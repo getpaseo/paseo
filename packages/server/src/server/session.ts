@@ -6321,6 +6321,7 @@ export class Session {
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
       doneAt: workspace.doneAt,
+      handoff: workspace.handoff,
       topic: workspace.topic ?? null,
       forgeConfigDir: workspace.forgeConfigDir,
       pullRequestCuration: workspace.pullRequestCuration,

@@ -116,6 +116,17 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // COMPAT(workspaceHandoff): added in v0.9.3, remove optional parsing after 2027-04-01.
+  handoff: z
+    .object({
+      agentId: z.string(),
+      kind: z.enum(["question", "action", "aborted", "report", "unsure"]),
+      need: z.string().nullable(),
+      at: z.string(),
+    })
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   labels: z.array(z.string()).optional(),
   // COMPAT(workspaceTopics): added in v0.9.2, remove optional parsing after 2027-04-01.
   // The topic is stored whole on every child rather than in a catalog: it exists only while a

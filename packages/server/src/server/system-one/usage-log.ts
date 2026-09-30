@@ -3,7 +3,7 @@ import path from "node:path";
 import type { SystemOneUsageBucket, SystemOneUsageSummary } from "@getpaseo/protocol/messages";
 import type { TypeSafeUsage } from "../browser-tools/jev-client.js";
 
-export type SystemOneUsagePurpose = "browser" | "shadow" | "routing" | "tool";
+export type SystemOneUsagePurpose = "browser" | "shadow" | "routing" | "handoff" | "tool";
 
 const WINDOW_DAYS = 7;
 // Shadow mode alone writes a few thousand lines a day; older lines are never shown.

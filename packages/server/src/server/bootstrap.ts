@@ -169,6 +169,10 @@ import {
 import { EvidenceStore } from "./verify/evidence-store.js";
 import { VerifySession } from "./verify/verify-session.js";
 import { createConfiguredSystemOneDecisionSource } from "./system-one/tools.js";
+import { HandoffClassifier, handoffBackfillCandidates } from "./system-one/handoff-classifier.js";
+
+const HANDOFF_BACKFILL_DELAY_MS = 30_000;
+const HANDOFF_BACKFILL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 import { DaemonPlaywrightHost } from "./verify/playwright-host.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
@@ -1608,7 +1612,64 @@ export async function createPaseoDaemon(
       ),
     logFile: path.join(config.paseoHome, "system-one", "shadow.jsonl"),
   });
-  agentManager.setStreamObserver((agent, event) => shadowPredictor.observe(agent, event));
+  const handoffClassifier = new HandoffClassifier({
+    isEnabled: (cwd) =>
+      daemonConfigStore.get().systemOne?.enabled === true &&
+      !isSystemOneExcluded(config.paseoHome, cwd),
+    decisionSource: (cwd) =>
+      createConfiguredSystemOneDecisionSource(
+        config.paseoHome,
+        daemonConfigStore,
+        () => cwd,
+        "handoff",
+      ),
+    minConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
+    resolveAgent: (agentId) => {
+      const agent = agentManager.getAgent(agentId);
+      return agent
+        ? {
+            id: agent.id,
+            cwd: agent.cwd,
+            workspaceId: agent.workspaceId ?? null,
+            labels: agent.labels,
+          }
+        : null;
+    },
+    readLastReply: (agentId) => agentManager.peekLastAssistantMessage(agentId),
+    save: async (workspaceId, handoff) => {
+      const updated = await workspaceRegistry?.update(workspaceId, (existing) => ({
+        ...existing,
+        handoff,
+      }));
+      if (updated) await emitWorkspaceUpdatesExternal([workspaceId]);
+    },
+    logger,
+  });
+  agentManager.setStreamObserver((agent, event) => {
+    shadowPredictor.observe(agent, event);
+    handoffClassifier.observe(agent, event);
+  });
+  // Sessions handed back before sorting existed get sorted once, after startup settles.
+  setTimeout(() => {
+    void (async () => {
+      const [workspaces, agents] = await Promise.all([
+        workspaceRegistry?.list() ?? [],
+        agentStorage.list(),
+      ]);
+      const sorted = await handoffClassifier.backfill(
+        handoffBackfillCandidates({
+          workspaces: workspaces.map((workspace) => ({
+            workspaceId: workspace.workspaceId,
+            doneAt: workspace.doneAt,
+            hasHandoff: workspace.handoff !== null,
+          })),
+          agents,
+          sinceMs: Date.now() - HANDOFF_BACKFILL_WINDOW_MS,
+        }),
+      );
+      if (sorted > 0) logger.info({ sorted }, "handoff backfill sorted open sessions");
+    })().catch((error: unknown) => logger.warn({ err: error }, "handoff backfill failed"));
+  }, HANDOFF_BACKFILL_DELAY_MS).unref();
   agentManager.setTurnRouter(
     createSystemOneTurnRouter({
       paseoHome: config.paseoHome,

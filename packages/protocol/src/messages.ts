@@ -4482,6 +4482,18 @@ export const WorkspaceDescriptorPayloadSchema = z
     // COMPAT(workspaceDone): added in v0.9.3, remove optional after 2027-04-01.
     // When the person marked the session done. A session that works again after it is open again.
     doneAt: z.string().nullable().optional(),
+    // COMPAT(workspaceHandoff): added in v0.9.3, remove optional after 2027-04-01.
+    // What the last handed-back turn wants from the person. `kind` stays a string so new
+    // kinds do not break older clients: question, action, aborted, report, unsure.
+    handoff: z
+      .object({
+        agentId: z.string(),
+        kind: z.string(),
+        need: z.string().nullable(),
+        at: z.string(),
+      })
+      .nullable()
+      .optional(),
     // COMPAT(workspaceTopics): added in v0.9.2, remove optional after 2027-04-01.
     // The topic this workspace belongs to. Carried in full on every child so a rename
     // reaches clients on the workspace channel they already observe.

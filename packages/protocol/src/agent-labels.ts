@@ -52,3 +52,15 @@ function deriveOrigin(labels: Record<string, string>, options: { internal?: bool
   if (parentAgentId) return `agent:${parentAgentId}`;
   return "user";
 }
+
+// Paperclip's Boss is the only Paperclip role that talks to the person; the others report to it.
+const PERSON_FACING_PAPERCLIP_ORIGIN = "paperclip:Boss";
+const UNATTENDED_ORIGIN_PREFIXES = ["schedule", "systemd:", "process:", "internal"];
+
+/** Whether a session with this origin waits on the person, rather than on another agent or a timer. */
+export function isPersonFacingOrigin(origin: string | null | undefined): boolean {
+  const value = origin?.trim();
+  if (!value) return true;
+  if (value.startsWith("paperclip:")) return value === PERSON_FACING_PAPERCLIP_ORIGIN;
+  return !UNATTENDED_ORIGIN_PREFIXES.some((prefix) => value.startsWith(prefix));
+}

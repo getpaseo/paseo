@@ -1,6 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   getParentAgentIdFromLabels,
+  isPersonFacingOrigin,
   getOpenAgentTabLabel,
   hasOpenAgentTab,
   isDelegatedAgent,
@@ -51,5 +52,27 @@ describe("withOriginLabel", () => {
     const { withOriginLabel } = await import("./agent-labels.js");
     const labels = { "paseo.origin": "systemd:g4-watch.service", "paseo.parent-agent-id": "a1" };
     expect(withOriginLabel(labels, {})).toBe(labels);
+  });
+});
+
+describe("isPersonFacingOrigin", () => {
+  it("keeps people, Paperclip's Boss and delegated agents; drops Paperclip workers and timers", () => {
+    expect(isPersonFacingOrigin(undefined)).toBe(true);
+    expect(isPersonFacingOrigin("user")).toBe(true);
+    expect(isPersonFacingOrigin("user:cli")).toBe(true);
+    expect(isPersonFacingOrigin("agent:abc")).toBe(true);
+    expect(isPersonFacingOrigin("paperclip:Boss")).toBe(true);
+    for (const origin of [
+      "paperclip:Dev",
+      "paperclip:Reviewer",
+      "paperclip:Tester",
+      "paperclip:Scout",
+      "schedule:21bb6e3a",
+      "systemd:g4-watch.service",
+      "process:cron",
+      "internal",
+    ]) {
+      expect(isPersonFacingOrigin(origin)).toBe(false);
+    }
   });
 });
