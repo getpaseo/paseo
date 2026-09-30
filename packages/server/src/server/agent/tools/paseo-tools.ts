@@ -79,6 +79,7 @@ import type {
   WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import { resolveWorktreeSourceCwd } from "../../workspace-source.js";
+import { assignWorkspaceTopic, createWorkspaceTopic } from "../../workspace-topics.js";
 import type { WorkspaceScriptsService } from "../../session/workspace-scripts/workspace-scripts-service.js";
 import {
   type ArchiveCommandDependencies,
@@ -125,7 +126,7 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert" | "updateMany">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
@@ -194,6 +195,12 @@ interface ProviderSummary {
   error?: string;
 }
 
+const WorkspaceTopicSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+});
+
 const WorkspaceAutomationSummarySchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
@@ -201,6 +208,7 @@ const WorkspaceAutomationSummarySchema = z.object({
   isolation: z.enum(["local", "worktree"]),
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
+  topic: WorkspaceTopicSummarySchema.nullable(),
 });
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
@@ -211,6 +219,7 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
     isolation: workspace.kind === "worktree" ? ("worktree" as const) : ("local" as const),
     kind: workspace.kind,
     title: workspace.title,
+    topic: workspace.topic ?? null,
   };
 }
 
@@ -2360,6 +2369,71 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           workspaceId,
           title,
         }),
+      };
+    },
+  );
+
+  registerTool(
+    "set_workspace_topic",
+    {
+      title: "Set workspace topic",
+      description:
+        "Group workspaces under one topic, the parent for sessions that belong to one piece of work. " +
+        "Pass topicTitle to start a new topic, topicId to join one list_workspaces shows, or " +
+        "detach: true to take the workspaces out of their topic. A topic with no workspaces left " +
+        "disappears. Omit workspaceIds to act on your current workspace.",
+      inputSchema: {
+        workspaceIds: z
+          .array(z.string().trim().min(1))
+          .optional()
+          .describe("Workspaces to move. Omit for your current workspace."),
+        topicTitle: z.string().trim().min(1).optional().describe("Title of a new topic."),
+        topicId: z.string().trim().min(1).optional().describe("Existing topic to join."),
+        detach: z.boolean().optional().describe("Take the workspaces out of their topic."),
+      },
+      outputSchema: {
+        topic: WorkspaceTopicSummarySchema.nullable(),
+        workspaceIds: z.array(z.string()),
+      },
+    },
+    async ({ workspaceIds: requestedWorkspaceIds, topicTitle, topicId, detach }) => {
+      const registry = options.workspaceRegistry;
+      if (!registry) {
+        throw new Error("Workspace registry is required to set workspace topics");
+      }
+      const targets = [topicTitle, topicId, detach ? true : undefined].filter(
+        (value) => value !== undefined,
+      );
+      if (targets.length !== 1) {
+        throw new Error("Pass exactly one of topicTitle, topicId or detach: true");
+      }
+      const workspaceIds =
+        requestedWorkspaceIds && requestedWorkspaceIds.length > 0
+          ? requestedWorkspaceIds
+          : [resolveWorkspaceIdForRename()];
+
+      if (topicTitle !== undefined) {
+        const { topic } = await createWorkspaceTopic(registry, {
+          title: topicTitle,
+          workspaceIds,
+        });
+        return {
+          content: [],
+          structuredContent: ensureValidJson({ topic, workspaceIds }),
+        };
+      }
+      // ponytail: one registry write per workspace; batch through updateMany if agents move many.
+      let topic: PersistedWorkspaceRecord["topic"] | null = null;
+      for (const workspaceId of workspaceIds) {
+        const workspace = await assignWorkspaceTopic(registry, {
+          workspaceId,
+          topicId: topicId ?? null,
+        });
+        topic = workspace.topic ?? null;
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ topic, workspaceIds }),
       };
     },
   );

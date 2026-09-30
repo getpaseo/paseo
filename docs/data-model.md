@@ -501,10 +501,22 @@ Array of workspace records. A workspace is a specific working directory within a
 | `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                |
 | `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
 | `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
+| `topic`                        | `{ id, title, description }?`                                | The topic this workspace is a child of. Missing means it stands alone. See [Workspace topics](#workspace-topics).                                                                             |
 | `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
 | `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+### Workspace topics
+
+A topic groups workspaces that started apart but turned out to be one piece of work. It has no
+record of its own: every child stores the whole topic (`top_<16 hex>` id, title, description), so
+the topic exists exactly as long as some workspace carries it. Detaching the last child dissolves
+it, a rename rewrites every child in one registry write (`WorkspaceRegistry.updateMany`), and
+clients learn about both through the ordinary workspace updates. Archived children keep their
+topic, so restoring one puts it back. Topics have one level; a topic cannot hold another topic.
+The RPCs are `workspace.topic.{create,assign,update}.request`, gated on
+`server_info.features.workspaceTopics`; agents use the `set_workspace_topic` tool.
 
 ### Workspace label catalog
 

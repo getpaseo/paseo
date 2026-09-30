@@ -8290,6 +8290,115 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
   });
 });
 
+test("workspace.topic RPCs combine, rename and split sessions and publish descriptors live", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "session-topics-"));
+  try {
+    const emitted: SessionOutboundMessage[] = [];
+    const logger = createTestLogger();
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      logger,
+    );
+    for (const workspaceId of ["ws-phase1", "ws-phase2"]) {
+      await workspaceRegistry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: "proj-1",
+          cwd: REPO_CWD,
+          kind: "local_checkout",
+          displayName: workspaceId,
+          createdAt: "2026-03-01T12:00:00.000Z",
+          updatedAt: "2026-03-01T12:00:00.000Z",
+        }),
+      );
+    }
+    const session = asTestSession(
+      createSessionForWorkspaceTests({
+        onMessage: (message) => emitted.push(message),
+        workspaceRegistry,
+      }),
+    );
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "sub-workspaces",
+      subscribe: { subscriptionId: "sub-workspaces" },
+    });
+    const topicUpdates = () =>
+      emitted.flatMap((message) =>
+        message.type === "workspace_update" && message.payload.kind === "upsert"
+          ? [{ id: message.payload.workspace.id, topic: message.payload.workspace.topic }]
+          : [],
+      );
+
+    await session.handleMessage({
+      type: "workspace.topic.create.request",
+      title: "Riesling",
+      workspaceIds: ["ws-phase1", "ws-phase2"],
+      requestId: "req-create",
+    });
+    const created = findByType(emitted, "workspace.topic.create.response")?.payload;
+    expect(created).toMatchObject({
+      accepted: true,
+      topic: { title: "Riesling", description: null },
+      workspaceIds: ["ws-phase1", "ws-phase2"],
+      error: null,
+    });
+    const topicId = created?.topic?.id ?? "";
+    expect(topicUpdates()).toEqual(
+      expect.arrayContaining([
+        { id: "ws-phase1", topic: created?.topic },
+        { id: "ws-phase2", topic: created?.topic },
+      ]),
+    );
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "workspace.topic.update.request",
+      topicId,
+      title: "Riesling launch",
+      requestId: "req-update",
+    });
+    expect(findByType(emitted, "workspace.topic.update.response")?.payload).toMatchObject({
+      accepted: true,
+      topic: { id: topicId, title: "Riesling launch" },
+    });
+    expect(topicUpdates().map((update) => update.topic?.title)).toEqual([
+      "Riesling launch",
+      "Riesling launch",
+    ]);
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "workspace.topic.assign.request",
+      workspaceId: "ws-phase1",
+      topicId: null,
+      requestId: "req-detach",
+    });
+    expect(findByType(emitted, "workspace.topic.assign.response")?.payload).toEqual({
+      requestId: "req-detach",
+      workspaceId: "ws-phase1",
+      accepted: true,
+      topicId: null,
+      error: null,
+    });
+    expect(topicUpdates()).toEqual([{ id: "ws-phase1", topic: null }]);
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "workspace.topic.assign.request",
+      workspaceId: "ws-phase1",
+      topicId: "top_missing",
+      requestId: "req-missing",
+    });
+    expect(findByType(emitted, "workspace.topic.assign.response")?.payload).toMatchObject({
+      accepted: false,
+      error: "Topic top_missing not found",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(

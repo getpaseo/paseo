@@ -191,6 +191,12 @@ import {
   type WorkspaceMutation,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import {
+  assignWorkspaceTopic,
+  createWorkspaceTopic,
+  updateWorkspaceTopic,
+  WorkspaceTopicError,
+} from "./workspace-topics.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
@@ -2427,6 +2433,7 @@ export class Session {
     return (
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
+      this.dispatchWorkspaceTopicMessage(msg) ??
       this.dispatchWorkspaceSetupMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg)
     );
@@ -3106,6 +3113,19 @@ export class Session {
       return this.handleWorkspaceSetupRunRequest(msg);
     }
     return undefined;
+  }
+
+  private dispatchWorkspaceTopicMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.topic.create.request":
+        return this.handleWorkspaceTopicCreateRequest(msg);
+      case "workspace.topic.assign.request":
+        return this.handleWorkspaceTopicAssignRequest(msg);
+      case "workspace.topic.update.request":
+        return this.handleWorkspaceTopicUpdateRequest(msg);
+      default:
+        return undefined;
+    }
   }
 
   private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -4201,6 +4221,105 @@ export class Session {
         },
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
+    }
+  }
+
+  // Clients see the change through the registry's mutation broadcast; the response only settles
+  // the request. Domain errors are the user's to read, anything else is logged.
+  private workspaceTopicErrorMessage(error: unknown, requestId: string): string {
+    if (error instanceof WorkspaceTopicError) return error.message;
+    this.sessionLogger.error({ err: error, requestId }, "session: workspace topic request failed");
+    return getErrorMessageOr(error, "Failed to update topic");
+  }
+
+  private async handleWorkspaceTopicCreateRequest(
+    msg: Extract<SessionInboundMessage, { type: "workspace.topic.create.request" }>,
+  ): Promise<void> {
+    try {
+      const { topic, workspaces } = await createWorkspaceTopic(this.workspaceRegistry, {
+        title: msg.title,
+        description: msg.description,
+        workspaceIds: msg.workspaceIds,
+      });
+      this.emit({
+        type: "workspace.topic.create.response",
+        payload: {
+          requestId: msg.requestId,
+          accepted: true,
+          topic,
+          workspaceIds: workspaces.map((workspace) => workspace.workspaceId),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.topic.create.response",
+        payload: {
+          requestId: msg.requestId,
+          accepted: false,
+          topic: null,
+          workspaceIds: [],
+          error: this.workspaceTopicErrorMessage(error, msg.requestId),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceTopicAssignRequest(
+    msg: Extract<SessionInboundMessage, { type: "workspace.topic.assign.request" }>,
+  ): Promise<void> {
+    try {
+      const workspace = await assignWorkspaceTopic(this.workspaceRegistry, {
+        workspaceId: msg.workspaceId,
+        topicId: msg.topicId,
+      });
+      this.emit({
+        type: "workspace.topic.assign.response",
+        payload: {
+          requestId: msg.requestId,
+          workspaceId: msg.workspaceId,
+          accepted: true,
+          topicId: workspace.topic?.id ?? null,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.topic.assign.response",
+        payload: {
+          requestId: msg.requestId,
+          workspaceId: msg.workspaceId,
+          accepted: false,
+          topicId: null,
+          error: this.workspaceTopicErrorMessage(error, msg.requestId),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceTopicUpdateRequest(
+    msg: Extract<SessionInboundMessage, { type: "workspace.topic.update.request" }>,
+  ): Promise<void> {
+    try {
+      const { topic } = await updateWorkspaceTopic(this.workspaceRegistry, {
+        topicId: msg.topicId,
+        title: msg.title,
+        description: msg.description,
+      });
+      this.emit({
+        type: "workspace.topic.update.response",
+        payload: { requestId: msg.requestId, accepted: true, topic, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.topic.update.response",
+        payload: {
+          requestId: msg.requestId,
+          accepted: false,
+          topic: null,
+          error: this.workspaceTopicErrorMessage(error, msg.requestId),
+        },
+      });
     }
   }
 
@@ -6130,6 +6249,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      topic: workspace.topic ?? null,
       forgeConfigDir: workspace.forgeConfigDir,
       pullRequestCuration: workspace.pullRequestCuration,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),

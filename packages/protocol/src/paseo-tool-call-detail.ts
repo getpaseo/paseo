@@ -101,6 +101,10 @@ const TOOL_SPECS: Readonly<Record<string, ToolDetailSpec>> = {
     outputFields: ["workspaceId", "archivedAgentIds", "removedDirectory"],
   },
   rename_workspace: { inputOrder: ["title", "workspaceId"] },
+  set_workspace_topic: {
+    inputOrder: ["topicTitle", "topicId", "detach", "workspaceIds"],
+    outputFields: ["workspaceIds"],
+  },
   create_agent: {
     promptField: "initialPrompt",
     inputOrder: AGENT_FIELDS,

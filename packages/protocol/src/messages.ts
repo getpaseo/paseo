@@ -1078,6 +1078,42 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// COMPAT(workspaceTopics): added in v0.9.2. Gate on server_info.features.workspaceTopics.
+// A topic groups workspaces that started apart but belong to one piece of work. It exists
+// only through the workspaces that carry it, so there is no delete verb: detaching the last
+// child dissolves it.
+export const WorkspaceTopicSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+});
+
+export const WorkspaceTopicCreateRequestSchema = z.object({
+  type: z.literal("workspace.topic.create.request"),
+  title: z.string(),
+  description: z.string().nullable().optional(),
+  // Moved into the new topic, leaving any topic they belonged to before.
+  workspaceIds: z.array(z.string()),
+  requestId: z.string(),
+});
+
+export const WorkspaceTopicAssignRequestSchema = z.object({
+  type: z.literal("workspace.topic.assign.request"),
+  workspaceId: z.string(),
+  // Null detaches the workspace from its topic.
+  topicId: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const WorkspaceTopicUpdateRequestSchema = z.object({
+  type: z.literal("workspace.topic.update.request"),
+  topicId: z.string(),
+  // Omitted fields stay as they are; a null description clears it.
+  title: z.string().optional(),
+  description: z.string().nullable().optional(),
+  requestId: z.string(),
+});
+
 // COMPAT(workspaceForgeAccount): added in v0.8.1. Gate on
 // server_info.features.workspaceForgeAccount.
 // An empty string clears the pin and returns the workspace to the machine's
@@ -2302,6 +2338,38 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const WorkspaceTopicCreateResponseSchema = z.object({
+  type: z.literal("workspace.topic.create.response"),
+  payload: z.object({
+    requestId: z.string(),
+    accepted: z.boolean(),
+    topic: WorkspaceTopicSchema.nullable(),
+    workspaceIds: z.array(z.string()),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WorkspaceTopicAssignResponseSchema = z.object({
+  type: z.literal("workspace.topic.assign.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    topicId: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WorkspaceTopicUpdateResponseSchema = z.object({
+  type: z.literal("workspace.topic.update.response"),
+  payload: z.object({
+    requestId: z.string(),
+    accepted: z.boolean(),
+    topic: WorkspaceTopicSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspacePullRequestsCurateResponsePayloadSchema = z.object({
   requestId: z.string(),
   workspaceId: z.string(),
@@ -3476,6 +3544,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceTopicCreateRequestSchema,
+  WorkspaceTopicAssignRequestSchema,
+  WorkspaceTopicUpdateRequestSchema,
   WorkspaceForgeAccountSetRequestSchema,
   ForgeAccountListRequestSchema,
   WorkspacePullRequestsCurateRequestSchema,
@@ -3971,6 +4042,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
+        // COMPAT(workspaceTopics): added in v0.9.2, remove gate after 2027-04-01.
+        workspaceTopics: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(workspaceForgeAccount): added in v0.8.1, remove gate after 2027-06-30.
@@ -4356,6 +4429,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     pinnedAt: z.string().nullable().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
+    // COMPAT(workspaceTopics): added in v0.9.2, remove optional after 2027-04-01.
+    // The topic this workspace belongs to. Carried in full on every child so a rename
+    // reaches clients on the workspace channel they already observe.
+    topic: WorkspaceTopicSchema.nullable().optional(),
     // COMPAT(workspaceForgeAccount): added in v0.8.1, remove optional after 2027-06-30.
     // Config directory of the forge CLI account this workspace speaks to, so a
     // work and a private GitHub account can live on one machine. Null means the
@@ -7241,6 +7318,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceTopicCreateResponseSchema,
+  WorkspaceTopicAssignResponseSchema,
+  WorkspaceTopicUpdateResponseSchema,
   WorkspaceForgeAccountSetResponseSchema,
   ForgeAccountListResponseSchema,
   WorkspacePullRequestsCurateResponseSchema,
@@ -7625,6 +7705,13 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceTopic = z.infer<typeof WorkspaceTopicSchema>;
+export type WorkspaceTopicCreateRequest = z.infer<typeof WorkspaceTopicCreateRequestSchema>;
+export type WorkspaceTopicAssignRequest = z.infer<typeof WorkspaceTopicAssignRequestSchema>;
+export type WorkspaceTopicUpdateRequest = z.infer<typeof WorkspaceTopicUpdateRequestSchema>;
+export type WorkspaceTopicCreateResponse = z.infer<typeof WorkspaceTopicCreateResponseSchema>;
+export type WorkspaceTopicAssignResponse = z.infer<typeof WorkspaceTopicAssignResponseSchema>;
+export type WorkspaceTopicUpdateResponse = z.infer<typeof WorkspaceTopicUpdateResponseSchema>;
 export type WorkspaceForgeAccountSetRequest = z.infer<typeof WorkspaceForgeAccountSetRequestSchema>;
 export type ForgeAccount = z.infer<typeof ForgeAccountSchema>;
 export type ForgeAccountScope = z.infer<typeof ForgeAccountScopeSchema>;

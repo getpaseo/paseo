@@ -3261,6 +3261,89 @@ test("sends project.add.request without creating a workspace", async () => {
   });
 });
 
+test("creates, renames and detaches workspace topics through the dotted RPCs", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const topic = { id: "top_1", title: "Riesling", description: null };
+
+  const createPromise = client.createWorkspaceTopic(
+    { title: "Riesling", workspaceIds: ["wks_1", "wks_2"] },
+    "req-create",
+  );
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.topic.create.request",
+    title: "Riesling",
+    workspaceIds: ["wks_1", "wks_2"],
+    requestId: "req-create",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.topic.create.response",
+      payload: {
+        requestId: "req-create",
+        accepted: true,
+        topic,
+        workspaceIds: ["wks_1", "wks_2"],
+        error: null,
+      },
+    }),
+  );
+  await expect(createPromise).resolves.toEqual(topic);
+
+  const renamePromise = client.updateWorkspaceTopic("top_1", { title: "Wine" }, "req-rename");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.topic.update.request",
+    topicId: "top_1",
+    title: "Wine",
+    requestId: "req-rename",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.topic.update.response",
+      payload: {
+        requestId: "req-rename",
+        accepted: true,
+        topic: { ...topic, title: "Wine" },
+        error: null,
+      },
+    }),
+  );
+  await expect(renamePromise).resolves.toEqual({ ...topic, title: "Wine" });
+
+  const detachPromise = client.assignWorkspaceTopic("wks_1", null, "req-detach");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.topic.assign.request",
+    workspaceId: "wks_1",
+    topicId: null,
+    requestId: "req-detach",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.topic.assign.response",
+      payload: {
+        requestId: "req-detach",
+        workspaceId: "wks_1",
+        accepted: false,
+        topicId: null,
+        error: "Workspace wks_1 is archived",
+      },
+    }),
+  );
+  await expect(detachPromise).rejects.toThrow("Workspace wks_1 is archived");
+});
+
 test("marks a workspace unread through the dotted RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

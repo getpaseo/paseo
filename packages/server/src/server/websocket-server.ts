@@ -341,6 +341,7 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
     list: async () => [],
     get: async () => null,
     update: async () => null,
+    updateMany: async (stage) => stage(new Map()),
     upsert: async () => {},
     archive: async () => {},
     remove: async () => {},
@@ -1834,6 +1835,8 @@ export class VoiceAssistantWebSocketServer {
         providerSubagentNesting: true,
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: true,
+        // COMPAT(workspaceTopics): added in v0.9.2, remove gate after 2027-04-01.
+        workspaceTopics: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: true,
         workspaceForgeAccount: true,

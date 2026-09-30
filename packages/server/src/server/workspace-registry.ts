@@ -111,6 +111,16 @@ const PersistedWorkspaceRecordSchema = z.object({
     .optional()
     .transform((value) => value ?? null),
   labels: z.array(z.string()).optional(),
+  // COMPAT(workspaceTopics): added in v0.9.2, remove optional parsing after 2027-04-01.
+  // The topic is stored whole on every child rather than in a catalog: it exists only while a
+  // workspace carries it, and a rename rewrites every child in one registry write.
+  topic: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      description: z.string().nullable(),
+    })
+    .optional(),
   untrustedSource: UntrustedWorkspaceSourceSchema.optional(),
   // COMPAT(workspaceForgeAccount): added in v0.8.1, remove optional parsing after 2027-06-30.
   // Config directory of the forge CLI account this workspace speaks to, so a
@@ -217,6 +227,13 @@ export interface WorkspaceRegistry {
     context?: WorkspaceArchiveContext,
   ): Promise<void>;
   remove(workspaceId: string): Promise<void>;
+  /**
+   * Writes every record `stage` returns in one atomic registry write. Throwing from `stage`
+   * aborts without writing anything.
+   */
+  updateMany(
+    stage: (records: ReadonlyMap<string, PersistedWorkspaceRecord>) => PersistedWorkspaceRecord[],
+  ): Promise<PersistedWorkspaceRecord[]>;
   /** Central lifecycle seam for daemon-global workspace observers. */
   subscribeToMutations?(
     listener: (mutation: WorkspaceMutation) => void | Promise<void>,
@@ -598,6 +615,18 @@ export class FileBackedWorkspaceRegistry
       await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
     }
     return workspace;
+  }
+
+  async updateMany(
+    stage: (records: ReadonlyMap<string, PersistedWorkspaceRecord>) => PersistedWorkspaceRecord[],
+  ): Promise<PersistedWorkspaceRecord[]> {
+    const changed = await this.mutateMany(stage);
+    await Promise.all(
+      changed.map((workspace) =>
+        this.notifyMutation({ kind: "upsert", workspaceId: workspace.workspaceId, workspace }),
+      ),
+    );
+    return changed;
   }
 
   override async upsert(

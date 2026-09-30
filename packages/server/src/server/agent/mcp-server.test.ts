@@ -24,6 +24,7 @@ import {
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  FileBackedWorkspaceRegistry,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -3942,6 +3943,62 @@ describe("update_agent MCP tool", () => {
 
     expect(spies.agentStorage.get).not.toHaveBeenCalled();
     expect(spies.agentManager.updateAgentMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("set_workspace_topic MCP tool", () => {
+  it("starts a topic for the caller workspace, lets another join, and detaches", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mcp-topics-"));
+    try {
+      const logger = createTestLogger();
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      const workspaceRegistry = new FileBackedWorkspaceRegistry(
+        join(dir, "workspaces.json"),
+        logger,
+      );
+      for (const workspaceId of ["wks_phase1", "wks_phase2"]) {
+        await workspaceRegistry.upsert(
+          createPersistedWorkspaceRecord({
+            workspaceId,
+            projectId: "proj_1",
+            cwd: REPO_CWD,
+            kind: "local_checkout",
+            displayName: workspaceId,
+            createdAt: "2026-09-30T00:00:00.000Z",
+            updatedAt: "2026-09-30T00:00:00.000Z",
+          }),
+        );
+      }
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({ id: "caller", cwd: REPO_CWD, workspaceId: "wks_phase1" }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        workspaceRegistry,
+        callerAgentId: "caller",
+        logger,
+      });
+      const tool = registeredTool(server, "set_workspace_topic");
+
+      const created = await invokeToolWithParsedInput(tool, { topicTitle: "Riesling" });
+      const topic = (await workspaceRegistry.get("wks_phase1"))?.topic;
+      expect(topic).toMatchObject({ title: "Riesling" });
+      expect(created.structuredContent).toEqual({ topic, workspaceIds: ["wks_phase1"] });
+
+      await invokeToolWithParsedInput(tool, { topicId: topic?.id, workspaceIds: ["wks_phase2"] });
+      expect((await workspaceRegistry.get("wks_phase2"))?.topic).toEqual(topic);
+
+      await invokeToolWithParsedInput(tool, { detach: true });
+      expect((await workspaceRegistry.get("wks_phase1"))?.topic).toBeUndefined();
+
+      await expect(
+        invokeToolWithParsedInput(tool, { topicTitle: "X", detach: true }),
+      ).rejects.toThrow("Pass exactly one of topicTitle, topicId or detach: true");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

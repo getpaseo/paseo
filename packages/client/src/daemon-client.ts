@@ -120,6 +120,7 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  WorkspaceTopic,
   PluginListItem,
   PluginLogEntry,
   PluginSourceStatusItem,
@@ -3330,6 +3331,55 @@ export class DaemonClient {
       throw new Error(payload.error ?? "setWorkspacePinned rejected");
     }
     return { pinnedAt: payload.pinnedAt };
+  }
+
+  /** Combines workspaces under a new topic. Gate on `server_info.features.workspaceTopics`. */
+  async createWorkspaceTopic(
+    input: { title: string; description?: string | null; workspaceIds: string[] },
+    requestId?: string,
+  ): Promise<WorkspaceTopic> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.topic.create.request", ...input },
+      responseType: "workspace.topic.create.response",
+    });
+    if (!payload.accepted || !payload.topic) {
+      throw new Error(payload.error ?? "createWorkspaceTopic rejected");
+    }
+    return payload.topic;
+  }
+
+  /** Moves a workspace into a topic, or out of its topic when `topicId` is null. */
+  async assignWorkspaceTopic(
+    workspaceId: string,
+    topicId: string | null,
+    requestId?: string,
+  ): Promise<{ topicId: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.topic.assign.request", workspaceId, topicId },
+      responseType: "workspace.topic.assign.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "assignWorkspaceTopic rejected");
+    }
+    return { topicId: payload.topicId };
+  }
+
+  async updateWorkspaceTopic(
+    topicId: string,
+    changes: { title?: string; description?: string | null },
+    requestId?: string,
+  ): Promise<WorkspaceTopic> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.topic.update.request", topicId, ...changes },
+      responseType: "workspace.topic.update.response",
+    });
+    if (!payload.accepted || !payload.topic) {
+      throw new Error(payload.error ?? "updateWorkspaceTopic rejected");
+    }
+    return payload.topic;
   }
 
   async inspectWorkspaceRecovery(
