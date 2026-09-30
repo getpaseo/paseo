@@ -27,34 +27,37 @@ In Paseo, select **Muse Code**, then choose a model, approval mode, and reasonin
 Paseo runs `muse serve` and communicates over the Muse Session Protocol (MSP). Your Muse
 configuration determines the available models.
 
-## Per-agent options
+## Provider options
 
 Paseo launches Muse with the sandbox disabled (`--disable-sandbox`) and workspace trust
 on (`--trust-workspace`). Muse can install packages using your npm cache and load project
 rules, skills, and configuration.
 
-To restore the sandbox and disable workspace trust for one agent, pass provider options
-when creating it with the [SDK](/docs/sdk/provider-options):
+Set defaults for every Muse agent in `config.json` on the daemon machine under
+`agents.providers.muse.options`:
 
-```ts
-const agent = await client.agents.create({
-  config: {
-    provider: "muse/meta/muse-spark-1.3",
-    modeId: "onRequest",
-    options: {
-      sandbox: { enabled: true, network: "proxy-only" },
-      trustWorkspace: false,
-    },
-  },
-  cwd: "/Users/me/dev/project",
-  prompt: "Inspect the project.",
-});
+```json
+{
+  "agents": {
+    "providers": {
+      "muse": {
+        "options": {
+          "sandbox": { "enabled": true, "network": "proxy-only" },
+          "trustWorkspace": false
+        }
+      }
+    }
+  }
+}
 ```
 
-The SDK's `config.options` becomes `providerOptions` in the agent creation request and
-`ProviderSessionConfig`. Options are saved with the agent and reapplied when its Muse host
-opens on refresh or resume. Invalid values and unknown keys fail session creation with a
-`providerOptions` error.
+You can also supply per-agent `providerOptions` when creating an agent. The daemon merges
+provider defaults with the per-agent options and delivers the effective `providerOptions`
+to Muse. See [provider options](/docs/sdk/provider-options) for configuration and creation.
+
+Per-agent options are saved with the agent and reapplied when its Muse host opens on refresh
+or resume. Invalid values and unknown keys fail session creation with a `providerOptions`
+error.
 
 | Option            | Default        | Effect                                                                                                                          |
 | ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,7 +67,7 @@ opens on refresh or resume. Invalid values and unknown keys fail session creatio
 
 Approval modes control tool decisions separately: **Default**, **Ask**, **Strict**, and
 **Full access**. Full access automatically allows escalated approval stages; it preserves
-these per-agent options. Skills appear in the slash-command menu, alongside `/compact`.
+the effective provider options. Skills appear in the slash-command menu, alongside `/compact`.
 
 ## Limitations in Muse 1.4.1
 
