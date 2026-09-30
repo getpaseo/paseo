@@ -1,15 +1,5 @@
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
-import log from "electron-log/main";
-log.transports.console.level = "info";
-log.initialize({ spyRendererConsole: true });
-
-import { inheritLoginShellEnv } from "./login-shell-env.js";
-
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -26,6 +16,18 @@ import {
   shell,
   webContents,
 } from "electron";
+import log from "electron-log/main";
+// Packaged relaunches can inherit a pipe whose reader exits with the old process.
+// Keep routine diagnostics in the log file unless console debugging is requested.
+log.transports.console.level = app.isPackaged && process.env.PASEO_DEBUG !== "1" ? false : "info";
+log.initialize({ spyRendererConsole: true });
+
+import { inheritLoginShellEnv } from "./login-shell-env.js";
+
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
 import { closeAllTransportSessions } from "./daemon/local-transport.js";
