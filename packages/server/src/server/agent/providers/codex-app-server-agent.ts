@@ -4487,6 +4487,16 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.failedImageTurn = null;
       this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: forked.thread.id });
       await this.loadPersistedHistory(this.client);
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: {
+          type: "notification",
+          level: "warning",
+          message:
+            "Codex could not process an image. The image turn and later messages remain visible here, but are excluded from Codex context. Restate any missing details if needed.",
+        },
+      });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(`Codex image failure recovery failed: ${reason}. Original error: ${failed.error}`, {

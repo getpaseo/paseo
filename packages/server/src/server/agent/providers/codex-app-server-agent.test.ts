@@ -2008,6 +2008,14 @@ describe("Codex app-server provider", () => {
     ]);
     expect(appServer.requests().filter((request) => request.method === "turn/start").at(-1))
       .toMatchObject({ params: { threadId: "forked-thread" } });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "timeline",
+      item: expect.objectContaining({
+        type: "notification",
+        level: "warning",
+        message: expect.stringContaining("excluded from Codex context"),
+      }),
+    }));
     appServer.assertNoErrors();
     await session.close();
   });
