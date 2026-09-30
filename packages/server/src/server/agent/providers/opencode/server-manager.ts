@@ -1,12 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { stat } from "node:fs/promises";
 import net from "node:net";
-import { createRequire } from "node:module";
-import path from "node:path";
 import type { Logger } from "pino";
 
-import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
 import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
@@ -15,6 +11,7 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
+import { resolveOpenCodeBinary } from "./binary.js";
 import { resolveOpenCodeHomeDir } from "./paths.js";
 import {
   OpenCodeEventConsumer,
@@ -611,52 +608,6 @@ async function waitForServerAcquisition<T>(
     return await Promise.race([operation, aborted]);
   } finally {
     if (handleAbort) signal.removeEventListener("abort", handleAbort);
-  }
-}
-
-async function resolveOpenCodeBinary(): Promise<string> {
-  const found = await findExecutable("opencode");
-  if (!found) {
-    throw new Error(
-      "OpenCode binary not found. Install OpenCode (https://github.com/opencode-ai/opencode) and ensure it is available in your shell PATH.",
-    );
-  }
-
-  if (process.platform === "win32" && path.extname(found).toLowerCase() === ".cmd") {
-    const packageDirectories = [
-      path.join(path.dirname(found), "node_modules", "opencode-ai"),
-      path.join(path.dirname(found), "..", "opencode-ai"),
-    ];
-    for (const packageDirectory of packageDirectories) {
-      const bundledBinary = path.join(packageDirectory, "bin", "opencode.exe");
-      if (await pathExists(bundledBinary)) return bundledBinary;
-
-      // Newer npm releases keep the executable in a platform dependency.
-      // Resolve from the CLI package so nested installs and pnpm both work.
-      try {
-        const require = createRequire(path.join(packageDirectory, "package.json"));
-        return require.resolve(`opencode-windows-${process.arch}/bin/opencode.exe`);
-      } catch {
-        // Try the other npm layout before retaining the original command.
-      }
-    }
-
-    console.warn(
-      "[opencode-server] Found opencode.cmd but could not resolve the real opencode.exe. " +
-        "The process may not be properly terminated on exit. Path: %s",
-      found,
-    );
-  }
-
-  return found;
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await stat(filePath);
-    return true;
-  } catch {
-    return false;
   }
 }
 
