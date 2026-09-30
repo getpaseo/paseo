@@ -10,7 +10,7 @@ import { BuiltinPluginLoader } from "../plugins/builtin/index.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 
-test("Muse publishes its client settings bundle while installed plugins are disabled", async () => {
+test("Muse registers without a client settings bundle", async () => {
   const daemon = await createTestPaseoDaemon({
     builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
   });
@@ -21,8 +21,8 @@ test("Muse publishes its client settings bundle while installed plugins are disa
   try {
     await client.connect();
     const muse = (await client.getPluginCatalog()).find((plugin) => plugin.id === "muse-provider");
-    expect(muse?.clientBundle).toBeTypeOf("string");
-    expect(muse?.clientBundle).not.toBe("");
+    expect(muse).toBeDefined();
+    expect(muse?.clientBundle).toBe("");
   } finally {
     await client.close();
     await daemon.close();

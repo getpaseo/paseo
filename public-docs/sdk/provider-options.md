@@ -1,6 +1,6 @@
 ---
 title: Provider options
-description: Sandboxing, permissions, and network rules for Codex, Claude, and OpenCode agents created from the SDK.
+description: Sandboxing, permissions, and network rules for Codex, Claude, OpenCode, and Muse Code agents created from the SDK.
 nav: Provider options
 order: 55
 category: TypeScript SDK
@@ -146,6 +146,16 @@ await client.close();
 `failIfUnavailable: true` makes agent startup fail when the sandbox cannot be established. Leave it off and Claude runs unsandboxed instead.
 
 `sandbox.filesystem` takes `allowWrite`, `denyWrite`, `allowRead`, and `denyRead`. `sandbox.network` takes `allowedDomains`, `deniedDomains`, `strictAllowlist`, and proxy settings.
+
+## Muse Code
+
+Muse starts with its sandbox disabled and workspace trust enabled. Set
+`options: { sandbox: { enabled: true, network: "proxy-only" }, trustWorkspace: false }`
+to restore sandboxing and skip project-scoped rules and configuration for one agent.
+`sandbox.network` accepts `"proxy-only"`, `"restricted"`, or `"enabled"`; it only applies
+when the sandbox is enabled. Options persist across refresh and resume.
+
+See [Muse Code](/docs/muse-code#per-agent-options) for a create-agent example and defaults.
 
 ## OpenCode
 

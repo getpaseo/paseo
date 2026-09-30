@@ -8,9 +8,7 @@ import {
   type ProviderRegistration,
   type ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
-import type { PluginSettings } from "@getpaseo/plugin/server";
-import { serveArgs } from "./settings.js";
-import { settingsSchema } from "../shared/settings.js";
+import { serveArgs } from "./options.js";
 import { Usage } from "./usage.js";
 import { execFile } from "node:child_process";
 import { Catalog, launchKey } from "./catalog.js";
@@ -31,10 +29,7 @@ const capabilities = [
   "session.list",
 ] as const;
 
-export function createMuseProvider(
-  settings: PluginSettings<typeof settingsSchema>,
-  usage: Usage,
-): ProviderRegistration {
+export function createMuseProvider(usage: Usage): ProviderRegistration {
   return {
     id: "muse",
     label: "Muse Code",
@@ -56,7 +51,6 @@ export function createMuseProvider(
       return connect(
         requireLaunch(request.launch),
         negotiateProviderCapabilities(request.capabilities, capabilities),
-        settings,
         usage,
       );
     },
@@ -101,7 +95,6 @@ async function status(launch: ProviderLaunch): Promise<ProviderStatus> {
 function connect(
   launch: ProviderLaunch,
   negotiated: readonly string[],
-  settings: PluginSettings<typeof settingsSchema>,
   usage: Usage,
 ): ProviderConnection {
   const listeners = new Set<(event: ProviderEvent) => void>();
@@ -134,7 +127,7 @@ function connect(
         launch,
         emit,
         capabilities: negotiated,
-        serveArgs: await serveArgs(settings),
+        serveArgs: serveArgs(input.config.providerOptions),
       });
       sessions.set(input.sessionId, session);
       try {

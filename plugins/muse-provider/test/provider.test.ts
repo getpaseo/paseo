@@ -13,7 +13,6 @@ import {
   type ProviderLaunch,
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
-import { settingsSchema } from "../shared/settings.js";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
 import contribute from "../index.server.js";
 
@@ -25,21 +24,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 function registration(
-  readSettings = () => settingsSchema.parse({}),
   registerUsageSource = (_source: UsageSourceRegistration) => {},
 ): ProviderRegistration {
   let provider: ProviderRegistration | undefined;
   const server = {
-    registerSettings() {
-      return {
-        read: async () => ({
-          status: "ready" as const,
-          revision: "1",
-          values: readSettings(),
-        }),
-        subscribe: () => () => {},
-      };
-    },
     registerUsageSource,
     registerProvider(value: ProviderRegistration) {
       provider = value;
@@ -49,7 +37,11 @@ function registration(
   if (!provider) throw new Error("Provider was not registered");
   return provider;
 }
-async function harness(scenario = "text-reasoning", env: Record<string, string> = {}) {
+async function harness(
+  scenario = "text-reasoning",
+  env: Record<string, string> = {},
+  providerOptions?: Record<string, unknown>,
+) {
   const root = await mkdtemp(path.join(os.tmpdir(), "muse-provider-test-"));
   roots.push(root);
   const requests = path.join(root, "requests.ndjson");
@@ -59,14 +51,10 @@ async function harness(scenario = "text-reasoning", env: Record<string, string> 
     env: { MUSE_TEST_SCENARIO: scenario, MUSE_TEST_REQUESTS: requests, ...env },
   };
   await writeFile(requests, "");
-  let settings = settingsSchema.parse({});
   let usageSource!: UsageSourceRegistration;
-  const provider = registration(
-    () => settings,
-    (source) => {
-      usageSource = source;
-    },
-  );
+  const provider = registration((source) => {
+    usageSource = source;
+  });
   const connection = await provider.connect({
     launch,
     versions: [1],
@@ -103,6 +91,7 @@ async function harness(scenario = "text-reasoning", env: Record<string, string> 
       sessionId: "paseo-session",
       config: {
         cwd: root,
+        providerOptions,
         env: {},
         settings: {},
         mcpServers: {},
@@ -155,9 +144,6 @@ async function harness(scenario = "text-reasoning", env: Record<string, string> 
     recorded,
     root,
     usageSource,
-    setSettings: (values: unknown) => {
-      settings = settingsSchema.parse(values);
-    },
   };
 }
 
@@ -1011,22 +997,81 @@ test("silent active turns page after two minutes and stop polling on recovered t
   await vi.advanceTimersByTimeAsync(240000);
   expect((await h.recorded()).filter((f) => f.method === "view/page")).toHaveLength(1);
 });
-test("sandbox, network and workspace trust settings apply only on the next open", async () => {
+test("default launch disables sandbox and trusts workspace", async () => {
   const h = await harness();
   await h.open();
-  h.setSettings({ sandbox: false, network: "enabled", trustWorkspace: true });
-  expect((await h.recorded()).filter((f) => f.event === "hostStarted").map((f) => f.args)).toEqual([
-    ["serve", "--sandbox-network", "proxy-only"],
+  expect((await h.recorded()).find((f) => f.event === "hostStarted").args).toEqual([
+    "serve",
+    "--sandbox-network",
+    "proxy-only",
+    "--disable-sandbox",
+    "--trust-workspace",
   ]);
-  await h.send({ type: "session.close", sessionId: "paseo-session", requestId: "close-settings" });
+});
+test.each([
+  [{ sandbox: { enabled: true } }, ["--sandbox-network", "proxy-only", "--trust-workspace"]],
+  [{ trustWorkspace: false }, ["--sandbox-network", "proxy-only", "--disable-sandbox"]],
+  [
+    { sandbox: { network: "restricted" } },
+    ["--sandbox-network", "restricted", "--disable-sandbox", "--trust-workspace"],
+  ],
+  [
+    { sandbox: { network: "enabled" } },
+    ["--sandbox-network", "enabled", "--disable-sandbox", "--trust-workspace"],
+  ],
+  [
+    { sandbox: { enabled: true, network: "proxy-only" }, trustWorkspace: false },
+    ["--sandbox-network", "proxy-only"],
+  ],
+])("provider options %j control launch flags", async (params, args) => {
+  const h = await harness("text-reasoning", {}, params);
+  await h.open();
+  expect((await h.recorded()).find((f) => f.event === "hostStarted").args).toEqual([
+    "serve",
+    ...args,
+  ]);
+});
+test.each([
+  [{ sandbox: { enabled: "true" } }, "sandbox.enabled"],
+  [{ sandbox: { network: "invalid" } }, "sandbox.network"],
+  [{ trustWorkspace: 1 }, "trustWorkspace"],
+  [{ unexpected: true }, "unexpected"],
+])("invalid provider options %j fail session creation clearly", async (options, field) => {
+  const h = await harness("text-reasoning", {}, options);
+  const event = await h.open();
+  expect(event).toMatchObject({
+    type: "request.failed",
+    error: { code: "invalidProviderOptions" },
+  });
+  if (event.type !== "request.failed") throw new Error("Expected failure");
+  expect(event.error.message).toContain("Invalid Muse providerOptions");
+  expect(event.error.message).toContain(field);
+  expect(await h.recorded()).toEqual([]);
+});
+test("resuming a session reapplies its provider options to the new host", async () => {
+  const h = await harness(
+    "resume-without-cursor",
+    {},
+    {
+      sandbox: { enabled: true, network: "restricted" },
+      trustWorkspace: false,
+    },
+  );
+  await h.open({ version: 1, data: { sessionId: "saved-session" } });
+  const saved = h.events.find((e) => e.type === "session.opened");
+  if (saved?.type !== "session.opened" || !saved.persistence)
+    throw new Error("Expected persistence");
+  await h.send({ type: "session.close", sessionId: "paseo-session", requestId: "close" });
   await h.wait((e) => e.type === "session.closed");
   const from = h.events.length;
-  await h.open();
+  await h.open(saved.persistence);
   await h.wait((e) => e.type === "session.ready", from);
-  expect((await h.recorded()).filter((f) => f.event === "hostStarted").map((f) => f.args)).toEqual([
-    ["serve", "--sandbox-network", "proxy-only"],
-    ["serve", "--sandbox-network", "enabled", "--disable-sandbox", "--trust-workspace"],
+  const frames = await h.recorded();
+  expect(frames.filter((f) => f.event === "hostStarted").map((f) => f.args)).toEqual([
+    ["serve", "--sandbox-network", "restricted"],
+    ["serve", "--sandbox-network", "restricted"],
   ]);
+  expect(frames.some((f) => f.method === "session/resume")).toBe(true);
 });
 test("sessions list filters workspace and imported persistence opens via resume", async () => {
   const h = await harness("resume-without-cursor");
@@ -1203,8 +1248,7 @@ test("default workflow children render structured tool details from the real no-
 
 for (const source of ["user", "project"] as const) {
   test(`real ${source} skill catalog and command replay with explicit workspace trust`, async () => {
-    const h = await harness(`phase3-${source}-skill`);
-    h.setSettings({ trustWorkspace: source === "project" });
+    const h = await harness(`phase3-${source}-skill`, {}, { trustWorkspace: source === "project" });
     await h.open();
     expect(await h.wait((e) => e.type === "session.commands")).toMatchObject({
       commands: expect.arrayContaining([
