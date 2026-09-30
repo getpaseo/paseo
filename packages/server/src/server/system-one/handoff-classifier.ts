@@ -42,7 +42,8 @@ export function candidateSentences(text: string): string[] {
   const sentences = plain
     .split(/(?<=[.!?])\s+|\n+/)
     .map((sentence) => sentence.replace(/\s+/g, " ").trim())
-    .filter((sentence) => sentence.length >= 12);
+    // A line ending in a colon only introduces a list; it never says what is needed.
+    .filter((sentence) => sentence.length >= 12 && !sentence.endsWith(":"));
   return sentences.slice(-MAX_SENTENCES).map((sentence) => sentence.slice(0, MAX_NEED_CHARS));
 }
 

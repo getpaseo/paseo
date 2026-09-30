@@ -39,7 +39,7 @@ function scripted(kind: string, need?: string, confidence = 0.9): TypeSafeDecisi
 }
 
 const REPLY =
-  "## Stand\n- **Daemon** läuft auf `8a0950997`.\n- APK ist installiert.\n\nSoll ich den Mac jetzt neu starten oder wartest du bis heute Abend?";
+  "## Stand\nDafür müssen gelten:\n- **Daemon** läuft auf `8a0950997`.\n- APK ist installiert.\n\nSoll ich den Mac jetzt neu starten oder wartest du bis heute Abend?";
 
 describe("candidateSentences", () => {
   it("returns plain closing sentences without Markdown marks", () => {
