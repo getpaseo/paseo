@@ -169,15 +169,15 @@ packages/server/src/
 ├── relay-transport.ts        # Outbound relay connection
 ```
 
-Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`  
-Daemon logs: `$PASEO_HOME/daemon.log`
+Agent state persists to `$PANDAOS_HOME/agents/{cwd-with-dashes}/{agent-id}.json`  
+Daemon logs: `$PANDAOS_HOME/daemon.log`
 
 ---
 
 ## Debugging
 
 ```bash
-tail -f $PASEO_HOME/daemon.log      # Daemon logs
+tail -f $PANDAOS_HOME/daemon.log      # Daemon logs
 npm run test:ui                     # Vitest browser UI at localhost:51204
 npm run cli -- inspect <agent-id>   # Detailed agent info
 npm run db:query -- "SELECT * FROM agent_timeline_rows..."

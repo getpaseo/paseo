@@ -1,6 +1,6 @@
 # Custom Provider Configuration
 
-Paseo supports configuring custom agent providers through `config.json` (located at `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
+Paseo supports configuring custom agent providers through `config.json` (located at `$PANDAOS_HOME/config.json`, typically `~/.pandaos/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
 
 Provider definitions live under `agents.providers` in config.json:
 

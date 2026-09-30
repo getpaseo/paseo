@@ -27,7 +27,7 @@ The web and desktop dev launchers pass the current Git branch to Metro as
 `EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL`. The expanded desktop sidebar shows it in
 the titlebar row. Production builds leave the variable unset and show no label.
 
-`npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
+`npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.pandaos` state.
 
 ## Nix desktop package
 
@@ -42,12 +42,32 @@ Linux produces the `paseo-desktop` launcher and desktop entry. macOS produces
 Electron runtime and the checkout's built daemon, client, and renderer rather
 than downloading a published desktop release.
 
-### PASEO_HOME
+### PANDAOS_HOME
 
-`PASEO_HOME` is the directory that holds runtime state (agents, worktrees, workspace config, sockets, daemon log). Resolution rules:
+`PANDAOS_HOME` is the directory that holds runtime state (agents, worktrees, workspace config, sockets, daemon log). The server resolves it in `packages/server/src/server/paseo-home.ts`; the CLI, the desktop app, and the dev scripts all go through that function or mirror it:
 
-- The **server itself** (e.g. when launched by the desktop app or `npm run start`) defaults to `~/.paseo` (see `packages/server/src/server/paseo-home.ts`).
-- **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
+1. `PANDAOS_HOME`, if set.
+2. `PASEO_HOME`, if set. Kept for launchers and agents from before the rename.
+3. `~/.pandaos`, if it exists.
+4. `~/.paseo`, if it exists. This is an install that has not been migrated yet.
+5. `~/.pandaos` for a fresh install.
+
+Set one of the two variables, not both: `PANDAOS_HOME` outranks `PASEO_HOME`, so an inherited `PANDAOS_HOME` silently overrides the `PASEO_HOME` a test harness or launcher sets to isolate a daemon. For that reason the daemon launch environment passes the selected home to the daemon and its agents as `PASEO_HOME` only and drops `PANDAOS_HOME`, and the server test setup and CLI test helpers drop it too.
+
+Moving an existing `~/.paseo` never happens on its own, because a running daemon and agent sessions hold paths inside it. Run it yourself with the daemon stopped:
+
+```bash
+pandaos daemon stop
+pandaos home migrate --dry-run   # report what would happen
+pandaos home migrate             # rename ~/.paseo to ~/.pandaos, then link ~/.paseo -> .pandaos
+pandaos daemon start
+```
+
+The command refuses while a daemon holds the `~/.paseo` PID lock, and when both directories already exist. Running it again after a migration reports `already migrated`. The symlink stays: git worktree metadata, stored agent `cwd`s, workspace records, and external scripts keep absolute `~/.paseo/...` paths, and the daemon checks worktree ownership through realpaths, so those records stay valid without being rewritten.
+
+Dev homes follow the same variables:
+
+- **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app. They export the chosen home as both `PASEO_HOME` and `PANDAOS_HOME`.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
 - **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
@@ -55,7 +75,7 @@ than downloading a published desktop release.
 Override knobs:
 
 ```bash
-PASEO_HOME=~/.paseo-blue npm run dev          # explicit home
+PANDAOS_HOME=~/.pandaos-blue npm run dev      # explicit home
 PASEO_DEV_SEED_HOME=/path/to/home npm run dev # seed from a different source home
 PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived worktree home
 ```
@@ -106,7 +126,7 @@ npm run ios        # → expo run:ios (packages/app): builds and launches the ap
 
 `expo run:ios` starts its own Metro and gives you the normal Simulator.app window (full speed, native touch, no stream).
 
-**Pointing the app at a daemon.** The client resolves its local daemon from `EXPO_PUBLIC_LOCAL_DAEMON` (`packages/app/src/runtime/host-runtime.ts`); when unset it falls back to `localhost:6767`, the production `~/.paseo` daemon. To target a worktree's dev daemon instead, set it on the build command:
+**Pointing the app at a daemon.** The client resolves its local daemon from `EXPO_PUBLIC_LOCAL_DAEMON` (`packages/app/src/runtime/host-runtime.ts`); when unset it falls back to `localhost:6767`, the production daemon. To target a worktree's dev daemon instead, set it on the build command:
 
 ```bash
 EXPO_PUBLIC_LOCAL_DAEMON=localhost:${PASEO_SERVICE_DAEMON_PORT} npm run ios   # worktree daemon running as a Paseo service
@@ -313,19 +333,19 @@ guards already prevent throttling from causing a false stall.
 
 ### Daemon logs
 
-Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set
+Check `$PANDAOS_HOME/daemon.log` for daemon logs. The default level is `info`; set
 `PASEO_LOG_LEVEL=trace` before launching the daemon when you need full provider,
 session, and agent-manager traces for stuck-state debugging.
 
 The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
-`$PASEO_HOME/config.json` win first. Without persisted config, the optional
+`$PANDAOS_HOME/config.json` win first. Without persisted config, the optional
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
 ### Git process pressure
 
 If Git refreshes consume too much CPU, disk, or antivirus capacity, especially on Windows, reduce
-the daemon-global Git process limits in `$PASEO_HOME/config.json`:
+the daemon-global Git process limits in `$PANDAOS_HOME/config.json`:
 
 ```json
 {
@@ -430,7 +450,7 @@ Service proxy hostnames use the double-dash shape: `web--feature-auth--project.l
 ```
 
 Service ports use OS ephemeral allocation by default. Set `worktrees.servicePorts` in
-`$PASEO_HOME/config.json`, or replace it for one project with `worktree.servicePorts` in
+`$PANDAOS_HOME/config.json`, or replace it for one project with `worktree.servicePorts` in
 `paseo.json`. The block accepts an inclusive `range` such as `"3000-4000"` or a `portScript`
 executable. Since `portScript` is executed directly without a shell, it must point to a real executable (e.g., a binary or a script with a proper shebang like `#!/bin/sh`) rather than an inline shell command or shell pipeline. For inline shell commands or pipelines, wrap them in a small script. `portScript` runs in the workspace directory with four arguments: service name,
 workspace ID, branch name, and worktree path. A missing branch is passed as an empty string. The same
@@ -565,7 +585,7 @@ npm run cli -- --host ssh://user@host ls -a
 ```
 
 Set `PASEO_HOST` to use the same target across invocations. An explicit
-selector overrides both environment selectors. With both `PASEO_HOME` and `PASEO_HOST` set, pass an explicit selector. See [CLI target selection](../public-docs/cli.md#select-one-daemon).
+selector overrides both environment selectors. With a home variable (`PANDAOS_HOME` or `PASEO_HOME`) and `PASEO_HOST` both set, pass an explicit selector. See [CLI target selection](../public-docs/cli.md#select-one-daemon).
 
 In an SSH URI, the URL port is the SSH server port. The remote daemon defaults to `127.0.0.1:6767`; use `?daemonPort=7777` to override it. The transport runs non-interactively through the local OpenSSH client and never installs, starts, or configures the remote daemon. User-facing setup and troubleshooting live in [public-docs/connectivity.md](../public-docs/connectivity.md#ssh).
 
@@ -579,19 +599,19 @@ default; pass `--server <server-id>` when targeting another server.
 Agent data lives at:
 
 ```
-$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
+$PANDAOS_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 ```
 
 Find an agent by ID:
 
 ```bash
-find $PASEO_HOME/agents -name "{agent-id}.json"
+find $PANDAOS_HOME/agents -name "{agent-id}.json"
 ```
 
 Find by content:
 
 ```bash
-rg -l "some title text" $PASEO_HOME/agents/
+rg -l "some title text" $PANDAOS_HOME/agents/
 ```
 
 ## Provider session files

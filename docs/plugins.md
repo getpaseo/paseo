@@ -164,9 +164,9 @@ Server contributions can write to stdout and stderr with normal Node logging. Pa
 entries for loading, ready, stopping, and stopped transitions. Compilation and load failures are
 recorded as stderr entries before a subprocess exists. Inspect the recent in-memory
 tail from the host plugin settings or with `paseo plugin logs <id>`. Git preparation commands are
-recorded in `$PASEO_HOME/daemon.log` before a plugin exists, rather than the plugin log tail. Reload, disable, and process
+recorded in `$PANDAOS_HOME/daemon.log` before a plugin exists, rather than the plugin log tail. Reload, disable, and process
 failure retain the tail; removing the plugin clears it. Daemon restarts do not retain the tail, but
-structured copies remain in `$PASEO_HOME/daemon.log`. Plugin output can contain secrets, so do not
+structured copies remain in `$PANDAOS_HOME/daemon.log`. Plugin output can contain secrets, so do not
 log credentials or tokens.
 
 ## Contribute behavior and UI

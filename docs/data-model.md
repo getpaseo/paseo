@@ -32,7 +32,7 @@ checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot
 
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
-All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
+All server-side stores live under `$PANDAOS_HOME` (resolution and the `~/.paseo` migration: [development.md](development.md#pandaos_home)).
 
 ## Store Surface Rules
 
@@ -43,7 +43,7 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 ## Directory layout
 
 ```
-$PASEO_HOME/
+$PANDAOS_HOME/
 ├── config.json                          # Daemon configuration
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
@@ -77,7 +77,7 @@ The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` b
 
 ## 1. Agent Record
 
-**Path:** `$PASEO_HOME/agents/{project-dir}/{agentId}.json`
+**Path:** `$PANDAOS_HOME/agents/{project-dir}/{agentId}.json`
 
 Each agent is stored as a separate JSON file, grouped by project directory.
 
@@ -179,7 +179,7 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 ## 2. Daemon Configuration
 
-**Path:** `$PASEO_HOME/config.json`
+**Path:** `$PANDAOS_HOME/config.json`
 
 Single file, validated with `PersistedConfigSchema`.
 
@@ -214,7 +214,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     baseUrl: string
   },
   worktrees?: {
-    root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
+    root?: string            // optional root for new worktrees; defaults to $PANDAOS_HOME/worktrees
     servicePorts?: {         // optional dynamic service port allocation policy
       range?: string         // inclusive range, e.g. "3000-4000"
       portScript?: string    // executable that receives service/workspace context and prints one TCP port
@@ -396,7 +396,7 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 ## 3. Schedule
 
-**Path:** `$PASEO_HOME/schedules/{id}.json`
+**Path:** `$PANDAOS_HOME/schedules/{id}.json`
 
 One file per schedule. ID is 8 hex characters.
 
@@ -444,7 +444,7 @@ One file per schedule. ID is 8 hex characters.
 
 ## 4. Project Registry
 
-**Path:** `$PASEO_HOME/projects/projects.json`
+**Path:** `$PANDAOS_HOME/projects/projects.json`
 
 Array of project records.
 
@@ -479,7 +479,7 @@ workspace together with its owning project.
 
 ## 5. Workspace Registry
 
-**Path:** `$PASEO_HOME/projects/workspaces.json`
+**Path:** `$PANDAOS_HOME/projects/workspaces.json`
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
@@ -508,7 +508,7 @@ Array of workspace records. A workspace is a specific working directory within a
 
 ### Workspace label catalog
 
-**Path:** `$PASEO_HOME/projects/workspace-labels.json`
+**Path:** `$PANDAOS_HOME/projects/workspace-labels.json`
 
 The catalog is shared by every workspace on one host. A definition contains a display name and one
 of the ten identity colour names (`WORKSPACE_LABEL_COLORS` in
@@ -539,7 +539,7 @@ than treating it as valid.
 
 ## 6. Push Token Store
 
-**Path:** `$PASEO_HOME/push-tokens.json`
+**Path:** `$PANDAOS_HOME/push-tokens.json`
 
 ```json
 {
@@ -553,13 +553,13 @@ Simple set of Expo push notification tokens. Loaded with permissive parsing (fil
 
 ## 7. Daemon meta files
 
-These small files are not validated as full Zod schemas but are persisted under `$PASEO_HOME` for daemon identity and runtime coordination.
+These small files are not validated as full Zod schemas but are persisted under `$PANDAOS_HOME` for daemon identity and runtime coordination.
 
 | Path                  | Format                                                         | Notes                                                                             |
 | --------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `server-id`           | Plain text, e.g. `srv_<base64url>`                             | Stable per-`$PASEO_HOME` daemon ID. Overridable via `PASEO_SERVER_ID` env.        |
+| `server-id`           | Plain text, e.g. `srv_<base64url>`                             | Stable per-`$PANDAOS_HOME` daemon ID. Overridable via `PASEO_SERVER_ID` env.      |
 | `daemon-keypair.json` | `{ v: 2, publicKeyB64, secretKeyB64 }` (libsodium box keypair) | E2EE relay identity. Written with mode `0600`. Regenerated if file is unreadable. |
-| `paseo.pid`           | JSON `{ pid, startedAt, ... }`                                 | PID lock; prevents two daemons sharing one `$PASEO_HOME`.                         |
+| `paseo.pid`           | JSON `{ pid, startedAt, ... }`                                 | PID lock; prevents two daemons sharing one `$PANDAOS_HOME`.                       |
 | `daemon.log`          | Pino log output                                                | Default location; path/rotation configurable via `log.file` in `config.json`.     |
 
 ---

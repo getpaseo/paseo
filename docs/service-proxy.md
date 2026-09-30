@@ -40,7 +40,7 @@ The commands return the same script metadata shown by the workspace: lifecycle, 
 
 ## Configuration
 
-Add a `serviceProxy` block under `daemon` in `~/.paseo/config.json`:
+Add a `serviceProxy` block under `daemon` in `$PANDAOS_HOME/config.json`:
 
 ```json
 {
