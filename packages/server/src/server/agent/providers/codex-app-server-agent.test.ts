@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
+  AgentPermissionRequest,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -170,44 +171,6 @@ function createSession(
   session.activeForegroundTurnId = "test-turn";
   return session;
 }
-
-test("Codex usage reference follows CODEX_HOME and excludes custom base URLs", async () => {
-  const session = new CodexAppServerAgentSession(
-    createConfig(),
-    null,
-    createTestLogger(),
-    () => {
-      throw new Error("unused");
-    },
-    {},
-    false,
-    false,
-    false,
-    undefined,
-    "interactive",
-    { CODEX_HOME: "/accounts/second" },
-  );
-  expect(await session.getUsageReference()).toEqual({
-    source: "codex",
-    input: { codexHome: "/accounts/second" },
-  });
-  const custom = new CodexAppServerAgentSession(
-    createConfig(),
-    null,
-    createTestLogger(),
-    () => {
-      throw new Error("unused");
-    },
-    {},
-    false,
-    false,
-    false,
-    undefined,
-    "interactive",
-    { CODEX_HOME: "/accounts/second", OPENAI_BASE_URL: "https://example.test" },
-  );
-  expect(await custom.getUsageReference()).toBeNull();
-});
 
 function createProviderWithFakeAppServer(
   appServer: FakeCodexAppServer,
@@ -1382,6 +1345,75 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("answers each concurrent command approval callback that shares one item", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const requested: AgentPermissionRequest[] = [];
+    session.subscribe((event) => {
+      if (event.type === "permission_requested") requested.push(event.request);
+    });
+
+    try {
+      await session.connect();
+
+      const firstPermission = waitForNextPermission(session);
+      appServer.requestCommandApproval({
+        itemId: "shared-item",
+        approvalId: "callback-a",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "git add a.txt",
+        cwd: "/workspace/project",
+        reason: "subcommand a",
+      });
+      await firstPermission;
+      const secondPermission = waitForNextPermission(session);
+      appServer.requestCommandApproval({
+        itemId: "shared-item",
+        approvalId: "callback-b",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "git add b.txt",
+        cwd: "/workspace/project",
+        reason: "subcommand b",
+      });
+      await secondPermission;
+
+      expect(requested.map((request) => request.input?.command)).toEqual([
+        "git add a.txt",
+        "git add b.txt",
+      ]);
+      expect(new Set(requested.map((request) => request.id)).size).toBe(2);
+      expect(session.getPendingPermissions()).toHaveLength(2);
+
+      await session.respondToPermission(requested[0]!.id, { behavior: "allow" });
+      await session.respondToPermission(requested[1]!.id, {
+        behavior: "deny",
+        message: "not b",
+      });
+
+      await expect(appServer.waitForCommandApprovalDecision("callback-a")).resolves.toEqual({
+        decision: "accept",
+      });
+      await expect(appServer.waitForCommandApprovalDecision("callback-b")).resolves.toEqual({
+        decision: "decline",
+      });
+      expect(session.getPendingPermissions()).toHaveLength(0);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("shows a successful shell command that produces no output", async () => {

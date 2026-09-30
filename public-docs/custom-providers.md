@@ -18,7 +18,9 @@ Everything beyond the [supported providers](/docs/supported-providers) lives und
 
 Run `paseo reload` after editing the file. Provider changes apply to future launches without restarting the daemon.
 
-Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`). Every custom entry needs `extends` (a first-class provider ID or `"acp"`) and a `label`.
+Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`). A new custom provider needs `extends` (a first-class provider ID or `"acp"`) and a `label`.
+To override a bundled provider plugin, use its provider ID and omit `extends`. For
+[Muse Code](/docs/muse-code), set command or environment overrides under `agents.providers.muse`.
 
 The examples below are a quick tour. The full, up-to-date reference is on GitHub: [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
 

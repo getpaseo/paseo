@@ -18,7 +18,6 @@ export const PROVIDER_CAPABILITIES = [
   "session.revert.files",
   "session.subsession",
   "session.unarchive",
-  "session.usage_reference",
   "permission",
   "permission.tool_policy",
   "timeline.plugin",
@@ -29,6 +28,9 @@ export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 export interface ProviderRegistration {
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
+  /** Default executable and arguments; the daemon resolves overrides before status/connect. */
+  command?: readonly [string, ...string[]];
+  status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
   description?: string;
@@ -38,10 +40,34 @@ export interface ProviderRegistration {
 }
 
 export type ProviderCatalogOptions =
-  | { scope: "global"; force?: boolean }
-  | { scope: "workspace"; cwd: string; force?: boolean };
+  | { scope: "global"; force?: boolean; launch?: ProviderLaunch }
+  | { scope: "workspace"; cwd: string; force?: boolean; launch?: ProviderLaunch };
+
+export const ProviderLaunchSchema = z
+  .object({
+    /** Resolved executable path. */
+    command: z.string().min(1),
+    args: z.array(z.string()),
+    /** Complete daemon-owned environment, including overrides and parent-session stripping. */
+    env: z.record(z.string(), z.string()),
+  })
+  .strip();
+
+export type ProviderLaunch = z.infer<typeof ProviderLaunchSchema>;
+
+export interface ProviderStatusRequest {
+  launch?: ProviderLaunch;
+}
+
+export const ProviderStatusSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(true), diagnostic: z.string().optional() }).strip(),
+  z.object({ available: z.literal(false), diagnostic: z.string().min(1) }).strip(),
+]);
+
+export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
 export interface ProviderConnectRequest {
+  launch?: ProviderLaunch;
   versions: readonly number[];
   capabilities: readonly string[];
 }
@@ -228,7 +254,6 @@ export type ProviderInput =
     }
   | { type: "session.prompt"; sessionId: string; prompt: ProviderPrompt }
   | { type: "session.interrupt"; requestId: string; sessionId: string }
-  | { type: "session.usage_reference"; requestId: string; sessionId: string }
   | {
       type: "session.permission";
       sessionId: string;
@@ -528,11 +553,6 @@ export type ProviderEvent =
   | { type: "catalog"; requestId: string; catalog: ProviderCatalog }
   | { type: "sessions"; requestId: string; sessions: ProviderSessionSummary[] }
   | { type: "request.completed"; requestId: string }
-  | {
-      type: "usage_reference";
-      requestId: string;
-      reference: { source: string; input: JsonValue } | null;
-    }
   | { type: "request.failed"; requestId: string; error: ProviderError }
   | {
       type: "session.opened";
@@ -616,8 +636,6 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
     case "session.interrupt":
     case "session.close":
       return [];
-    case "session.usage_reference":
-      return ["session.usage_reference"];
     case "sessions":
       return ["session.list"];
     case "session.open": {
@@ -895,13 +913,6 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
     .strict(),
   z
     .object({ type: z.literal("session.interrupt"), requestId: idSchema, sessionId: idSchema })
-    .strict(),
-  z
-    .object({
-      type: z.literal("session.usage_reference"),
-      requestId: idSchema,
-      sessionId: idSchema,
-    })
     .strict(),
   z
     .object({
@@ -1288,13 +1299,6 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
     })
     .strip(),
   z.object({ type: z.literal("request.completed"), requestId: idSchema }).strip(),
-  z
-    .object({
-      type: z.literal("usage_reference"),
-      requestId: idSchema,
-      reference: z.object({ source: idSchema, input: z.json() }).nullable(),
-    })
-    .strip(),
   z
     .object({ type: z.literal("request.failed"), requestId: idSchema, error: providerErrorSchema })
     .strip(),

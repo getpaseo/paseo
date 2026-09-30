@@ -1183,6 +1183,9 @@ export const es: TranslationResources = {
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
     },
+    footer: {
+      usage: "Uso",
+    },
     help: {
       trigger: "Ayuda y soporte",
       sectionHelp: "Ayuda",
@@ -2220,9 +2223,16 @@ export const es: TranslationResources = {
         description: "Muestra un esquema para saltar entre instrucciones",
       },
       sidebar: {
-        title: "Barra lateral",
-        description:
-          "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+        header: {
+          title: "Encabezado",
+          description:
+            "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+        },
+        footer: {
+          title: "Pie",
+          description:
+            "Elige qué filas aparecen en la parte inferior de la barra lateral y en qué orden. Añadir proyecto y la fila de iconos siempre se muestran",
+        },
         moveUp: "Mover hacia arriba",
         moveDown: "Mover hacia abajo",
       },

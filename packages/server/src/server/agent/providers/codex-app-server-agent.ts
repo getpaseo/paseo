@@ -3521,7 +3521,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
-    private readonly usageEnv: NodeJS.ProcessEnv = process.env,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3547,17 +3546,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.currentThreadId = this.resumeHandle.sessionId;
       this.historyPending = true;
     }
-  }
-
-  async getUsageReference() {
-    if (this.usageEnv.OPENAI_BASE_URL) return null;
-    return {
-      source: "codex",
-      input: {
-        codexHome:
-          this.usageEnv.CODEX_HOME || path.join(this.usageEnv.HOME || os.homedir(), ".codex"),
-      },
-    };
   }
 
   get id(): string | null {
@@ -6945,6 +6933,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     const parsed = z
       .object({
         itemId: z.string(),
+        // Set when several approval callbacks belong to one item; it names the callback.
+        approvalId: z.string().nullable().optional(),
         threadId: z.string(),
         turnId: z.string(),
         command: z.string().nullable().optional(),
@@ -6958,7 +6948,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       cwd: parsed.cwd ?? this.config.cwd ?? null,
       running: true,
     });
-    const requestId = `permission-${parsed.itemId}`;
+    const requestId = `permission-${parsed.approvalId ?? parsed.itemId}`;
     const title = parsed.command ? `Run command: ${parsed.command}` : "Run command";
     const request: AgentPermissionRequest = {
       id: requestId,
@@ -7262,7 +7252,6 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
       "interactive",
-      buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env),
     );
     await session.connect();
     return session;
@@ -7295,7 +7284,6 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
-      buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env),
     );
     await session.connect();
     return session;

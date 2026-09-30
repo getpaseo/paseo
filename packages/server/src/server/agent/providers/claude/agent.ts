@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
-import { homedir } from "node:os";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -2041,15 +2040,6 @@ class ClaudeContextUsageState {
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
-
-  async getUsageReference() {
-    const env = this.buildSdkEnv();
-    if (env.ANTHROPIC_BASE_URL || env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return null;
-    return {
-      source: "claude",
-      input: { configDir: env.CLAUDE_CONFIG_DIR || path.join(env.HOME || homedir(), ".claude") },
-    };
-  }
 
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;

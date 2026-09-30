@@ -11,7 +11,6 @@ export interface UsageWindow {
   runsOutAt?: string | null;
   shortfallPct?: number | null;
   tone?: "default" | "ok" | "warning" | "danger";
-  headline?: boolean;
 }
 
 export interface UsageBalance {
@@ -49,7 +48,7 @@ export interface UsageSourceRegistration {
   /** Stable account identity, resolved without fetching usage. */
   identify(input: unknown): Promise<{ key: string; label?: string } | null>;
   fetch(input: unknown): Promise<UsageReport>;
-  discover?(): Promise<JsonValue[]>;
+  discover(): Promise<JsonValue[]>;
 }
 
 export function windowFromUsedPct(input: {
@@ -58,7 +57,6 @@ export function windowFromUsedPct(input: {
   utilizationPct: number | null | undefined;
   resetsAt?: string | null;
   tone?: UsageWindow["tone"];
-  headline?: boolean;
 }): UsageWindow {
   const usedPct = typeof input.utilizationPct === "number" ? input.utilizationPct : null;
   const window: UsageWindow = {
@@ -69,7 +67,6 @@ export function windowFromUsedPct(input: {
     resetsAt: input.resetsAt ?? null,
   };
   if (input.tone) window.tone = input.tone;
-  if (input.headline) window.headline = true;
   return window;
 }
 

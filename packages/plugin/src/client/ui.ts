@@ -63,3 +63,24 @@ export interface ExternalLinkProps {
   onError?: (error: unknown) => void;
 }
 export declare const ExternalLink: ComponentType<ExternalLinkProps>;
+
+export type SidebarIcon = string | ComponentType<{ size: number; color: string }>;
+export interface SidebarRowProps {
+  /**
+   * Tells rows of one item apart when the item renders several: "bot-2". Unique within the item.
+   * Omit it when the item renders one row.
+   */
+  id?: string;
+  /** A Lucide icon name or a component. */
+  icon?: SidebarIcon;
+  /** Defaults to the item's registered title. */
+  label?: string;
+  onPress(): void;
+  active?: boolean;
+  /** Right slot. Renders beside the row's pressable, so a button here presses on its own. */
+  trailing?: ReactNode;
+}
+/** A sidebar navigation row. Render it from a sidebar item's `Component`. */
+export declare const SidebarRow: ComponentType<SidebarRowProps>;
+/** A line between groups of rows. Render it from a sidebar item's `Component`. */
+export declare const SidebarSeparator: ComponentType;

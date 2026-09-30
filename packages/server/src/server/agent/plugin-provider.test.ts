@@ -1,5 +1,7 @@
+import { relative } from "node:path";
 import type {
   ProviderConnection,
+  ProviderLaunch,
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
@@ -394,24 +396,6 @@ describe("PluginAgentClientRegistry", () => {
     await expect(client.unarchiveNativeSession?.(persistence)).resolves.toBeUndefined();
     expect(harness.inputs).toEqual([]);
     await registry.shutdown();
-  });
-
-  test("returns no usage reference when a plugin provider lacks the capability", async () => {
-    const harness = createProviderHarness();
-    const registry = new PluginAgentClientRegistry(createTestLogger());
-    registry.replace([harness.registration]);
-    const client = registry.clients()[harness.registration.id]!;
-    const session = await client.createSession({
-      provider: harness.registration.id,
-      cwd: "/workspace",
-    });
-    try {
-      expect(await session.getUsageReference?.()).toBeNull();
-      expect(harness.inputs.some((input) => input.type === "session.usage_reference")).toBe(false);
-    } finally {
-      await session.close();
-      registry.replace([]);
-    }
   });
 
   test("terminalizes an active turn exactly once when its plugin provider is removed", async () => {
@@ -832,6 +816,151 @@ describe("pending provider responses", () => {
           ).rejects.toBe(reason);
         },
       );
+    },
+  );
+});
+
+describe("plugin provider launch and status", () => {
+  test("resolves the executable against the provider's PATH override", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = { ...harness.registration, command: ["node"] };
+    const logger = createTestLogger();
+    const registry = new PluginAgentClientRegistry(logger);
+    registry.replace([registration]);
+    try {
+      const definition = registry.definitions()[registration.id]!;
+      const client = definition.createClient(logger, { env: { PATH: "/paseo-nonexistent-bin" } });
+      expect(await client.isAvailable()).toBe(false);
+      expect(await client.getDiagnostic!()).toEqual({ diagnostic: "node not found on PATH" });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("strips parent-session and daemon-control variables from session env overlays", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        {
+          env: {
+            SESSION_TOKEN: "session",
+            PASEO_AGENT_ID: "agent",
+            CLAUDECODE: "parent",
+            PASEO_NODE_ENV: "development",
+          },
+        },
+      );
+      const input = harness.inputs.find((value) => value.type === "session.open");
+      expect(input).toMatchObject({
+        config: { env: { SESSION_TOKEN: "session", PASEO_AGENT_ID: "agent" } },
+      });
+      if (input?.type !== "session.open") throw new Error("Expected session.open");
+      expect(input.config.env).not.toHaveProperty("CLAUDECODE");
+      expect(input.config.env).not.toHaveProperty("PASEO_NODE_ENV");
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("resolves relative executable paths before sending launch data", async () => {
+    const harness = createProviderHarness();
+    const launches: Array<ProviderLaunch | undefined> = [];
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: [relative(process.cwd(), process.execPath)],
+      async connect(request) {
+        launches.push(request.launch);
+        return harness.registration.connect(request);
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      await registry.clients()[registration.id]!.fetchCatalog({ scope: "global" });
+      expect(launches).toMatchObject([{ command: process.execPath }]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("a missing executable is unavailable with a diagnostic without connecting", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: ["paseo-nonexistent-provider-executable"],
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      expect(await client.isAvailable()).toBe(false);
+      expect(await client.getDiagnostic!()).toEqual({
+        diagnostic: "paseo-nonexistent-provider-executable not found on PATH",
+      });
+      expect(harness.inputs).toEqual([]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test.each([
+    { mode: "default" as const },
+    { mode: "append" as const, args: ["extra"] },
+    { mode: "replace" as const, argv: [process.execPath, "replacement"] },
+  ])(
+    "resolves $mode launch and supplies identical data to status, catalogue identity, and connect",
+    async (command) => {
+      const harness = createProviderHarness();
+      const launches: Array<ProviderLaunch | undefined> = [];
+      const registration: ProviderRegistration = {
+        ...harness.registration,
+        command: [process.execPath, "default"],
+        async status(request) {
+          launches.push(request.launch);
+          return { available: true };
+        },
+        async getCatalogCacheKey(options) {
+          launches.push(options.launch);
+          return "shared";
+        },
+        async connect(request) {
+          launches.push(request.launch);
+          return harness.registration.connect(request);
+        },
+      };
+      const logger = createTestLogger();
+      const registry = new PluginAgentClientRegistry(logger);
+      registry.replace([registration]);
+      try {
+        const client = registry.definitions()[registration.id]!.createClient(logger, {
+          command,
+          env: { PLUGIN_SETTING: "custom", CLAUDECODE: "parent" },
+        });
+        expect(await client.isAvailable()).toBe(true);
+        expect(await client.getCatalogCacheKey!({ scope: "global" })).toBe("shared");
+        await client.fetchCatalog({ scope: "global" });
+        let expectedArgs = ["default"];
+        if (command.mode === "replace") expectedArgs = ["replacement"];
+        if (command.mode === "append") expectedArgs = ["default", "extra"];
+        expect(launches).toHaveLength(3);
+        for (const launch of launches) {
+          expect(launch).toMatchObject({
+            command: process.execPath,
+            args: expectedArgs,
+            env: { PLUGIN_SETTING: "custom" },
+          });
+          expect(launch!.env).not.toHaveProperty("CLAUDECODE");
+          expect(launch!.env).not.toHaveProperty("PASEO_NODE_ENV");
+        }
+        expect(launches[0]).toEqual(launches[1]);
+        expect(launches[1]).toEqual(launches[2]);
+      } finally {
+        await registry.shutdown();
+      }
     },
   );
 });

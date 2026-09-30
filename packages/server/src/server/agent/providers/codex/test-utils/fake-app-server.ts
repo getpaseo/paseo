@@ -85,13 +85,15 @@ export interface FakeCodexAppServer {
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
+    approvalId?: string;
     threadId: string;
     turnId: string;
     command: string;
     cwd: string;
     reason: string;
   }): void;
-  waitForCommandApprovalDecision(itemId: string): Promise<unknown>;
+  /** Keyed by `approvalId` when the request carried one, otherwise by `itemId`. */
+  waitForCommandApprovalDecision(callbackId: string): Promise<unknown>;
   requestFileChangeApproval(params: {
     itemId: string;
     threadId: string;
@@ -518,7 +520,7 @@ export function createFakeCodexAppServer(
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;
       nextServerRequestId += 1;
-      approvalRequestIds.set(params.itemId, requestId);
+      approvalRequestIds.set(params.approvalId ?? params.itemId, requestId);
       child.stdout.write(
         `${JSON.stringify({
           jsonrpc: "2.0",
@@ -528,8 +530,8 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
-    async waitForCommandApprovalDecision(itemId) {
-      return await this.waitForApprovalDecision(itemId);
+    async waitForCommandApprovalDecision(callbackId) {
+      return await this.waitForApprovalDecision(callbackId);
     },
     requestFileChangeApproval(params) {
       const requestId = nextServerRequestId;

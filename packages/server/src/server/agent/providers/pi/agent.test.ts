@@ -23,7 +23,7 @@ import {
   PiRpcAgentSession,
   transformPiModels,
 } from "./agent.js";
-import { FakePi, type FakePiSession } from "./test-utils/fake-pi.js";
+import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
@@ -160,19 +160,32 @@ function parseEntryCapture(notification: string): unknown {
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
+  registerMcpServer: (name: string, config: unknown) => void = () => undefined,
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
+      events: { on: () => void };
       registerCommand: () => void;
+      registerMcpServer: (name: string, config: unknown) => void;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
+    events: { on: () => undefined },
     registerCommand: () => undefined,
+    registerMcpServer,
   });
   return listeners;
+}
+
+async function readRegisteredMcpServers(extensionPath: string): Promise<Record<string, unknown>> {
+  const servers: Record<string, unknown> = {};
+  await loadPaseoExtensionListeners(extensionPath, (name, config) => {
+    servers[name] = config;
+  });
+  return servers;
 }
 
 async function applyPaseoExtensionSystemPrompt(
@@ -201,71 +214,6 @@ async function createSession(
   const events = new SessionEvents(session);
   return { pi, session, events };
 }
-
-test("Pi usage reference follows the current OAuth model and agent directory", async () => {
-  const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-usage-"));
-  try {
-    writeFileSync(
-      path.join(agentDir, "auth.json"),
-      JSON.stringify({
-        "openai-codex": {
-          type: "oauth",
-          access: "codex-token",
-          accountId: "account-1",
-          refresh: "refresh",
-          expires: Date.now() + 60_000,
-        },
-        anthropic: {
-          type: "oauth",
-          access: "claude-token",
-          refresh: "refresh",
-          expires: Date.now() + 60_000,
-        },
-      }),
-    );
-    const pi = new FakePi();
-    let runtime!: FakePiSession;
-    pi.queueSessionSetup((sessionRuntime) => {
-      runtime = sessionRuntime;
-      runtime.state.model = { provider: "openai-codex", id: "gpt", name: "GPT" };
-    });
-    const session = await createClient(pi).createSession(createConfig(), {
-      env: { PI_CODING_AGENT_DIR: agentDir },
-    });
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "codex",
-      input: { accessToken: "codex-token", accountId: "account-1" },
-    });
-    runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "claude",
-      input: { accessToken: "claude-token" },
-    });
-    writeFileSync(
-      path.join(agentDir, "auth.json"),
-      JSON.stringify({
-        "openai-codex": { type: "oauth", access: "codex-token" },
-        anthropic: { type: "api_key", key: "api-key" },
-      }),
-    );
-    runtime.state.model = { provider: "openai-codex", id: "gpt", name: "GPT" };
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "codex",
-      input: { accessToken: "codex-token" },
-    });
-    runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
-    writeFileSync(
-      path.join(agentDir, "auth.json"),
-      JSON.stringify({ anthropic: { type: "api_key", key: "api-key" } }),
-    );
-    expect(await session.getUsageReference?.()).toBeNull();
-    runtime.state.model = { provider: "other", id: "other", name: "Other" };
-    expect(await session.getUsageReference?.()).toBeNull();
-    await session.close();
-  } finally {
-    rmSync(agentDir, { recursive: true, force: true });
-  }
-});
 
 test("forwards launch-context env to the Pi process launch", async () => {
   const pi = new FakePi();
@@ -3190,6 +3138,102 @@ describe("PiRpcAgentClient", () => {
         { env: { PI_CODING_AGENT_DIR: agentDir } },
       ),
     ).rejects.toThrow(`Failed to parse Pi MCP config: ${configPath}`);
+  });
+
+  test("registers MCP servers through Pi's built-in MCP when pi-mcp-adapter is not loaded", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([
+      {
+        name: "mcp",
+        source: "extension",
+        sourceInfo: { path: "builtin:mcp", source: "builtin" },
+      },
+    ]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer token" },
+          },
+          local: { type: "stdio", command: "node", args: ["server.js"], env: { KEY: "`${x}`" } },
+        },
+      }),
+    );
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.argv).not.toContain("--mcp-config");
+    const extensionPath = actualLaunch.extensionPaths[0]!;
+    expect(await readRegisteredMcpServers(extensionPath)).toEqual({
+      paseo: {
+        url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        headers: { Authorization: "Bearer token" },
+      },
+      local: { command: "node", args: ["server.js"], env: { KEY: "`${x}`" } },
+    });
+
+    await session.close();
+    expect(existsSync(extensionPath)).toBe(false);
+  });
+
+  test("registers the resumed session's MCP servers through Pi's built-in MCP", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const original = await client.createSession(createConfig());
+    const persistence = original.describePersistence()!;
+    await original.close();
+
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const session = await client.resumeSession(persistence, {
+      mcpServers: {
+        paseo: { type: "http", url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2" },
+      },
+    });
+    onTestFinished(() => session.close());
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const actualLaunch = pi.recordedLaunches.at(-1)!;
+    expect(actualLaunch.session).toBe(persistence.nativeHandle);
+    expect(actualLaunch.argv).not.toContain("--mcp-config");
+    expect(await readRegisteredMcpServers(actualLaunch.extensionPaths[0]!)).toEqual({
+      paseo: { url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2" },
+    });
+  });
+
+  test("uses pi-mcp-adapter when it replaces Pi's built-in MCP", async () => {
+    const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+    const pi = new FakePi();
+    pi.queueCommands([
+      { name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } },
+      { name: "mcp:1", source: "extension", sourceInfo: { source: "npm:pi-mcp-adapter" } },
+    ]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: { paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" } },
+      }),
+      { env: { PI_CODING_AGENT_DIR: agentDir } },
+    );
+    onTestFinished(() => session.close());
+
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.argv).toContain("--mcp-config");
+    expect(await readRegisteredMcpServers(actualLaunch.extensionPaths[0]!)).toEqual({});
+  });
+
+  test.each([
+    { name: "legacy", config: { type: "sse" as const, url: "https://example.com/sse" } },
+    { name: "foo.bar", config: { type: "http" as const, url: "https://example.com/mcp" } },
+  ])("rejects $name, which Pi's built-in MCP cannot register", async ({ name, config }) => {
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+
+    await expect(
+      createClient(pi).createSession(createConfig({ mcpServers: { [name]: config } })),
+    ).rejects.toThrow(name);
+    expect(pi.recordedLaunches).toHaveLength(1);
   });
 
   test("does not pass MCP config when pi-mcp-adapter is not loaded", async () => {

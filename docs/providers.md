@@ -1,6 +1,24 @@
 # Adding a New Provider to Paseo
 
-This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
+Add new providers through the plugin SDK. The core adapter patterns below describe the existing
+server integrations.
+
+## Plugin providers
+
+Keep a bundled provider in `plugins/<id>/` and register it through
+`@getpaseo/plugin/server/provider`. Antigravity and Muse Code follow this pattern. Built-in loading and SDK
+import rules belong to [plugins.md](plugins.md#built-in-plugins); the
+[public provider guide](../public-docs/plugins/providers.md) covers the provider contract.
+
+The plugin owns the CLI transport, session state, catalog, and capabilities. The daemon owns
+executable resolution and applies `agents.providers.<provider-id>.command` and `env` before
+connecting. Register the provider's icon with the plugin rather than adding it to the app's
+provider icon map. You do not need a core manifest entry or provider factory.
+
+| Provider    | Transport                                  | Setup and limitations                                            |
+| ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
+| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
 
 ## Provider-native session options
 
@@ -46,7 +64,7 @@ Each provider definition owns its option schema and exact MCP preapproval mappin
 must fail closed for Hub unattended execution until it can approve one exact injected MCP server
 and tool identity without approving native tools.
 
-## Two Integration Patterns
+## Core adapter patterns
 
 ### ACP (Agent Client Protocol) -- recommended
 
@@ -69,7 +87,7 @@ model; it does not override the model list returned by a resolver.
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode/runtime-client.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
+Core direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode/runtime-client.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
@@ -85,7 +103,9 @@ Paseo's per-agent and daemon-wide system prompts are appended by its generated P
 
 Pi model records expose input capabilities through `model.input`. Only send raw RPC `images` when the current model explicitly includes `"image"` in that list. Text-only Pi/OMP models reject image content and persist the rejected image in JSONL history, so image prompts for those models must be materialized to a local file and passed as a text path hint instead.
 
-Pi MCP support depends on the open-source `pi-mcp-adapter` extension being loaded for the agent cwd. Probe with Pi RPC `get_commands`; the adapter registers an extension command named `mcp` (often with `sourceInfo.source` containing `pi-mcp-adapter`). When Paseo injects MCP servers into Pi, write a per-agent MCP config and pass it with `--mcp-config` instead of modifying user or project MCP files. Because that flag replaces the Pi global config layer, preserve the existing `<Pi agent dir>/mcp.json` in the generated file before overlaying injected servers. For local HTTP servers such as Paseo's own `/mcp/agents` endpoint, explicitly disable adapter OAuth (`auth: false`, `oauth: false`) in the generated config.
+Probe Pi MCP support with Pi RPC `get_commands` for the agent cwd. Pi 0.99 and later ship MCP as a built-in extension, which registers an extension command named `mcp` with `sourceInfo.path` `builtin:mcp`. Register injected servers through `pi.registerMcpServer` in Paseo's generated extension; the built-in extension rejects SSE servers and names with characters other than letters, digits, `_`, and `-`, and a server of the same name in Pi's `mcp.json` takes precedence.
+
+The open-source `pi-mcp-adapter` extension replaces the built-in one and registers its own `mcp` command (often with `sourceInfo.source` containing `pi-mcp-adapter`). When it is loaded, write a per-agent MCP config and pass it with `--mcp-config` instead of modifying user or project MCP files. Because that flag replaces the Pi global config layer, preserve the existing `<Pi agent dir>/mcp.json` in the generated file before overlaying injected servers. For local HTTP servers such as Paseo's own `/mcp/agents` endpoint, explicitly disable adapter OAuth (`auth: false`, `oauth: false`) in the generated config.
 
 Pi control-plane RPCs wait 60 seconds by default. Override `params.rpcTimeoutMs` when extension or MCP startup on a slow host needs more time. Timeout errors name the pending RPC phase and report both elapsed time and the configured deadline. This setting does not govern long-running Pi compaction or Pi extension UI results. See [OMP profiles and Pi-compatible forks](custom-providers.md#omp-profiles-and-pi-compatible-forks) for OMP startup and RPC deadlines.
 
@@ -199,7 +219,7 @@ promise for completion: equal results, including equal discovery timestamps, emi
 
 ## Usage sources
 
-Usage is fetched on demand from plugin usage sources. Each source registers through `server.registerUsageSource()` with an input schema, `fetch(input)`, and optional `discover()`. The daemon discovers configured accounts, validates inputs in the plugin runtime, caches each source/input result for five minutes, and returns `usage.list_reports.response`. A source report has an account key, availability status, plan label, windows, balances, and details. Mark the window the app should show first with `headline: true`.
+Usage is fetched on demand from plugin usage sources. Each source registers through `server.registerUsageSource()` with an input schema, `fetch(input)`, and required `discover()`. The daemon discovers configured accounts, validates inputs in the plugin runtime, caches each source/input result for five minutes, and returns `usage.list_reports.response`. A source report has an account key, availability status, plan label, windows, balances, and details.
 
 Create a built-in source under `plugins/<name>-usage-source/` with the same manifest, entry, `server/`, `shared/`, and `icon.svg` layout as an external plugin. Add its ID to `builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. Keep credential discovery, API parsing, and normalization inside the source; use helpers from `@getpaseo/plugin/server/usage`. The wire shape remains source agnostic. See [plugin usage sources](plugins.md#usage-sources).
 
@@ -295,7 +315,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
 ### 2. Add to the provider manifest
 
-In `packages/server/src/server/agent/provider-manifest.ts`, add mode definitions with UI metadata (icons, color tiers) and a provider definition entry.
+In `packages/protocol/src/provider-manifest.ts`, add mode definitions with UI metadata (icons, color tiers) and a provider definition entry.
 
 First, define the modes with visual metadata:
 

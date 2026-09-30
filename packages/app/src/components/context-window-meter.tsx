@@ -187,7 +187,7 @@ export function ContextWindowMeter({
           ) : null}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
+      <TooltipContent side="top" align="center" offset={8} testID="context-window-meter-tooltip">
         <View style={styles.tooltipContent}>
           <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
           <Text style={styles.tooltipText}>

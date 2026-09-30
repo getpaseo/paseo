@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
@@ -28,7 +29,8 @@ test("built output compiles and starts every listed built-in", async () => {
   const { version } = JSON.parse(
     await readFile(path.join(repoRoot, "packages/server/package.json"), "utf8"),
   );
-  const runtime = new PluginRuntime(pino({ level: "silent" }), version);
+  const settingsDirectory = await mkdtemp(path.join(os.tmpdir(), "builtin-dist-settings-"));
+  const runtime = new PluginRuntime(pino({ level: "silent" }), version, { settingsDirectory });
   runtime.bindPaseoSessionHost({
     async attachPluginSocket(_pluginId, socket) {
       const closed = new Promise((resolve) => socket.once("close", resolve));
@@ -76,5 +78,6 @@ test("built output compiles and starts every listed built-in", async () => {
     }
   } finally {
     await runtime.stopAll();
+    await rm(settingsDirectory, { recursive: true, force: true });
   }
 });

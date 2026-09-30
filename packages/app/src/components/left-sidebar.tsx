@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { FolderPlus, Gauge, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
+import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -43,16 +43,15 @@ import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels"
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
+import { PluginSidebarItem } from "@/plugins/sidebar-items";
+import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import {
-  buildSettingsAddHostRoute,
-  buildSettingsRoute,
-  buildUsageRoute,
-} from "@/utils/host-routes";
+import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
+import { UsageSidebarItem } from "@/usage";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
@@ -430,25 +429,6 @@ function SidebarHostPicker({
   );
 }
 
-function SidebarUsageButton({ theme }: { theme: SidebarTheme }) {
-  const { t } = useTranslation();
-  const isCompactLayout = useIsCompactFormFactor();
-  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  const handlePress = useCallback(() => {
-    if (isCompactLayout) showMobileAgent();
-    router.push(buildUsageRoute());
-  }, [isCompactLayout, showMobileAgent]);
-  return (
-    <FooterIconButton
-      onPress={handlePress}
-      testID="sidebar-usage"
-      label={t("settings.hostSections.usage")}
-      icon={Gauge}
-      theme={theme}
-    />
-  );
-}
-
 function IconTooltipContent({
   label,
   shortcutKeys,
@@ -472,6 +452,7 @@ function SidebarFooter({
   labels,
   handleAddHost,
   handleOpenHostSettings,
+  onBeforeNavigate,
 }: {
   theme: SidebarTheme;
   handleOpenProject: () => void;
@@ -486,6 +467,7 @@ function SidebarFooter({
   };
   handleAddHost: () => void;
   handleOpenHostSettings: (serverId: string) => void;
+  onBeforeNavigate?: () => void;
 }) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
@@ -498,6 +480,7 @@ function SidebarFooter({
         shortcutKeys={newAgentKeys}
         theme={theme}
       />
+      <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
       <View style={styles.footerIconRow}>
         <SidebarHostPicker
           theme={theme}
@@ -512,7 +495,6 @@ function SidebarFooter({
           icon={Import}
           theme={theme}
         />
-        <SidebarUsageButton theme={theme} />
         <SidebarHelpMenu />
         <FooterIconButton
           onPress={handleSettings}
@@ -523,6 +505,31 @@ function SidebarFooter({
           theme={theme}
         />
       </View>
+    </View>
+  );
+}
+
+/** The footer rows in the user's `sidebarFooterItems` order: the Usage item and plugin rows. */
+function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void }) {
+  const { items } = useSidebarNavItems("footer");
+  const rowsRef = useRef<View | null>(null);
+  const visibleItems = items.filter((item) => item.visible);
+  if (visibleItems.length === 0) return null;
+  return (
+    <View ref={rowsRef} collapsable={false} style={styles.footerRows}>
+      {visibleItems.map((item) =>
+        item.kind === "plugin" ? (
+          <PluginSidebarItem
+            key={item.key}
+            group={item.group}
+            section="footer"
+            fallbackAnchorRef={rowsRef}
+            onBeforeNavigate={onBeforeNavigate}
+          />
+        ) : (
+          <UsageSidebarItem key={item.key} />
+        ),
+      )}
     </View>
   );
 }
@@ -634,6 +641,7 @@ function MobileSidebar({
           labels={labels}
           handleAddHost={handleAddHost}
           handleOpenHostSettings={handleOpenHostSettings}
+          onBeforeNavigate={closeSidebar}
         />
       </View>
     </MobilePanelOverlay>
@@ -954,29 +962,31 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
   },
   sidebarFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
+  // Every footer row is 28px tall with `spacing[1]` between rows, the same as the gap above.
+  footerRows: {
+    gap: theme.spacing[1],
+  },
   footerIconRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    flexShrink: 0,
   },
+  // The leading glyph sits on the footer icons' rail: a 16px icon centered in a 28px button
+  // starts 6px in, `spacing[1.5]`.
   footerAddProjectButton: {
     minWidth: 0,
-    minHeight: 32,
-    flex: 1,
+    minHeight: 28,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingVertical: theme.spacing[1.5],
-    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1.5],
     borderRadius: theme.borderRadius.lg,
   },
   footerAddProjectButtonHovered: {
