@@ -1987,6 +1987,26 @@ export const ProviderUsageListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const TeamListRequestMessageSchema = z.object({
+  type: z.literal("team.list.request"),
+  requestId: z.string(),
+});
+
+export const TeamEventsRequestMessageSchema = z.object({
+  type: z.literal("team.events.request"),
+  requestId: z.string(),
+  teamId: z.string(),
+  /** Only events with a higher commit; omit for the whole log. */
+  afterCommit: z.number().int().optional(),
+});
+
+export const TeamMessageRequestMessageSchema = z.object({
+  type: z.literal("team.message.request"),
+  requestId: z.string(),
+  teamId: z.string(),
+  text: z.string(),
+});
+
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
   handle: AgentPersistenceHandleSchema,
@@ -3650,6 +3670,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
+  TeamListRequestMessageSchema,
+  TeamEventsRequestMessageSchema,
+  TeamMessageRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -4150,6 +4173,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(teams): added in v0.9.4, remove gate after 2027-04-01.
+        teams: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6762,6 +6787,78 @@ export const ProviderUsageListResponseMessageSchema = z.object({
   }),
 });
 
+// Team runtime wire shapes. Strings stay open (phase, status, event type, actor type) because
+// workflow packs define them; the app styles known values and falls back for the rest.
+export const TeamActorSchema = z.object({
+  type: z.string(),
+  id: z.string(),
+});
+
+export const TeamItemSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  phase: z.string(),
+  board: z.string(),
+});
+
+export const TeamSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  bossAgentId: z.string(),
+  createdAt: z.string(),
+  items: z.array(TeamItemSummarySchema),
+  lastEventAt: z.string().nullable(),
+});
+
+export const TeamEventPayloadSchema = z.object({
+  commit: z.number().int(),
+  at: z.string(),
+  type: z.string(),
+  actor: TeamActorSchema,
+  workItemId: z.string().nullable().optional(),
+  text: z.string(),
+  data: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+export const TeamBindingSummarySchema = z.object({
+  id: z.string(),
+  workItemId: z.string(),
+  role: z.string(),
+  agentId: z.string(),
+  turn: z.string(),
+  status: z.string(),
+});
+
+export const TeamListResponseMessageSchema = z.object({
+  type: z.literal("team.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    teams: z.array(TeamSummarySchema),
+  }),
+});
+
+export const TeamEventsResponseMessageSchema = z.object({
+  type: z.literal("team.events.response"),
+  payload: z.object({
+    requestId: z.string(),
+    teamId: z.string(),
+    team: TeamSummarySchema,
+    commit: z.number().int(),
+    events: z.array(TeamEventPayloadSchema),
+    bindings: z.array(TeamBindingSummarySchema),
+  }),
+});
+
+export const TeamMessageResponseMessageSchema = z.object({
+  type: z.literal("team.message.response"),
+  payload: z.object({
+    requestId: z.string(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -7471,6 +7568,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  TeamListResponseMessageSchema,
+  TeamEventsResponseMessageSchema,
+  TeamMessageResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -7689,6 +7789,12 @@ export type ProviderUsageDetail = z.infer<typeof ProviderUsageDetailSchema>;
 export type ProviderUsageListResponseMessage = z.infer<
   typeof ProviderUsageListResponseMessageSchema
 >;
+export type TeamSummary = z.infer<typeof TeamSummarySchema>;
+export type TeamEventPayload = z.infer<typeof TeamEventPayloadSchema>;
+export type TeamBindingSummary = z.infer<typeof TeamBindingSummarySchema>;
+export type TeamListResponseMessage = z.infer<typeof TeamListResponseMessageSchema>;
+export type TeamEventsResponseMessage = z.infer<typeof TeamEventsResponseMessageSchema>;
+export type TeamMessageResponseMessage = z.infer<typeof TeamMessageResponseMessageSchema>;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
 export type ChatInspectResponse = z.infer<typeof ChatInspectResponseSchema>;

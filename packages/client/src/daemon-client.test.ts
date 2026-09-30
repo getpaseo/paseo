@@ -6518,6 +6518,79 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   });
 });
 
+test("sends team.events.request and resolves team.events.response", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const eventsPromise = client.getTeamEvents({
+    teamId: "team_1",
+    afterCommit: 4,
+    requestId: "team-events-1",
+  });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "team.events.request",
+      teamId: "team_1",
+      afterCommit: 4,
+      requestId: "team-events-1",
+    },
+  });
+
+  const payload = {
+    requestId: "team-events-1",
+    teamId: "team_1",
+    team: {
+      id: "team_1",
+      title: "Text helpers",
+      status: "active",
+      bossAgentId: "boss-1",
+      createdAt: "2026-10-01T08:00:00.000Z",
+      items: [{ id: "item_1", title: "slugify", phase: "test", board: "item" }],
+      lastEventAt: "2026-10-01T08:05:00.000Z",
+    },
+    commit: 5,
+    events: [
+      {
+        commit: 5,
+        at: "2026-10-01T08:05:00.000Z",
+        type: "report.accepted",
+        actor: { type: "role", id: "developer" },
+        workItemId: "item_1",
+        text: "slugify done",
+        data: { bindingId: "seat_1", outcome: "done" },
+      },
+    ],
+    bindings: [
+      {
+        id: "seat_1",
+        workItemId: "item_1",
+        role: "developer",
+        agentId: "agent-1",
+        turn: "reported",
+        status: "active",
+      },
+    ],
+  };
+  mock.triggerMessage(wrapSessionMessage({ type: "team.events.response", payload }));
+
+  await expect(eventsPromise).resolves.toEqual(payload);
+});
+
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

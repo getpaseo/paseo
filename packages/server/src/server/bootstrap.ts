@@ -2035,6 +2035,7 @@ export async function createPaseoDaemon(
               resourcePolicyRuntime,
               browserActivity,
               providerUsageService,
+              teamService,
             );
             // Sorted handbacks ping when System One sorts them; a plain finish then stays quiet.
             wsServer.setHandoffPingsActive(

@@ -100,6 +100,9 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
+  TeamEventsResponseMessage,
+  TeamListResponseMessage,
+  TeamMessageResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
@@ -517,6 +520,9 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+type TeamListPayload = TeamListResponseMessage["payload"];
+type TeamEventsPayload = TeamEventsResponseMessage["payload"];
+type TeamMessagePayload = TeamMessageResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -5606,6 +5612,39 @@ export class DaemonClient {
       message: {
         type: "provider.usage.list.request",
       },
+    });
+  }
+
+  async listTeams(options?: { requestId?: string }): Promise<TeamListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "team.list.request" },
+    });
+  }
+
+  async getTeamEvents(options: {
+    teamId: string;
+    afterCommit?: number;
+    requestId?: string;
+  }): Promise<TeamEventsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "team.events.request",
+        teamId: options.teamId,
+        ...(options.afterCommit !== undefined ? { afterCommit: options.afterCommit } : {}),
+      },
+    });
+  }
+
+  async sendTeamMessage(options: {
+    teamId: string;
+    text: string;
+    requestId?: string;
+  }): Promise<TeamMessagePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: { type: "team.message.request", teamId: options.teamId, text: options.text },
     });
   }
 

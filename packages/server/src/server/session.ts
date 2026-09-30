@@ -216,6 +216,8 @@ import {
   createGitMetadataGenerator,
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
+import { TeamSession } from "./session/team/team-session.js";
+import type { TeamService } from "./team/service.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { BrowserScreencastSession } from "./session/browser/screencast.js";
@@ -512,6 +514,7 @@ export interface SessionOptions {
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
+  teamService?: TeamService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -854,6 +857,7 @@ export class Session {
   private readonly voiceSessions: VoiceSessions;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
+  private readonly teamSession: TeamSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -891,6 +895,7 @@ export class Session {
       workspaceLabelService,
       filesystem,
       scheduleService,
+      teamService,
       checkoutDiffManager,
       github,
       renameCurrentBranch,
@@ -1031,6 +1036,11 @@ export class Session {
     this.scheduleSession = new ScheduleSession({
       host: { emit: (msg) => this.emit(msg) },
       scheduleService,
+      logger: this.sessionLogger,
+    });
+    this.teamSession = new TeamSession({
+      host: { emit: (msg) => this.emit(msg) },
+      teamService,
       logger: this.sessionLogger,
     });
     this.providerCatalogSession = new ProviderCatalogSession({
@@ -3299,7 +3309,8 @@ export class Session {
     return (
       this.dispatchVerifyMessage(msg) ??
       this.dispatchBrowserImportMessage(msg) ??
-      this.dispatchScheduleMessage(msg)
+      this.dispatchScheduleMessage(msg) ??
+      this.dispatchTeamMessage(msg)
     );
   }
 
@@ -3385,6 +3396,19 @@ export class Session {
       return;
     }
     await this.verifySession.handleEvidenceArtifactGetRequest(request);
+  }
+
+  private dispatchTeamMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "team.list.request":
+        return this.teamSession.handleTeamListRequest(msg);
+      case "team.events.request":
+        return this.teamSession.handleTeamEventsRequest(msg);
+      case "team.message.request":
+        return this.teamSession.handleTeamMessageRequest(msg);
+      default:
+        return undefined;
+    }
   }
 
   private dispatchScheduleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
