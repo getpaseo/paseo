@@ -35,10 +35,6 @@ export class Usage {
   detach(id: string): void {
     this.sessions.delete(id);
   }
-  reference(id: string): { account: string } {
-    const session = this.sessions.get(id)!;
-    return { account: session.account };
-  }
   private async read(account: string, launch: ProviderLaunch): Promise<Observation> {
     const readers = [...this.sessions.values()].filter((session) => session.account === account);
     if (readers.length > 0) {
@@ -85,7 +81,6 @@ export class Usage {
                 utilizationPct: usage.window.usedPercent,
                 resetsAt: new Date(usage.window.resetsAtMs).toISOString(),
                 tone: toneFromUsedPct(usage.window.usedPercent),
-                headline: true,
               }),
               windowFromUsedPct({
                 id: "weekly",

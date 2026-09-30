@@ -1107,23 +1107,17 @@ for (const usage of [
     },
   },
 ]) {
-  test(`usage source presents ${"usage" in usage ? "subscription windows" : "real route absence"} from a provider usage reference`, async () => {
+  test(`usage source presents ${"usage" in usage ? "subscription windows" : "real route absence"} from discovered accounts`, async () => {
     const h = await harness("catalog-controls", { MUSE_TEST_USAGE: JSON.stringify(usage) });
     await h.open();
-    await h.send({
-      type: "session.usage_reference",
-      requestId: "usage-ref",
-      sessionId: "paseo-session",
-    });
-    const event = await h.wait((e) => e.type === "usage_reference");
-    if (event.type !== "usage_reference" || !event.reference)
-      throw new Error("Expected usage reference");
-    expect(event.reference.source).toBe("muse");
-    expect(await h.usageSource.identify(event.reference.input)).toEqual({
-      key: (event.reference.input as { account: string }).account,
+    const inputs = await h.usageSource.discover();
+    expect(inputs).toHaveLength(1);
+    const input = inputs[0];
+    expect(await h.usageSource.identify(input)).toEqual({
+      key: (input as { account: string }).account,
       label: "Muse Code",
     });
-    const report = await h.usageSource.fetch(event.reference.input);
+    const report = await h.usageSource.fetch(input);
     if ("usage" in usage)
       expect(report).toMatchObject({
         status: "available",
@@ -1135,7 +1129,6 @@ for (const usage of [
             usedPct: 75,
             remainingPct: 25,
             tone: "warning",
-            headline: true,
           },
           { id: "weekly", usedPct: 105, remainingPct: 0, tone: "danger" },
         ],
@@ -1264,15 +1257,11 @@ test("usage identity follows the resolved config directory across credential and
       META_BASE_URL: route!,
     });
     await h.open();
-    await h.send({
-      type: "session.usage_reference",
-      sessionId: "paseo-session",
-      requestId: "identity",
-    });
-    const event = await h.wait((e) => e.type === "usage_reference");
-    if (event.type !== "usage_reference" || !event.reference)
-      throw new Error("Expected usage reference");
-    identities.push((event.reference.input as { account: string }).account);
+    const inputs = await h.usageSource.discover();
+    expect(inputs).toHaveLength(1);
+    const identity = await h.usageSource.identify(inputs[0]);
+    expect(identity).not.toBeNull();
+    identities.push(identity!.key);
   }
   expect(identities[0]).toBe(identities[1]);
   expect(identities[2]).not.toBe(identities[0]);

@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { Text } from "react-native";
-import { useSettings, type PluginSurfaceProps, type SettingsState } from "@getpaseo/plugin/client";
+import { useSettings, type PluginScreenProps, type SettingsState } from "@getpaseo/plugin/client";
 import {
   SettingsAction,
   SettingsCard,
@@ -22,7 +22,7 @@ function Controls({
   theme,
 }: {
   settings: ReadySettings;
-  theme: PluginSurfaceProps["theme"];
+  theme: PluginScreenProps["theme"];
 }) {
   const style = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
   const changeSandbox = useCallback(
@@ -79,7 +79,7 @@ function Controls({
   );
 }
 
-export function MuseSettings({ theme }: PluginSurfaceProps) {
+export function MuseSettings({ theme }: PluginScreenProps) {
   const settings = useSettings(museSettings);
   const style = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
   if (settings.status === "loading") return <Text style={style}>Loading settings…</Text>;

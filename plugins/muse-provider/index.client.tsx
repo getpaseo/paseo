@@ -2,10 +2,9 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { MuseSettings } from "./client/settings.js";
 
 export default function contribute(client: PluginClientContext) {
-  client.addSettingsScreen({
+  client.addScreen({
     id: "muse",
     title: "Muse Code",
-    icon: "SlidersHorizontal",
     Component: MuseSettings,
   });
   client.addCommandCenterItem({
@@ -13,8 +12,8 @@ export default function contribute(client: PluginClientContext) {
     title: "Configure Muse Code",
     icon: "Settings",
     context: "global",
-    onSelect({ openSettings }) {
-      openSettings("muse");
+    onSelect({ openScreen }) {
+      openScreen({ screenId: "muse" });
     },
   });
   return () => {};

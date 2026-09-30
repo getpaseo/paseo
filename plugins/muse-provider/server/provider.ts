@@ -29,7 +29,6 @@ const capabilities = [
   "session.persistence",
   "permission",
   "session.list",
-  "session.usage_reference",
 ] as const;
 
 export function createMuseProvider(
@@ -157,13 +156,6 @@ function connect(
     const session = sessions.get(input.sessionId);
     if (!session) throw new MuseError("unknownSession", "Muse session is not open");
     switch (input.type) {
-      case "session.usage_reference":
-        emit({
-          type: "usage_reference",
-          requestId: input.requestId,
-          reference: { source: "muse", input: usage.reference(input.sessionId) },
-        });
-        return;
       case "session.prompt":
         await session.prompt(input.prompt);
         return;
