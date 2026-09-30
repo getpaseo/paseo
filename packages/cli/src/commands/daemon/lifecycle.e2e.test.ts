@@ -24,7 +24,11 @@ async function port() {
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "paseo lifecycle "));
   const env = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => !key.startsWith("PASEO_") && !key.startsWith("PANDAOS_"),
+      ),
+    ),
     HOME: root,
     USERPROFILE: root,
   };
@@ -135,7 +139,7 @@ test("managed two-home restart retains its supervisor and never routes ordinary 
     const beforeA = await f.liveStatus(a);
     const beforeB = await f.liveStatus(b, poisoned);
     if (process.platform !== "win32") {
-      for (const home of [a, b, path.join(f.root, ".paseo")])
+      for (const home of [a, b, path.join(f.root, ".pandaos")])
         expect((await stat(home)).mode & 0o777).toBe(0o700);
     }
 
