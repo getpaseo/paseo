@@ -206,6 +206,9 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    // COMPAT(hostIcon): added in v0.10.3, remove optional after 2027-04-01.
+    // A loose string, not an enum: a newer app may pick an icon this daemon has never heard of.
+    hostIcon: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -226,6 +229,8 @@ export const MutableDaemonConfigPatchSchema = z
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    // null clears the choice and returns the host to its detected icon.
+    hostIcon: z.string().max(64).nullable().optional(),
   })
   .partial()
   .passthrough();
@@ -3532,6 +3537,15 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema.optional(),
+    // COMPAT(hostIcon): added in v0.10.3, remove optional after 2027-04-01.
+    // `selected` is the icon the user chose for this host; `detected` is what the daemon guessed
+    // from its hardware. Both are loose strings so an icon one side doesn't know never fails the parse.
+    hostIcon: z
+      .object({
+        selected: z.string().nullable(),
+        detected: z.string().nullable(),
+      })
+      .optional(),
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
@@ -3704,6 +3718,9 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(hostIcon): added in v0.10.3, remove gate after 2027-04-01.
+        // An older daemon drops an unknown config patch field, so the picker must not appear to save.
+        hostIcon: z.boolean().optional(),
       })
       .optional(),
   })
