@@ -38,6 +38,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { useWorkspaceDoneToggle } from "@/leitstand/mark-done-button";
 import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
@@ -141,6 +142,33 @@ function WorkspaceMenuItem({
     return <ContextMenuItem {...props}>{children}</ContextMenuItem>;
   }
   return <DropdownMenuItem {...props}>{children}</DropdownMenuItem>;
+}
+
+/** Closing a session without opening the dashboard; hidden on hosts that cannot store the mark. */
+function MarkDoneMenuItem({
+  surface,
+  serverId,
+  workspaceId,
+  workspaceKey,
+}: {
+  surface: MenuSurface;
+  serverId?: string;
+  workspaceId?: string;
+  workspaceKey: string;
+}) {
+  const { t } = useTranslation();
+  const toggle = useWorkspaceDoneToggle(serverId, workspaceId);
+  if (!toggle) return null;
+  return (
+    <WorkspaceMenuItem
+      surface={surface}
+      testID={`sidebar-workspace-menu-${toggle.done ? "reopen" : "mark-done"}-${workspaceKey}`}
+      leading={toggle.done ? markAsUnreadLeadingIcon : markAsReadLeadingIcon}
+      onSelect={toggle.toggle}
+    >
+      {toggle.done ? t("leitstand.board.reopen") : t("leitstand.board.markDone")}
+    </WorkspaceMenuItem>
+  );
 }
 
 function SidebarWorkspaceMenuItems({
@@ -271,6 +299,12 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
+      <MarkDoneMenuItem
+        surface={surface}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        workspaceKey={workspaceKey}
+      />
       {serverId && workspaceId ? (
         <DropdownMenuSubTrigger
           id={WORKSPACE_LABEL_PAGE_ID}

@@ -203,6 +203,7 @@ import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import { MarkDoneButton } from "@/leitstand/mark-done-button";
 import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
@@ -1091,6 +1092,12 @@ function WorkspaceHeaderTitleBar({
             onOpenSetupTab={onOpenSetupTab}
           />
         )}
+        <MarkDoneButton
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          size={isMobile ? "xs" : "sm"}
+          testID="workspace-header"
+        />
         {isMobile && workspaceScripts.length > 0 ? (
           <WorkspaceScriptsButton
             serverId={normalizedServerId}
