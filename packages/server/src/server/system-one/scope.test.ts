@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
-import { isSystemOneExcluded } from "./scope.js";
+import { isShadowModeEnabled, isSystemOneExcluded } from "./scope.js";
 import { createConfiguredSystemOneDecisionSource } from "./tools.js";
 
 const homes: string[] = [];
@@ -61,5 +61,27 @@ describe("isSystemOneExcluded", () => {
       }),
     ).rejects.toThrow("turned off for this project");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("isShadowModeEnabled", () => {
+  function store(systemOne: { enabled: boolean; shadow?: boolean }) {
+    return { get: () => ({ systemOne }) } as unknown as Pick<DaemonConfigStore, "get">;
+  }
+
+  it("follows the shadow switch and the System One switch, and skips excluded projects", () => {
+    const home = homeWithExcludedPaths(["/work/private"]);
+    expect(isShadowModeEnabled(home, store({ enabled: true, shadow: true }), "/work/app")).toBe(
+      true,
+    );
+    expect(isShadowModeEnabled(home, store({ enabled: true, shadow: false }), "/work/app")).toBe(
+      false,
+    );
+    expect(isShadowModeEnabled(home, store({ enabled: false, shadow: true }), "/work/app")).toBe(
+      false,
+    );
+    expect(
+      isShadowModeEnabled(home, store({ enabled: true, shadow: true }), "/work/private/x"),
+    ).toBe(false);
   });
 });

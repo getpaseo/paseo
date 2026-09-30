@@ -21,24 +21,12 @@ export function isSystemOneExcluded(paseoHome: string, cwd: string | undefined):
   });
 }
 
-const SHADOW_FLAG_TTL_MS = 5_000;
-let shadowFlagCache: { home: string; value: boolean; readAt: number } | null = null;
-
-/** Shadow mode fires on every stream event, so the config flag is cached briefly. */
 export function isShadowModeEnabled(
   paseoHome: string,
   daemonConfigStore: Pick<DaemonConfigStore, "get">,
   cwd: string,
 ): boolean {
-  if (!daemonConfigStore.get().systemOne?.enabled) return false;
-  const now = Date.now();
-  if (
-    !shadowFlagCache ||
-    shadowFlagCache.home !== paseoHome ||
-    now - shadowFlagCache.readAt > SHADOW_FLAG_TTL_MS
-  ) {
-    const value = loadPersistedConfig(paseoHome).daemon?.systemOne?.shadow === true;
-    shadowFlagCache = { home: paseoHome, value, readAt: now };
-  }
-  return shadowFlagCache.value && !isSystemOneExcluded(paseoHome, cwd);
+  const config = daemonConfigStore.get().systemOne;
+  if (!config?.enabled || !config.shadow) return false;
+  return !isSystemOneExcluded(paseoHome, cwd);
 }

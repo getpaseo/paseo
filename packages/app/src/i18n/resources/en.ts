@@ -2346,6 +2346,15 @@ export const en = {
       linkedAccounts: "Linked accounts",
       host: "Overview",
     },
+    tokenUsage: {
+      title: "Tokens, last 7 days",
+      info: "What the agents on this host reported for sessions active in the last 7 days, per provider, and Jev's own calls. A session counts with its whole total.",
+      sessions_one: "{{count}} session · {{turns}} turns",
+      sessions_other: "{{count}} sessions · {{turns}} turns",
+      tokens: "in {{input}} · out {{output}}",
+      empty: "No token usage yet",
+      emptyHint: "Counts appear once an agent finishes a turn.",
+    },
     systemOne: {
       title: "Jev / System One",
       info: "PandaOS gives every supported coding agent the same fast, typed decision primitive. Jev complements the agent's main model; it does not replace it.",
@@ -2391,11 +2400,15 @@ export const en = {
         saving: "Saving…",
       },
       usage: {
-        title: "Jev usage",
-        info: "Tokens TypeSafe reports for every Jev call on this host, counted since this PandaOS version.",
+        title: "What Jev does on its own",
+        info: "Jev calls cost TypeSafe tokens. Switch off what you don't need; the counts are on the Usage page.",
         browserGoals: {
           label: "Let Jev drive browser goals",
           hint: "browser_goal and goal steps in browser_test hand clicks and typing to Jev. Off: agents drive the browser tools themselves, which costs them more of their own tokens.",
+        },
+        shadow: {
+          label: "Shadow predictions",
+          hint: "Jev guesses every agent's next step to learn from it. Nothing acts on the guess, and it makes the most Jev calls by far.",
         },
         purposes: {
           browser: "Browser goals",
@@ -2413,8 +2426,6 @@ export const en = {
         week: "7 days",
         summary_one: "{{count}} call · {{tokens}} tokens",
         summary_other: "{{count}} calls · {{tokens}} tokens",
-        empty: "No Jev calls counted yet",
-        emptyHint: "Counts appear after the next Jev call.",
       },
       agentUse: {
         title: "How agents use Jev",

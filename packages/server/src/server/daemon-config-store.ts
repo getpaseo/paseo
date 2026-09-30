@@ -23,7 +23,7 @@ interface SupportedMutableConfigPatch {
   systemOne?: Partial<
     Pick<
       NonNullable<MutableDaemonConfig["systemOne"]>,
-      "enabled" | "model" | "endpoint" | "minimumConfidence" | "browserGoals"
+      "enabled" | "model" | "endpoint" | "minimumConfidence" | "browserGoals" | "shadow"
     >
   >;
   paperclip?: Partial<NonNullable<MutableDaemonConfig["paperclip"]>>;
@@ -195,6 +195,7 @@ const RELOADABLE_PATHS = [
   "daemon.systemOne.endpoint",
   "daemon.systemOne.minimumConfidence",
   "daemon.systemOne.browserGoals",
+  "daemon.systemOne.shadow",
   "daemon.paperclip",
   "daemon.hostnames",
   "daemon.cors.allowedOrigins",
@@ -226,6 +227,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.systemOne.endpoint", "systemOne.endpoint"],
   ["daemon.systemOne.minimumConfidence", "systemOne.minimumConfidence"],
   ["daemon.systemOne.browserGoals", "systemOne.browserGoals"],
+  ["daemon.systemOne.shadow", "systemOne.shadow"],
   ["daemon.paperclip", "paperclip"],
   ["daemon.hostnames", "hostnames"],
   ["daemon.cors.allowedOrigins", "cors.allowedOrigins"],
@@ -406,6 +408,7 @@ export class DaemonConfigStore {
         endpoint: this.current.systemOne?.endpoint ?? "https://api.typesafe.ai/v1/systemone",
         minimumConfidence: this.current.systemOne?.minimumConfidence ?? 0.5,
         browserGoals: this.current.systemOne?.browserGoals ?? true,
+        shadow: this.current.systemOne?.shadow ?? false,
         ...status,
       },
     });

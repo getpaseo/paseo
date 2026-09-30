@@ -530,6 +530,7 @@ function resolveSystemOneConfig(persisted: ReturnType<typeof loadPersistedConfig
     endpoint: persisted.daemon?.systemOne?.endpoint ?? DEFAULT_TYPESAFE_API_ENDPOINT,
     minimumConfidence: persisted.daemon?.systemOne?.minimumConfidence ?? 0.5,
     browserGoals: persisted.daemon?.systemOne?.browserGoals ?? true,
+    shadow: persisted.daemon?.systemOne?.shadow ?? false,
   };
 }
 

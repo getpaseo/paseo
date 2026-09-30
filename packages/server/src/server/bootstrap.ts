@@ -422,6 +422,7 @@ export interface PaseoDaemonConfig {
     endpoint?: string;
     minimumConfidence: number;
     browserGoals?: boolean;
+    shadow?: boolean;
   };
   git?: {
     maxProcessesPerSecond: number;
@@ -616,6 +617,7 @@ function createInitialSystemOneConfig(
     endpoint: config?.endpoint ?? "https://api.typesafe.ai/v1/systemone",
     minimumConfidence: config?.minimumConfidence ?? 0.5,
     browserGoals: config?.browserGoals ?? true,
+    shadow: config?.shadow ?? false,
     ...credential,
   };
 }

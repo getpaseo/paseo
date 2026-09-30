@@ -16,7 +16,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { useHostFeature } from "@/runtime/host-features";
-import { SystemOneUsageSection } from "./system-one-usage-section";
+import { SystemOneSwitches } from "./system-one-switches";
 
 const CONFIDENCE_OPTIONS = [
   { value: "0.35", label: "35%" },
@@ -99,8 +99,8 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
     (enabled: boolean) => mutation.mutate({ systemOne: { enabled } }),
     [mutation],
   );
-  const toggleBrowserGoals = useCallback(
-    (browserGoals: boolean) => mutation.mutate({ systemOne: { browserGoals } }),
+  const patchJevUse = useCallback(
+    (patch: { browserGoals?: boolean; shadow?: boolean }) => mutation.mutate({ systemOne: patch }),
     [mutation],
   );
   const credentialLabel = useMemo(
@@ -220,11 +220,11 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
       </SettingsSection>
 
       {hasUsage ? (
-        <SystemOneUsageSection
-          serverId={serverId}
+        <SystemOneSwitches
           browserGoals={systemOne.browserGoals}
+          shadow={systemOne.shadow}
           disabled={mutation.isPending || !systemOne.enabled}
-          onBrowserGoalsChange={toggleBrowserGoals}
+          onChange={patchJevUse}
         />
       ) : null}
 

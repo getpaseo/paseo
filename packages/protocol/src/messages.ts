@@ -220,6 +220,8 @@ const MutableSystemOneConfigSchema = z
     minimumConfidence: z.number().min(0).max(1).default(0.5),
     // COMPAT(systemOneBrowserGoals): added in v0.9.2, older daemons always let Jev drive browser goals.
     browserGoals: z.boolean().default(true),
+    // COMPAT(systemOneUsage): added in v0.9.2; Jev guesses every agent's next step to learn.
+    shadow: z.boolean().default(false),
     configured: z.boolean().default(false),
     credentialSource: z.enum(["paseo", "environment", "env-file"]).nullable().default(null),
   })
@@ -231,6 +233,7 @@ const MutableSystemOnePatchSchema = z
     endpoint: SafeSystemOneEndpointSchema.optional(),
     minimumConfidence: z.number().min(0).max(1).optional(),
     browserGoals: z.boolean().optional(),
+    shadow: z.boolean().optional(),
   })
   .strict();
 const MutableRelayConfigSchema = z

@@ -52,6 +52,7 @@ import {
 } from "@/runtime/host-runtime";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
+import { TokenUsageSection } from "@/provider-usage/token-usage-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
@@ -348,6 +349,7 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
         view={providerUsageView}
         onRefresh={handleRefresh}
       />
+      <TokenUsageSection serverId={serverId} />
     </View>
   );
 }
