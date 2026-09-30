@@ -27,6 +27,7 @@ export const fr: TranslationResources = {
     total: "{{total}} résultats",
   },
   common: {
+    bottomSheetBackdrop: "Arrière-plan du panneau inférieur",
     back: "Dos",
     loading: "Chargement...",
     actions: {

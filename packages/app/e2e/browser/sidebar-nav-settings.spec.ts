@@ -31,13 +31,13 @@ import {
   setSidebarNavItemVisible,
 } from "../support/helpers/sidebar-nav-settings";
 
-test("fixed footer line keeps the labeled Add project button and four icons", async ({ page }) => {
+test("fixed footer line keeps its five icons, Help and Settings at the end", async ({ page }) => {
   test.setTimeout(120_000);
   await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
   await seedSidebarFooterPreferences(page, [{ key: "add-project", visible: false }]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoAppShell(page);
-  await expectPinnedUsage(page, ["31%", "7%"]);
+  await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
   await expectFooterIconRow(page);
   await expectFooterSeparator(page, true);
   await footerScreenshot(page, "footer-desktop-with-rows");

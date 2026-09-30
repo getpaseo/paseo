@@ -28,8 +28,22 @@ export function claudeAndCodexReports(): UsageReportEntry[] {
         status: "available",
         planLabel: "Max",
         windows: [
-          { id: "five_hour", label: "Session", usedPct: 31, resetsAt: inOneDay() },
-          { id: "weekly", label: "Weekly", usedPct: 54, resetsAt: inOneDay() },
+          {
+            id: "five_hour",
+            label: "Session",
+            shortLabel: "5h",
+            summary: true,
+            usedPct: 31,
+            resetsAt: inOneDay(),
+          },
+          {
+            id: "weekly",
+            label: "Weekly",
+            shortLabel: "wk",
+            summary: true,
+            usedPct: 54,
+            resetsAt: inOneDay(),
+          },
         ],
       },
     },
@@ -44,8 +58,22 @@ export function claudeAndCodexReports(): UsageReportEntry[] {
         status: "available",
         planLabel: "Pro",
         windows: [
-          { id: "session", label: "Session", usedPct: 7, resetsAt: inOneDay() },
-          { id: "weekly", label: "Weekly", usedPct: 12, resetsAt: inOneDay() },
+          {
+            id: "session",
+            label: "Session",
+            shortLabel: "5h",
+            summary: true,
+            usedPct: 7,
+            resetsAt: inOneDay(),
+          },
+          {
+            id: "weekly",
+            label: "Weekly",
+            shortLabel: "wk",
+            summary: true,
+            usedPct: 12,
+            resetsAt: inOneDay(),
+          },
         ],
       },
     },
@@ -71,9 +99,10 @@ export async function expectOnUsageScreen(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/usage$/);
 }
 
-export async function expectPinnedUsage(page: Page, percents: string[]): Promise<void> {
-  const windows = usageItem(page).getByTestId("sidebar-usage-pinned-window");
-  await expect(windows).toHaveText(percents);
+/** Each pinned window as it reads: its percent and short label, "31% 5h". */
+export async function expectPinnedUsage(page: Page, windows: string[]): Promise<void> {
+  const pinned = usageItem(page).getByTestId("sidebar-usage-pinned-window");
+  await expect(pinned).toHaveText(windows);
 }
 
 /** Without pinned windows the Usage item is a plain row that reads "Usage". */
@@ -95,8 +124,21 @@ export async function togglePin(scope: Locator, source: string, window: string) 
   await expect(row).toBeChecked({ checked: !pinned });
 }
 
-export async function showUsageAs(scope: Locator | Page, displayAs: "used" | "remaining") {
-  await scope.locator(`[data-testid="usage-display-${displayAs}"]:visible`).first().click();
+/** The usage title row's options menu: Refresh and Used/Remaining. */
+export async function openUsageOptions(page: Page): Promise<void> {
+  await page.locator('[data-testid="usage-options-menu"]:visible').first().click();
+  await expect(page.getByTestId("usage-display-used")).toBeVisible();
+}
+
+export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {
+  await openUsageOptions(page);
+  await page.getByTestId(`usage-display-${displayAs}`).click();
+  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+}
+
+export async function refreshAllUsage(page: Page): Promise<void> {
+  await openUsageOptions(page);
+  await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
 }
 
 /** Opens the compact sidebar drawer. */

@@ -57,15 +57,13 @@ export async function readAuth(
 }
 
 function usageWindow(
-  id: string,
-  label: string,
+  spec: { id: string; label: string; shortLabel: string; summary?: boolean },
   value: z.infer<typeof windowSchema> | null | undefined,
 ): UsageWindow | null {
   if (!value) return null;
   const usedPct = value.used_percent ?? 0;
   return windowFromUsedPct({
-    id,
-    label,
+    ...spec,
     utilizationPct: usedPct,
     resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
     tone: toneFromUsedPct(usedPct),
@@ -95,9 +93,18 @@ export async function fetchUsage(
   if (text.trim().startsWith("<")) return { status: "unavailable", windows: [] };
   const usage = responseSchema.parse(JSON.parse(text));
   const windows = [
-    usageWindow("session", "Session", usage.rate_limit?.primary_window),
-    usageWindow("weekly", "Weekly", usage.rate_limit?.secondary_window),
-    usageWindow("code_review", "Code review", usage.code_review_rate_limit?.primary_window),
+    usageWindow(
+      { id: "session", label: "Session", shortLabel: "5h", summary: true },
+      usage.rate_limit?.primary_window,
+    ),
+    usageWindow(
+      { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true },
+      usage.rate_limit?.secondary_window,
+    ),
+    usageWindow(
+      { id: "code_review", label: "Code review", shortLabel: "review" },
+      usage.code_review_rate_limit?.primary_window,
+    ),
   ].filter((window): window is UsageWindow => window !== null);
   const balance = usage.credits?.balance;
   return {
@@ -112,7 +119,7 @@ export async function fetchUsage(
               id: "credits",
               label: "Credits",
               remaining: balance,
-              unit: "usd",
+              unit: "credits",
               tone: balanceToneFromRemaining(balance),
             },
           ],

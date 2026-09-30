@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { gotoAppShell } from "./app";
 import { openCommandCenter } from "./command-center";
+import { openGlobalNewWorkspaceComposer } from "./new-workspace";
 import { getServerId } from "./server-id";
 import { expectMobileAgentSidebarVisible, openMobileAgentSidebar } from "./sidebar";
 
@@ -18,16 +19,21 @@ export class ImportSessionFlow {
       timeout: 30_000,
     });
   }
-  async revealMobileEntryPoint() {
-    await openMobileAgentSidebar(this.page);
-    await expectMobileAgentSidebarVisible(this.page);
-    const button = this.page.getByTestId("sidebar-import-session");
+  /** The new workspace screen's Import session button, reached from the sidebar. */
+  async revealNewWorkspaceEntryPoint() {
+    const compact = (this.page.viewportSize()?.width ?? 0) < 768;
+    if (compact) {
+      await openMobileAgentSidebar(this.page);
+      await expectMobileAgentSidebarVisible(this.page);
+    }
+    await openGlobalNewWorkspaceComposer(this.page);
+    const button = this.page.getByTestId("new-workspace-import-session");
     await expect(button).toHaveAccessibleName("Import session");
     await expect(button).toBeInViewport();
   }
   async openGlobally() {
-    await expect(this.page.getByTestId("sidebar-import-session")).toBeVisible();
-    await this.page.getByTestId("sidebar-import-session").click();
+    await this.revealNewWorkspaceEntryPoint();
+    await this.page.getByTestId("new-workspace-import-session").click();
     await this.expectSheetReady();
   }
   async openFromWorkspaceHeader() {

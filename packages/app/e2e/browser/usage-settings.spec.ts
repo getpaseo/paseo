@@ -7,6 +7,7 @@ import {
   installUsageReportsFixture,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
+import { refreshAllUsage, showUsageAs } from "../support/helpers/usage-sidebar-item";
 
 const ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
 
@@ -89,7 +90,7 @@ test.describe("usage settings", () => {
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
 
-    await card.getByTestId("usage-display-remaining").click();
+    await showUsageAs(page, "remaining");
     await expect(card.getByText("30% left")).toBeVisible();
     await expect(card.getByText("93% left")).toBeVisible();
   });
@@ -117,7 +118,7 @@ test.describe("usage settings", () => {
     const card = page.getByTestId("usage-card");
     await expect(card.getByText("23%")).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await refreshAllUsage(page);
     await expect.poll(() => forcedRefreshCount(usage)).toBe(1);
     await expect(card.getByText("64%")).toBeVisible();
   });

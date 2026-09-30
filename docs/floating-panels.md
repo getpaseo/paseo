@@ -302,6 +302,22 @@ Do not treat `onChange(-1)` as a close by itself. In a stacked
 another pushed sheet. Close React state from `onDismiss`; use `onChange` only to
 track phase.
 
+All sheets use the app-wide Gorhom modal provider through `IsolatedBottomSheetModal`. This
+includes native centered dialogs: separate React Native Modals cannot present a root-owned
+sibling dialog over an existing iOS presenter.
+
+The wrapper must give Gorhom an object ref. Gorhom accepts a callback ref at the React boundary
+but stores it in the modal queue and later reads `.current`; provider dismissal, replacement,
+and restoration then silently do nothing. Callers may use callback refs on the wrapper, which
+forwards commands to the current Gorhom handle.
+
+Request a backdrop with `backdropOpacity`; do not install a caller-owned backdrop. On web,
+Gorhom's default backdrop closes its own sheet, even when another modal is above it. Its animated
+pointer-event changes can expose a lower backdrop during a transition. The shared web backdrop
+keeps its press target until portal teardown and asks the provider to dismiss the top modal.
+Gorhom's presentation queue remains the authority; backdrop mount order is irrelevant. Native
+retains Gorhom's gesture backdrop and the same push/replace presentation semantics.
+
 ## Gotcha 7 — A sheet cannot read context from its call site
 
 React cannot copy contexts reflectively, so the only way across the teleport in
