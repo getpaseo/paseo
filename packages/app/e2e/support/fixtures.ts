@@ -30,6 +30,20 @@ const metroTest = base.extend({
     }
     await provide(`http://localhost:${metroPort}`);
   },
+  // Every page, including specs that seed their own host registry, starts with project grouping:
+  // the suite predates the status-first sidebar and walks project headers. A spec that switches
+  // grouping keeps its choice across reloads.
+  page: async ({ page }, provide) => {
+    await page.addInitScript(() => {
+      if (localStorage.getItem("sidebar-view") === null) {
+        localStorage.setItem(
+          "sidebar-view",
+          JSON.stringify({ state: { groupMode: "project" }, version: 7 }),
+        );
+      }
+    });
+    await provide(page);
+  },
 });
 
 const daemonTest = metroTest.extend<
@@ -177,14 +191,6 @@ const test = daemonTest.extend<{
           localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon, ...extraHosts]));
           localStorage.removeItem("@paseo:settings");
           localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
-          // The suite predates the status-first sidebar and walks project headers; a spec that
-          // switches grouping keeps its choice across reloads.
-          if (localStorage.getItem("sidebar-view") === null) {
-            localStorage.setItem(
-              "sidebar-view",
-              JSON.stringify({ state: { groupMode: "project" }, version: 7 }),
-            );
-          }
         },
         {
           daemon: testDaemon,
