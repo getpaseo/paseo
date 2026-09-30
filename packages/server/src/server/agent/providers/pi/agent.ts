@@ -260,13 +260,15 @@ interface PiMcpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
-  auth?: false;
-  oauth?: false;
 }
 
-interface PiMcpConfigFile {
-  path: string;
-  cleanup: () => void;
+type PiMcpConfig =
+  | { kind: "native"; servers: Record<string, McpServerConfig> }
+  | { kind: "adapter"; file: PiTempFile };
+
+interface PiPaseoExtensionOptions {
+  systemPrompt?: string;
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 interface PiTempFile {
@@ -485,7 +487,7 @@ function buildResumeStartInput(input: {
   resumeConfig: PiResumeConfig;
   sessionFile: string;
   launchContext: AgentLaunchContext | undefined;
-  mcpConfig: PiMcpConfigFile | null;
+  mcpConfig: PiTempFile | null;
   paseoExtension: PiTempFile | null;
 }): PiStartSessionInput {
   return {
@@ -511,8 +513,6 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
   return {
     url: config.url,
     ...(config.headers ? { headers: config.headers } : {}),
-    auth: false,
-    oauth: false,
   };
 }
 
@@ -577,7 +577,7 @@ function createPiMcpConfigFile(
   options?: {
     piGlobalConfigEnv?: Record<string, string>;
   },
-): PiMcpConfigFile {
+): PiTempFile {
   const globalConfig = options?.piGlobalConfigEnv
     ? readPiGlobalMcpConfig(options.piGlobalConfigEnv)
     : {};
@@ -589,7 +589,12 @@ function createPiMcpConfigFile(
   }
   const mcpServers: Record<string, unknown> = { ...configuredServers };
   for (const [name, serverConfig] of Object.entries(servers)) {
-    mcpServers[name] = toPiMcpConfig(serverConfig);
+    const config = toPiMcpConfig(serverConfig);
+    if (serverConfig.type === "stdio") {
+      mcpServers[name] = config;
+    } else {
+      mcpServers[name] = { ...config, auth: false, oauth: false };
+    }
   }
 
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-mcp-"));
@@ -606,7 +611,11 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
+function createPiPaseoExtensionFile(options: PiPaseoExtensionOptions): PiTempFile {
+  const mcpServers = Object.entries(options.mcpServers ?? {}).map(([name, config]) => [
+    name,
+    toPiMcpConfig(config),
+  ]);
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -666,6 +675,9 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	}
 
 	export default function paseoIntegration(pi) {
+	  for (const [name, config] of ${JSON.stringify(mcpServers)}) {
+	    pi.registerMcpServer(name, config);
+	  }
 	  const submittedUserMessages = [];
 
 	  function emitSubmittedUserEntries(ctx) {
@@ -691,9 +703,9 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  }
 
 	  ${
-      systemPrompt
+      options.systemPrompt
         ? `pi.on("before_agent_start", async (event) => ({
-	    systemPrompt: event.systemPrompt + "\\n\\n" + ${JSON.stringify(systemPrompt)},
+	    systemPrompt: event.systemPrompt + "\\n\\n" + ${JSON.stringify(options.systemPrompt)},
 	  }));`
         : ""
     }
@@ -746,7 +758,7 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  });
 	}
 `.trimStart(),
-    "utf8",
+    { encoding: "utf8", mode: 0o600 },
   );
   return {
     path: filePath,
@@ -774,6 +786,14 @@ function isPiMcpAdapterCommand(command: PiRpcSlashCommand): boolean {
     return true;
   }
   return JSON.stringify(command.sourceInfo).includes("pi-mcp-adapter");
+}
+
+function isPiNativeMcpCommand(command: PiRpcSlashCommand): boolean {
+  return (
+    command.source === "extension" &&
+    /^mcp(?::\d+)?$/.test(command.name) &&
+    command.sourceInfo?.path === "builtin:mcp"
+  );
 }
 
 function withPiCapabilities(supportsMcpServers: boolean): AgentCapabilityFlags {
@@ -2486,9 +2506,12 @@ export class PiRpcAgentClient implements AgentClient {
       ...launchContext?.env,
     };
     const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
-    const paseoExtension = createPiPaseoExtensionFile(
-      composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
-    );
+    const mcpConfigFile = mcpConfig?.kind === "adapter" ? mcpConfig.file : null;
+    const nativeMcpServers = mcpConfig?.kind === "native" ? mcpConfig.servers : undefined;
+    const paseoExtension = createPiPaseoExtensionFile({
+      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      mcpServers: nativeMcpServers,
+    });
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -2497,11 +2520,11 @@ export class PiRpcAgentClient implements AgentClient {
         thinkingOptionId: normalizePiThinkingOption(config.thinkingOptionId) ?? undefined,
         noSession: config.internal === true,
         env: launchContext?.env,
-        mcpConfigPath: mcpConfig?.path,
+        mcpConfigPath: mcpConfigFile?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
       });
     } catch (error) {
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2511,7 +2534,7 @@ export class PiRpcAgentClient implements AgentClient {
         config,
         initialState: await runtimeSession.getState(),
         capabilities: capabilitiesForSession(mcpConfig !== null),
-        cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
+        cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
@@ -2519,7 +2542,7 @@ export class PiRpcAgentClient implements AgentClient {
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2547,12 +2570,15 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.config.mcpServers,
       mcpEnv,
     );
-    const paseoExtension = createPiPaseoExtensionFile(
-      composeSystemPromptParts(
+    const mcpConfigFile = mcpConfig?.kind === "adapter" ? mcpConfig.file : null;
+    const nativeMcpServers = mcpConfig?.kind === "native" ? mcpConfig.servers : undefined;
+    const paseoExtension = createPiPaseoExtensionFile({
+      systemPrompt: composeSystemPromptParts(
         resumeConfig.config.systemPrompt,
         resumeConfig.config.daemonAppendSystemPrompt,
       ),
-    );
+      mcpServers: nativeMcpServers,
+    });
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession(
@@ -2560,12 +2586,12 @@ export class PiRpcAgentClient implements AgentClient {
           resumeConfig,
           sessionFile,
           launchContext,
-          mcpConfig,
+          mcpConfig: mcpConfigFile,
           paseoExtension,
         }),
       );
     } catch (error) {
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2575,7 +2601,7 @@ export class PiRpcAgentClient implements AgentClient {
         config: resumeConfig.config,
         initialState: await runtimeSession.getState(),
         capabilities: capabilitiesForSession(mcpConfig !== null),
-        cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
+        cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
@@ -2583,7 +2609,7 @@ export class PiRpcAgentClient implements AgentClient {
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2702,29 +2728,52 @@ export class PiRpcAgentClient implements AgentClient {
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
     env: Record<string, string> | undefined,
-  ): Promise<PiMcpConfigFile | null> {
+  ): Promise<PiMcpConfig | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
-    if (!(await this.detectMcpAdapter(cwd, env))) {
+    const support = await this.detectMcpSupport(cwd, env);
+    if (!support) {
       return null;
     }
-    return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env });
+    if (support === "native") {
+      for (const [name, config] of Object.entries(servers)) {
+        if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+          throw new Error(
+            `Invalid Pi native MCP server name: ${name}. Use only letters, digits, underscores, and hyphens.`,
+          );
+        }
+        if (config.type === "sse") {
+          throw new Error(
+            `Pi native MCP does not support SSE server ${name}. Use streamable HTTP or load pi-mcp-adapter.`,
+          );
+        }
+      }
+      return { kind: "native", servers };
+    }
+    return { kind: "adapter", file: createPiMcpConfigFile(servers, { piGlobalConfigEnv: env }) };
   }
 
-  private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
+  private async detectMcpSupport(
+    cwd: string,
+    env?: Record<string, string>,
+  ): Promise<"native" | "adapter" | null> {
     const runtimeSession = await this.runtime.startSession({ cwd, env }).catch((error) => {
-      this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed to start");
+      this.logger.debug({ err: error, cwd }, "Pi MCP support probe failed to start");
       return null;
     });
     if (!runtimeSession) {
-      return false;
+      return null;
     }
     try {
-      return (await runtimeSession.getCommands()).some(isPiMcpAdapterCommand);
+      const commands = await runtimeSession.getCommands();
+      if (commands.some(isPiMcpAdapterCommand)) {
+        return "adapter";
+      }
+      return commands.some(isPiNativeMcpCommand) ? "native" : null;
     } catch (error) {
-      this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed");
-      return false;
+      this.logger.debug({ err: error, cwd }, "Pi MCP support probe failed");
+      return null;
     } finally {
       await runtimeSession.close().catch(() => undefined);
     }

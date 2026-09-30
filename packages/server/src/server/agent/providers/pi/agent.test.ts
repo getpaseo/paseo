@@ -7,6 +7,7 @@ import {
   openSync,
   readSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -160,17 +161,20 @@ function parseEntryCapture(notification: string): unknown {
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
+  registerMcpServer: (name: string, config: Record<string, unknown>) => void = () => undefined,
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
       registerCommand: () => void;
+      registerMcpServer: typeof registerMcpServer;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
     registerCommand: () => undefined,
+    registerMcpServer,
   });
   return listeners;
 }
@@ -3080,6 +3084,229 @@ describe("PiRpcAgentClient", () => {
     expect(fakeSession.treeNavigationRequests).toEqual(["entry-1"]);
   });
 
+  test("injects MCP servers through Pi native MCP without an adapter", async () => {
+    const secret = "literal ` ${secret}\nnext line";
+    const pi = new FakePi();
+    pi.queueCommands([
+      { name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
+    ]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer test-token" },
+          },
+          localSecret: {
+            type: "stdio",
+            command: "node",
+            args: ["secret-server.js", secret],
+            env: { SECRET_VALUE: secret },
+          },
+        },
+      }),
+    );
+    onTestFinished(() => session.close());
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    expect(pi.recordedLaunches).toHaveLength(2);
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.mcpConfigPath).toBeUndefined();
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--extension",
+      actualLaunch.extensionPaths[0],
+    ]);
+    const extensionPath = actualLaunch.extensionPaths[0]!;
+    if (process.platform !== "win32") {
+      expect(statSync(extensionPath).mode & 0o777).toBe(0o600);
+    }
+    const servers: Record<string, unknown> = {};
+    await loadPaseoExtensionListeners(extensionPath, (name, config) => {
+      servers[name] = config;
+    });
+    expect(servers).toEqual({
+      paseo: {
+        url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        headers: { Authorization: "Bearer test-token" },
+      },
+      localSecret: {
+        command: "node",
+        args: ["secret-server.js", secret],
+        env: { SECRET_VALUE: secret },
+      },
+    });
+
+    await session.close();
+    expect(existsSync(extensionPath)).toBe(false);
+    expect(existsSync(path.dirname(extensionPath))).toBe(false);
+  });
+
+  test("registers the current MCP URL when resuming through Pi native MCP", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const original = await client.createSession(
+      createConfig({
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=old-agent" },
+        },
+      }),
+    );
+    onTestFinished(() => original.close());
+    const persistence = original.describePersistence();
+    expect(persistence).not.toBeNull();
+    await original.close();
+
+    pi.queueCommands([{ name: "mcp:1", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const session = await client.resumeSession(persistence!, {
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=current-agent",
+        },
+      },
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches).toHaveLength(4);
+    const actualLaunch = pi.recordedLaunches[3]!;
+    expect(actualLaunch.session).toBe(persistence!.nativeHandle);
+    expect(actualLaunch.mcpConfigPath).toBeUndefined();
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const servers: Record<string, unknown> = {};
+    await loadPaseoExtensionListeners(actualLaunch.extensionPaths[0]!, (name, config) => {
+      servers[name] = config;
+    });
+    expect(servers).toEqual({
+      paseo: { url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=current-agent" },
+    });
+  });
+
+  test("rejects legacy SSE servers with an actionable error for Pi native MCP", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const creation = createClient(pi).createSession(
+      createConfig({
+        mcpServers: { legacySearch: { type: "sse", url: "https://example.com/sse" } },
+      }),
+    );
+    await expect(creation).rejects.toThrow("legacySearch");
+    await expect(creation).rejects.toThrow(/streamable HTTP|pi-mcp-adapter/);
+  });
+
+  test("keeps the MCP adapter when native and adapter commands are both advertised", async () => {
+    const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+    const pi = new FakePi();
+    pi.queueCommands([
+      { name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } },
+      { name: "mcp:1", source: "extension", sourceInfo: { source: "npm:pi-mcp-adapter" } },
+    ]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: { legacySearch: { type: "sse", url: "https://example.com/sse" } },
+      }),
+      { env: { PI_CODING_AGENT_DIR: agentDir } },
+    );
+    onTestFinished(() => session.close());
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.argv).toContain("--mcp-config");
+    expect(actualLaunch.mcpConfigPath).toEqual(expect.any(String));
+    expect(JSON.parse(readUtf8File(actualLaunch.mcpConfigPath!))).toEqual({
+      mcpServers: { legacySearch: { url: "https://example.com/sse", auth: false, oauth: false } },
+    });
+    const servers: Record<string, unknown> = {};
+    await loadPaseoExtensionListeners(actualLaunch.extensionPaths[0]!, (name, config) => {
+      servers[name] = config;
+    });
+    expect(servers).toEqual({});
+  });
+
+  test.each([
+    { name: "mcp", source: "extension" as const, sourceInfo: { path: "/tmp/builtin:mcp.ts" } },
+    { name: "mcp", source: "prompt" as const, sourceInfo: { path: "builtin:mcp" } },
+    { name: "mcp-status", source: "extension" as const, sourceInfo: { path: "builtin:mcp" } },
+  ])("does not detect native MCP from an unrelated $source command $name", async (command) => {
+    const pi = new FakePi();
+    pi.queueCommands([command]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: { paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" } },
+      }),
+    );
+    onTestFinished(() => session.close());
+
+    expect(session.capabilities.supportsMcpServers).toBe(false);
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.mcpConfigPath).toBeUndefined();
+    const servers: Record<string, unknown> = {};
+    await loadPaseoExtensionListeners(actualLaunch.extensionPaths[0]!, (name, config) => {
+      servers[name] = config;
+    });
+    expect(servers).toEqual({});
+  });
+
+  test.each([undefined, {}])(
+    "does not probe MCP when no servers are supplied (%j)",
+    async (mcpServers) => {
+      const pi = new FakePi();
+      const session = await createClient(pi).createSession(createConfig({ mcpServers }));
+      onTestFinished(() => session.close());
+
+      expect(pi.recordedLaunches).toHaveLength(1);
+      expect(pi.recordedLaunches[0]!.mcpConfigPath).toBeUndefined();
+      expect(session.capabilities.supportsMcpServers).toBe(false);
+    },
+  );
+
+  test("rejects invalid server names before starting Pi native MCP", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+
+    await expect(
+      createClient(pi).createSession(
+        createConfig({
+          mcpServers: { "foo.bar": { type: "http", url: "https://example.com/mcp" } },
+        }),
+      ),
+    ).rejects.toThrow(/Invalid Pi native MCP server name.*foo\.bar/);
+    expect(pi.recordedLaunches).toHaveLength(1);
+  });
+
+  test("does not merge or rewrite Pi global configuration for native MCP injection", async () => {
+    const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+    const configPath = path.join(agentDir, "mcp.json");
+    const authPath = path.join(agentDir, "mcp-auth.json");
+    const configContents = "{ invalid MCP config";
+    const authContents = '{ "global-server": { "access_token": "keep-me" } }\n';
+    writeFileSync(configPath, configContents);
+    writeFileSync(authPath, authContents);
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: { paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" } },
+      }),
+      { env: { PI_CODING_AGENT_DIR: agentDir } },
+    );
+    onTestFinished(() => session.close());
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    expect(pi.recordedLaunches[1]!.mcpConfigPath).toBeUndefined();
+    await session.close();
+    expect(readUtf8File(configPath)).toBe(configContents);
+    expect(readUtf8File(authPath)).toBe(authContents);
+  });
+
   test("injects MCP servers without replacing the Pi global MCP config", async () => {
     const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
     onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
@@ -3192,7 +3419,7 @@ describe("PiRpcAgentClient", () => {
     ).rejects.toThrow(`Failed to parse Pi MCP config: ${configPath}`);
   });
 
-  test("does not pass MCP config when pi-mcp-adapter is not loaded", async () => {
+  test("does not inject MCP servers when neither native MCP nor the adapter is loaded", async () => {
     const pi = new FakePi();
     pi.queueCommands([]);
     const client = createClient(pi);
