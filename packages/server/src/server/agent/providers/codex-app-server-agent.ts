@@ -1275,9 +1275,16 @@ export function mapCodexQuestionRequestToToolCall(params: {
   error?: unknown;
 }): ToolCallTimelineItem {
   const formattedQuestions = formatCodexQuestionPrompts(params.questions);
+  const publicAnswers = params.answers
+    ? Object.fromEntries(
+        Object.entries(params.answers).filter(
+          ([id]) => !params.questions.some((question) => question.id === id && question.isSecret),
+        ),
+      )
+    : undefined;
   const formattedAnswers =
-    params.answers && Object.keys(params.answers).length > 0
-      ? Object.entries(params.answers)
+    publicAnswers && Object.keys(publicAnswers).length > 0
+      ? Object.entries(publicAnswers)
           .map(([id, values]) => `${id}: ${values.join(", ")}`)
           .join("\n")
       : null;
@@ -1297,7 +1304,7 @@ export function mapCodexQuestionRequestToToolCall(params: {
     },
     metadata: {
       questions: params.questions,
-      ...(params.answers ? { answers: params.answers } : {}),
+      ...(publicAnswers && Object.keys(publicAnswers).length > 0 ? { answers: publicAnswers } : {}),
     },
   };
 
@@ -1364,6 +1371,14 @@ function mapCodexQuestionResponseByHeader(params: {
   }
 
   return Object.keys(answers).length > 0 ? answers : null;
+}
+
+function redactCodexSecretQuestionResolution(
+  response: AgentPermissionResponse,
+  questions: CodexQuestionPrompt[],
+): AgentPermissionResponse {
+  if (!questions.some((question) => question.isSecret)) return response;
+  return { behavior: response.behavior };
 }
 
 interface CodexPatchFileChange {
@@ -4667,11 +4682,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitDeniedToolCallTimelineEvent({ requestId, response, pendingRequest });
     }
 
+    const questions = pending.questions ?? [];
     this.emitEvent({
       type: "permission_resolved",
       provider: CODEX_PROVIDER,
       requestId,
-      resolution: response,
+      resolution: redactCodexSecretQuestionResolution(response, questions),
     });
 
     if (pending.kind === "command") {
@@ -4693,7 +4709,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
 
-    const questions = pending.questions ?? [];
     const itemId =
       typeof pendingRequest?.metadata?.itemId === "string"
         ? pendingRequest.metadata.itemId

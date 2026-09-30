@@ -363,6 +363,8 @@ export const en = {
     },
     question: {
       submit: "Submit",
+      sendToChat: "Send to chat",
+      chatDeliveryWarning: "Your answer will appear in chat. Do not enter passwords or secrets.",
       next: "Next",
       answerPlaceholder: "Type your answer...",
       otherPlaceholder: "Other...",

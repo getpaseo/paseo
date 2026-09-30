@@ -5010,6 +5010,21 @@ export class Session {
     response: AgentPermissionResponse,
   ): Promise<void> {
     try {
+      const pendingRequest = this.agentManager
+        .getPendingPermissions(agentId)
+        .find((request) => request.id === requestId);
+      const questions = pendingRequest?.input?.questions;
+      const hasSecretAnswer =
+        pendingRequest?.provider === "codex" &&
+        pendingRequest.name === "request_user_input" &&
+        Array.isArray(questions) &&
+        questions.some(
+          (question) =>
+            typeof question === "object" &&
+            question !== null &&
+            "isSecret" in question &&
+            question.isSecret === true,
+        );
       await respondToAgentPermission({
         agentManager: this.agentManager,
         agentId,
@@ -5023,7 +5038,11 @@ export class Session {
       if (this.delivery.isModern(this.delivery.currentSource)) {
         this.delivery.reply({
           type: "agent_permission_resolved",
-          payload: { agentId, requestId, resolution: response },
+          payload: {
+            agentId,
+            requestId,
+            resolution: hasSecretAnswer ? { behavior: response.behavior } : response,
+          },
         });
       }
     } catch (error) {

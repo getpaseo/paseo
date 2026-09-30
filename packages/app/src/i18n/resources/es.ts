@@ -370,6 +370,9 @@ export const es: TranslationResources = {
       failedRetry: "El dictado falló. Toca reintentar.",
     },
     question: {
+      sendToChat: "Enviar al chat",
+      chatDeliveryWarning:
+        "Tu respuesta aparecerá en el chat. No introduzcas contraseñas ni información secreta.",
       submit: "Entregar",
       next: "Siguiente",
       answerPlaceholder: "Escribe tu respuesta...",

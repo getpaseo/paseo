@@ -365,6 +365,8 @@ export const ar: TranslationResources = {
       failedRetry: "فشل الإملاء. اضغط على إعادة المحاولة.",
     },
     question: {
+      sendToChat: "إرسال إلى الدردشة",
+      chatDeliveryWarning: "ستظهر إجابتك في الدردشة. لا تُدخل كلمات مرور أو معلومات سرية.",
       submit: "يُقدِّم",
       next: "التالي",
       answerPlaceholder: "اكتب إجابتك...",

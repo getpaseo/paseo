@@ -369,6 +369,9 @@ export const ptBR: TranslationResources = {
       failedRetry: "Falha no ditado. Toque para tentar novamente.",
     },
     question: {
+      sendToChat: "Enviar para o chat",
+      chatDeliveryWarning:
+        "Sua resposta aparecerá no chat. Não digite senhas nem informações secretas.",
       submit: "Enviar",
       next: "Próximo",
       answerPlaceholder: "Digite sua resposta...",

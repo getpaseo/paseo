@@ -369,6 +369,8 @@ export const ru: TranslationResources = {
       failedRetry: "Диктовка не удалась. Нажмите «Повторить».",
     },
     question: {
+      sendToChat: "Отправить в чат",
+      chatDeliveryWarning: "Ваш ответ появится в чате. Не вводите пароли или секретные данные.",
       submit: "Отправить",
       next: "Далее",
       answerPlaceholder: "Введите ответ...",

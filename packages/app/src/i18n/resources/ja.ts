@@ -371,6 +371,9 @@ export const ja: TranslationResources = {
     },
     question: {
       submit: "送信",
+      sendToChat: "チャットに送信",
+      chatDeliveryWarning:
+        "回答はチャットに表示されます。パスワードや秘密情報を入力しないでください。",
       next: "次へ",
       answerPlaceholder: "回答を入力...",
       otherPlaceholder: "その他...",

@@ -26,9 +26,32 @@ import {
   mapCodexPatchNotificationToToolCall,
   mapCodexPlanUpdateToTodo,
   mapCodexPlanToToolCall,
+  mapCodexQuestionRequestToToolCall,
   normalizeCodexOutputSchema,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
+
+test("keeps native secret answers out of Paseo's completed question timeline", () => {
+  const item = mapCodexQuestionRequestToToolCall({
+    callId: "question-1",
+    status: "completed",
+    questions: [
+      {
+        id: "password",
+        header: "Password",
+        question: "Enter password",
+        options: [],
+        isSecret: true,
+      },
+      { id: "color", header: "Color", question: "Choose a color", options: [] },
+    ],
+    answers: { password: ["private-value"], color: ["blue"] },
+  });
+
+  expect(item.detail).toMatchObject({ text: expect.stringContaining("color: blue") });
+  expect(item.metadata?.answers).toEqual({ color: ["blue"] });
+  expect(JSON.stringify(item)).not.toContain("private-value");
+});
 
 describe("mapCodexPlanUpdateToTodo", () => {
   test("preserves checklist progress without creating a plan card", () => {
@@ -3087,6 +3110,39 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
+  });
+
+  test("returns a secret answer to Codex without broadcasting it in Paseo events", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const nativeReply = asInternals(session).handleToolApprovalRequest({
+      itemId: "secret-question",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "password",
+          header: "Password",
+          question: "Enter password",
+          options: [],
+          isSecret: true,
+        },
+      ],
+    });
+
+    await session.respondToPermission("permission-secret-question", {
+      behavior: "allow",
+      updatedInput: { answers: { Password: "private-value" } },
+    });
+
+    expect(await nativeReply).toEqual({ answers: { password: { answers: ["private-value"] } } });
+    expect(events.find((event) => event.type === "permission_resolved")).toMatchObject({
+      resolution: { behavior: "allow" },
+    });
+    expect(
+      JSON.stringify(events.filter((event) => event.type !== "permission_requested")),
+    ).not.toContain("private-value");
   });
 
   test("converts Codex collab agent notifications through the normal timeline path", () => {
