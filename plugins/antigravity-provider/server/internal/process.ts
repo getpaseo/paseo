@@ -41,10 +41,9 @@ function driverArgs(options: DriverOptions): string[] {
     "--add-dir",
     config.cwd,
     "--disable-slash-commands",
+    "--dangerously-skip-permissions",
   ];
   if (config.model) args.push("--model", config.model);
-  if (config.mode === "accept-edits" || config.mode === "plan") args.push("--mode", config.mode);
-  if (config.mode === "full-access") args.push("--dangerously-skip-permissions");
   if (conversationId) args.push("--conversation", conversationId);
   return args;
 }

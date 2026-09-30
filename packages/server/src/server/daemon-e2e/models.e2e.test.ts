@@ -138,6 +138,17 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
       cwd,
       title: "Antigravity E2E",
     });
+    expect(agent.currentModeId).toBe("full-access");
+    expect(agent.availableModes?.map((mode) => mode.id)).toEqual(["full-access"]);
+    const openedTimeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(openedTimeline.entries.map((entry) => entry.item)).toEqual([
+      {
+        type: "notification",
+        level: "warning",
+        message:
+          "Antigravity is running with full access\nAntigravity's CLI cannot ask for permission when another app drives it, so Paseo starts it with --dangerously-skip-permissions. Every tool call, including shell commands, runs without asking.",
+      },
+    ]);
     await client.sendMessage(agent.id, "Reply with exactly ANTIGRAVITY_E2E_OK. No tools.");
     const result = await client.waitForFinish(agent.id, 90000);
     expect(result.status).toBe("idle");

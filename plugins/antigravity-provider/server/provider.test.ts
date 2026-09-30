@@ -187,6 +187,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
     "--add-dir",
     h.cwd,
     "--disable-slash-commands",
+    "--dangerously-skip-permissions",
   ]);
   expect(records.find((entry) => entry.args.includes("--input-format")).env).toBe(
     "session-overlay",
@@ -232,12 +233,14 @@ it("maps tools and emits one denial notice for a SUCCESS result", async () => {
       }),
     ]),
   );
-  const notices = h.events.filter((event) => event.type === "session.notice");
+  const notices = h.events.filter(
+    (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+  );
   expect(notices).toHaveLength(1);
   expect(notices[0]).toMatchObject({
     notice: {
       title: "Shell command denied",
-      description: "Switch to Full access to allow shell commands.",
+      description: "Antigravity's own policy denied it.",
     },
   });
 });
@@ -246,11 +249,19 @@ it("reports only new process denials across replayed turns and resets after resp
   const h = await harness();
   await h.open();
   await h.completed(await h.prompt("DENIAL_REPLAY"));
-  expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(1);
+  expect(
+    h.events.filter(
+      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+    ),
+  ).toHaveLength(1);
   const followupStart = h.events.length;
   await h.completed(await h.prompt("DENIAL_REPLAY"));
   const followup = h.events.slice(followupStart);
-  expect(followup.some((event) => event.type === "session.notice")).toBe(false);
+  expect(
+    followup.some(
+      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+    ),
+  ).toBe(false);
   expect(followup).toContainEqual(
     expect.objectContaining({
       type: "timeline.item",
@@ -261,10 +272,14 @@ it("reports only new process denials across replayed turns and resets after resp
     type: "session.configure",
     sessionId: "s",
     requestId: "mode",
-    changes: { mode: "plan" },
+    changes: { model: "gemini-3.8-flash-low" },
   });
   await h.completed(await h.prompt("DENIAL_REPLAY"));
-  expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(2);
+  expect(
+    h.events.filter(
+      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+    ),
+  ).toHaveLength(2);
   expect(
     (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
   ).toHaveLength(2);
@@ -275,17 +290,27 @@ it("counts repeated native action denials without exposing tool identifiers", as
   await h.open();
   await h.completed(await h.prompt("DENIAL_REPLAY"));
   await h.completed(await h.prompt("DENIAL_REPLAY"));
-  const notices = h.events.filter((event) => event.type === "session.notice");
+  const notices = h.events.filter(
+    (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+  );
   expect(notices).toHaveLength(1);
   expect(notices[0]).toMatchObject({
     notice: {
       title: "2 actions denied",
-      description: "Switch to Full access to allow shell commands.",
+      description: "Antigravity's own policy denied it.",
     },
   });
   await h.completed(await h.prompt("DENIAL_REPLAY"));
-  expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(2);
-  expect(h.events.findLast((event) => event.type === "session.notice")).toMatchObject({
+  expect(
+    h.events.filter(
+      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+    ),
+  ).toHaveLength(2);
+  expect(
+    h.events.findLast(
+      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+    ),
+  ).toMatchObject({
     notice: { title: "Shell command denied" },
   });
 });
@@ -377,25 +402,73 @@ it("stops an unresponsive driver and still respawns the conversation", async () 
   await h.completed(await h.prompt("HELLO"));
 });
 
-it.each(["accept-edits", "plan"])(
-  "launches native %s mode without claiming read-only access",
-  async (mode) => {
-    const h = await harness();
-    await h.open();
-    await h.request({
-      type: "session.configure",
-      requestId: "mode",
-      sessionId: "s",
-      changes: { mode },
-    });
-    await h.completed(await h.prompt("HELLO"));
-    const launches = (await h.records()).filter(
-      (entry) => entry.args && entry.args.includes("--input-format"),
-    );
-    expect(launches[1].args).toContain("--mode");
-    expect(launches[1].args[launches[1].args.indexOf("--mode") + 1]).toBe(mode);
-  },
-);
+it("rejects plan and keeps the full-access selection without respawning", async () => {
+  const h = await harness();
+  await h.open();
+  await h.request({
+    type: "session.configure",
+    requestId: "plan",
+    sessionId: "s",
+    changes: { mode: "plan" },
+  });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.failed",
+      requestId: "plan",
+      error: { code: "INVALID_MODE", message: "Unknown Antigravity mode: plan" },
+    }),
+  );
+  await h.request({
+    type: "session.configure",
+    requestId: "full",
+    sessionId: "s",
+    changes: { mode: "full-access" },
+  });
+  await h.completed(await h.prompt("HELLO"));
+  expect(
+    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
+  ).toHaveLength(1);
+});
+
+it("emits the full-access warning after opened and again on respawn or resume", async () => {
+  const h = await harness();
+  await h.open();
+  const warning = {
+    type: "session.notice",
+    sessionId: "s",
+    notice: {
+      id: "s:full-access",
+      severity: "warning",
+      title: "Antigravity is running with full access",
+      description:
+        "Antigravity's CLI cannot ask for permission when another app drives it, so Paseo starts it with --dangerously-skip-permissions. Every tool call, including shell commands, runs without asking.",
+    },
+  };
+  const opened = h.events.findIndex((event) => event.type === "session.opened");
+  expect(h.events[opened + 1]).toEqual(warning);
+  expect(h.events.slice(0, opened).some((event) => event.type === "session.notice")).toBe(false);
+  await h.completed(await h.prompt("HELLO"));
+  await h.request({
+    type: "session.configure",
+    requestId: "model",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  await h.completed(await h.prompt("HELLO"));
+  expect(h.events.filter((event) => event.type === "session.notice")).toEqual([warning, warning]);
+  const launches = (await h.records()).filter((entry) => entry.args?.includes("--input-format"));
+  expect(launches).toHaveLength(2);
+  for (const launch of launches) {
+    expect(launch.args).toContain("--dangerously-skip-permissions");
+    expect(launch.args).not.toContain("--mode");
+  }
+  const persistence = h.persistence();
+  await h.connection.close();
+  const resumed = await harness();
+  await resumed.open(persistence);
+  await resumed.completed(await resumed.prompt("RESUME"));
+  expect(resumed.events.filter((event) => event.type === "session.notice")).toEqual([warning]);
+});
 
 it("defers model and mode changes until the next prompt, then respawns with validated flags", async () => {
   const h = await harness();
@@ -414,10 +487,9 @@ it("defers model and mode changes until the next prompt, then respawns with vali
     (entry) => entry.args && entry.args.includes("--input-format"),
   );
   expect(launches).toHaveLength(2);
-  expect(launches[1].args.slice(-5)).toEqual([
+  expect(launches[1].args.slice(-4)).toEqual([
     "--model",
     "gemini-3.8-flash-low",
-    "--dangerously-skip-permissions",
     "--conversation",
     "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
   ]);
@@ -519,7 +591,7 @@ describe("discovery", () => {
     expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
   });
 
-  it("parses tab-separated catalog and exposes native permission choices without thinking options", async () => {
+  it("parses tab-separated catalog and exposes only full access without thinking options", async () => {
     const h = await harness();
     await h.request({ type: "catalog", requestId: "catalog" });
     const event = h.events[0];
@@ -530,35 +602,21 @@ describe("discovery", () => {
           { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
         ]),
         thinkingOptions: [],
-        defaultMode: "default",
+        defaultMode: "full-access",
       },
     });
     if (event.type !== "catalog") throw new Error("Missing catalog");
     expect(event.catalog.models).toHaveLength(11);
-    expect(event.catalog.modes.map((mode) => mode.label)).toEqual([
-      "Default",
-      "Accept edits",
-      "Plan",
-      "Full access",
-    ]);
-    expect(event.catalog.modes.map((mode) => mode.id)).toEqual([
-      "default",
-      "accept-edits",
-      "plan",
-      "full-access",
-    ]);
-    expect(
-      event.catalog.modes.map(({ id, icon, colorTier, isUnattended }) => ({
-        id,
-        icon,
-        colorTier,
-        isUnattended,
-      })),
-    ).toEqual([
-      { id: "default", icon: "Shield", colorTier: "moderate", isUnattended: undefined },
-      { id: "accept-edits", icon: "ShieldPlus", colorTier: "moderate", isUnattended: undefined },
-      { id: "plan", icon: "ShieldEllipsis", colorTier: "planning", isUnattended: undefined },
-      { id: "full-access", icon: "ShieldOff", colorTier: "dangerous", isUnattended: true },
+    expect(event.catalog.modes).toEqual([
+      {
+        id: "full-access",
+        label: "Full access",
+        icon: "ShieldOff",
+        colorTier: "dangerous",
+        isUnattended: true,
+        description:
+          "Antigravity cannot ask for permission when another app drives it. Paseo starts it with --dangerously-skip-permissions.",
+      },
     ]);
   });
   it("reports missing, old, unauthenticated and available launches", async () => {

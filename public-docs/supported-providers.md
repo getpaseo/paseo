@@ -26,9 +26,16 @@ Work out of the box once the underlying CLI is installed and authenticated.
 Install the Antigravity CLI (`agy`) on your daemon host, then run `agy` once to sign in. Pick
 **Antigravity** in Paseo. The provider ships with Paseo; no separate plugin install is required.
 
-**Default**, **Accept edits**, and **Plan** allow workspace edits and deny shell commands.
-**Full access** allows everything. Plan does not enforce read-only access. To run a denied shell
-command, choose Full access and send another prompt.
+**Full access** is the only permission mode. Antigravity cannot ask for permission when another
+app drives it, so Paseo starts `agy` with `--dangerously-skip-permissions`. Every tool call,
+including shell commands, runs without asking. Each session starts with a warning explaining
+this, including when you reopen a chat or change models. Antigravity's own policy can still deny
+an action.
+
+After a daemon restart, Antigravity remembers the conversation, but Paseo's transcript starts
+fresh because `agy` does not replay its history.
+
+This integration uses your installed CLI and sign-in. It is not endorsed by Google.
 
 Paseo MCP tools and steering are unavailable. Your own `agy` MCP servers still work. Attached
 images are passed as file references for the agent to read.

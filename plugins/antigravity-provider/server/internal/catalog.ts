@@ -10,34 +10,12 @@ import { AntigravityError } from "./wire.js";
 
 const modes: readonly ProviderMode[] = [
   {
-    id: "default",
-    icon: "Shield",
-    colorTier: "moderate",
-    label: "Default",
-    description: "Workspace reads and edits are allowed; shell commands are denied.",
-  },
-  {
-    id: "accept-edits",
-    icon: "ShieldPlus",
-    colorTier: "moderate",
-    label: "Accept edits",
-    description:
-      "Native accept-edits mode. Workspace edits are allowed; shell commands are denied.",
-  },
-  {
-    id: "plan",
-    icon: "ShieldEllipsis",
-    colorTier: "planning",
-    label: "Plan",
-    description:
-      "Native plan mode permits workspace edits. Shell commands are denied; this is not read-only.",
-  },
-  {
     id: "full-access",
     icon: "ShieldOff",
     colorTier: "dangerous",
     label: "Full access",
-    description: "Skip native permission checks, including for shell commands.",
+    description:
+      "Antigravity cannot ask for permission when another app drives it. Paseo starts it with --dangerously-skip-permissions.",
     isUnattended: true,
   },
 ];
@@ -53,7 +31,7 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
       throw new AntigravityError(`Duplicate Antigravity model: ${id}`, "INVALID_CATALOG");
     models.push({ id, label });
   }
-  return { models, modes, thinkingOptions: [], defaultMode: "default" };
+  return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
 }
 
 export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus> {
