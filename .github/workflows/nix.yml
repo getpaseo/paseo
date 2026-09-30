@@ -101,8 +101,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          app="result-desktop/Applications/Paseo.app"
-          test -x "$app/Contents/MacOS/Paseo"
+          app="result-desktop/Applications/PandaOS.app"
+          test -x "$app/Contents/MacOS/PandaOS"
           test -L result-desktop/bin/paseo-desktop
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "sh.paseo.desktop"
           find "$app" -name Info.plist -print0 | xargs -0 -n 1 plutil -lint
