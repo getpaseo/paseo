@@ -69,12 +69,17 @@ export async function verifySubagentFixture(
         type: "assistant_message" as const,
         text: message.content,
       };
-      expect(live).toContainEqual(
-        expect.objectContaining({ type: "timeline", item: assistantText }),
-      );
-      expect(replay).toContainEqual(
-        expect.objectContaining({ type: "timeline", item: assistantText }),
-      );
+      const expectedText = message.display === false ? [] : [assistantText];
+      for (const events of [live, replay]) {
+        const matchingText = events.flatMap((event) =>
+          event.type === "timeline" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === message.content
+            ? [event.item]
+            : [],
+        );
+        expect(matchingText).toEqual(expectedText);
+      }
     }
     const liveSubagents = live.filter((event) => event.type === "provider_subagent");
     const firstTimeline = liveSubagents.findIndex((event) => event.event.type === "timeline");

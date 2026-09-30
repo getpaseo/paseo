@@ -1058,6 +1058,45 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("hides custom-message prose during a turn without hiding visible or legacy output", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("Check visibility");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "custom", content: "hidden string context", display: false },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "hidden block context" }],
+        display: false,
+      },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "custom", content: "visible custom output", display: true },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "custom", content: "legacy custom output" },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      { type: "timeline", item: { type: "assistant_message", text: "visible custom output" } },
+      { type: "timeline", item: { type: "assistant_message", text: "legacy custom output" } },
+    ]);
+
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+    expect(events.turnCompletedEvents()).toHaveLength(1);
+    await session.close();
+  });
+
   test("settles an autonomous turn triggered by a Pi extension custom message", async () => {
     const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();

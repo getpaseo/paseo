@@ -140,6 +140,32 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("hides custom-message prose only when display is explicitly false", async () => {
+    await expect(
+      collectHistory([
+        { role: "custom", content: "hidden string context", display: false },
+        {
+          role: "custom",
+          content: [{ type: "text", text: "hidden block context" }],
+          display: false,
+        },
+        { role: "custom", content: "visible custom output", display: true },
+        { role: "custom", content: "legacy custom output" },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "visible custom output" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "legacy custom output" },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(
