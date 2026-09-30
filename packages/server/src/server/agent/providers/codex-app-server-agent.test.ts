@@ -1965,6 +1965,78 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("recovers a Codex thread after an unsupported image error while retaining the failed turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project", model: "text-only-model" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("Read this image and describe it");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "image-turn" });
+    emitCodexUserMessage(appServer, {
+      id: "image-request",
+      text: "Read this image and describe it",
+      turnId: "image-turn",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "thread-1",
+      item: { id: "image-view-1", type: "imageView", path: "/tmp/paseo-image.png" },
+    });
+    appServer.completeTurn({
+      status: "failed",
+      error: { message: "400 invalid_request_error: image input is not supported by this model" },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "turn_failed",
+      provider: "codex",
+      error: "400 invalid_request_error: image input is not supported by this model",
+    }));
+    expect(events.some((event) => event.type === "timeline" && event.item.type === "user_message")).toBe(true);
+
+    await session.startTurn("Please answer in text instead");
+    expect(appServer.requests().filter((request) => request.method === "thread/fork")).toMatchObject([
+      {
+        params: {
+          threadId: "thread-1",
+          beforeTurnId: "image-turn",
+          model: "text-only-model",
+        },
+      },
+    ]);
+    expect(appServer.requests().filter((request) => request.method === "turn/start").at(-1))
+      .toMatchObject({ params: { threadId: "forked-thread" } });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("keeps a failed non-image turn in the current Codex thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig(),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    await session.startTurn("first request");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "failed-turn" });
+    appServer.completeTurn({ status: "failed", error: { message: "400 invalid JSON schema" } });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await session.startTurn("second request");
+    expect(appServer.requests().filter((request) => request.method === "thread/fork")).toEqual([]);
+    expect(appServer.requests().filter((request) => request.method === "turn/start").at(-1))
+      .toMatchObject({ params: { threadId: "thread-1" } });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds a legacy conversation with a bounded fork on Codex without thread/rollback", async () => {
     const appServer = createFakeCodexAppServer({
       initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),

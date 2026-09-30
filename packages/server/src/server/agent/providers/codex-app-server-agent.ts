@@ -932,6 +932,11 @@ function isCodexAlreadyIdleInterrupt(error: unknown): boolean {
   );
 }
 
+function isUnsupportedImageTurnError(message: string): boolean {
+  return /(?:\b400\b|invalid_request_error|unsupported)/i.test(message) &&
+    /(?:image|vision|multimodal)/i.test(message);
+}
+
 // Codex app-server API response types
 interface CodexReasoningEffortEntry {
   reasoningEffort?: string;
@@ -3429,6 +3434,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
+  private failedImageTurn: { threadId: string; turnId: string; error: string } | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -4369,6 +4375,8 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.ensureThread();
       }
 
+      await this.recoverFailedImageTurn();
+
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
@@ -4410,6 +4418,40 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.pendingForegroundStart = null;
       }
       pendingStart.resolve();
+    }
+  }
+
+  private async recoverFailedImageTurn(): Promise<void> {
+    const failed = this.failedImageTurn;
+    if (!failed || !this.client || this.currentThreadId !== failed.threadId) return;
+
+    // A rejected image is retained in Codex's native thread. Fork before the
+    // failed turn so the next text prompt is not sent with that image again.
+    // Keep the failed turn and its original error in Paseo's timeline.
+    try {
+      const config = this.buildCodexInnerConfig();
+      const forked = await this.client.forkThread({
+        threadId: failed.threadId,
+        beforeTurnId: failed.turnId,
+        cwd: this.config.cwd ?? null,
+        model: this.config.model ?? null,
+        serviceTier: this.serviceTier,
+        ...(config ? { config } : {}),
+        excludeTurns: false,
+        persistExtendedHistory: true,
+      });
+      this.currentThreadId = forked.thread.id;
+      this.cachedRuntimeInfo = null;
+      this.persistedHistory = [];
+      this.historyPending = false;
+      this.failedImageTurn = null;
+      this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: forked.thread.id });
+      await this.loadPersistedHistory(this.client);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Codex image failure recovery failed: ${reason}. Original error: ${failed.error}`, {
+        cause: error,
+      });
     }
   }
 
@@ -6130,6 +6172,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.completePendingRootCompactions();
     if (parsed.status === "failed") {
+      if (
+        this.currentThreadId &&
+        this.currentTurnId &&
+        parsed.errorMessage &&
+        isUnsupportedImageTurnError(parsed.errorMessage)
+      ) {
+        this.failedImageTurn = {
+          threadId: this.currentThreadId,
+          turnId: this.currentTurnId,
+          error: parsed.errorMessage,
+        };
+      }
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
