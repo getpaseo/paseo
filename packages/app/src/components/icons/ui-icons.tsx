@@ -179,6 +179,7 @@ import { WrenchIcon as PhWrench } from "phosphor-react-native/src/icons/Wrench";
 import { XIcon as PhX } from "phosphor-react-native/src/icons/X";
 import { XCircleIcon as PhXCircle } from "phosphor-react-native/src/icons/XCircle";
 import { XSquareIcon as PhXSquare } from "phosphor-react-native/src/icons/XSquare";
+import { UsersThreeIcon as PhUsersThree } from "phosphor-react-native/src/icons/UsersThree";
 
 export interface UiIconProps {
   size?: number;
@@ -336,6 +337,7 @@ export const ListTodo = uiIcon(PhListChecks, "ListTodo");
 export const Maximize = uiIcon(PhArrowsOut, "Maximize");
 export const Maximize2 = uiIcon(PhArrowsOut, "Maximize2");
 export const MessageCircle = uiIcon(PhChatCircle, "MessageCircle");
+export const Users = uiIcon(PhUsersThree, "Users");
 export const MessageSquare = uiIcon(PhChatCenteredText, "MessageSquare");
 export const MessageSquareCode = uiIcon(PhCodeBlock, "MessageSquareCode");
 export const MessageSquarePlus = uiIcon(PhChatTeardropText, "MessageSquarePlus");

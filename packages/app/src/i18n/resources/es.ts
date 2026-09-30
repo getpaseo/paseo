@@ -1363,6 +1363,7 @@ export const es: TranslationResources = {
       sessions: "Historial",
       search: "Buscar",
       schedules: "Horarios",
+      teams: "Equipos",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",

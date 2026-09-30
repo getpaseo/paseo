@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { CalendarClock, History, Plus, Search } from "@/components/icons/ui-icons";
+import { CalendarClock, History, Plus, Search, Users } from "@/components/icons/ui-icons";
 import { memo, useCallback, useMemo, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
@@ -21,7 +21,9 @@ import {
   buildNewWorkspaceRoute,
   buildSchedulesRoute,
   buildSessionsRoute,
+  buildTeamsRoute,
 } from "@/utils/host-routes";
+import { useTeamHosts } from "@/teams/use-teams";
 
 interface SidebarNavRowProps {
   onBeforeNavigate?: () => void;
@@ -170,9 +172,34 @@ function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
   );
 }
 
+function SidebarTeamsRow({ onBeforeNavigate }: SidebarNavRowProps) {
+  const { t } = useTranslation();
+  const pathname = usePathname();
+  const hasTeamHost = useTeamHosts().length > 0;
+  const handlePress = useCallback(() => {
+    onBeforeNavigate?.();
+    router.push(buildTeamsRoute());
+  }, [onBeforeNavigate]);
+
+  // Only hosts that run the team runtime have teams to show.
+  if (!hasTeamHost) return null;
+
+  return (
+    <SidebarHeaderRow
+      icon={Users}
+      label={t(builtinSidebarNavLabelKey("teams"))}
+      onPress={handlePress}
+      isActive={pathname.includes("/teams")}
+      testID="sidebar-teams"
+      variant="compact"
+    />
+  );
+}
+
 const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps>> = {
   "new-workspace": SidebarNewWorkspaceRow,
   history: SidebarHistoryRow,
   search: SidebarSearchRow,
   schedules: SidebarSchedulesRow,
+  teams: SidebarTeamsRow,
 };
