@@ -97,6 +97,7 @@ import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reor
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
+import { useScrollSelectedRowIntoView } from "@/components/sidebar/use-scroll-selected-row-into-view";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
   SidebarWorkspaceContextMenu,
@@ -1122,18 +1123,7 @@ function WorkspaceRowInner({
     interaction.handlePressOut();
   }, [interaction]);
 
-  // The open workspace scrolls into view, so a long sidebar never hides where you are.
-  useEffect(() => {
-    if (!platformIsWeb || !selected) return undefined;
-    // On first load the sidebar keeps laying out after the row mounts; scroll once it settled.
-    const timer = setTimeout(() => {
-      const row = document.querySelector(
-        `[data-testid="sidebar-workspace-row-${window.CSS.escape(workspace.workspaceKey)}"]`,
-      );
-      row?.scrollIntoView({ block: "nearest" });
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [selected, workspace.workspaceKey]);
+  useScrollSelectedRowIntoView(selected, workspace.workspaceKey);
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 

@@ -1258,6 +1258,24 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "Abrir Leitstand",
+      toggle: "Alternar Leitstand",
+    },
+    inbox: {
+      more_one: "Mais {{count}} no Leitstand",
+      more_other: "Mais {{count}} no Leitstand",
+    },
+    workspaces: {
+      title: "Workspaces",
+    },
+    status: {
+      needsInput: "Precisa de resposta",
+      failed: "Com falha",
+      attention: "Pronto para revisar",
+      running: "Em andamento",
+      done: "Concluído",
+    },
     display: {
       trigger: "Preferências de exibição",
       heading: "Exibição",

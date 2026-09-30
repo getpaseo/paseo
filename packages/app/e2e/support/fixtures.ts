@@ -177,6 +177,14 @@ const test = daemonTest.extend<{
           localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon, ...extraHosts]));
           localStorage.removeItem("@paseo:settings");
           localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+          // The suite predates the status-first sidebar and walks project headers; a spec that
+          // switches grouping keeps its choice across reloads.
+          if (localStorage.getItem("sidebar-view") === null) {
+            localStorage.setItem(
+              "sidebar-view",
+              JSON.stringify({ state: { groupMode: "project" }, version: 7 }),
+            );
+          }
         },
         {
           daemon: testDaemon,

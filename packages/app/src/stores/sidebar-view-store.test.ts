@@ -231,11 +231,22 @@ describe("sidebar view store", () => {
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
-      groupMode: "project",
+      groupMode: "status",
       hostFilters: [],
       projectFilters: [],
       labelFilter: { labels: [] },
     });
+  });
+
+  it("moves the old project default to status when upgrading from before v7", () => {
+    expect(
+      migrateSidebarViewState({ groupMode: "project", hostFilters: ["host-a"] }, 6).groupMode,
+    ).toBe("status");
+    expect(migrateSidebarViewState({ groupMode: "status" }, 6).groupMode).toBe("status");
+  });
+
+  it("keeps project grouping chosen at v7 or later", () => {
+    expect(migrateSidebarViewState({ groupMode: "project" }, 7).groupMode).toBe("project");
   });
 
   it("falls back to the legacy storage key when the new key is empty", async () => {

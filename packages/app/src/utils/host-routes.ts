@@ -437,6 +437,11 @@ export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }
 
+/** The Leitstand lives at /open-project; the host-scoped path only redirects there. */
+export function isLeitstandPathname(pathname: string): boolean {
+  return pathname === "/open-project" || /^\/h\/[^/]+\/open-project\/?$/.test(pathname);
+}
+
 interface NewWorkspaceRouteOptions {
   serverId?: string;
   sourceDirectory?: string;

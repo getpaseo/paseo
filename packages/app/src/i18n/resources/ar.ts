@@ -1228,6 +1228,24 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "فتح Leitstand",
+      toggle: "إظهار/إخفاء Leitstand",
+    },
+    inbox: {
+      more_one: "{{count}} أخرى في Leitstand",
+      more_other: "{{count}} أخرى في Leitstand",
+    },
+    workspaces: {
+      title: "مساحات العمل",
+    },
+    status: {
+      needsInput: "بحاجة إلى رد",
+      failed: "فشل",
+      attention: "جاهز للمراجعة",
+      running: "قيد العمل",
+      done: "منتهٍ",
+    },
     display: {
       trigger: "تفضيلات العرض",
       heading: "العرض",

@@ -1220,6 +1220,24 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "打开 Leitstand",
+      toggle: "切换 Leitstand",
+    },
+    inbox: {
+      more_one: "Leitstand 中还有 {{count}} 项",
+      more_other: "Leitstand 中还有 {{count}} 项",
+    },
+    workspaces: {
+      title: "工作区",
+    },
+    status: {
+      needsInput: "需要输入",
+      failed: "失败",
+      attention: "待审阅",
+      running: "进行中",
+      done: "已完成",
+    },
     display: {
       trigger: "显示偏好",
       heading: "显示",

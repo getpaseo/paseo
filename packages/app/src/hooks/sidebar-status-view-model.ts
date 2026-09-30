@@ -13,6 +13,15 @@ export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   done: "Done",
 };
 
+/** Translation keys for the labels above; the sidebar renders these. */
+export const STATUS_BUCKET_LABEL_KEYS = {
+  needs_input: "sidebar.status.needsInput",
+  failed: "sidebar.status.failed",
+  attention: "sidebar.status.attention",
+  running: "sidebar.status.running",
+  done: "sidebar.status.done",
+} as const satisfies Record<StatusBucket, string>;
+
 export interface StatusGroup {
   bucket: StatusBucket;
   label: string;

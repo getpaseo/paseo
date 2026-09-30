@@ -1245,6 +1245,24 @@ export const en = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "Open Leitstand",
+      toggle: "Toggle Leitstand",
+    },
+    inbox: {
+      more_one: "{{count}} more on the Leitstand",
+      more_other: "{{count}} more on the Leitstand",
+    },
+    workspaces: {
+      title: "Workspaces",
+    },
+    status: {
+      needsInput: "Needs input",
+      failed: "Failed",
+      attention: "Ready to review",
+      running: "Working",
+      done: "Done",
+    },
     display: {
       trigger: "Display preferences",
       heading: "Display",

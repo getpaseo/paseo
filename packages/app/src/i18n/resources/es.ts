@@ -1268,6 +1268,24 @@ export const es: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "Abrir Leitstand",
+      toggle: "Mostrar/ocultar Leitstand",
+    },
+    inbox: {
+      more_one: "{{count}} más en el Leitstand",
+      more_other: "{{count}} más en el Leitstand",
+    },
+    workspaces: {
+      title: "Espacios de trabajo",
+    },
+    status: {
+      needsInput: "Requiere respuesta",
+      failed: "Con errores",
+      attention: "Listo para revisar",
+      running: "En curso",
+      done: "Terminado",
+    },
     display: {
       trigger: "Preferencias de visualización",
       heading: "Visualización",

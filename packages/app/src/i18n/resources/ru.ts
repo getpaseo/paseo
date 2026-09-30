@@ -1248,6 +1248,24 @@ export const ru: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "Открыть Leitstand",
+      toggle: "Показать/скрыть Leitstand",
+    },
+    inbox: {
+      more_one: "Ещё {{count}} в Leitstand",
+      more_other: "Ещё {{count}} в Leitstand",
+    },
+    workspaces: {
+      title: "Рабочие пространства",
+    },
+    status: {
+      needsInput: "Нужен ответ",
+      failed: "С ошибкой",
+      attention: "Готово к просмотру",
+      running: "В работе",
+      done: "Готово",
+    },
     display: {
       trigger: "Настройки отображения",
       heading: "Отображение",

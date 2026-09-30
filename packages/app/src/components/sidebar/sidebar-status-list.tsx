@@ -22,7 +22,8 @@ import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
+import { STATUS_BUCKET_LABEL_KEYS, type StatusBucket } from "@/hooks/sidebar-status-view-model";
+import { useScrollSelectedRowIntoView } from "@/components/sidebar/use-scroll-selected-row-into-view";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
@@ -410,6 +411,8 @@ function StatusGroupHeader({
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
 }) {
+  const { t } = useTranslation();
+  const label = t(STATUS_BUCKET_LABEL_KEYS[group.leading.bucket]);
   const [isHovered, setIsHovered] = useState(false);
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
@@ -433,7 +436,7 @@ function StatusGroupHeader({
     <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
       <Pressable
         accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={`${group.label} group`}
+        accessibilityLabel={`${label} group`}
         accessibilityState={accessibilityState}
         style={rowStyle}
         onPress={handlePress}
@@ -449,7 +452,13 @@ function StatusGroupHeader({
           </View>
           <View style={styles.statusGroupTitleGroup}>
             <Text style={styles.statusGroupTitle} numberOfLines={1}>
-              {group.label}
+              {label}
+            </Text>
+            <Text
+              style={styles.statusGroupCount}
+              testID={`sidebar-status-group-count-${group.key}`}
+            >
+              {group.rows.length}
             </Text>
           </View>
         </View>
@@ -808,6 +817,7 @@ function StatusWorkspaceRowInnerContent({
   const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  useScrollSelectedRowIntoView(selected, workspace.workspaceKey);
   const didLongPressRef = dragInteraction?.didLongPressRef;
   const startDragPress = dragInteraction?.handlePressIn;
   const moveDragPress = dragInteraction?.handleTouchMove;
@@ -1107,12 +1117,22 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  // Small tracked capitals: the group names a region of the Leiste, it is not a row to act on.
   statusGroupTitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-    fontWeight: "400",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
     minWidth: 0,
     flexShrink: 1,
+  },
+  statusGroupCount: {
+    color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    fontVariant: ["tabular-nums"],
+    flexShrink: 0,
   },
   workspaceRowContainer: {
     position: "relative",

@@ -10,6 +10,12 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const onInkColorMapping = (theme: Theme) => ({ color: theme.colors.surface0 });
+
+function iconColorMapping(isActive: boolean, isHovered: boolean) {
+  if (isActive) return onInkColorMapping;
+  return isHovered ? foregroundColorMapping : foregroundMutedColorMapping;
+}
 
 type SidebarHeaderRowVariant = "header" | "compact";
 
@@ -53,22 +59,20 @@ export function SidebarHeaderRow({
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.button,
       variant === "compact" && styles.buttonCompact,
-      (Boolean(hovered) || isActive) && styles.buttonHovered,
+      Boolean(hovered) && !isActive && styles.buttonHovered,
+      isActive && styles.buttonActive,
     ],
     [isActive, variant],
   );
 
   const renderChildren = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) => {
-      const isHighlighted = Boolean(state.hovered) || isActive;
+      const isHovered = Boolean(state.hovered);
       return (
         <>
-          <ThemedIcon
-            size={ICON_SIZE.sm}
-            uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
-          />
-          <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
-          {shortcutKeys && Boolean(state.hovered) ? (
+          <ThemedIcon size={ICON_SIZE.sm} uniProps={iconColorMapping(isActive, isHovered)} />
+          <SidebarHeaderRowLabel label={label} isHovered={isHovered} isActive={isActive} />
+          {shortcutKeys && isHovered && !isActive ? (
             <Shortcut chord={shortcutKeys} style={styles.shortcut} />
           ) : null}
         </>
@@ -96,14 +100,16 @@ export function SidebarHeaderRow({
 
 function SidebarHeaderRowLabel({
   label,
-  isHighlighted,
+  isHovered,
+  isActive,
 }: {
   label: string;
-  isHighlighted: boolean;
+  isHovered: boolean;
+  isActive: boolean;
 }) {
   const labelStyle = useMemo(
-    () => [styles.label, isHighlighted && styles.labelHighlighted],
-    [isHighlighted],
+    () => [styles.label, isHovered && styles.labelHighlighted, isActive && styles.labelActive],
+    [isHovered, isActive],
   );
   return <Text style={labelStyle}>{label}</Text>;
 }
@@ -148,6 +154,10 @@ const styles = StyleSheet.create((theme) => ({
   buttonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
+  // Where you are is filled with ink, as in the settings navigation.
+  buttonActive: {
+    backgroundColor: theme.colors.foreground,
+  },
   label: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
@@ -155,6 +165,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   labelHighlighted: {
     color: theme.colors.foreground,
+  },
+  labelActive: {
+    color: theme.colors.surface0,
   },
   shortcut: {
     marginLeft: "auto",

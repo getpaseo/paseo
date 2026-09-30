@@ -1245,6 +1245,24 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "Leitstand を開く",
+      toggle: "Leitstand の切り替え",
+    },
+    inbox: {
+      more_one: "Leitstand にあと {{count}} 件",
+      more_other: "Leitstand にあと {{count}} 件",
+    },
+    workspaces: {
+      title: "ワークスペース",
+    },
+    status: {
+      needsInput: "入力待ち",
+      failed: "失敗",
+      attention: "レビュー待ち",
+      running: "作業中",
+      done: "完了",
+    },
     display: {
       trigger: "表示設定",
       heading: "表示",

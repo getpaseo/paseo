@@ -23,7 +23,7 @@ import {
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
-import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { SidebarLeisteHeader } from "@/components/sidebar/sidebar-leiste";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -54,6 +54,9 @@ import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
+
+// The mobile close button floats over the head's right edge: its 32px target plus the rail inset.
+const MOBILE_CLOSE_BUTTON_INSET = 40;
 
 const DEV_BUILD_LABEL = process.env.EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL?.trim() || null;
 
@@ -555,7 +558,11 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
+        <SidebarLeisteHeader
+          style={styles.sidebarHeaderGroup}
+          onBeforeNavigate={closeSidebar}
+          trailingInset={MOBILE_CLOSE_BUTTON_INSET}
+        />
         <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
           <Pressable
             style={styles.mobileCloseButton}
@@ -751,7 +758,7 @@ function DesktopSidebar({
           ) : (
             <TitlebarDragRegion />
           )}
-          <SidebarNavRows style={sidebarHeaderGroupStyle} />
+          <SidebarLeisteHeader style={sidebarHeaderGroupStyle} />
         </View>
 
         {isInitialLoad && !hasActiveHostFilter ? (
@@ -801,9 +808,10 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
+  const { t } = useTranslation();
   return (
     <View style={styles.workspacesSectionHeader}>
-      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
+      <Text style={styles.workspacesSectionTitle}>{t("sidebar.workspaces.title")}</Text>
       <View style={styles.workspacesSectionActions}>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
@@ -812,7 +820,7 @@ function WorkspacesSectionHeader() {
             </View>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <IconTooltipContent label="Display preferences" />
+            <IconTooltipContent label={t("sidebar.display.trigger")} />
           </TooltipContent>
         </Tooltip>
       </View>
@@ -860,10 +868,13 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
   },
+  // Small tracked capitals, like every section head in the Leiste: it names a region.
   workspacesSectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
+    fontWeight: theme.fontWeight.medium,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   workspacesSectionActions: {
     flexDirection: "row",

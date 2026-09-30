@@ -1238,6 +1238,24 @@ export const ko: TranslationResources = {
     },
   },
   sidebar: {
+    leitstand: {
+      open: "Leitstand 열기",
+      toggle: "Leitstand 전환",
+    },
+    inbox: {
+      more_one: "Leitstand에 {{count}}개 더",
+      more_other: "Leitstand에 {{count}}개 더",
+    },
+    workspaces: {
+      title: "워크스페이스",
+    },
+    status: {
+      needsInput: "입력 필요",
+      failed: "실패",
+      attention: "검토 준비됨",
+      running: "작업 중",
+      done: "완료",
+    },
     display: {
       trigger: "표시 설정",
       heading: "표시",

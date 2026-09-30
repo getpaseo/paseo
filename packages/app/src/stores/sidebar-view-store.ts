@@ -9,7 +9,10 @@ export type SidebarGroupMode = "project" | "status";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 6;
+const SIDEBAR_VIEW_STORE_VERSION = 7;
+// The Leiste is status-first, like the Leitstand it shrinks from; the project view stays a choice.
+const DEFAULT_SIDEBAR_GROUP_MODE: SidebarGroupMode = "status";
+const STATUS_DEFAULT_VERSION = 7;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -118,11 +121,23 @@ function readHostFilters(persistedState: SidebarViewStorageState): string[] {
   return legacyHostFilter ? [legacyHostFilter] : [];
 }
 
-export function migrateSidebarViewState(persistedState: unknown): SidebarViewPersistedState {
+export function migrateSidebarViewState(
+  persistedState: unknown,
+  version: number = SIDEBAR_VIEW_STORE_VERSION,
+): SidebarViewPersistedState {
+  const migrated = migrateSidebarViewShape(persistedState);
+  // Before v7 "project" was the default rather than a choice, so it moves with the new default.
+  if (version < STATUS_DEFAULT_VERSION && migrated.groupMode === "project") {
+    return { ...migrated, groupMode: DEFAULT_SIDEBAR_GROUP_MODE };
+  }
+  return migrated;
+}
+
+function migrateSidebarViewShape(persistedState: unknown): SidebarViewPersistedState {
   const result = SidebarViewPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
     return {
-      groupMode: "project",
+      groupMode: DEFAULT_SIDEBAR_GROUP_MODE,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -178,7 +193,7 @@ export function createSidebarViewStorage(
 export const useSidebarViewStore = create<SidebarViewStoreState>()(
   persist(
     (set) => ({
-      groupMode: "project",
+      groupMode: DEFAULT_SIDEBAR_GROUP_MODE,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
