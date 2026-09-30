@@ -336,6 +336,23 @@ describe("paseo worktree manager", () => {
       expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(remoteTip);
     });
 
+    it("leaves remote.origin.fetch untouched when origin does not track the base branch", async () => {
+      const remoteTip = advanceOriginPastCachedRef();
+      const narrowRefspec = "+refs/heads/other:refs/remotes/origin/other";
+      git(["config", "remote.origin.fetch", narrowRefspec], repoDir);
+
+      const created = await createLegacyWorktreeForTest({
+        branchName: "from-narrow-clone",
+        cwd: repoDir,
+        baseBranch: "origin/main",
+        worktreeSlug: "from-narrow-clone",
+        paseoHome,
+      });
+
+      expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(remoteTip);
+      expect(git(["config", "--get-all", "remote.origin.fetch"], repoDir)).toBe(narrowRefspec);
+    });
+
     it("skips the fetch when the requested branch already exists locally", async () => {
       advanceOriginPastCachedRef();
       const cachedTip = git(["rev-parse", "refs/remotes/origin/main"], repoDir);

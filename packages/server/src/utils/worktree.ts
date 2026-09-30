@@ -1722,7 +1722,13 @@ async function refreshRemoteTrackingBaseRef(cwd: string, resolvedBaseRef: string
       return;
     }
     const headRef = resolvedBaseRef.slice(`refs/remotes/${remoteName}/`.length);
-    await tryFetchWorktreeTrackingRemote({ cwd, remoteName, headRef });
+    // Fetch only. The base is not a branch this worktree tracks, so no refspec is added to
+    // remote.<name>.fetch; one left behind breaks later fetches once the branch is deleted.
+    await runGitCommand(["fetch", remoteName, `+refs/heads/${headRef}:${resolvedBaseRef}`], {
+      cwd,
+      timeout: 120_000,
+      acceptExitCodes: [0, 1, 128],
+    });
   } catch {
     // Fetch timed out or the remote config could not be read; branch from the cached ref.
   }
