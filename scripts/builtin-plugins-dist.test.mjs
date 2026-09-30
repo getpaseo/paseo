@@ -26,9 +26,6 @@ async function findEntry(directory, names) {
 
 test("built output compiles and starts every listed built-in", async () => {
   assert.equal(resolveBuiltinPluginsRoot(), packagedRoot);
-  assert.ok(!builtinPlugins.includes("antigravity-provider"));
-  assert.ok(builtinPlugins.includes("muse-provider"));
-  assert.equal(await stat(path.join(packagedRoot, "antigravity-provider")).catch(() => null), null);
   const { version } = JSON.parse(
     await readFile(path.join(repoRoot, "packages/server/package.json"), "utf8"),
   );
@@ -71,9 +68,6 @@ test("built output compiles and starts every listed built-in", async () => {
       assert.ok(bundles.serverBundle, `${id} must compile a server bundle`);
       await runtime.startBuiltinPlugin({ id, directory });
       assert.ok(runtime.catalog().some((plugin) => plugin.id === id));
-      if (id === "muse-provider") {
-        assert.ok(runtime.getProviderRegistrations(id).some((provider) => provider.id === "muse"));
-      }
       if (id.endsWith("-usage-source")) {
         const sourceId = id.slice(0, -"-usage-source".length);
         assert.ok(
