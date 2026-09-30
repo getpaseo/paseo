@@ -3086,6 +3086,9 @@ export const ko: TranslationResources = {
         checksFailed: "체크 실패",
         mergeReady: "병합 준비됨",
         finished: "내 차례",
+        handoffQuestion: "질문",
+        handoffAction: "확인 필요",
+        handoffAborted: "중단됨",
       },
       reasons: {
         permission: "{{agent}}이(가) 권한을 요청합니다: {{request}}",

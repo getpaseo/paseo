@@ -3120,6 +3120,9 @@ export const ptBR: TranslationResources = {
         checksFailed: "Checks vermelhos",
         mergeReady: "Pronto para merge",
         finished: "Sua vez",
+        handoffQuestion: "Pergunta",
+        handoffAction: "Precisa de você",
+        handoffAborted: "Interrompido",
       },
       reasons: {
         permission: "{{agent}} pede permissão: {{request}}",

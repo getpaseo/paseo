@@ -3135,6 +3135,9 @@ export const ru: TranslationResources = {
         checksFailed: "Проверки красные",
         mergeReady: "Готов к слиянию",
         finished: "Ваш ход",
+        handoffQuestion: "Вопрос",
+        handoffAction: "Нужны вы",
+        handoffAborted: "Остановлен",
       },
       reasons: {
         permission: "{{agent}} просит разрешения: {{request}}",

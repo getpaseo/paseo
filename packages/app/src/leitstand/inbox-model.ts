@@ -1,3 +1,4 @@
+import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
 import {
   isSessionMarkedDone,
   type LeitstandPullRequest,
@@ -81,6 +82,10 @@ export interface FinishedInboxItem extends SessionInboxItemBase {
   kind: "finished";
   /** The agent that spoke last; its reply is the row's context and where a reply goes. */
   agentId: string | null;
+  /** The daemon's sorting of this handback (question, action, aborted, unsure), when current. */
+  handoffKind: string | null;
+  /** The agent's own sentence of what it needs, when the daemon picked one. */
+  need: string | null;
 }
 
 export interface ScheduleErrorInboxItem extends InboxItemBase {
@@ -120,15 +125,72 @@ function isHandedBackRecently(session: LeitstandSession, nowMs: number): boolean
   return nowMs - session.handedBackAt.getTime() <= WAITING_INBOX_WINDOW_MS;
 }
 
-function latestAgentId(session: LeitstandSession): string | null {
+// The daemon sorts a turn a moment after it ends; an older sorting belongs to an earlier turn.
+const HANDOFF_CLOCK_SLACK_MS = 2 * 60 * 1000;
+
+function latestAgent(
+  agents: readonly LeitstandSession["agents"][number][],
+): LeitstandSession["agents"][number] | null {
   let latest: LeitstandSession["agents"][number] | null = null;
-  for (const agent of session.agents) {
+  for (const agent of agents) {
     if (!latest || agent.lastActivityAt > latest.lastActivityAt) latest = agent;
   }
-  return latest?.id ?? null;
+  return latest;
 }
 
-function sessionItems(session: LeitstandSession, nowMs: number): SessionInboxItem[] {
+function latestAgentId(session: LeitstandSession): string | null {
+  return latestAgent(session.agents)?.id ?? null;
+}
+
+/** The handoff sorting that belongs to the turn the person sees now, if the daemon has one. */
+function currentHandoff(session: LeitstandSession): LeitstandSession["handoff"] {
+  const handoff = session.handoff;
+  const speaker = latestAgent(session.agents);
+  if (!handoff || !speaker || handoff.agentId !== speaker.id) return null;
+  return handoff.at.getTime() >= speaker.lastActivityAt.getTime() - HANDOFF_CLOCK_SLACK_MS
+    ? handoff
+    : null;
+}
+
+/** Paperclip workers and schedules talk to Boss or to nobody; only the rest waits on the person. */
+function withPersonFacingAgents(session: LeitstandSession): LeitstandSession | null {
+  const people = session.agents.filter((agent) => agent.personFacing);
+  if (session.agents.length > 0 && people.length === 0) return null;
+  if (people.length === session.agents.length) return session;
+  const speaker = latestAgent(people);
+  return {
+    ...session,
+    agents: people,
+    bucket:
+      STATUS_BUCKET_ORDER.find((bucket) => people.some((agent) => agent.bucket === bucket)) ??
+      session.bucket,
+    handedBackAt: speaker?.lastActivityAt ?? session.handedBackAt,
+  };
+}
+
+function finishedItem(
+  session: LeitstandSession,
+  base: Omit<FinishedInboxItem, "kind" | "id" | "agentId" | "handoffKind" | "need">,
+  nowMs: number,
+): FinishedInboxItem | null {
+  if (session.bucket !== "attention" && session.bucket !== "done") return null;
+  if (!isHandedBackRecently(session, nowMs)) return null;
+  const handoff = currentHandoff(session);
+  if (handoff?.kind === "report") return null;
+  return {
+    ...base,
+    since: session.handedBackAt,
+    kind: "finished",
+    id: `${session.key}|finished|${sinceKey(session.handedBackAt)}`,
+    agentId: latestAgentId(session),
+    handoffKind: handoff ? handoff.kind : null,
+    need: handoff ? handoff.need : null,
+  };
+}
+
+function sessionItems(input: LeitstandSession, nowMs: number): SessionInboxItem[] {
+  const session = withPersonFacingAgents(input);
+  if (!session) return [];
   const base = {
     serverId: session.serverId,
     sessionKey: session.key,
@@ -171,18 +233,8 @@ function sessionItems(session: LeitstandSession, nowMs: number): SessionInboxIte
     });
   }
 
-  if (
-    (session.bucket === "attention" || session.bucket === "done") &&
-    isHandedBackRecently(session, nowMs)
-  ) {
-    items.push({
-      ...base,
-      since: session.handedBackAt,
-      kind: "finished",
-      id: `${session.key}|finished|${sinceKey(session.handedBackAt)}`,
-      agentId: latestAgentId(session),
-    });
-  }
+  const finished = finishedItem(session, base, nowMs);
+  if (finished) items.push(finished);
 
   const open = session.pullRequests.filter(isOpen);
   const failing = open.filter((pr) => pr.checksStatus === "failure");

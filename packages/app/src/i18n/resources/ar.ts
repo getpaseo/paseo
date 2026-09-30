@@ -3058,6 +3058,9 @@ export const ar: TranslationResources = {
         checksFailed: "فحوصات حمراء",
         mergeReady: "جاهز للدمج",
         finished: "دورك",
+        handoffQuestion: "سؤال",
+        handoffAction: "يحتاجك",
+        handoffAborted: "توقف",
       },
       reasons: {
         permission: "{{agent}} يطلب إذنًا: {{request}}",

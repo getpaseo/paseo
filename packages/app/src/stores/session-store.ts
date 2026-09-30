@@ -119,6 +119,8 @@ export interface WorkspaceDescriptor {
   pinnedAt?: string | null;
   /** When the person marked the session done; null while it is open. */
   doneAt?: string | null;
+  /** What the last handed-back turn wants from the person, as the daemon sorted it. */
+  handoff?: WorkspaceDescriptorPayload["handoff"];
   /** The topic this workspace is a child of; null when it stands alone. */
   topic?: WorkspaceTopic | null;
   /** Config directory of this workspace's forge account, null for the machine default. */
@@ -165,6 +167,8 @@ export function normalizeWorkspaceDescriptor(
     pinnedAt: payload.pinnedAt ?? null,
     // COMPAT(workspaceDone): daemons before v0.9.3 omit it.
     doneAt: payload.doneAt ?? null,
+    // COMPAT(workspaceHandoff): daemons before v0.9.3 omit it.
+    handoff: payload.handoff ?? null,
     // COMPAT(workspaceTopics): daemons before v0.9.2 omit the topic.
     topic: payload.topic ?? null,
     forgeConfigDir: payload.forgeConfigDir ?? null,

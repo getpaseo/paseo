@@ -14,7 +14,7 @@ import { resolveProviderLabel } from "@/utils/provider-definitions";
 const WINDOW_DAYS = 7;
 const HISTORY_LIMIT = 2000;
 const REFRESH_MS = 60_000;
-const JEV_PURPOSES = ["browser", "shadow", "routing", "tool"] as const;
+const JEV_PURPOSES = ["browser", "shadow", "routing", "handoff", "tool"] as const;
 
 export interface ProviderTokenRow {
   provider: string;

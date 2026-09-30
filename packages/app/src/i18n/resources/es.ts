@@ -3150,6 +3150,9 @@ export const es: TranslationResources = {
         checksFailed: "Checks en rojo",
         mergeReady: "Listo para fusionar",
         finished: "Tu turno",
+        handoffQuestion: "Pregunta",
+        handoffAction: "Te necesita",
+        handoffAborted: "Detenido",
       },
       reasons: {
         permission: "{{agent}} pide permiso: {{request}}",

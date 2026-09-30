@@ -98,6 +98,7 @@ export function useLeitstandSessions(): LeitstandSessionsState {
           agents: agentsByServer.get(entry.serverId)?.get(entry.workspaceId) ?? [],
           topic: workspace?.topic ?? null,
           doneAt: workspace?.doneAt ?? null,
+          handoff: workspace?.handoff ?? null,
         }),
       );
     }

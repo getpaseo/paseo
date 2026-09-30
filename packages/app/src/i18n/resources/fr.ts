@@ -3138,6 +3138,9 @@ export const fr: TranslationResources = {
         checksFailed: "Checks en rouge",
         mergeReady: "Prête à fusionner",
         finished: "À toi",
+        handoffQuestion: "Question",
+        handoffAction: "Vous attend",
+        handoffAborted: "Interrompu",
       },
       reasons: {
         permission: "{{agent}} demande une autorisation : {{request}}",

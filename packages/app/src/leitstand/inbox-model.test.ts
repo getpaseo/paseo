@@ -27,6 +27,7 @@ function agent(overrides: Partial<LeitstandAgent> = {}): LeitstandAgent {
     pendingPermission: null,
     lastError: null,
     lastActivityAt: new Date(NOW - 60_000),
+    personFacing: true,
     ...overrides,
   };
 }
@@ -63,6 +64,7 @@ function session(overrides: Partial<LeitstandSession> = {}): LeitstandSession {
     jiraKeys: [],
     doneAt: null,
     handedBackAt: new Date(NOW - 60_000),
+    handoff: null,
     ...overrides,
   };
 }
@@ -256,6 +258,60 @@ describe("buildLeitstandInbox", () => {
       ],
     });
     expect(items).toEqual([expect.objectContaining({ kind: "finished", agentId: "dev" })]);
+  });
+
+  it("leaves out sessions whose agents talk to Boss or run on a timer", () => {
+    const worker = session({
+      bucket: "needs_input",
+      agents: [agent({ bucket: "needs_input", personFacing: false })],
+    });
+    expect(inbox({ sessions: [worker] }).items).toEqual([]);
+
+    const mixed = session({
+      bucket: "needs_input",
+      agents: [
+        agent({ id: "dev", bucket: "needs_input", personFacing: false }),
+        agent({ id: "boss", bucket: "attention", lastActivityAt: new Date(NOW - 30_000) }),
+      ],
+    });
+    expect(inbox({ sessions: [mixed] }).items).toEqual([
+      expect.objectContaining({ kind: "finished", agentId: "boss" }),
+    ]);
+  });
+
+  it("drops a handback the daemon sorted as a plain report and shows what a question needs", () => {
+    const handedBack = { bucket: "attention" as const, agents: [agent({ bucket: "attention" })] };
+    const report = session({
+      ...handedBack,
+      handoff: { agentId: "agent-1", kind: "report", need: null, at: new Date(NOW - 50_000) },
+    });
+    expect(inbox({ sessions: [report] }).items).toEqual([]);
+
+    const question = session({
+      ...handedBack,
+      handoff: {
+        agentId: "agent-1",
+        kind: "question",
+        need: "Soll ich die Datenbank auch löschen?",
+        at: new Date(NOW - 50_000),
+      },
+    });
+    expect(inbox({ sessions: [question] }).items).toEqual([
+      expect.objectContaining({
+        kind: "finished",
+        handoffKind: "question",
+        need: "Soll ich die Datenbank auch löschen?",
+      }),
+    ]);
+
+    // A sorting from an earlier turn says nothing about the current one.
+    const stale = session({
+      ...handedBack,
+      handoff: { agentId: "agent-1", kind: "report", need: null, at: new Date(NOW - 3_600_000) },
+    });
+    expect(inbox({ sessions: [stale] }).items).toEqual([
+      expect.objectContaining({ kind: "finished", handoffKind: null }),
+    ]);
   });
 
   it("keeps a handed-back session after it was looked at, until it is marked done", () => {

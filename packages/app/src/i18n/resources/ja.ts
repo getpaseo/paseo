@@ -3102,6 +3102,9 @@ export const ja: TranslationResources = {
         checksFailed: "チェック失敗",
         mergeReady: "マージ可能",
         finished: "あなたの番",
+        handoffQuestion: "質問",
+        handoffAction: "対応待ち",
+        handoffAborted: "中断",
       },
       reasons: {
         permission: "{{agent}} が許可を求めています: {{request}}",

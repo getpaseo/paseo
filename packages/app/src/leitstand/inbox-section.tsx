@@ -48,6 +48,20 @@ const KIND_LABEL_KEY = {
   finished: "leitstand.inbox.kinds.finished",
 } as const satisfies Record<InboxKind, string>;
 
+const HANDOFF_LABEL_KEY: Record<string, string> = {
+  question: "leitstand.inbox.kinds.handoffQuestion",
+  action: "leitstand.inbox.kinds.handoffAction",
+  aborted: "leitstand.inbox.kinds.handoffAborted",
+};
+
+/** A sorted handback names what it wants; an unsorted one stays "Your turn". */
+function kindLabelKey(item: InboxItem): string {
+  if (item.kind === "finished" && item.handoffKind) {
+    return HANDOFF_LABEL_KEY[item.handoffKind] ?? KIND_LABEL_KEY.finished;
+  }
+  return KIND_LABEL_KEY[item.kind];
+}
+
 const SNOOZE_LABEL_KEY = {
   hour: "leitstand.inbox.actions.snoozeHour",
   evening: "leitstand.inbox.actions.snoozeEvening",
@@ -157,17 +171,23 @@ function InboxRow({
           <Text style={styles.rowTitle} numberOfLines={1}>
             {item.title}
           </Text>
-          <Text style={[styles.kind, kindStyle(item.kind)]}>{t(KIND_LABEL_KEY[item.kind])}</Text>
+          <Text style={[styles.kind, kindStyle(item.kind)]}>{t(kindLabelKey(item))}</Text>
           <AgeText date={item.since} />
         </View>
         {hasAgentReply(item) ? (
           <>
-            <InboxReplyPreview
-              serverId={item.serverId}
-              agentId={item.agentId}
-              fallback={describeReason(item, t)}
-              style={styles.reason}
-            />
+            {item.kind === "finished" && item.need ? (
+              <Text style={styles.need} numberOfLines={2}>
+                {item.need}
+              </Text>
+            ) : (
+              <InboxReplyPreview
+                serverId={item.serverId}
+                agentId={item.agentId}
+                fallback={describeReason(item, t)}
+                style={styles.reason}
+              />
+            )}
             {item.agentId ? (
               <InboxReplyInput serverId={item.serverId} agentId={item.agentId} testID={testID} />
             ) : null}
@@ -519,6 +539,11 @@ const styles = StyleSheet.create((theme) => ({
   reason: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+  },
+  // What the agent needs reads first, so it carries the body colour rather than the muted one.
+  need: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foreground,
   },
   actions: {
     flexDirection: "row",

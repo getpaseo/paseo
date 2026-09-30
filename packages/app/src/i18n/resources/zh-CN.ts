@@ -3033,6 +3033,9 @@ export const zhCN: TranslationResources = {
         checksFailed: "检查未通过",
         mergeReady: "可以合并",
         finished: "轮到你",
+        handoffQuestion: "问题",
+        handoffAction: "需要你处理",
+        handoffAborted: "已中断",
       },
       reasons: {
         permission: "{{agent}} 请求权限：{{request}}",

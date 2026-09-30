@@ -324,6 +324,7 @@ describe("resolveScheduleProject", () => {
           title: null,
           provider: "codex",
           model: null,
+          personFacing: true,
           bucket: "done",
           lastActivityAt: T,
           pendingPermission: null,

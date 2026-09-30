@@ -1,3 +1,4 @@
+import { isPersonFacingOrigin, ORIGIN_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
@@ -29,6 +30,16 @@ export interface LeitstandAgent {
   lastError: string | null;
   /** When the agent last did anything; for an idle agent, when it handed the turn back. */
   lastActivityAt: Date;
+  /** False for Paperclip workers, schedules and watchers: they never wait on the person. */
+  personFacing: boolean;
+}
+
+/** The daemon's sorting of a handed-back turn: question, action, aborted, report or unsure. */
+export interface LeitstandHandoff {
+  agentId: string;
+  kind: string;
+  need: string | null;
+  at: Date;
 }
 
 /** One Leitstand session: today's workspace, with what the Leitstand shows about it. */
@@ -57,6 +68,7 @@ export interface LeitstandSession {
   doneAt: Date | null;
   /** When an agent of the session last handed back, null without agents. */
   handedBackAt: Date | null;
+  handoff: LeitstandHandoff | null;
 }
 
 export interface LeitstandSchedule {
@@ -110,6 +122,7 @@ function toLeitstandAgent(agent: Agent): LeitstandAgent {
       : null,
     lastError: agent.lastError ?? null,
     lastActivityAt: agent.lastActivityAt,
+    personFacing: isPersonFacingOrigin(agent.labels[ORIGIN_LABEL]),
   };
 }
 
@@ -174,12 +187,19 @@ function latest(dates: readonly Date[]): Date | null {
   return result;
 }
 
+function toHandoff(handoff: WorkspaceDescriptor["handoff"]): LeitstandHandoff | null {
+  if (!handoff) return null;
+  const at = new Date(handoff.at);
+  return Number.isFinite(at.getTime()) ? { ...handoff, at } : null;
+}
+
 export function buildLeitstandSession(input: {
   entry: SidebarWorkspaceEntry;
   githubRuntime: WorkspaceDescriptor["githubRuntime"];
   agents: readonly LeitstandAgent[];
   topic?: WorkspaceTopic | null;
   doneAt?: string | null;
+  handoff?: WorkspaceDescriptor["handoff"];
 }): LeitstandSession {
   const { entry } = input;
   const pullRequests = selectSessionPullRequests(entry, input.githubRuntime);
@@ -202,6 +222,7 @@ export function buildLeitstandSession(input: {
     attachedPullRequests: (entry.relatedPullRequests ?? []).filter((pr) => pr.origin === "manual"),
     doneAt: doneAt && Number.isFinite(doneAt.getTime()) ? doneAt : null,
     handedBackAt: latest(input.agents.map((agent) => agent.lastActivityAt)),
+    handoff: toHandoff(input.handoff),
     jiraKeys: extractJiraKeys([
       entry.name,
       entry.currentBranch,
