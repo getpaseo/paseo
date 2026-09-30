@@ -3052,6 +3052,7 @@ export const ko: TranslationResources = {
   },
   leitstand: {
     title: "대시보드",
+    leave: "세션",
     metrics: {
       running_one: "실행 중인 에이전트 {{count}}",
       running_other: "실행 중인 에이전트 {{count}}",
@@ -3060,7 +3061,7 @@ export const ko: TranslationResources = {
     },
     inbox: {
       title: "내가 필요한 일",
-      hint: "이유가 사라지면 자동으로 없어집니다",
+      hint: "답장하거나 완료로 표시할 때까지 남아 있습니다",
       snoozedCount_one: "{{count}}개 미룸",
       snoozedCount_other: "{{count}}개 미룸",
       empty: "지금은 필요한 일이 없습니다.",
@@ -3073,7 +3074,7 @@ export const ko: TranslationResources = {
         scheduleError: "실행 실패",
         checksFailed: "체크 실패",
         mergeReady: "병합 준비됨",
-        finished: "완료",
+        finished: "내 차례",
       },
       reasons: {
         permission: "{{agent}}이(가) 권한을 요청합니다: {{request}}",
@@ -3085,7 +3086,7 @@ export const ko: TranslationResources = {
         checksFailed_one: "PR #{{number}}의 체크가 실패했습니다",
         checksFailed_other: "PR {{count}}개의 체크가 실패했습니다 (첫 번째 #{{number}})",
         mergeReady: "PR #{{number}}이(가) 통과되어 병합할 수 있습니다",
-        finished: "완료, 아직 확인하지 않음",
+        finished: "에이전트가 차례를 넘기고 기다립니다",
       },
       actions: {
         review: "검토",
@@ -3107,12 +3108,16 @@ export const ko: TranslationResources = {
       topicSessions_other: "세션 {{count}}개",
       moreAgents: "+{{count}}",
       running: "실행 중",
+      waiting: "대기 중",
       planned: "예약됨",
       done: "완료",
+      markDone: "완료로 표시",
+      reopen: "다시 열기",
       allProjects: "전체",
       emptyRunning: "실행 중인 항목 없음",
       emptyPlanned: "예약된 항목 없음",
-      emptyDone: "완료된 항목 없음",
+      emptyWaiting: "기다리는 항목 없음",
+      emptyDone: "완료로 표시한 항목 없음",
       nextRun: "다음 {{when}}",
       unread: "새 항목",
       stack: "{{merged}}/{{total}} 병합됨",

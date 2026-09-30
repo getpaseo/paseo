@@ -3101,6 +3101,7 @@ export const ru: TranslationResources = {
   },
   leitstand: {
     title: "Панель",
+    leave: "Сессии",
     metrics: {
       running_one: "Работает агентов: {{count}}",
       running_other: "Работает агентов: {{count}}",
@@ -3109,7 +3110,7 @@ export const ru: TranslationResources = {
     },
     inbox: {
       title: "Нужны вы",
-      hint: "Исчезает сам, когда причина устранена",
+      hint: "Остаётся, пока вы не ответите или не отметите как готовое",
       snoozedCount_one: "Отложено: {{count}}",
       snoozedCount_other: "Отложено: {{count}}",
       empty: "Сейчас вы никому не нужны.",
@@ -3122,7 +3123,7 @@ export const ru: TranslationResources = {
         scheduleError: "Запуск не удался",
         checksFailed: "Проверки красные",
         mergeReady: "Готов к слиянию",
-        finished: "Готово",
+        finished: "Ваш ход",
       },
       reasons: {
         permission: "{{agent}} просит разрешения: {{request}}",
@@ -3134,7 +3135,7 @@ export const ru: TranslationResources = {
         checksFailed_one: "У PR #{{number}} падают проверки",
         checksFailed_other: "PR с падающими проверками: {{count}}, первый #{{number}}",
         mergeReady: "PR #{{number}} зелёный и готов к слиянию",
-        finished: "Готово, ещё не просмотрено",
+        finished: "Агент вернул ход и ждёт вас",
       },
       actions: {
         review: "Проверить",
@@ -3156,12 +3157,16 @@ export const ru: TranslationResources = {
       topicSessions_other: "Сессий: {{count}}",
       moreAgents: "+{{count}}",
       running: "Работает",
+      waiting: "Ждёт",
       planned: "Запланировано",
       done: "Готово",
+      markDone: "Готово",
+      reopen: "Открыть снова",
       allProjects: "Все",
       emptyRunning: "Ничего не работает",
       emptyPlanned: "Ничего не запланировано",
-      emptyDone: "Ничего не готово",
+      emptyWaiting: "Ничего не ждёт вас",
+      emptyDone: "Ничего не отмечено готовым",
       nextRun: "далее {{when}}",
       unread: "новое",
       stack: "слито {{merged}}/{{total}}",

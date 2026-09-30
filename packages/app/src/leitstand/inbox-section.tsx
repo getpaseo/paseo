@@ -26,10 +26,11 @@ import {
 } from "./inbox-model";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { LeitstandPanda } from "./leitstand-panda";
+import { MarkDoneButton } from "./mark-done-button";
 import { StatusGlyph, glyphForInboxKind } from "./status-glyph";
 import { AgeText, ProjectTag } from "./tags";
 import type { SnoozableInbox } from "./use-leitstand";
-import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
+import { MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 type TFunction = ReturnType<typeof useTranslation>["t"];
 type ButtonSize = "sm" | "md";
@@ -87,7 +88,7 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
   return (
     <View style={styles.inbox} testID="leitstand-inbox">
       <View style={styles.header}>
-        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.title}>
+        <Text style={styles.title} accessibilityRole="header">
           {t("leitstand.inbox.title")}
         </Text>
         <Text dataSet={MONO_FONT_DATASET} style={styles.count} testID="leitstand-inbox-count">
@@ -104,9 +105,7 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
         <View style={styles.empty} testID="leitstand-inbox-empty">
           <LeitstandPanda mood="sleep" size={64} />
           <View style={styles.emptyText}>
-            <Text dataSet={DISPLAY_FONT_DATASET} style={styles.emptyTitle}>
-              {t("leitstand.inbox.empty")}
-            </Text>
+            <Text style={styles.emptyTitle}>{t("leitstand.inbox.empty")}</Text>
             <Text style={styles.reason}>{t("leitstand.inbox.emptyHint")}</Text>
           </View>
         </View>
@@ -193,9 +192,20 @@ function InboxActions({
       );
     default:
       return (
-        <Button variant="secondary" size={size} onPress={openSession} testID={`${testID}-open`}>
-          {t(PRIMARY_ACTION_KEY[item.kind])}
-        </Button>
+        <>
+          <Button variant="secondary" size={size} onPress={openSession} testID={`${testID}-open`}>
+            {t(PRIMARY_ACTION_KEY[item.kind])}
+          </Button>
+          {item.kind === "question" || item.kind === "finished" ? (
+            <MarkDoneButton
+              serverId={item.serverId}
+              workspaceId={item.workspaceId}
+              done={false}
+              size={size}
+              testID={testID}
+            />
+          ) : null}
+        </>
       );
   }
 }
@@ -392,8 +402,8 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   title: {
-    fontFamily: theme.fontFamily.display,
-    fontSize: theme.fontSize["3xl"],
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },
   count: {
@@ -423,8 +433,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   emptyTitle: {
-    fontFamily: theme.fontFamily.display,
-    fontSize: theme.fontSize["2xl"],
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },
   row: {

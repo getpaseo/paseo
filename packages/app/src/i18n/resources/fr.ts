@@ -3104,6 +3104,7 @@ export const fr: TranslationResources = {
   paperclip: en.paperclip,
   leitstand: {
     title: "Tableau de bord",
+    leave: "Sessions",
     metrics: {
       running_one: "{{count}} agent actif",
       running_other: "{{count}} agents actifs",
@@ -3112,7 +3113,7 @@ export const fr: TranslationResources = {
     },
     inbox: {
       title: "Besoin de vous",
-      hint: "Disparaît dès que la raison n'existe plus",
+      hint: "Reste jusqu'à ta réponse ou jusqu'à ce que tu le marques terminé",
       snoozedCount_one: "{{count}} reporté",
       snoozedCount_other: "{{count}} reportés",
       empty: "Rien n'a besoin de vous pour l'instant.",
@@ -3125,7 +3126,7 @@ export const fr: TranslationResources = {
         scheduleError: "Exécution échouée",
         checksFailed: "Checks en rouge",
         mergeReady: "Prête à fusionner",
-        finished: "Terminé",
+        finished: "À toi",
       },
       reasons: {
         permission: "{{agent}} demande une autorisation : {{request}}",
@@ -3137,7 +3138,7 @@ export const fr: TranslationResources = {
         checksFailed_one: "La PR #{{number}} a des checks en échec",
         checksFailed_other: "{{count}} PR ont des checks en échec, à commencer par #{{number}}",
         mergeReady: "La PR #{{number}} est au vert et prête à fusionner",
-        finished: "Terminé, pas encore consulté",
+        finished: "L'agent t'a rendu la main et attend",
       },
       actions: {
         review: "Examiner",
@@ -3159,12 +3160,16 @@ export const fr: TranslationResources = {
       topicSessions_other: "{{count}} sessions",
       moreAgents: "+{{count}}",
       running: "En cours",
+      waiting: "En attente",
       planned: "Planifié",
       done: "Terminé",
+      markDone: "Marquer terminé",
+      reopen: "Rouvrir",
       allProjects: "Tous",
       emptyRunning: "Rien en cours",
       emptyPlanned: "Rien de planifié",
-      emptyDone: "Rien de terminé",
+      emptyWaiting: "Rien ne t'attend",
+      emptyDone: "Rien de marqué terminé",
       nextRun: "prochaine {{when}}",
       unread: "nouveau",
       stack: "{{merged}}/{{total}} fusionnées",

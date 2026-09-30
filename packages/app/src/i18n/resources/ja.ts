@@ -3068,6 +3068,7 @@ export const ja: TranslationResources = {
   },
   leitstand: {
     title: "ダッシュボード",
+    leave: "セッション",
     metrics: {
       running_one: "稼働中のエージェント {{count}}",
       running_other: "稼働中のエージェント {{count}}",
@@ -3076,7 +3077,7 @@ export const ja: TranslationResources = {
     },
     inbox: {
       title: "あなた待ち",
-      hint: "理由がなくなると自動で消えます",
+      hint: "返信するか完了にするまで残ります",
       snoozedCount_one: "{{count}} 件スヌーズ中",
       snoozedCount_other: "{{count}} 件スヌーズ中",
       empty: "今あなたを待っているものはありません。",
@@ -3089,7 +3090,7 @@ export const ja: TranslationResources = {
         scheduleError: "実行失敗",
         checksFailed: "チェック失敗",
         mergeReady: "マージ可能",
-        finished: "完了",
+        finished: "あなたの番",
       },
       reasons: {
         permission: "{{agent}} が許可を求めています: {{request}}",
@@ -3101,7 +3102,7 @@ export const ja: TranslationResources = {
         checksFailed_one: "PR #{{number}} のチェックが失敗しています",
         checksFailed_other: "{{count}} 件の PR でチェックが失敗しています（最初は #{{number}}）",
         mergeReady: "PR #{{number}} はグリーンでマージできます",
-        finished: "完了、まだ未確認",
+        finished: "エージェントがあなたの返答を待っています",
       },
       actions: {
         review: "確認",
@@ -3123,12 +3124,16 @@ export const ja: TranslationResources = {
       topicSessions_other: "{{count}} 件のセッション",
       moreAgents: "+{{count}}",
       running: "実行中",
+      waiting: "待機中",
       planned: "予定",
       done: "完了",
+      markDone: "完了にする",
+      reopen: "再開",
       allProjects: "すべて",
       emptyRunning: "実行中のものはありません",
       emptyPlanned: "予定はありません",
-      emptyDone: "完了したものはありません",
+      emptyWaiting: "あなたを待つものはありません",
+      emptyDone: "完了にしたものはありません",
       nextRun: "次回 {{when}}",
       unread: "新着",
       stack: "{{merged}}/{{total}} マージ済み",

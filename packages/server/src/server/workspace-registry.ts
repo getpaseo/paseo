@@ -110,6 +110,12 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // COMPAT(workspaceDone): added in v0.9.3, remove optional parsing after 2027-04-01.
+  doneAt: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   labels: z.array(z.string()).optional(),
   // COMPAT(workspaceTopics): added in v0.9.2, remove optional parsing after 2027-04-01.
   // The topic is stored whole on every child rather than in a catalog: it exists only while a

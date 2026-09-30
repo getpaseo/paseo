@@ -1,9 +1,15 @@
-import type { LeitstandPullRequest, LeitstandSchedule, LeitstandSession } from "./session-model";
+import {
+  isSessionMarkedDone,
+  type LeitstandPullRequest,
+  type LeitstandSchedule,
+  type LeitstandSession,
+} from "./session-model";
 
 /**
  * Why something needs you, most urgent kind first. The inbox is derived from live session,
  * change-request and schedule data on every render; nothing here is stored, so an item leaves
- * the moment its reason does.
+ * the moment its reason does. Looking at a session is never a reason to leave: a question or a
+ * handed-back turn stays until the person replies or marks the session done.
  */
 export type InboxKind =
   | "permission"
@@ -69,6 +75,7 @@ export interface MergeReadyInboxItem extends SessionInboxItemBase {
   pullRequest: LeitstandPullRequest;
 }
 
+/** An agent handed the turn back and nobody replied or marked the session done. */
 export interface FinishedInboxItem extends SessionInboxItemBase {
   kind: "finished";
 }
@@ -99,7 +106,18 @@ function isOpen(pr: LeitstandPullRequest): boolean {
   return pr.state === "open";
 }
 
-function sessionItems(session: LeitstandSession): SessionInboxItem[] {
+// ponytail: sessions handed back longer ago than this stay on the board's "waiting" column but
+// leave the inbox, so years of untouched workspaces do not bury today's; a per-session
+// "seen" marker on the daemon would replace the window if that ever reads wrong.
+export const WAITING_INBOX_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+function isHandedBackRecently(session: LeitstandSession, nowMs: number): boolean {
+  if (session.agents.length === 0 || !session.handedBackAt) return false;
+  if (isSessionMarkedDone(session)) return false;
+  return nowMs - session.handedBackAt.getTime() <= WAITING_INBOX_WINDOW_MS;
+}
+
+function sessionItems(session: LeitstandSession, nowMs: number): SessionInboxItem[] {
   const base = {
     serverId: session.serverId,
     sessionKey: session.key,
@@ -121,7 +139,7 @@ function sessionItems(session: LeitstandSession): SessionInboxItem[] {
         agentLabel: asking.title ?? asking.provider,
         request: asking.pendingPermission.title,
       });
-    } else {
+    } else if (!isSessionMarkedDone(session)) {
       items.push({
         ...base,
         kind: "question",
@@ -141,11 +159,15 @@ function sessionItems(session: LeitstandSession): SessionInboxItem[] {
     });
   }
 
-  if (session.bucket === "attention") {
+  if (
+    (session.bucket === "attention" || session.bucket === "done") &&
+    isHandedBackRecently(session, nowMs)
+  ) {
     items.push({
       ...base,
+      since: session.handedBackAt,
       kind: "finished",
-      id: `${session.key}|finished|${sinceKey(base.since)}`,
+      id: `${session.key}|finished|${sinceKey(session.handedBackAt)}`,
     });
   }
 
@@ -218,7 +240,7 @@ export function buildLeitstandInbox(input: {
   snoozedUntil: Readonly<Record<string, number>>;
   nowMs: number;
 }): LeitstandInbox {
-  const all: InboxItem[] = input.sessions.flatMap(sessionItems);
+  const all: InboxItem[] = input.sessions.flatMap((session) => sessionItems(session, input.nowMs));
   for (const schedule of input.schedules) {
     const item = scheduleItem(schedule);
     if (item) all.push(item);

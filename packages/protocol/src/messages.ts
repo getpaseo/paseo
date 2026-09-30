@@ -1081,6 +1081,15 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// COMPAT(workspaceDone): added in v0.9.3. Gate on server_info.features.workspaceDone.
+// Only the person closes a session: finishing a turn hands it back, it never marks it done.
+export const WorkspaceDoneSetRequestSchema = z.object({
+  type: z.literal("workspace.done.set.request"),
+  workspaceId: z.string(),
+  done: z.boolean(),
+  requestId: z.string(),
+});
+
 // COMPAT(workspaceTopics): added in v0.9.2. Gate on server_info.features.workspaceTopics.
 // A topic groups workspaces that started apart but belong to one piece of work. It exists
 // only through the workspaces that carry it, so there is no delete verb: detaching the last
@@ -2341,6 +2350,17 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const WorkspaceDoneSetResponseSchema = z.object({
+  type: z.literal("workspace.done.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    doneAt: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceTopicCreateResponseSchema = z.object({
   type: z.literal("workspace.topic.create.response"),
   payload: z.object({
@@ -3547,6 +3567,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceDoneSetRequestSchema,
   WorkspaceTopicCreateRequestSchema,
   WorkspaceTopicAssignRequestSchema,
   WorkspaceTopicUpdateRequestSchema,
@@ -4049,6 +4070,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceTopics: z.boolean().optional(),
         // COMPAT(systemOneUsage): added in v0.9.2, gates the browser-goal switch and Jev usage.
         systemOneUsage: z.boolean().optional(),
+        // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
+        workspaceDone: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(workspaceForgeAccount): added in v0.8.1, remove gate after 2027-06-30.
@@ -4434,6 +4457,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     pinnedAt: z.string().nullable().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
+    // COMPAT(workspaceDone): added in v0.9.3, remove optional after 2027-04-01.
+    // When the person marked the session done. A session that works again after it is open again.
+    doneAt: z.string().nullable().optional(),
     // COMPAT(workspaceTopics): added in v0.9.2, remove optional after 2027-04-01.
     // The topic this workspace belongs to. Carried in full on every child so a rename
     // reaches clients on the workspace channel they already observe.
@@ -7338,6 +7364,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceDoneSetResponseSchema,
   WorkspaceTopicCreateResponseSchema,
   WorkspaceTopicAssignResponseSchema,
   WorkspaceTopicUpdateResponseSchema,
@@ -7725,6 +7752,8 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceDoneSetRequest = z.infer<typeof WorkspaceDoneSetRequestSchema>;
+export type WorkspaceDoneSetResponse = z.infer<typeof WorkspaceDoneSetResponseSchema>;
 export type WorkspaceTopic = z.infer<typeof WorkspaceTopicSchema>;
 export type WorkspaceTopicCreateRequest = z.infer<typeof WorkspaceTopicCreateRequestSchema>;
 export type WorkspaceTopicAssignRequest = z.infer<typeof WorkspaceTopicAssignRequestSchema>;

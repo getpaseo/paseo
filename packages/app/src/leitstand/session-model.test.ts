@@ -235,10 +235,24 @@ describe("buildLeitstandBoard", () => {
     projectName: "app",
   });
 
-  it("splits sessions into running and done, newest first, and plans active schedules by next run", () => {
+  it("splits sessions into running, waiting and done, newest first, and plans schedules by next run", () => {
     const board = buildLeitstandBoard({
       sessions: [
         leitstandSession({ key: "a", bucket: "done", since: new Date("2026-09-29T00:00:00Z") }),
+        leitstandSession({
+          key: "closed",
+          bucket: "done",
+          since: new Date("2026-09-29T01:00:00Z"),
+          handedBackAt: new Date("2026-09-29T01:00:00Z"),
+          doneAt: new Date("2026-09-29T02:00:00Z"),
+        }),
+        leitstandSession({
+          key: "reopened",
+          bucket: "done",
+          since: new Date("2026-09-29T03:00:00Z"),
+          handedBackAt: new Date("2026-09-29T03:00:00Z"),
+          doneAt: new Date("2026-09-29T02:00:00Z"),
+        }),
         leitstandSession({
           key: "b",
           bucket: "needs_input",
@@ -260,8 +274,9 @@ describe("buildLeitstandBoard", () => {
       ],
       projectViewKey: null,
     });
-    expect(board.running.map((s) => s.key)).toEqual(["c", "b", "e"]);
-    expect(board.done.map((s) => s.key)).toEqual(["d", "a"]);
+    expect(board.running.map((s) => s.key)).toEqual(["c"]);
+    expect(board.waiting.map((s) => s.key)).toEqual(["b", "d", "reopened", "a", "e"]);
+    expect(board.done.map((s) => s.key)).toEqual(["closed"]);
     expect(board.planned.map((s) => s.schedule.id)).toEqual(["soon", "late"]);
   });
 
@@ -310,6 +325,7 @@ describe("resolveScheduleProject", () => {
           provider: "codex",
           model: null,
           bucket: "done",
+          lastActivityAt: T,
           pendingPermission: null,
           lastError: null,
         },
@@ -373,6 +389,7 @@ describe("arrangeBoardColumns", () => {
       key: "x",
       bucket: "done",
       since: new Date("2026-09-30T08:00:00Z"),
+      doneAt: new Date("2026-09-30T08:00:00Z"),
     });
     const columns = arrangeBoardColumns(
       buildLeitstandBoard({
@@ -381,8 +398,9 @@ describe("arrangeBoardColumns", () => {
         projectViewKey: null,
       }),
     );
-    expect(columns.running).toHaveLength(1);
-    const [card] = columns.running;
+    expect(columns.running).toHaveLength(0);
+    expect(columns.waiting).toHaveLength(1);
+    const [card] = columns.waiting;
     expect(card?.kind).toBe("topic");
     if (card?.kind !== "topic") return;
     expect(card.bucket).toBe("needs_input");

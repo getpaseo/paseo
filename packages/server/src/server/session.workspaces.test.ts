@@ -8290,6 +8290,71 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
   });
 });
 
+test("workspace.done.set.request marks a session done, reopens it, and emits the descriptor", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+  await session.handleMessage({
+    type: "fetch_workspaces_request",
+    requestId: "sub-workspaces",
+    subscribe: { subscriptionId: "sub-workspaces" },
+  });
+
+  await session.handleMessage({
+    type: "workspace.done.set.request",
+    workspaceId: "ws-1",
+    done: true,
+    requestId: "req-done-1",
+  });
+  const marked = findByType(emitted, "workspace.done.set.response");
+  expect(marked?.payload).toMatchObject({ requestId: "req-done-1", accepted: true, error: null });
+  expect(marked?.payload.doneAt).toEqual(expect.any(String));
+  expect(workspaces.get("ws-1")?.doneAt).toBe(marked?.payload.doneAt);
+  expect(findByType(emitted, "workspace_update")?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: { id: "ws-1", doneAt: marked?.payload.doneAt },
+  });
+
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "workspace.done.set.request",
+    workspaceId: "ws-1",
+    done: false,
+    requestId: "req-done-2",
+  });
+  expect(findByType(emitted, "workspace.done.set.response")?.payload.doneAt).toBeNull();
+  expect(workspaces.get("ws-1")?.doneAt).toBeNull();
+});
+
 test("workspace.topic RPCs combine, rename and split sessions and publish descriptors live", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "session-topics-"));
   try {

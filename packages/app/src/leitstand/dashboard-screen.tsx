@@ -2,12 +2,11 @@ import { Redirect } from "expo-router";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { MenuHeader } from "@/components/headers/menu-header";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useHostRuntimeConnectionStatuses, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
-import { LeitstandScreen } from "./leitstand-screen";
+import { DashboardHeader, LeitstandScreen } from "./leitstand-screen";
 import { useLeitstandSessions } from "./use-leitstand";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -28,13 +27,15 @@ export function DashboardScreen() {
   if (!state.hasProjects && !isSettling) return <Redirect href={buildOpenProjectRoute()} />;
   return (
     <View style={styles.container}>
-      <MenuHeader borderless />
       {state.hasProjects ? (
         <LeitstandScreen state={state} />
       ) : (
-        <View style={styles.loading}>
-          <ThemedLoadingSpinner size="large" uniProps={spinnerColor} />
-        </View>
+        <>
+          <DashboardHeader mood={null} />
+          <View style={styles.loading}>
+            <ThemedLoadingSpinner size="large" uniProps={spinnerColor} />
+          </View>
+        </>
       )}
     </View>
   );

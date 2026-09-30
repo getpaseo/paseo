@@ -21,23 +21,26 @@ import {
   type LeitstandSession,
 } from "./session-model";
 import { StatusGlyph, glyphForBucket } from "./status-glyph";
+import { MarkDoneButton } from "./mark-done-button";
 import { AgeText, JiraTags, ProjectTag, StackBar } from "./tags";
 import type { LeitstandProject } from "./use-leitstand";
-import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
+import { MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 const COLUMN_LABEL_KEY = {
   running: "leitstand.board.running",
+  waiting: "leitstand.board.waiting",
   planned: "leitstand.board.planned",
   done: "leitstand.board.done",
 } as const satisfies Record<BoardColumnId, string>;
 
 const COLUMN_EMPTY_KEY = {
   running: "leitstand.board.emptyRunning",
+  waiting: "leitstand.board.emptyWaiting",
   planned: "leitstand.board.emptyPlanned",
   done: "leitstand.board.emptyDone",
 } as const satisfies Record<BoardColumnId, string>;
 
-const COLUMNS: readonly BoardColumnId[] = ["running", "planned", "done"];
+const COLUMNS: readonly BoardColumnId[] = ["running", "waiting", "planned", "done"];
 
 export function BoardSection({
   sessions,
@@ -145,7 +148,7 @@ function ColumnCards({
   if (entries.length === 0) return empty;
   return entries.map((entry) =>
     entry.kind === "session" ? (
-      <SessionCard key={entry.session.key} session={entry.session} />
+      <SessionCard key={entry.session.key} session={entry.session} column={column} />
     ) : (
       <TopicCard key={entry.key} entry={entry} />
     ),
@@ -194,10 +197,10 @@ function TopicCard({ entry }: { entry: Extract<LeitstandBoardEntry, { kind: "top
     <View style={styles.card} testID={testID}>
       <View style={styles.cardHead}>
         {first ? <ProjectTag name={first.projectName} /> : null}
-        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.cardTitle} numberOfLines={2}>
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {entry.topic.title}
         </Text>
-        <StatusGlyph name={glyphForBucket(entry.bucket)} size={14} />
+        <StatusGlyph name={glyphForBucket(entry.bucket)} size={16} />
       </View>
       <Pressable onPress={toggle} accessibilityRole="button" testID={`${testID}-toggle`}>
         <Text style={styles.context}>
@@ -227,7 +230,7 @@ function TopicChildRow({ session }: { session: LeitstandSession }) {
       accessibilityRole="button"
       testID={`leitstand-card-${session.key}`}
     >
-      <StatusGlyph name={glyphForBucket(session.bucket)} size={12} />
+      <StatusGlyph name={glyphForBucket(session.bucket)} size={8} />
       <Text style={styles.topicChildName} numberOfLines={1}>
         {session.name}
       </Text>
@@ -240,7 +243,13 @@ function TopicChildRow({ session }: { session: LeitstandSession }) {
 // The card is a glance, not the agent list; the session itself has every tab.
 const MAX_AGENT_CHIPS = 3;
 
-function SessionCard({ session }: { session: LeitstandSession }) {
+function SessionCard({
+  session,
+  column,
+}: {
+  session: LeitstandSession;
+  column: Exclude<BoardColumnId, "planned">;
+}) {
   const { t } = useTranslation();
   const open = useCallback(() => {
     navigateToWorkspace({ serverId: session.serverId, workspaceId: session.workspaceId });
@@ -254,7 +263,7 @@ function SessionCard({ session }: { session: LeitstandSession }) {
     <Pressable onPress={open} style={cardStyle} accessibilityRole="button" testID={testID}>
       <View style={styles.cardHead}>
         <ProjectTag name={session.projectName} />
-        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.cardTitle} numberOfLines={2}>
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {session.name}
         </Text>
         {session.bucket === "attention" ? (
@@ -262,7 +271,7 @@ function SessionCard({ session }: { session: LeitstandSession }) {
             {t("leitstand.board.unread")}
           </Text>
         ) : null}
-        <StatusGlyph name={glyphForBucket(session.bucket)} size={14} />
+        <StatusGlyph name={glyphForBucket(session.bucket)} size={16} />
       </View>
       {session.context ? (
         <Text style={styles.context} numberOfLines={1}>
@@ -282,6 +291,15 @@ function SessionCard({ session }: { session: LeitstandSession }) {
           <ExternalLink href={linkedPr.url} label={`#${linkedPr.number}`} testID={`${testID}-pr`} />
         ) : null}
         <AgeText date={session.since} />
+        {column === "running" ? null : (
+          <MarkDoneButton
+            serverId={session.serverId}
+            workspaceId={session.workspaceId}
+            done={column === "done"}
+            size="xs"
+            testID={testID}
+          />
+        )}
       </View>
       {session.jiraKeys.length > 0 ? (
         <View style={styles.jira}>
@@ -307,7 +325,7 @@ function SessionCard({ session }: { session: LeitstandSession }) {
 function AgentChip({ agent }: { agent: LeitstandAgent }) {
   return (
     <View style={styles.agentChip}>
-      <StatusGlyph name={glyphForBucket(agent.bucket)} size={10} />
+      <StatusGlyph name={glyphForBucket(agent.bucket)} size={8} />
       <Text style={styles.agentLabel} numberOfLines={1}>
         {agent.title ?? agent.provider}
       </Text>
@@ -334,10 +352,10 @@ function ScheduleCard({ entry }: { entry: LeitstandSchedule }) {
     >
       <View style={styles.cardHead}>
         {entry.projectName ? <ProjectTag name={entry.projectName} /> : null}
-        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.cardTitle} numberOfLines={2}>
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {resolveScheduleTitle(schedule)}
         </Text>
-        <StatusGlyph name="plan" size={14} />
+        <StatusGlyph name="plan" size={16} />
       </View>
       <View style={styles.meta}>
         <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
@@ -417,8 +435,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   cardTitle: {
     flex: 1,
-    fontFamily: theme.fontFamily.display,
-    fontSize: theme.fontSize["2xl"],
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },
   context: {

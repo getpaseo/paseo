@@ -3187,6 +3187,8 @@ export class Session {
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
         return this.handleWorkspaceMarkUnreadRequest(msg);
+      case "workspace.done.set.request":
+        return this.handleWorkspaceDoneSetRequest(msg.workspaceId, msg.done, msg.requestId);
       default:
         return undefined;
     }
@@ -4186,6 +4188,40 @@ export class Session {
           error: getErrorMessageOr(error, "Failed to set workspace title"),
         },
       });
+    }
+  }
+
+  private async handleWorkspaceDoneSetRequest(
+    workspaceId: string,
+    done: boolean,
+    requestId: string,
+  ): Promise<void> {
+    const emitResponse = (accepted: boolean, doneAt: string | null, error: string | null) => {
+      this.emit({
+        type: "workspace.done.set.response",
+        payload: { requestId, workspaceId, accepted, doneAt, error },
+      });
+    };
+    try {
+      const now = new Date().toISOString();
+      const doneAt = done ? now : null;
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        doneAt,
+        updatedAt: now,
+      }));
+      if (!updated) {
+        emitResponse(false, null, "Workspace not found");
+        return;
+      }
+      emitResponse(true, doneAt, null);
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.sessionLogger.error(
+        { workspaceId, done, requestId, err: error },
+        "session: workspace.done.set.request error",
+      );
+      emitResponse(false, null, getErrorMessageOr(error, "Failed to mark workspace done"));
     }
   }
 
@@ -6260,6 +6296,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      doneAt: workspace.doneAt,
       topic: workspace.topic ?? null,
       forgeConfigDir: workspace.forgeConfigDir,
       pullRequestCuration: workspace.pullRequestCuration,
@@ -6371,6 +6408,7 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      doneAt: result.workspace.doneAt,
       forgeConfigDir: result.workspace.forgeConfigDir,
       pullRequestCuration: result.workspace.pullRequestCuration,
       ...(result.workspace.labels && result.workspace.labels.length > 0

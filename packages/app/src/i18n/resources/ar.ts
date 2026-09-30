@@ -3025,6 +3025,7 @@ export const ar: TranslationResources = {
   paperclip: en.paperclip,
   leitstand: {
     title: "لوحة التحكم",
+    leave: "الجلسات",
     metrics: {
       running_one: "الوكلاء العاملون: {{count}}",
       running_other: "الوكلاء العاملون: {{count}}",
@@ -3033,7 +3034,7 @@ export const ar: TranslationResources = {
     },
     inbox: {
       title: "بحاجة إليك",
-      hint: "يختفي تلقائيًا عند زوال السبب",
+      hint: "يبقى حتى ترد أو تضع علامة منتهٍ",
       snoozedCount_one: "مؤجل: {{count}}",
       snoozedCount_other: "مؤجل: {{count}}",
       empty: "لا شيء بحاجة إليك الآن.",
@@ -3045,7 +3046,7 @@ export const ar: TranslationResources = {
         scheduleError: "فشل التشغيل",
         checksFailed: "فحوصات حمراء",
         mergeReady: "جاهز للدمج",
-        finished: "انتهى",
+        finished: "دورك",
       },
       reasons: {
         permission: "{{agent}} يطلب إذنًا: {{request}}",
@@ -3057,7 +3058,7 @@ export const ar: TranslationResources = {
         checksFailed_one: "فحوصات PR #{{number}} فاشلة",
         checksFailed_other: "طلبات PR بفحوصات فاشلة: {{count}}، أولها #{{number}}",
         mergeReady: "PR #{{number}} أخضر وجاهز للدمج",
-        finished: "انتهى ولم تتم مراجعته بعد",
+        finished: "أعاد الوكيل الدور إليك وينتظر",
       },
       actions: {
         review: "مراجعة",
@@ -3079,12 +3080,16 @@ export const ar: TranslationResources = {
       topicSessions_other: "{{count}} جلسات",
       moreAgents: "+{{count}}",
       running: "قيد التشغيل",
+      waiting: "بانتظارك",
       planned: "مجدول",
       done: "منتهٍ",
+      markDone: "وضع علامة منتهٍ",
+      reopen: "إعادة فتح",
       allProjects: "الكل",
       emptyRunning: "لا شيء قيد التشغيل",
       emptyPlanned: "لا شيء مجدول",
-      emptyDone: "لا شيء منتهٍ",
+      emptyWaiting: "لا شيء بانتظارك",
+      emptyDone: "لا شيء معلَّم كمنتهٍ",
       nextRun: "التالي {{when}}",
       unread: "جديد",
       stack: "مدمج {{merged}}/{{total}}",

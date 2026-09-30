@@ -5,6 +5,7 @@ import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { deriveSidebarStateBucket, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { extractJiraKeys } from "./jira";
 import type { WorkspaceTopic } from "@getpaseo/protocol/messages";
+import type { RelatedPullRequest } from "@/git/related-pull-requests";
 
 export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
@@ -26,6 +27,8 @@ export interface LeitstandAgent {
   /** Title of the oldest open permission request, when one is waiting. */
   pendingPermission: { id: string; title: string } | null;
   lastError: string | null;
+  /** When the agent last did anything; for an idle agent, when it handed the turn back. */
+  lastActivityAt: Date;
 }
 
 /** One Leitstand session: today's workspace, with what the Leitstand shows about it. */
@@ -47,7 +50,13 @@ export interface LeitstandSession {
   agents: LeitstandAgent[];
   /** Stack order, bottom first. */
   pullRequests: LeitstandPullRequest[];
+  /** Hand-attached change requests; their stored facts go stale until a client rereads them. */
+  attachedPullRequests: RelatedPullRequest[];
   jiraKeys: string[];
+  /** When the person marked the session done, or null. */
+  doneAt: Date | null;
+  /** When an agent of the session last handed back, null without agents. */
+  handedBackAt: Date | null;
 }
 
 export interface LeitstandSchedule {
@@ -100,6 +109,7 @@ function toLeitstandAgent(agent: Agent): LeitstandAgent {
       ? { id: permission.id, title: permission.title ?? permission.name }
       : null,
     lastError: agent.lastError ?? null,
+    lastActivityAt: agent.lastActivityAt,
   };
 }
 
@@ -156,14 +166,24 @@ export function selectSessionPullRequests(
   ];
 }
 
+function latest(dates: readonly Date[]): Date | null {
+  let result: Date | null = null;
+  for (const date of dates) {
+    if (!result || date.getTime() > result.getTime()) result = date;
+  }
+  return result;
+}
+
 export function buildLeitstandSession(input: {
   entry: SidebarWorkspaceEntry;
   githubRuntime: WorkspaceDescriptor["githubRuntime"];
   agents: readonly LeitstandAgent[];
   topic?: WorkspaceTopic | null;
+  doneAt?: string | null;
 }): LeitstandSession {
   const { entry } = input;
   const pullRequests = selectSessionPullRequests(entry, input.githubRuntime);
+  const doneAt = input.doneAt ? new Date(input.doneAt) : null;
   return {
     key: entry.workspaceKey,
     serverId: entry.serverId,
@@ -179,6 +199,9 @@ export function buildLeitstandSession(input: {
     topic: input.topic ?? null,
     agents: [...input.agents],
     pullRequests,
+    attachedPullRequests: (entry.relatedPullRequests ?? []).filter((pr) => pr.origin === "manual"),
+    doneAt: doneAt && Number.isFinite(doneAt.getTime()) ? doneAt : null,
+    handedBackAt: latest(input.agents.map((agent) => agent.lastActivityAt)),
     jiraKeys: extractJiraKeys([
       entry.name,
       entry.currentBranch,
@@ -211,19 +234,29 @@ export function resolveScheduleProject(
     : { projectViewKey: null, projectName: null };
 }
 
-export type BoardColumnId = "running" | "planned" | "done";
+export type BoardColumnId = "running" | "waiting" | "planned" | "done";
+
+/** Where a session stands: an agent works, it waits on the person, or the person closed it. */
+export type SessionColumn = "running" | "waiting" | "done";
 
 export interface LeitstandBoard {
   running: LeitstandSession[];
+  waiting: LeitstandSession[];
   planned: LeitstandSchedule[];
   done: LeitstandSession[];
 }
 
-const RUNNING_BUCKETS: ReadonlySet<SidebarStateBucket> = new Set([
-  "needs_input",
-  "failed",
-  "running",
-]);
+/** Marked done, and no agent worked since; new work opens the session again. */
+export function isSessionMarkedDone(session: LeitstandSession): boolean {
+  if (!session.doneAt) return false;
+  return !session.handedBackAt || session.doneAt.getTime() >= session.handedBackAt.getTime();
+}
+
+/** Only the person closes a session: a finished turn waits on them until they reply or say done. */
+export function sessionColumn(session: LeitstandSession): SessionColumn {
+  if (session.bucket === "running") return "running";
+  return isSessionMarkedDone(session) ? "done" : "waiting";
+}
 
 function newestFirst(left: LeitstandSession, right: LeitstandSession): number {
   return (right.since?.getTime() ?? 0) - (left.since?.getTime() ?? 0);
@@ -234,8 +267,9 @@ function nextRunTime(schedule: LeitstandSchedule): number {
 }
 
 /**
- * Sessions still moving (or waiting on you) are "running"; finished ones are "done". "Planned" is
- * every active schedule with a next run. `projectViewKey` null means every project.
+ * Sessions an agent works on are "running", the ones waiting on you "waiting", the ones you closed
+ * "done". "Planned" is every active schedule with a next run. `projectViewKey` null means every
+ * project.
  */
 export function buildLeitstandBoard(input: {
   sessions: readonly LeitstandSession[];
@@ -245,9 +279,12 @@ export function buildLeitstandBoard(input: {
   const inProject = (key: string | null) =>
     input.projectViewKey === null || key === input.projectViewKey;
   const sessions = input.sessions.filter((session) => inProject(session.projectViewKey));
+  const inColumn = (column: SessionColumn) =>
+    sessions.filter((session) => sessionColumn(session) === column).sort(newestFirst);
   return {
-    running: sessions.filter((session) => RUNNING_BUCKETS.has(session.bucket)).sort(newestFirst),
-    done: sessions.filter((session) => !RUNNING_BUCKETS.has(session.bucket)).sort(newestFirst),
+    running: inColumn("running"),
+    waiting: inColumn("waiting"),
+    done: inColumn("done"),
     planned: input.schedules
       .filter(
         (entry) =>
@@ -287,6 +324,7 @@ export type LeitstandBoardEntry =
       /** Most urgent child first. */
       children: LeitstandSession[];
       bucket: SidebarStateBucket;
+      column: SessionColumn;
       since: Date | null;
     };
 
@@ -298,17 +336,16 @@ const BUCKET_URGENCY: Record<SidebarStateBucket, number> = {
   done: 4,
 };
 
-/**
- * A topic is one card, in the column of its most urgent child, so a finished phase does not
- * pull its topic into "done" while another phase still runs.
- */
-export function arrangeBoardColumns(board: LeitstandBoard): {
-  running: LeitstandBoardEntry[];
-  done: LeitstandBoardEntry[];
-} {
+// A topic waits on you while any phase does; it is done only when every phase is.
+const COLUMN_URGENCY: Record<SessionColumn, number> = { waiting: 0, running: 1, done: 2 };
+
+/** A topic is one card, in the column of its most urgent child. */
+export function arrangeBoardColumns(
+  board: LeitstandBoard,
+): Record<SessionColumn, LeitstandBoardEntry[]> {
   const topics = new Map<string, Extract<LeitstandBoardEntry, { kind: "topic" }>>();
   const loose: LeitstandSession[] = [];
-  for (const session of [...board.running, ...board.done]) {
+  for (const session of [...board.running, ...board.waiting, ...board.done]) {
     if (!session.topic) {
       loose.push(session);
       continue;
@@ -320,32 +357,34 @@ export function arrangeBoardColumns(board: LeitstandBoard): {
       topic: session.topic,
       children: [],
       bucket: session.bucket,
+      column: sessionColumn(session),
       since: session.since,
     };
     group.children.push(session);
     if (BUCKET_URGENCY[session.bucket] < BUCKET_URGENCY[group.bucket])
       group.bucket = session.bucket;
+    const column = sessionColumn(session);
+    if (COLUMN_URGENCY[column] < COLUMN_URGENCY[group.column]) group.column = column;
     if ((session.since?.getTime() ?? 0) > (group.since?.getTime() ?? 0))
       group.since = session.since;
     topics.set(key, group);
   }
-  const entries: LeitstandBoardEntry[] = [
-    ...loose.map((session) => ({ kind: "session" as const, session })),
-    ...topics.values(),
-  ];
   for (const group of topics.values()) {
     group.children.sort(
       (left, right) => BUCKET_URGENCY[left.bucket] - BUCKET_URGENCY[right.bucket],
     );
   }
-  const bucketOf = (entry: LeitstandBoardEntry) =>
-    entry.kind === "session" ? entry.session.bucket : entry.bucket;
+  const entries: LeitstandBoardEntry[] = [
+    ...loose.map((session) => ({ kind: "session" as const, session })),
+    ...topics.values(),
+  ];
+  const columnOf = (entry: LeitstandBoardEntry) =>
+    entry.kind === "session" ? sessionColumn(entry.session) : entry.column;
   const sinceOf = (entry: LeitstandBoardEntry) =>
     (entry.kind === "session" ? entry.session.since : entry.since)?.getTime() ?? 0;
-  const newest = (left: LeitstandBoardEntry, right: LeitstandBoardEntry) =>
-    sinceOf(right) - sinceOf(left);
-  return {
-    running: entries.filter((entry) => RUNNING_BUCKETS.has(bucketOf(entry))).sort(newest),
-    done: entries.filter((entry) => !RUNNING_BUCKETS.has(bucketOf(entry))).sort(newest),
-  };
+  const inColumn = (column: SessionColumn) =>
+    entries
+      .filter((entry) => columnOf(entry) === column)
+      .sort((left, right) => sinceOf(right) - sinceOf(left));
+  return { running: inColumn("running"), waiting: inColumn("waiting"), done: inColumn("done") };
 }

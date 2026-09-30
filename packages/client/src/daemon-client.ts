@@ -3334,6 +3334,23 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  /** Marks a session done or open again. Gate on `server_info.features.workspaceDone`. */
+  async setWorkspaceDone(
+    workspaceId: string,
+    done: boolean,
+    requestId?: string,
+  ): Promise<{ doneAt: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.done.set.request", workspaceId, done },
+      responseType: "workspace.done.set.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceDone rejected");
+    }
+    return { doneAt: payload.doneAt };
+  }
+
   /** Combines workspaces under a new topic. Gate on `server_info.features.workspaceTopics`. */
   async createWorkspaceTopic(
     input: { title: string; description?: string | null; workspaceIds: string[] },

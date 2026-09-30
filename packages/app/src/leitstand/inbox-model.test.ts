@@ -5,6 +5,7 @@ import {
   buildLeitstandInbox,
   deriveLeitstandMood,
   snoozeUntil,
+  WAITING_INBOX_WINDOW_MS,
   type InboxItem,
 } from "./inbox-model";
 import type {
@@ -25,6 +26,7 @@ function agent(overrides: Partial<LeitstandAgent> = {}): LeitstandAgent {
     bucket: "running",
     pendingPermission: null,
     lastError: null,
+    lastActivityAt: new Date(NOW - 60_000),
     ...overrides,
   };
 }
@@ -57,7 +59,10 @@ function session(overrides: Partial<LeitstandSession> = {}): LeitstandSession {
     since: new Date(NOW - 60_000),
     agents: [agent()],
     pullRequests: [],
+    attachedPullRequests: [],
     jiraKeys: [],
+    doneAt: null,
+    handedBackAt: new Date(NOW - 60_000),
     ...overrides,
   };
 }
@@ -236,6 +241,31 @@ describe("buildLeitstandInbox", () => {
       sessions: [session({ bucket: "attention", agents: [agent({ bucket: "attention" })] })],
     });
     expect(kinds(items)).toEqual(["finished"]);
+  });
+
+  it("keeps a handed-back session after it was looked at, until it is marked done", () => {
+    const seen = session({ bucket: "done", agents: [agent({ bucket: "done" })] });
+    expect(kinds(inbox({ sessions: [seen] }).items)).toEqual(["finished"]);
+
+    const markedDone = { ...seen, doneAt: new Date(NOW - 30_000) };
+    expect(inbox({ sessions: [markedDone] }).items).toEqual([]);
+
+    const workedAgain = { ...markedDone, handedBackAt: new Date(NOW - 10_000) };
+    expect(kinds(inbox({ sessions: [workedAgain] }).items)).toEqual(["finished"]);
+  });
+
+  it("closes an open question when the session is marked done", () => {
+    const asked = session({ bucket: "needs_input", doneAt: new Date(NOW - 30_000) });
+    expect(inbox({ sessions: [asked] }).items).toEqual([]);
+  });
+
+  it("lets a long-untouched session leave the inbox", () => {
+    const old = session({
+      bucket: "done",
+      handedBackAt: new Date(NOW - WAITING_INBOX_WINDOW_MS - 1),
+    });
+    expect(inbox({ sessions: [old] }).items).toEqual([]);
+    expect(inbox({ sessions: [{ ...old, agents: [] }] }).items).toEqual([]);
   });
 
   it("drops an item as soon as its reason is gone", () => {

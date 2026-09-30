@@ -3116,6 +3116,7 @@ export const es: TranslationResources = {
   },
   leitstand: {
     title: "Panel",
+    leave: "Sesiones",
     metrics: {
       running_one: "{{count}} agente en marcha",
       running_other: "{{count}} agentes en marcha",
@@ -3124,7 +3125,7 @@ export const es: TranslationResources = {
     },
     inbox: {
       title: "Te necesita",
-      hint: "Desaparece solo cuando el motivo deja de existir",
+      hint: "Sigue aquí hasta que respondas o lo marques como terminado",
       snoozedCount_one: "{{count}} pospuesto",
       snoozedCount_other: "{{count}} pospuestos",
       empty: "Ahora mismo nada te necesita.",
@@ -3137,7 +3138,7 @@ export const es: TranslationResources = {
         scheduleError: "Ejecución fallida",
         checksFailed: "Checks en rojo",
         mergeReady: "Listo para fusionar",
-        finished: "Terminado",
+        finished: "Tu turno",
       },
       reasons: {
         permission: "{{agent}} pide permiso: {{request}}",
@@ -3149,7 +3150,7 @@ export const es: TranslationResources = {
         checksFailed_one: "El PR #{{number}} tiene checks fallidos",
         checksFailed_other: "{{count}} PR tienen checks fallidos, empezando por #{{number}}",
         mergeReady: "El PR #{{number}} está en verde y listo para fusionar",
-        finished: "Terminado, aún sin revisar",
+        finished: "El agente te devolvió el turno y espera",
       },
       actions: {
         review: "Revisar",
@@ -3171,12 +3172,16 @@ export const es: TranslationResources = {
       topicSessions_other: "{{count}} sesiones",
       moreAgents: "+{{count}}",
       running: "En marcha",
+      waiting: "En espera",
       planned: "Programado",
       done: "Terminado",
+      markDone: "Terminado",
+      reopen: "Reabrir",
       allProjects: "Todos",
       emptyRunning: "Nada en marcha",
       emptyPlanned: "Nada programado",
-      emptyDone: "Nada terminado",
+      emptyWaiting: "Nada espera por ti",
+      emptyDone: "Nada marcado como terminado",
       nextRun: "próxima {{when}}",
       unread: "nuevo",
       stack: "{{merged}}/{{total}} fusionados",

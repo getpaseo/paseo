@@ -136,8 +136,15 @@ const GLYPH_COLOR: Record<StatusGlyphName, (theme: Theme) => { color: string }> 
   plan: (theme) => ({ color: theme.colors.foregroundMuted }),
 };
 
-export function StatusGlyph({ name, size = 12 }: { name: StatusGlyphName; size?: number }) {
-  return <ThemedPixelGlyph name={name} size={size} uniProps={GLYPH_COLOR[name]} />;
+const GLYPH_GRID = 8;
+
+/** A whole number of screen pixels per glyph pixel; 12 or 14 px blur an 8×8 mark into grey. */
+export function snapGlyphSize(size: number): number {
+  return Math.max(1, Math.round(size / GLYPH_GRID)) * GLYPH_GRID;
+}
+
+export function StatusGlyph({ name, size = 16 }: { name: StatusGlyphName; size?: number }) {
+  return <ThemedPixelGlyph name={name} size={snapGlyphSize(size)} uniProps={GLYPH_COLOR[name]} />;
 }
 
 const BUCKET_GLYPH: Record<SidebarStateBucket, StatusGlyphName> = {

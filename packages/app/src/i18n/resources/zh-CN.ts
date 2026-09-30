@@ -3000,6 +3000,7 @@ export const zhCN: TranslationResources = {
   },
   leitstand: {
     title: "仪表板",
+    leave: "会话",
     metrics: {
       running_one: "运行中的代理 {{count}}",
       running_other: "运行中的代理 {{count}}",
@@ -3008,7 +3009,7 @@ export const zhCN: TranslationResources = {
     },
     inbox: {
       title: "需要你",
-      hint: "原因消失后会自动移除",
+      hint: "在你回复或标记完成前一直保留",
       snoozedCount_one: "已推迟 {{count}} 项",
       snoozedCount_other: "已推迟 {{count}} 项",
       empty: "目前没有需要你处理的事。",
@@ -3020,7 +3021,7 @@ export const zhCN: TranslationResources = {
         scheduleError: "运行失败",
         checksFailed: "检查未通过",
         mergeReady: "可以合并",
-        finished: "已完成",
+        finished: "轮到你",
       },
       reasons: {
         permission: "{{agent}} 请求权限：{{request}}",
@@ -3032,7 +3033,7 @@ export const zhCN: TranslationResources = {
         checksFailed_one: "PR #{{number}} 的检查未通过",
         checksFailed_other: "{{count}} 个 PR 的检查未通过，首个为 #{{number}}",
         mergeReady: "PR #{{number}} 检查通过，可以合并",
-        finished: "已完成，尚未查看",
+        finished: "智能体已交回，正在等你",
       },
       actions: {
         review: "查看请求",
@@ -3054,12 +3055,16 @@ export const zhCN: TranslationResources = {
       topicSessions_other: "{{count}} 个会话",
       moreAgents: "+{{count}}",
       running: "运行中",
+      waiting: "等待中",
       planned: "已计划",
       done: "已完成",
+      markDone: "标记完成",
+      reopen: "重新打开",
       allProjects: "全部",
       emptyRunning: "没有运行中的项目",
       emptyPlanned: "没有计划",
-      emptyDone: "没有已完成的项目",
+      emptyWaiting: "没有等你的事项",
+      emptyDone: "没有标记完成的项目",
       nextRun: "下次 {{when}}",
       unread: "新",
       stack: "已合并 {{merged}}/{{total}}",
