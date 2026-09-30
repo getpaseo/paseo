@@ -315,8 +315,7 @@ const StoredWorkspaceSchema = z.strictObject({
   labels: z.array(z.string()).optional(),
   // Optional for entries cached before the done marker existed; same reasoning as labels.
   doneAt: z.string().nullable().optional(),
-  // Required on purpose, unlike labels: a row cached before handoff sorting fails to parse,
-  // which drops the workspace cursor, so the daemon resends every workspace once with it.
+  // Rows from before handoff sorting lack it; DIRECTORY_CACHE_SCHEMA makes the daemon resend them.
   handoff: z
     .object({
       agentId: z.string(),
@@ -324,7 +323,8 @@ const StoredWorkspaceSchema = z.strictObject({
       need: z.string().nullable(),
       at: z.string(),
     })
-    .nullable(),
+    .nullable()
+    .optional(),
   // Optional for entries cached before topics existed; same reasoning as labels.
   topic: z
     .strictObject({ id: z.string(), title: z.string(), description: z.string().nullable() })
@@ -389,7 +389,12 @@ const DirectoryCursorSchema = z.strictObject({
   afterSeq: z.number().int().nonnegative(),
 });
 
+// Bump when a cached row gains a field the daemon would not resend: a checkpoint from another
+// version is dropped, so the next connect replaces the whole directory once.
+const DIRECTORY_CACHE_SCHEMA = 2;
+
 const DirectoryCheckpointSchema = z.strictObject({
+  schema: z.number().int().optional(),
   projects: DirectoryCursorSchema.optional(),
   workspaces: DirectoryCursorSchema.optional(),
   agents: DirectoryCursorSchema.optional(),
@@ -970,6 +975,10 @@ export class ReplicaCache {
         invalidRows.push(row);
       }
     }
+    if (result.checkpoint) {
+      const { schema, ...cursors } = result.checkpoint as DirectoryCheckpoint & { schema?: number };
+      result.checkpoint = schema === DIRECTORY_CACHE_SCHEMA ? cursors : undefined;
+    }
     if (result.checkpoint && invalidEntities.size > 0) {
       result.checkpoint = { ...result.checkpoint };
       for (const entity of invalidEntities) delete result.checkpoint[entity];
@@ -1051,7 +1060,7 @@ export class ReplicaCache {
                 serverId: row.serverId,
                 kind: "checkpoint",
                 id: REPLICA_SINGLETON_ROW_ID,
-                payload: JSON.stringify(checkpoint),
+                payload: JSON.stringify({ ...checkpoint, schema: DIRECTORY_CACHE_SCHEMA }),
               },
             ]
           : [],
@@ -1077,7 +1086,7 @@ export class ReplicaCache {
                 serverId,
                 kind: "checkpoint",
                 id: REPLICA_SINGLETON_ROW_ID,
-                payload: JSON.stringify(checkpoint),
+                payload: JSON.stringify({ ...checkpoint, schema: DIRECTORY_CACHE_SCHEMA }),
               },
             ]
           : [],
@@ -1343,7 +1352,7 @@ export class ReplicaCache {
         if (!value) return null;
         break;
       case "checkpoint":
-        value = upsert.value;
+        value = { ...upsert.value, schema: DIRECTORY_CACHE_SCHEMA };
         break;
     }
     return {
