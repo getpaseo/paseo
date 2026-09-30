@@ -6,6 +6,7 @@ import type {
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 
 import {
+  buildAttentionWorkspaceTargets,
   buildSidebarShortcutModel,
   buildStatusSidebarShortcutModel,
   getRelativeSidebarShortcutTarget,
@@ -316,5 +317,73 @@ describe("getRelativeSidebarShortcutTarget", () => {
         delta: -1,
       }),
     ).toEqual({ serverId: "s1", workspaceId: "ws-3" });
+  });
+});
+
+describe("buildAttentionWorkspaceTargets", () => {
+  it("keeps only workspaces that need input, failed, or are ready to review, in sidebar order", () => {
+    const needsInput = workspace({
+      serverId: "s1",
+      workspaceId: "a",
+      workspaceDirectory: "/a",
+      name: "a",
+      statusBucket: "needs_input",
+    });
+    const running = workspace({
+      serverId: "s1",
+      workspaceId: "b",
+      workspaceDirectory: "/b",
+      name: "b",
+      statusBucket: "running",
+    });
+    const failed = workspace({
+      serverId: "s1",
+      workspaceId: "c",
+      workspaceDirectory: "/c",
+      name: "c",
+      statusBucket: "failed",
+    });
+    const done = workspace({
+      serverId: "s1",
+      workspaceId: "d",
+      workspaceDirectory: "/d",
+      name: "d",
+      statusBucket: "done",
+    });
+    const review = workspace({
+      serverId: "s2",
+      workspaceId: "e",
+      workspaceDirectory: "/e",
+      name: "e",
+      statusBucket: "attention",
+    });
+    const all = [needsInput, running, failed, done, review];
+
+    expect(
+      buildAttentionWorkspaceTargets({
+        projects: [project("p1", [needsInput, running, failed]), project("p2", [done, review])],
+        workspaceEntriesByKey: new Map(all.map((entry) => [entry.workspaceKey, entry])),
+      }),
+    ).toEqual([
+      { serverId: "s1", workspaceId: "a" },
+      { serverId: "s1", workspaceId: "c" },
+      { serverId: "s2", workspaceId: "e" },
+    ]);
+  });
+
+  it("skips placements whose entry has not hydrated yet", () => {
+    const needsInput = workspace({
+      serverId: "s1",
+      workspaceId: "a",
+      workspaceDirectory: "/a",
+      name: "a",
+      statusBucket: "needs_input",
+    });
+    expect(
+      buildAttentionWorkspaceTargets({
+        projects: [project("p1", [needsInput])],
+        workspaceEntriesByKey: new Map(),
+      }),
+    ).toEqual([]);
   });
 });

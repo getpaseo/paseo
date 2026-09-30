@@ -2,7 +2,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
-import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import type { StatusBucket, StatusGroup } from "@/hooks/sidebar-status-view-model";
 
 export interface SidebarShortcutWorkspaceTarget {
   serverId: string;
@@ -108,4 +108,24 @@ export function getRelativeSidebarShortcutTarget(input: {
 
   const nextIndex = (currentIndex + input.delta + input.targets.length) % input.targets.length;
   return input.targets[nextIndex] ?? null;
+}
+
+const ATTENTION_BUCKETS: ReadonlySet<StatusBucket> = new Set([
+  "needs_input",
+  "failed",
+  "attention",
+]);
+
+// Unlike the numbered targets this list is not capped at nine: the workspace that is waiting on
+// you is often the one scrolled out of view.
+export function buildAttentionWorkspaceTargets(input: {
+  projects: readonly { workspaces: readonly SidebarWorkspacePlacement[] }[];
+  workspaceEntriesByKey: ReadonlyMap<string, { statusBucket: StatusBucket }>;
+}): SidebarShortcutWorkspaceTarget[] {
+  return input.projects.flatMap((project) =>
+    project.workspaces.flatMap((workspace) => {
+      const bucket = input.workspaceEntriesByKey.get(workspace.workspaceKey)?.statusBucket;
+      return bucket && ATTENTION_BUCKETS.has(bucket) ? [createShortcutTarget(workspace)] : [];
+    }),
+  );
 }

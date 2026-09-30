@@ -18,6 +18,7 @@ function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRouti
     pathname: "/h/srv/workspace/ws-2",
     isMobile: false,
     sidebarShortcutTargets: SIDEBAR_TARGETS,
+    attentionWorkspaceTargets: [],
     navigationActiveWorkspace: null,
     commandCenterOpen: false,
     shortcutsDialogOpen: false,
@@ -469,5 +470,35 @@ describe("routeKeyboardShortcut — unknown actions", () => {
     expect(
       routeKeyboardShortcut({ action: "totally.made.up", payload: null }, makeCtx()),
     ).toEqual<ShortcutAction>({ kind: "none" });
+  });
+});
+
+describe("routeKeyboardShortcut — workspace.navigate.attention", () => {
+  const ATTENTION_TARGETS = [
+    { serverId: "srv", workspaceId: "ws-2" },
+    { serverId: "srv", workspaceId: "ws-9" },
+  ] as const;
+  const input = { action: "workspace.navigate.attention", payload: null };
+
+  it("jumps to the first workspace needing attention when the current one does not", () => {
+    expect(
+      routeKeyboardShortcut(
+        input,
+        makeCtx({
+          pathname: "/h/srv/workspace/ws-4",
+          attentionWorkspaceTargets: ATTENTION_TARGETS,
+        }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "navigate-workspace", serverId: "srv", workspaceId: "ws-2" });
+  });
+
+  it("cycles to the next workspace needing attention, beyond the nine shortcut slots", () => {
+    expect(
+      routeKeyboardShortcut(input, makeCtx({ attentionWorkspaceTargets: ATTENTION_TARGETS })),
+    ).toEqual<ShortcutAction>({ kind: "navigate-workspace", serverId: "srv", workspaceId: "ws-9" });
+  });
+
+  it("does nothing when no workspace needs attention", () => {
+    expect(routeKeyboardShortcut(input, makeCtx())).toEqual<ShortcutAction>({ kind: "none" });
   });
 });

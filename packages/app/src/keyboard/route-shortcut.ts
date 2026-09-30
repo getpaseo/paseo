@@ -15,6 +15,7 @@ export interface ShortcutRoutingContext {
   pathname: string;
   isMobile: boolean;
   sidebarShortcutTargets: ReadonlyArray<SidebarShortcutWorkspaceTarget>;
+  attentionWorkspaceTargets: ReadonlyArray<SidebarShortcutWorkspaceTarget>;
   navigationActiveWorkspace: SidebarShortcutWorkspaceTarget | null;
   commandCenterOpen: boolean;
   shortcutsDialogOpen: boolean;
@@ -135,21 +136,21 @@ function routeWorkspaceNavigateIndex(
   };
 }
 
-function routeWorkspaceNavigateRelative(
-  payload: KeyboardShortcutPayload,
+function routeRelativeWorkspace(
+  targets: ReadonlyArray<SidebarShortcutWorkspaceTarget>,
+  delta: 1 | -1,
   ctx: ShortcutRoutingContext,
 ): ShortcutAction {
-  if (!hasPayloadKey(payload, "delta")) return NONE;
-  if (ctx.sidebarShortcutTargets.length === 0) return NONE;
+  if (targets.length === 0) return NONE;
 
   const currentWorkspace =
     ctx.navigationActiveWorkspace ?? parseHostWorkspaceRouteFromPathname(ctx.pathname);
   const target = getRelativeSidebarShortcutTarget({
-    targets: ctx.sidebarShortcutTargets,
+    targets,
     currentTarget: currentWorkspace
       ? { serverId: currentWorkspace.serverId, workspaceId: currentWorkspace.workspaceId }
       : null,
-    delta: payload.delta,
+    delta,
   });
   if (!target) return NONE;
   return {
@@ -157,6 +158,14 @@ function routeWorkspaceNavigateRelative(
     serverId: target.serverId,
     workspaceId: target.workspaceId,
   };
+}
+
+function routeWorkspaceNavigateRelative(
+  payload: KeyboardShortcutPayload,
+  ctx: ShortcutRoutingContext,
+): ShortcutAction {
+  if (!hasPayloadKey(payload, "delta")) return NONE;
+  return routeRelativeWorkspace(ctx.sidebarShortcutTargets, payload.delta, ctx);
 }
 
 function routeMessageInputAction(payload: KeyboardShortcutPayload): ShortcutAction {
@@ -218,6 +227,8 @@ export function routeKeyboardShortcut(
       return routeWorkspaceNavigateIndex(input.payload, ctx);
     case "workspace.navigate.relative":
       return routeWorkspaceNavigateRelative(input.payload, ctx);
+    case "workspace.navigate.attention":
+      return routeRelativeWorkspace(ctx.attentionWorkspaceTargets, 1, ctx);
     case "message-input.action":
       return routeMessageInputAction(input.payload);
     case "agent.new":
