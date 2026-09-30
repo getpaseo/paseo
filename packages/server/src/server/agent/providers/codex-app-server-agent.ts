@@ -56,6 +56,7 @@ import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async
 import {
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
+  normalizeCommandExecutionCommand,
   splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
 import {
@@ -6863,14 +6864,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private rememberTerminalProcess(processId: string, command: unknown): void {
-    const normalizedCommand = normalizeCodexCommandValue(command);
-    if (!normalizedCommand) {
-      return;
-    }
-    const displayCommand =
-      typeof normalizedCommand === "string"
-        ? normalizedCommand
-        : normalizedCommand.join(" ").trim();
+    const displayCommand = normalizeCommandExecutionCommand(command);
     if (!displayCommand) {
       return;
     }
