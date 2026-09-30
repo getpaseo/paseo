@@ -29,7 +29,7 @@ Install the Antigravity CLI (`agy`) on your daemon host, then run `agy` once to 
 **Full access** is the only permission mode. Antigravity cannot ask for permission when another
 app drives it, so Paseo starts `agy` with `--dangerously-skip-permissions`. Every tool call,
 including shell commands, runs without asking. Each session starts with a warning explaining
-this, including when you reopen a chat or change models. Antigravity's own policy can still deny
+this, including when you reopen a chat. Antigravity's own policy can still deny
 an action.
 
 After a daemon restart, Antigravity remembers the conversation, but Paseo's transcript starts

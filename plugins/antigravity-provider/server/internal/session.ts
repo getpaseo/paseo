@@ -85,7 +85,7 @@ export class Session {
         "TURN_ACTIVE",
       );
     const { text, nativeText } = await this.promptFiles.encode(prompt);
-    if (await this.ensureDriver()) this.publishFullAccessNotice();
+    await this.ensureDriver();
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
     const driver = this.state.driver;
     const turn: Turn = {
@@ -193,7 +193,7 @@ export class Session {
     });
   }
 
-  private async ensureDriver(): Promise<boolean> {
+  private async ensureDriver(): Promise<void> {
     if (this.state.type === "closed") throw new AntigravityError("Antigravity session is closed");
     if (this.state.type === "stopping") {
       await this.state.driver.stop("interrupt");
@@ -205,7 +205,7 @@ export class Session {
       await driver.stop("close");
       this.state = { type: "dormant" };
     }
-    if (this.state.type !== "dormant") return false;
+    if (this.state.type !== "dormant") return;
     this.reportedDenials.clear();
     const driver = startDriver({
       launch: this.options.launch,
@@ -235,7 +235,6 @@ export class Session {
       await driver.stop("interrupt");
       throw error;
     }
-    return true;
   }
 
   private accept(frame: Frame): void {

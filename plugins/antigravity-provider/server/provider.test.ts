@@ -430,7 +430,7 @@ it("rejects plan and keeps the full-access selection without respawning", async 
   ).toHaveLength(1);
 });
 
-it("emits the full-access warning after opened and again on respawn or resume", async () => {
+it("emits one full-access warning per open, none on respawn, and one again on resume", async () => {
   const h = await harness();
   await h.open();
   const warning = {
@@ -455,7 +455,7 @@ it("emits the full-access warning after opened and again on respawn or resume", 
     changes: { model: "gemini-3.8-flash-low" },
   });
   await h.completed(await h.prompt("HELLO"));
-  expect(h.events.filter((event) => event.type === "session.notice")).toEqual([warning, warning]);
+  expect(h.events.filter((event) => event.type === "session.notice")).toEqual([warning]);
   const launches = (await h.records()).filter((entry) => entry.args?.includes("--input-format"));
   expect(launches).toHaveLength(2);
   for (const launch of launches) {
