@@ -123,10 +123,10 @@ test.describe("usage settings", () => {
     await expect(page.getByText("64%")).toBeVisible();
   });
 
-  test("asks to update a host without usage sources and never calls it", async ({ page }) => {
+  test("asks to update a host without usage support and never calls it", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usage = await installUsageReportsFixture(page, { usageSources: false });
+    const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
     await openSettings(page);

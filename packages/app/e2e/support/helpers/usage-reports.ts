@@ -13,8 +13,8 @@ interface UsageReportsFixtureOptions {
    * request; a function builds the response when the request arrives (e.g. a fresh `fetchedAt`).
    */
   lists?: Array<UsageListResponse | (() => UsageListResponse)>;
-  /** Advertise `features.usageSources`. False simulates a host from before usage sources. */
-  usageSources?: boolean;
+  /** False simulates a host with no usage reporting capability. */
+  usageSupported?: boolean;
 }
 
 type UsageListResponse = UsageReportEntry[] | { error: string };
@@ -38,7 +38,7 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
   return envelope.message as Record<string, unknown>;
 }
 
-function withUsageSourcesFeature(message: WebSocketMessage, enabled: boolean): string | null {
+function withUsageSupportFeature(message: WebSocketMessage, enabled: boolean): string | null {
   const envelope = parseJson(message) as {
     type?: unknown;
     message?: { type?: unknown; payload?: Record<string, unknown> };
@@ -57,7 +57,10 @@ function withUsageSourcesFeature(message: WebSocketMessage, enabled: boolean): s
     ...envelope,
     message: {
       ...envelope.message,
-      payload: { ...payload, features: { ...features, usageSources: enabled } },
+      payload: {
+        ...payload,
+        features: { ...features, usageSources: enabled, providerUsageList: enabled },
+      },
     },
   });
 }
@@ -92,7 +95,7 @@ export async function installUsageReportsFixture(
 ): Promise<UsageReportsFixture> {
   const listRequests: Array<{ forceRefresh: boolean; reportIds?: string[] }> = [];
   const listCounter = createCounter();
-  const usageSources = options.usageSources ?? true;
+  const usageSupported = options.usageSupported ?? true;
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
@@ -141,7 +144,7 @@ export async function installUsageReportsFixture(
 
     server.onMessage((message) => {
       const serverInfo =
-        typeof message === "string" ? withUsageSourcesFeature(message, usageSources) : null;
+        typeof message === "string" ? withUsageSupportFeature(message, usageSupported) : null;
       ws.send(serverInfo ?? message);
     });
   });

@@ -161,10 +161,10 @@ test.describe("usage screen", () => {
     await expect(group.getByTestId("usage-freshness")).toHaveText("Updated 2h ago");
   });
 
-  test("tells the user to update a host without usage sources", async ({ page }) => {
+  test("tells the user to update a host without usage support", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usage = await installUsageReportsFixture(page, { usageSources: false });
+    const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
     await page.locator('[data-testid="sidebar-usage"]:visible').first().click();
