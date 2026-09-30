@@ -1168,6 +1168,23 @@ export const ko: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "주제로 묶기",
+      open: "주제로 묶기...",
+      namePlaceholder: "주제 이름",
+      existing: "기존 주제에 추가",
+      submit: "묶기",
+      submitting: "묶는 중...",
+    },
+    detach: "주제에서 빼기",
+    rename: { title: "주제 이름 변경", submit: "이름 변경" },
+    updateHostUse: "주제를 사용하려면 호스트를 업데이트하세요.",
+    errors: {
+      hostDisconnected: "호스트 연결이 끊어졌습니다",
+      titleRequired: "주제 이름이 필요합니다",
+    },
+  },
   workspaceLabels: {
     title: "레이블",
     unlabelled: "레이블 없음",

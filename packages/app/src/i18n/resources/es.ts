@@ -1195,6 +1195,23 @@ export const es: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "Combinar en tema",
+      open: "Combinar en tema...",
+      namePlaceholder: "Nombre del tema",
+      existing: "Añadir a un tema existente",
+      submit: "Combinar",
+      submitting: "Combinando...",
+    },
+    detach: "Quitar del tema",
+    rename: { title: "Renombrar tema", submit: "Renombrar" },
+    updateHostUse: "Actualiza este host para usar temas.",
+    errors: {
+      hostDisconnected: "El host está desconectado",
+      titleRequired: "El nombre del tema es obligatorio",
+    },
+  },
   workspaceLabels: {
     title: "Etiquetas",
     unlabelled: "Sin etiqueta",

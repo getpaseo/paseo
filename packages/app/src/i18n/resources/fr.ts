@@ -1194,6 +1194,23 @@ export const fr: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "Regrouper dans un sujet",
+      open: "Regrouper dans un sujet...",
+      namePlaceholder: "Nom du sujet",
+      existing: "Ajouter à un sujet existant",
+      submit: "Regrouper",
+      submitting: "Regroupement...",
+    },
+    detach: "Retirer du sujet",
+    rename: { title: "Renommer le sujet", submit: "Renommer" },
+    updateHostUse: "Mettez à jour cet hôte pour utiliser les sujets.",
+    errors: {
+      hostDisconnected: "L’hôte est déconnecté",
+      titleRequired: "Le nom du sujet est requis",
+    },
+  },
   workspaceLabels: {
     title: "Étiquettes",
     unlabelled: "Sans étiquette",

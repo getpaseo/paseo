@@ -1153,6 +1153,20 @@ export const zhCN: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "合并为主题",
+      open: "合并为主题...",
+      namePlaceholder: "主题名称",
+      existing: "添加到现有主题",
+      submit: "合并",
+      submitting: "正在合并...",
+    },
+    detach: "从主题中移除",
+    rename: { title: "重命名主题", submit: "重命名" },
+    updateHostUse: "请更新此主机以使用主题。",
+    errors: { hostDisconnected: "主机已断开连接", titleRequired: "主题名称为必填项" },
+  },
   workspaceLabels: {
     title: "标签",
     unlabelled: "无标签",

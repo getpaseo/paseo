@@ -1185,6 +1185,23 @@ export const ptBR: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "Agrupar em tópico",
+      open: "Agrupar em tópico...",
+      namePlaceholder: "Nome do tópico",
+      existing: "Adicionar a um tópico existente",
+      submit: "Agrupar",
+      submitting: "Agrupando...",
+    },
+    detach: "Remover do tópico",
+    rename: { title: "Renomear tópico", submit: "Renomear" },
+    updateHostUse: "Atualize este host para usar tópicos.",
+    errors: {
+      hostDisconnected: "O host está desconectado",
+      titleRequired: "O nome do tópico é obrigatório",
+    },
+  },
   workspaceLabels: {
     title: "Etiquetas",
     unlabelled: "Sem etiqueta",

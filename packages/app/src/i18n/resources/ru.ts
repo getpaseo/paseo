@@ -1181,6 +1181,20 @@ export const ru: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "Объединить в тему",
+      open: "Объединить в тему...",
+      namePlaceholder: "Название темы",
+      existing: "Добавить в существующую тему",
+      submit: "Объединить",
+      submitting: "Объединение...",
+    },
+    detach: "Убрать из темы",
+    rename: { title: "Переименовать тему", submit: "Переименовать" },
+    updateHostUse: "Обновите этот хост, чтобы использовать темы.",
+    errors: { hostDisconnected: "Хост отключён", titleRequired: "Укажите название темы" },
+  },
   workspaceLabels: {
     title: "Метки",
     unlabelled: "Без метки",

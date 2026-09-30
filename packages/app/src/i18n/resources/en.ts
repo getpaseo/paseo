@@ -1178,6 +1178,20 @@ export const en = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "Combine into topic",
+      open: "Combine into topic...",
+      namePlaceholder: "Topic name",
+      existing: "Add to an existing topic",
+      submit: "Combine",
+      submitting: "Combining...",
+    },
+    detach: "Remove from topic",
+    rename: { title: "Rename topic", submit: "Rename" },
+    updateHostUse: "Update this host to use topics.",
+    errors: { hostDisconnected: "Host is disconnected", titleRequired: "Topic name is required" },
+  },
   workspaceLabels: {
     title: "Labels",
     unlabelled: "Unlabelled",

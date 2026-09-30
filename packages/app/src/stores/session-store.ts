@@ -39,6 +39,7 @@ import type {
   ServerCapabilities,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
+  WorkspaceTopic,
 } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceOpaqueId,
@@ -116,6 +117,8 @@ export interface WorkspaceDescriptor {
   name: string;
   title?: string | null;
   pinnedAt?: string | null;
+  /** The topic this workspace is a child of; null when it stands alone. */
+  topic?: WorkspaceTopic | null;
   /** Config directory of this workspace's forge account, null for the machine default. */
   forgeConfigDir?: string | null;
   projectForgeConfigDir?: string | null;
@@ -158,6 +161,8 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,
+    // COMPAT(workspaceTopics): daemons before v0.9.2 omit the topic.
+    topic: payload.topic ?? null,
     forgeConfigDir: payload.forgeConfigDir ?? null,
     projectForgeConfigDir: payload.projectForgeConfigDir ?? null,
     pullRequestCuration: payload.pullRequestCuration

@@ -1161,6 +1161,20 @@ export const ar: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "دمج في موضوع",
+      open: "دمج في موضوع...",
+      namePlaceholder: "اسم الموضوع",
+      existing: "إضافة إلى موضوع موجود",
+      submit: "دمج",
+      submitting: "جارٍ الدمج...",
+    },
+    detach: "إزالة من الموضوع",
+    rename: { title: "إعادة تسمية الموضوع", submit: "إعادة التسمية" },
+    updateHostUse: "حدّث هذا المضيف لاستخدام المواضيع.",
+    errors: { hostDisconnected: "المضيف غير متصل", titleRequired: "اسم الموضوع مطلوب" },
+  },
   workspaceLabels: {
     title: "التسميات",
     unlabelled: "بلا تسمية",

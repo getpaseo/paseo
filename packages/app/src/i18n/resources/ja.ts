@@ -1178,6 +1178,20 @@ export const ja: TranslationResources = {
       },
     },
   },
+  topics: {
+    combine: {
+      title: "トピックにまとめる",
+      open: "トピックにまとめる...",
+      namePlaceholder: "トピック名",
+      existing: "既存のトピックに追加",
+      submit: "まとめる",
+      submitting: "まとめています...",
+    },
+    detach: "トピックから外す",
+    rename: { title: "トピック名を変更", submit: "名前を変更" },
+    updateHostUse: "トピックを使用するにはホストを更新してください。",
+    errors: { hostDisconnected: "ホストが切断されています", titleRequired: "トピック名は必須です" },
+  },
   workspaceLabels: {
     title: "ラベル",
     unlabelled: "ラベルなし",
