@@ -23,7 +23,9 @@ describe("resolvePaseoHome", () => {
   });
 
   test("PANDAOS_HOME wins over PASEO_HOME", () => {
-    expect(resolvePaseoHome({ PANDAOS_HOME: "/a", PASEO_HOME: "/b" }, homeDir)).toBe("/a");
+    const a = path.join(homeDir, "a");
+    const b = path.join(homeDir, "b");
+    expect(resolvePaseoHome({ PANDAOS_HOME: a, PASEO_HOME: b }, homeDir)).toBe(a);
   });
 
   test("expands ~ in an explicit home", () => {

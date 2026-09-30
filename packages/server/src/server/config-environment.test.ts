@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { daemonLaunchEnvironment } from "./config-environment.js";
@@ -13,6 +14,7 @@ describe("daemonLaunchEnvironment", () => {
 
     expect(env.PANDAOS_HOME).toBeUndefined();
     expect(env.PASEO_HOME).toBe("/selected");
-    expect(resolvePaseoHome(env)).toBe("/selected");
+    // resolvePaseoHome makes the home absolute, which adds the current drive on Windows.
+    expect(resolvePaseoHome(env)).toBe(path.resolve("/selected"));
   });
 });

@@ -27,6 +27,9 @@ describe("migrateLegacyHome", () => {
     home = path.join(homeDir, ".pandaos");
   });
 
+  // POSIX keeps a relative link; Windows uses a junction, which always stores the absolute target.
+  const expectedLinkTarget = () => (process.platform === "win32" ? home : ".pandaos");
+
   afterEach(async () => {
     await rm(homeDir, { recursive: true, force: true });
   });
@@ -44,7 +47,7 @@ describe("migrateLegacyHome", () => {
     expect(result).toEqual({ action: "migrated", legacyHome, home, dryRun: false });
     expect((await lstat(home)).isDirectory()).toBe(true);
     expect((await lstat(legacyHome)).isSymbolicLink()).toBe(true);
-    expect(await readlink(legacyHome)).toBe(".pandaos");
+    expect(await readlink(legacyHome)).toBe(expectedLinkTarget());
     expect(await readFile(path.join(legacyHome, "config.json"), "utf8")).toBe('{"version":1}');
     expect((await lstat(path.join(legacyHome, "worktrees", "abc", "slug"))).isDirectory()).toBe(
       true,
@@ -59,7 +62,7 @@ describe("migrateLegacyHome", () => {
     const again = await migrateLegacyHome({ homeDir });
 
     expect(again.action).toBe("already_migrated");
-    expect(await readlink(legacyHome)).toBe(".pandaos");
+    expect(await readlink(legacyHome)).toBe(expectedLinkTarget());
   });
 
   test("dry run reports the plan and changes nothing", async () => {
