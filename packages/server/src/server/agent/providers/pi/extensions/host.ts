@@ -30,13 +30,16 @@ interface Session {
   adapter: PiExtensionSession;
 }
 
+interface Follower {
+  reader: PiChildSessionFollower;
+  /** Reads run in order so a final read cannot overtake a tick. */
+  pending: Promise<void>;
+}
+
 export class PiExtensionHost {
   private readonly sessions: Session[] = [];
   private remainingHydrationBytes: number;
-  private readonly followers = new Map<
-    string,
-    { reader: PiChildSessionFollower; pending: Promise<void> }
-  >();
+  private readonly followers = new Map<string, Follower>();
   private onFollowEvent?: (event: AgentStreamEvent) => void;
   private followTimer?: ReturnType<typeof setInterval>;
   private pollingExtensions = false;
@@ -54,10 +57,11 @@ export class PiExtensionHost {
     }
   }
 
+  /** Live sessions follow child files and adapter polls; replay hosts read each file once. */
   follow(onEvent: (event: AgentStreamEvent) => void): void {
     this.onFollowEvent = onEvent;
     this.followTimer ??= setInterval(() => {
-      for (const id of this.followers.keys()) void this.readFollower(id);
+      for (const [id, follower] of this.followers) void this.readFollower(id, follower);
       void this.pollExtensions();
     }, 250);
   }
@@ -69,9 +73,7 @@ export class PiExtensionHost {
     this.followers.clear();
   }
 
-  private readFollower(id: string): Promise<void> {
-    const follower = this.followers.get(id);
-    if (!follower) return Promise.resolve();
+  private readFollower(id: string, follower: Follower): Promise<void> {
     follower.pending = follower.pending
       .then(async () => {
         const events = await follower.reader.readNew();
@@ -143,7 +145,10 @@ export class PiExtensionHost {
       const mapping = this.safe(id, "mapRuntimeNotification", () =>
         adapter.mapRuntimeNotification?.(message),
       );
-      if (mapping) return this.prepare(id, mapping);
+      if (mapping) {
+        const prepared = this.safe(id, "prepare", () => this.prepare(id, mapping));
+        if (prepared) return prepared;
+      }
     }
     return undefined;
   }
@@ -160,55 +165,57 @@ export class PiExtensionHost {
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "pi", event }),
       ),
     ];
-    const statusByChild = new Map(
-      (mapping.subagents ?? []).flatMap((event) =>
-        event.type === "upsert" && event.status ? [[event.id, event.status] as const] : [],
-      ),
+    const hydration = (
+      this.onFollowEvent ? this.followChildren(mapping) : this.readChildren(mapping)
+    ).catch((error): AgentStreamEvent[] => {
+      this.logger?.warn(
+        { err: error, extensionId: id, operation: "hydrate" },
+        "Pi extension adapter failed",
+      );
+      return [];
+    });
+    return { ...mapping, events, hydration };
+  }
+
+  private async followChildren(
+    mapping: PiExtensionToolMapping | PiExtensionCustomMapping,
+  ): Promise<AgentStreamEvent[]> {
+    for (const { id, file } of mapping.childSessions ?? []) {
+      if (!this.followers.has(id)) {
+        this.followers.set(id, {
+          reader: new PiChildSessionFollower(id, file),
+          pending: Promise.resolve(),
+        });
+      }
+    }
+    const finished = (mapping.subagents ?? []).flatMap((event) =>
+      event.type === "upsert" && event.status && event.status !== "running" ? [event.id] : [],
     );
-    const hydration = Promise.all([
-      ...(mapping.childSessions ?? []).map(async ({ id: childId, file }) => {
-        if (this.onFollowEvent && statusByChild.get(childId) === "running") {
-          if (!this.followers.has(childId)) {
-            this.followers.set(childId, {
-              reader: new PiChildSessionFollower(childId, file),
-              pending: Promise.resolve(),
-            });
-          }
-          await this.readFollower(childId);
-          return [];
-        }
-        if (this.followers.has(childId)) {
-          await this.readFollower(childId);
-          this.followers.delete(childId);
-          return [];
-        }
+    const reads = [
+      ...new Set([...(mapping.childSessions ?? []).map(({ id }) => id), ...finished]),
+    ].flatMap((id) => {
+      const follower = this.followers.get(id);
+      return follower ? [this.readFollower(id, follower)] : [];
+    });
+    for (const id of finished) this.followers.delete(id);
+    await Promise.all(reads);
+    return [];
+  }
+
+  private async readChildren(
+    mapping: PiExtensionToolMapping | PiExtensionCustomMapping,
+  ): Promise<AgentStreamEvent[]> {
+    const groups = await Promise.all(
+      (mapping.childSessions ?? []).map(async ({ id, file }) => {
         const bytes = Math.min(this.remainingHydrationBytes, 2 * 1024 * 1024);
         if (bytes <= 0) return [];
         this.remainingHydrationBytes -= bytes;
-        return (await this.readChildSession(childId, file, bytes)).map(
+        return (await this.readChildSession(id, file, bytes)).map(
           (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "pi", event }),
         );
       }),
-      ...[...statusByChild].flatMap(([childId, status]) =>
-        status !== "running" && this.followers.has(childId)
-          ? [
-              this.readFollower(childId).then(() => {
-                this.followers.delete(childId);
-                return [];
-              }),
-            ]
-          : [],
-      ),
-    ])
-      .then((groups) => groups.flat())
-      .catch((error): AgentStreamEvent[] => {
-        this.logger?.warn(
-          { err: error, extensionId: id, operation: "hydrate" },
-          "Pi extension adapter failed",
-        );
-        return [];
-      });
-    return { ...mapping, events, hydration };
+    );
+    return groups.flat();
   }
 
   onToolStart(call: PiExtensionToolCall, provider = "pi"): AgentPermissionRequest | undefined {

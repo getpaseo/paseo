@@ -56,15 +56,26 @@ function asyncChildStatus(runState: string, stepStatus?: string) {
   return "completed";
 }
 
+/** The `subagent-notify` header; a grouped notice reports every run as completed. */
+function noticeStatus(header: string) {
+  if (/^Background tasks completed \(\d+\):/.test(header)) return "completed";
+  const outcome = header.match(
+    /^(?:Background task|Detached foreground task) (completed|failed|stopped): \*\*/,
+  )?.[1];
+  if (outcome === "stopped") return "canceled";
+  return outcome as "completed" | "failed" | undefined;
+}
+
 export const piSubagents: PiExtension = {
   id: "pi-subagents",
   createSession: () => {
     const callsByRun = new Map<string, string>();
     const readSessions = new Set<string>();
-    const asyncRuns = new Map<string, { owner: string; dir: string }>();
+    /** Keyed by async directory, which both status.json and the completion notice carry. */
+    const asyncRuns = new Map<string, { owner: string; polling: boolean }>();
     const rememberAsyncRun = (details: z.infer<typeof Details>, call: PiExtensionToolCall) => {
-      if (details.runId && details.asyncDir && call.status !== "failed") {
-        asyncRuns.set(details.runId, { owner: call.callId, dir: details.asyncDir });
+      if (details.asyncDir && call.status !== "failed") {
+        asyncRuns.set(details.asyncDir, { owner: call.callId, polling: true });
       }
     };
     const collectRows = (
@@ -164,13 +175,45 @@ export const piSubagents: PiExtension = {
         if (call.toolName === "subagent") return mapSpawn(call);
         return undefined;
       },
+      // The notice is the only completion Pi persists, so replay settles async runs from it.
+      mapCustomMessage(message) {
+        if (message.customType !== "subagent-notify") return undefined;
+        const text =
+          typeof message.content === "string"
+            ? message.content
+            : extractTextFromToolResult({ content: message.content });
+        const lines = text?.split("\n") ?? [];
+        const status = noticeStatus(lines[0] ?? "");
+        if (!status) return undefined;
+        const subagents: NonNullable<PiExtensionToolMapping["subagents"]> = [];
+        const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
+        // Each run's session line follows its async directory line; earlier lines are child output.
+        let owner: string | undefined;
+        for (const line of lines) {
+          const dir = line.match(/^Retention-managed async directory: (.+)$/)?.[1];
+          if (dir) {
+            owner = asyncRuns.get(dir)?.owner;
+            if (owner) subagents.push({ type: "upsert", id: owner, status });
+            continue;
+          }
+          const file = owner ? line.match(/^Session file: (.+)$/)?.[1] : undefined;
+          if (!owner || !file) continue;
+          if (!readSessions.has(file)) {
+            readSessions.add(file);
+            childSessions.push({ id: owner, file });
+          }
+          owner = undefined;
+        }
+        return subagents.length ? { subagents, childSessions } : undefined;
+      },
       poll() {
         const subagents: NonNullable<PiExtensionToolMapping["subagents"]> = [];
         const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
-        for (const [runId, run] of asyncRuns) {
+        for (const [dir, run] of asyncRuns) {
+          if (!run.polling) continue;
           let raw: unknown;
           try {
-            raw = JSON.parse(readFileSync(join(run.dir, "status.json"), "utf8"));
+            raw = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
           } catch {
             continue;
           }
@@ -194,7 +237,7 @@ export const piSubagents: PiExtension = {
                 status: parsed.data.state === "complete" ? "completed" : "failed",
               });
             }
-            asyncRuns.delete(runId);
+            run.polling = false;
           }
         }
         return subagents.length || childSessions.length ? { subagents, childSessions } : undefined;

@@ -22,13 +22,21 @@ export interface PiExtensionToolMapping {
   detail?: ToolCallDetail;
   timeline?: AgentTimelineItem[];
   subagents?: ProviderSubagentInputEvent[];
-  /** Completed Pi child sessions to hydrate through the normal Pi history mapper. */
-  childSessions?: Array<{ id: string; file: string }>;
+  childSessions?: PiChildSessionFile[];
 }
 
 export interface PiExtensionCustomMapping {
   subagents: ProviderSubagentInputEvent[];
-  childSessions?: Array<{ id: string; file: string }>;
+  childSessions?: PiChildSessionFile[];
+}
+
+/**
+ * A Pi child's append-only session file, mapped through the normal Pi history mapper. Report it as
+ * soon as it is known; a live session follows it until the child's upsert reaches a final status.
+ */
+export interface PiChildSessionFile {
+  id: string;
+  file: string;
 }
 
 export type PiExtensionDialog = Extract<PiRuntimeEvent, { type: "extension_ui_request" }>;
@@ -48,7 +56,9 @@ export interface PiExtensionUiReply {
 
 export interface PiExtensionSession {
   mapToolCall?(call: PiExtensionToolCall): PiExtensionToolMapping | undefined;
+  /** Claims a `ctx.ui.notify` message sent by this extension's `runtimeBridge`. */
   mapRuntimeNotification?(message: string): PiExtensionCustomMapping | undefined;
+  /** Called on the live follow cadence to report state Pi only writes to disk. */
   poll?(): PiExtensionCustomMapping | undefined;
   mapCustomMessage?(
     message: Extract<PiAgentMessage, { role: "custom" }>,
@@ -64,5 +74,10 @@ export interface PiExtensionSession {
 
 export interface PiExtension {
   id: string;
+  /**
+   * JavaScript statements run inside Paseo's Pi integration extension, with `pi` in scope. Reports
+   * state that Pi's RPC stream omits through `ctx.ui.notify`, which reaches `mapRuntimeNotification`.
+   */
+  runtimeBridge?: string;
   createSession(): PiExtensionSession;
 }

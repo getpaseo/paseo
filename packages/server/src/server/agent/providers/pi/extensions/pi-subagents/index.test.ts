@@ -87,6 +87,43 @@ describe("pi-subagents adapter", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  test("settles an async run and reads its transcript from the completion notice on replay", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-pi-async-"));
+    const file = join(dir, "child.jsonl");
+    try {
+      await writeFile(
+        file,
+        '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"DONE"}]}}\n',
+      );
+      const host = createPiExtensionHost();
+      host.mapToolCall({
+        callId: "call-1",
+        toolName: "subagent",
+        args: { agent: "scout", task: "Inspect", async: true },
+        status: "completed",
+        result: {
+          details: { mode: "single", runId: "run-1", asyncId: "run-1", asyncDir: dir, results: [] },
+        },
+      });
+      const notice = host.mapCustomMessage({
+        role: "custom",
+        customType: "subagent-notify",
+        content: [
+          "Background task completed: **scout**",
+          "",
+          "Session file: /tmp/not-the-session-line.jsonl",
+          "",
+          `Retention-managed async directory: ${dir}`,
+          "",
+          `Session file: ${file}`,
+        ].join("\n"),
+      });
+      expect(notice?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
+      expect(hasChildTimeline(await notice!.hydration)).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("maps completed subagent calls with task input to sub-agent detail", () => {
     const toolCall = parseToolArgs("subagent", {
       agent: "reviewer",
@@ -133,11 +170,11 @@ describe("pi-subagents adapter", () => {
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
   });
 
-  test("keeps captured async runs running until structured completion", async () => {
+  test("settles captured async runs from the completion notice live and on replay", async () => {
     const fixture = readSubagentFixture(new URL("./fixtures/background.json", import.meta.url));
     const events = await verifySubagentFixture(fixture);
     expect(events.findLast((event) => event.event.type === "upsert")?.event).toEqual(
-      expect.objectContaining({ status: "running" }),
+      expect.objectContaining({ status: "completed" }),
     );
   });
 
@@ -161,7 +198,13 @@ describe("pi-subagents adapter", () => {
     const upserts = events
       .filter((event) => event.event.type === "upsert")
       .map((event) => (event.event.type === "upsert" ? event.event : null));
-    expect(upserts.map((event) => event?.status)).toEqual(["running", "running", "completed"]);
+    // bg_wait settles the child; the later completion notice repeats it.
+    expect(upserts.map((event) => event?.status)).toEqual([
+      "running",
+      "running",
+      "completed",
+      "completed",
+    ]);
     expect(new Set(upserts.map((event) => event?.id)).size).toBe(1);
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
   });

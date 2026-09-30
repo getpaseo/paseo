@@ -2,9 +2,10 @@ import { PiExtensionHost } from "./host.js";
 import { piExtensions } from "./registry.js";
 import type { Logger } from "pino";
 import type { PiExtension } from "./contract.js";
-import { gotgenesRuntimeBridge } from "./gotgenes-pi-subagents/runtime-bridge.js";
 
-export const piExtensionRuntimeBridge = gotgenesRuntimeBridge;
+export const piExtensionRuntimeBridge = piExtensions
+  .flatMap((extension) => extension.runtimeBridge ?? [])
+  .join("\n");
 
 export type { PiExtensionHost } from "./host.js";
 export type { PiExtensionEventOutput } from "./host.js";

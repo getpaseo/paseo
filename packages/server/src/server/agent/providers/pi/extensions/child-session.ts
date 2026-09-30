@@ -12,39 +12,13 @@ export function outputFileFromToolResult(result: PiToolResult): string | undefin
   return extractTextFromToolResult(result)?.match(/^Output file:\s*(\S+)$/m)?.[1];
 }
 
-/** Child session files are immutable once the completed result exposes their path. */
-export async function mapPiChildSession(
+/** Reads a finished child transcript once, up to `maxBytes`. */
+export function mapPiChildSession(
   id: string,
   file: string,
   maxBytes = MAX_BYTES,
 ): Promise<ProviderSubagentInputEvent[]> {
-  try {
-    const handle = await open(file, "r");
-    try {
-      const fileSize = (await handle.stat()).size;
-      const size = Math.min(fileSize, MAX_BYTES, maxBytes);
-      if (!size) return [];
-      const buffer = Buffer.alloc(size);
-      const { bytesRead } = await handle.read(buffer, 0, size, 0);
-      const text = buffer.toString("utf8", 0, bytesRead);
-      const completeText = bytesRead < fileSize ? text.slice(0, text.lastIndexOf("\n")) : text;
-      return parseChildTimeline(id, completeText);
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    return [];
-  }
-}
-
-function parseChildTimeline(id: string, text: string): ProviderSubagentInputEvent[] {
-  const mapper = new PiHistoryMapper("pi");
-  const events: ProviderSubagentInputEvent[] = [];
-  for (const line of text.split("\n")) {
-    if (!line || events.length >= MAX_ITEMS) break;
-    events.push(...mapChildLine(mapper, id, line).slice(0, MAX_ITEMS - events.length));
-  }
-  return events;
+  return new PiChildSessionFollower(id, file, maxBytes).readNew();
 }
 
 function mapChildLine(
@@ -79,18 +53,22 @@ export class PiChildSessionFollower {
   private pending = Buffer.alloc(0);
   private readonly mapper = new PiHistoryMapper("pi");
   private items = 0;
+  private readonly maxBytes: number;
 
   constructor(
     private readonly id: string,
     private readonly file: string,
-  ) {}
+    maxBytes = MAX_BYTES,
+  ) {
+    this.maxBytes = Math.min(maxBytes, MAX_BYTES);
+  }
 
   async readNew(): Promise<ProviderSubagentInputEvent[]> {
-    if (this.offset >= MAX_BYTES || this.items >= MAX_ITEMS) return [];
+    if (this.offset >= this.maxBytes || this.items >= MAX_ITEMS) return [];
     try {
       const handle = await open(this.file, "r");
       try {
-        const size = Math.min((await handle.stat()).size - this.offset, MAX_BYTES - this.offset);
+        const size = Math.min((await handle.stat()).size, this.maxBytes) - this.offset;
         if (size <= 0) return [];
         const buffer = Buffer.alloc(size);
         const { bytesRead } = await handle.read(buffer, 0, size, this.offset);

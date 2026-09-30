@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import { outputFileFromToolResult } from "../child-session.js";
-import { GOTGENES_CHILD_SESSION_MARKER } from "./runtime-bridge.js";
+import { GOTGENES_CHILD_SESSION_MARKER, gotgenesRuntimeBridge } from "./runtime-bridge.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
 
 const SpawnArgs = z
@@ -42,6 +42,7 @@ const status = (value: string): "running" | "completed" | "failed" | "canceled" 
 
 export const gotgenesPiSubagents: PiExtension = {
   id: "@gotgenes/pi-subagents",
+  runtimeBridge: gotgenesRuntimeBridge,
   createSession: () => {
     const callsByAgent = new Map<string, string>();
     const readSessions = new Set<string>();

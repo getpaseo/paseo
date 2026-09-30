@@ -165,11 +165,13 @@ async function loadPaseoExtensionListeners(
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
+      events: { on: () => void };
       registerCommand: () => void;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
+    events: { on: () => undefined },
     registerCommand: () => undefined,
   });
   return listeners;

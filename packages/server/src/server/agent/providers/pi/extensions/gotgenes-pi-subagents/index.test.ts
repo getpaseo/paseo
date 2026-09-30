@@ -3,9 +3,60 @@ import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import { streamPiHistory } from "../../history-mapper.js";
-import { GOTGENES_CHILD_SESSION_MARKER } from "./runtime-bridge.js";
+import { GOTGENES_CHILD_SESSION_MARKER, gotgenesRuntimeBridge } from "./runtime-bridge.js";
+
+const SERVICE_KEY = Symbol.for("@gotgenes/pi-subagents:service");
+
+function loadRuntimeBridge() {
+  const listeners = new Map<string, (event: unknown, ctx?: unknown) => void>();
+  const pi = {
+    on: (name: string, listener: (event: unknown, ctx?: unknown) => void) =>
+      listeners.set(name, listener),
+    events: {
+      on: (name: string, listener: (event: unknown) => void) => listeners.set(name, listener),
+    },
+  };
+  new Function("pi", gotgenesRuntimeBridge)(pi);
+  return (name: string, event: unknown, ctx?: unknown) => listeners.get(name)?.(event, ctx);
+}
+
+function publishService(agents: Array<{ id: string; outputFile?: string }>): void {
+  (globalThis as Record<symbol, unknown>)[SERVICE_KEY] = { listAgents: () => agents };
+}
 
 describe("@gotgenes/pi-subagents adapter", () => {
+  test("reports a child's file after the child republishes the gotgenes service", async () => {
+    const notifications: string[] = [];
+    const emit = loadRuntimeBridge();
+    const file = "/sessions/parent/tasks/2026-09-30_child-session.jsonl";
+    try {
+      publishService([{ id: "native-1", outputFile: file }]);
+      emit(
+        "session_start",
+        {},
+        { ui: { notify: (message: string) => notifications.push(message) } },
+      );
+      // Pi loads gotgenes again inside the child, and that copy replaces the global service.
+      publishService([]);
+      emit("subagents:child:session-created", { sessionId: "child-session" });
+
+      await expect.poll(() => notifications).toHaveLength(1);
+      const host = createPiExtensionHost();
+      host.mapToolCall({
+        callId: "call-1",
+        toolName: "subagent",
+        args: { subagent_type: "Explore", prompt: "Inspect" },
+        status: "completed",
+        result: { details: { agentId: "native-1", status: "background" } },
+      });
+      expect(host.mapRuntimeNotification(notifications[0]!)?.childSessions).toEqual([
+        { id: "call-1", file },
+      ]);
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[SERVICE_KEY];
+    }
+  });
+
   test("accepts a live child path before or after the spawn result", () => {
     for (const early of [true, false]) {
       const host = createPiExtensionHost();
