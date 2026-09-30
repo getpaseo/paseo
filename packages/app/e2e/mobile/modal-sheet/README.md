@@ -94,7 +94,8 @@ Keep generated screenshots, recordings, and run logs outside the repository.
 ## Stacked adaptive sheets
 
 `stacked-pairing.ad` opens the welcome screen's pairing sheet and then the root-mounted host
-confirmation. It cancels the confirmation, closes and reopens the underlying sheet, confirms again,
+confirmation. It first types without tapping the input to verify autofocus, then cancels the
+confirmation, closes and reopens the underlying sheet, confirms again,
 and completes the password retry. `stacked-settings.ad` checks the same return and retry through
 Settings → add host → Direct connection → Advanced. Run both on phones and tablets so both the
 bottom sheet and centered dialog are exercised.
@@ -127,8 +128,10 @@ Android uses the same journeys: copy each script outside the repository, change 
 artifacts, and sessions separate from other runs. These host-dependent journeys remain outside the
 default mobile suite, alongside the existing modal-sheet scripts.
 
-On iOS, automated replacement of the advanced URI field triggers a repeated-update error on
-iPhone, and replacing it a second time appends text on iPad. For this Settings journey, use the
+On iPhone, bulk replacement or bulk keyboard entry of the advanced URI field triggers a
+repeated-update error with both the parent and stacked-sheet implementations. Entering the complete
+URI one character at a time passed with both implementations; faster typing remains unverified.
+On iPad, replacing the field a second time appends text. For this Settings journey, use the
 native clipboard Paste menu, then continue the assertions manually. Dismiss the password keyboard
 with Done to submit when the Connect button is below the keyboard. The welcome pairing regression
 runs end to end without these adjustments.
