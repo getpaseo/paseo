@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Pressable,
@@ -9,7 +9,12 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
+import { Check } from "@/components/icons/ui-icons";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
+import { useWorkspaceDoneToggle } from "@/leitstand/mark-done-button";
 import { PandaStatus } from "@/components/panda-status";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -215,6 +220,20 @@ function inboxRowStyle({ hovered }: HoverState) {
   return [styles.inboxRow, Boolean(hovered) && styles.rowHovered];
 }
 
+const ThemedCheck = withUnistyles(Check);
+
+function foregroundMutedColorMapping(theme: Theme) {
+  return { color: theme.colors.foregroundMuted };
+}
+
+function hoveredInboxRowStyle() {
+  return [styles.inboxRow, styles.rowHovered];
+}
+
+function inboxDoneStyle({ hovered }: HoverState) {
+  return [styles.inboxDone, Boolean(hovered) && styles.inboxDoneHovered];
+}
+
 const SidebarInboxRow = memo(function SidebarInboxRow({
   item,
   onBeforeNavigate,
@@ -236,20 +255,48 @@ const SidebarInboxRow = memo(function SidebarInboxRow({
     });
   }, [item, onBeforeNavigate]);
 
+  const doneToggle = useWorkspaceDoneToggle(item.serverId, item.workspaceId);
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const showDone = doneToggle !== null && (isHovered || isNative || isCompact);
+
+  // Hover lives on the plain View so the check button inside never fights the row (docs/hover.md).
   return (
-    <Pressable
-      onPress={handlePress}
-      accessibilityRole="button"
-      accessibilityLabel={`${t(KIND_LABEL_KEY[item.kind])}: ${item.title}`}
-      style={inboxRowStyle}
-      testID={`sidebar-inbox-item-${item.id}`}
+    <View
+      style={styles.inboxRowContainer}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
-      <StatusGlyph name={glyphForInboxKind(item.kind)} size={12} />
-      <Text style={styles.inboxRowTitle} numberOfLines={1}>
-        {item.title}
-      </Text>
-      <AgeText date={item.since} />
-    </Pressable>
+      <Pressable
+        onPress={handlePress}
+        accessibilityRole="button"
+        accessibilityLabel={`${t(KIND_LABEL_KEY[item.kind])}: ${item.title}`}
+        style={isHovered ? hoveredInboxRowStyle : styles.inboxRow}
+        testID={`sidebar-inbox-item-${item.id}`}
+      >
+        <StatusGlyph name={glyphForInboxKind(item.kind)} size={12} />
+        <Text style={styles.inboxRowTitle} numberOfLines={1}>
+          {item.title}
+        </Text>
+        {showDone ? (
+          <Pressable
+            onPress={doneToggle.toggle}
+            disabled={doneToggle.pending}
+            accessibilityRole="button"
+            accessibilityLabel={t("leitstand.board.markDone")}
+            hitSlop={6}
+            style={inboxDoneStyle}
+            testID={`sidebar-inbox-done-${item.id}`}
+          >
+            <ThemedCheck size={14} uniProps={foregroundMutedColorMapping} />
+          </Pressable>
+        ) : (
+          <AgeText date={item.since} />
+        )}
+      </Pressable>
+    </View>
   );
 });
 
@@ -333,6 +380,19 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontVariant: ["tabular-nums"],
     color: theme.colors.statusWarning,
+  },
+  inboxRowContainer: {
+    position: "relative",
+  },
+  inboxDone: {
+    width: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.base,
+  },
+  inboxDoneHovered: {
+    backgroundColor: theme.colors.surfaceSidebar,
   },
   inboxRow: {
     flexDirection: "row",
