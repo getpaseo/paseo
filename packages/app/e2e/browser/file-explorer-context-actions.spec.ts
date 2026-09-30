@@ -131,7 +131,7 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   );
   const extraMutedChevronColor = await draftRow
     .locator("svg")
-    .evaluate((icon) => getComputedStyle(icon).stroke);
+    .evaluate((icon) => getComputedStyle(icon).fill);
   expect(placeholderColor).toBe(extraMutedChevronColor);
   await nameInput.press("Tab");
   await expect(nameInput).toBeHidden();
@@ -297,7 +297,7 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   const deleteLabelColor = await deleteAction
     .getByText("Delete", { exact: true })
     .evaluate((element) => getComputedStyle(element).color);
-  await expect(deleteAction.locator("svg")).toHaveCSS("stroke", deleteLabelColor);
+  await expect(deleteAction.locator("svg")).toHaveCSS("fill", deleteLabelColor);
   const cancelledConfirmation = new Promise<string>((resolve) => {
     page.once("dialog", async (dialog) => {
       const message = dialog.message();

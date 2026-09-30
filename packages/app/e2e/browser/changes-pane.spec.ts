@@ -641,7 +641,7 @@ test("changes context menus expose folder revert and restore a file after confir
   const revertLabelColor = await folderRevert
     .getByText("Discard changes", { exact: true })
     .evaluate((element) => getComputedStyle(element).color);
-  await expect(folderRevert.locator("svg")).toHaveCSS("stroke", revertLabelColor);
+  await expect(folderRevert.locator("svg")).toHaveCSS("fill", revertLabelColor);
   await page.keyboard.press("Escape");
 
   await tree.getByTestId("diff-tree-file-0-toggle").click({ button: "right" });

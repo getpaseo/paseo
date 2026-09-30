@@ -228,7 +228,7 @@ export async function expectNoHostBadge(page: Page, target: HostBadgeTarget): Pr
 // tinted label or a pill fill would re-assert the design the meta row replaced.
 //
 // The icon takes the *foreground* variant of the identity colour, not the fill one: it is a
-// stroked glyph on a surface, so it has to clear contrast against that surface rather than
+// glyph on a surface (Phosphor paints it via its `color` attribute), so it has to clear contrast against that surface rather than
 // behind white letters. That variant is per-scheme, and the browser project runs light.
 export async function expectHostBadgeTinted(
   page: Page,
@@ -238,7 +238,7 @@ export async function expectHostBadgeTinted(
   await expect(badge).toBeVisible({ timeout: 15_000 });
   await expect(badge).toHaveText(target.hostName);
   await expect(badge.locator("svg")).toHaveAttribute(
-    "stroke",
+    "color",
     identityForeground(target.color, "light"),
   );
 }
@@ -252,7 +252,7 @@ export async function expectHostAppearancePreview(
   const badge = preview.getByTestId(`host-badge-${input.serverId}`);
   await expect(badge).toHaveText(input.hostName);
   await expect(badge.locator("svg")).toHaveAttribute(
-    "stroke",
+    "color",
     identityForeground(input.color, "light"),
   );
 }
