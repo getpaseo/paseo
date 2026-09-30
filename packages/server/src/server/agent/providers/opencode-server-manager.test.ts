@@ -393,8 +393,8 @@ describe.runIf(process.platform === "win32")(
         expect(records).toHaveLength(1);
         const record = records[0]!;
         expect(path.extname(record.command).toLowerCase()).toBe(".exe");
-        expect(path.normalize(record.command).toLowerCase()).toContain(
-          path.normalize("node_modules/opencode-ai/bin/opencode.exe").toLowerCase(),
+        expect(path.normalize(record.command).toLowerCase()).toMatch(
+          /opencode-(?:ai|windows-(?:x64|arm64))[\\/]bin[\\/]opencode\.exe$/,
         );
         expect(record.command.toLowerCase()).not.toBe(detectedOpenCode!.toLowerCase());
         expect(record.args).toEqual(["serve", "--port", String(acquisition.server.port)]);

@@ -436,6 +436,29 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     });
   }
 
+  const config = parseConfigFile(configPath, raw);
+  log?.info(`Loaded from ${configPath}`);
+  return config;
+}
+
+/** Observe the file without initializing a home, identity, or default configuration. */
+export function readPersistedConfig(
+  paseoHome: string,
+  options: { defaultsIfMissing?: boolean } = {},
+): PersistedConfig {
+  const configPath = getConfigPath(paseoHome);
+  let raw: string;
+  try {
+    raw = readFileSync(configPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return options.defaultsIfMissing ? structuredClone(DEFAULT_PERSISTED_CONFIG) : {};
+    throw error;
+  }
+  return parseConfigFile(configPath, raw);
+}
+
+function parseConfigFile(configPath: string, raw: string): PersistedConfig {
   let parsed: unknown;
   try {
     parsed = parseConfigText(raw);
@@ -446,35 +469,14 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     });
   }
 
-  const migrated = stripRemovedConfigFields(parsed);
-  const result = PersistedConfigSchema.safeParse(migrated);
+  const result = PersistedConfigSchema.safeParse(stripRemovedConfigFields(parsed));
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
       .join("\n");
     throw new Error(`[Config] Invalid config in ${configPath}:\n${issues}`);
   }
-
-  log?.info(`Loaded from ${configPath}`);
   return result.data as PersistedConfig;
-}
-
-/** Observe the file without initializing a home, identity, or default configuration. */
-export function readPersistedConfig(
-  paseoHome: string,
-  options: { defaultsIfMissing?: boolean } = {},
-): PersistedConfig {
-  let raw: string;
-  try {
-    raw = readFileSync(getConfigPath(paseoHome), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return options.defaultsIfMissing ? structuredClone(DEFAULT_PERSISTED_CONFIG) : {};
-    throw error;
-  }
-  return PersistedConfigSchema.parse(
-    stripRemovedConfigFields(parseConfigText(raw)),
-  ) as PersistedConfig;
 }
 
 /** Editors such as Windows Notepad save UTF-8 with a byte order mark, which JSON.parse rejects. */

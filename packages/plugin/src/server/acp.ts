@@ -115,6 +115,7 @@ export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistra
     label: options.label,
     description: options.description,
     icon: options.icon,
+    command: options.command,
     connect(request) {
       return createAcpProviderConnection(options, request);
     },

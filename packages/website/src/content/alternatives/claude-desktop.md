@@ -31,7 +31,7 @@ Claude Desktop is the Anthropic-controlled host application. Claude Code can run
 
 Claude Desktop runs Claude Code.
 
-Paseo runs Claude Code too, plus Codex, OpenCode, and Pi natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
+Paseo runs Claude Code too, plus Codex, OpenCode, Pi, and Muse Code natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
 
 ## Application plugins
 
@@ -94,25 +94,25 @@ Claude supports voice in Claude's own mobile and app surfaces. Claude Code itsel
 
 ## Comparison
 
-|                              | Paseo                                                           | Claude Desktop                       |
-| ---------------------------- | --------------------------------------------------------------- | ------------------------------------ |
-| License                      | Open source (Apache-2.0)                                        | Not published as open source         |
-| Desktop platforms            | macOS, Linux, Windows                                           | macOS, Linux, Windows                |
-| Mobile coding workflow       | Native Paseo workspace on iOS and Android                       | Dispatch and Cowork in Claude mobile |
-| Coding agents                | Claude Code, Codex, OpenCode, Pi + 30+ via ACP catalog + custom | Claude Code                          |
-| Product account required     | No                                                              | Claude account                       |
-| Cloud agent                  | Cloud waitlist                                                  | Claude Cowork and remote sessions    |
-| Required cloud connection    | No                                                              | Claude account and services          |
-| Machines you control         | Laptop, workstation, VM, server, or home lab                    | Local machine or SSH host            |
-| Git worktrees                | Yes                                                             | Yes                                  |
-| Per-worktree dev server URLs | Yes                                                             | No                                   |
-| Split panes and tabs         | Yes                                                             | Yes                                  |
-| In-app terminal              | Yes                                                             | Yes                                  |
-| In-app browser / preview     | Yes                                                             | Yes                                  |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                        | PR monitoring and merge workflows    |
-| CLI                          | Run, `--host`, ls, send, schedule, loop                         | Claude Code CLI                      |
-| Remote transport             | Direct connection or end-to-end encrypted relay                 | Anthropic Remote and cloud services  |
-| Application plugins          | Server code and native client components                        | No                                   |
-| Self-hosted control plane    | Daemon, web client, and relay                                   | No                                   |
+|                              | Paseo                                                                      | Claude Desktop                       |
+| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------ |
+| License                      | Open source (Apache-2.0)                                                   | Not published as open source         |
+| Desktop platforms            | macOS, Linux, Windows                                                      | macOS, Linux, Windows                |
+| Mobile coding workflow       | Native Paseo workspace on iOS and Android                                  | Dispatch and Cowork in Claude mobile |
+| Coding agents                | Claude Code, Codex, OpenCode, Pi, Muse Code + 30+ via ACP catalog + custom | Claude Code                          |
+| Product account required     | No                                                                         | Claude account                       |
+| Cloud agent                  | Cloud waitlist                                                             | Claude Cowork and remote sessions    |
+| Required cloud connection    | No                                                                         | Claude account and services          |
+| Machines you control         | Laptop, workstation, VM, server, or home lab                               | Local machine or SSH host            |
+| Git worktrees                | Yes                                                                        | Yes                                  |
+| Per-worktree dev server URLs | Yes                                                                        | No                                   |
+| Split panes and tabs         | Yes                                                                        | Yes                                  |
+| In-app terminal              | Yes                                                                        | Yes                                  |
+| In-app browser / preview     | Yes                                                                        | Yes                                  |
+| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                   | PR monitoring and merge workflows    |
+| CLI                          | Run, `--host`, ls, send, schedule, loop                                    | Claude Code CLI                      |
+| Remote transport             | Direct connection or end-to-end encrypted relay                            | Anthropic Remote and cloud services  |
+| Application plugins          | Server code and native client components                                   | No                                   |
+| Self-hosted control plane    | Daemon, web client, and relay                                              | No                                   |
 
 See also: [Paseo vs Codex App](/alternatives/codex-app), [Paseo vs OpenCode Desktop](/alternatives/opencode-desktop), [Paseo vs Conductor](/alternatives/conductor).

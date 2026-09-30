@@ -159,6 +159,20 @@ const darkStatusColors = {
   statusMerged: "#a890d5",
 };
 
+// Status tints — the fill of a status badge. The status color itself at low opacity, so a
+// badge takes its state's hue from the same source as its text and never drifts from it.
+// Dark surfaces swallow more of the tint, so the dark band runs a little stronger.
+function statusTints(colors: typeof lightStatusColors, alphaHex: string) {
+  return {
+    statusSuccessTint: `${colors.statusSuccess}${alphaHex}`,
+    statusDangerTint: `${colors.statusDanger}${alphaHex}`,
+    statusWarningTint: `${colors.statusWarning}${alphaHex}`,
+  };
+}
+
+const lightStatusTints = statusTints(lightStatusColors, "1f"); // 12%
+const darkStatusTints = statusTints(darkStatusColors, "29"); // 16%
+
 // Status *dot* colors — the small filled discs on a sidebar row, and the glyphs that stand in
 // for them. Same four hues and the same generation rule as the status colors above, but its
 // own band, because a dot is doing a different job than a check icon or a host badge.
@@ -289,6 +303,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
     ...lightDiffColors,
     ...lightStatusColors,
+    ...lightStatusTints,
     ...lightStatusDotColors,
 
     terminal: {
@@ -420,6 +435,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     ...darkDiffColors,
     ...darkStatusColors,
+    ...darkStatusTints,
     ...darkStatusDotColors,
 
     terminal: {
@@ -626,7 +642,10 @@ export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
   web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 });
 
-// `fontSize`, `fontFamily`, and `lineHeight` are deliberately widened to plain
+// Chat and markdown content column; the appearance updater patches the user's width in.
+export const DEFAULT_CONTENT_MAX_WIDTH = 820;
+
+// `fontSize`, `fontFamily`, `lineHeight`, and `contentMaxWidth` are deliberately widened to plain
 // `number`/`string` (not narrowed by `as const`) so the appearance updater can patch
 // them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
 // literal types.
@@ -635,6 +654,7 @@ interface CommonTheme {
   fontSize: Record<keyof typeof FONT_SIZE, number>;
   fontFamily: { ui: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
+  contentMaxWidth: number;
   iconSize: typeof ICON_SIZE;
   fontWeight: typeof FONT_WEIGHT;
   borderRadius: typeof BORDER_RADIUS;
@@ -647,6 +667,7 @@ const commonTheme: CommonTheme = {
   fontSize: FONT_SIZE,
   fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },
   lineHeight: LINE_HEIGHT,
+  contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
   iconSize: ICON_SIZE,
   fontWeight: FONT_WEIGHT,
   borderRadius: BORDER_RADIUS,

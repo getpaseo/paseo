@@ -1,3 +1,4 @@
+import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -136,6 +137,17 @@ function assertChildWithPipes(
   }
 }
 
+// Node reports a failed spawn (missing binary or missing cwd) as a child
+// `error` event; without a listener it becomes an uncaught exception.
+function rejectOnSpawnError(child: ChildProcess, stderrChunks: string[]): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    child.once("error", (error) => {
+      const stderr = stderrChunks.join("").trim();
+      reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
+    });
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -189,15 +201,22 @@ export function summarizeACPRequestError(error: unknown): {
   return { message: String(error) };
 }
 
+// Keeps the JSON-RPC code so callers can still tell invalid params from other failures.
+class ACPRequestError extends Error {
+  readonly code: number;
+
+  constructor(error: ACPError) {
+    super(summarizeACPRequestError(error).message, { cause: error });
+    this.name = "ACPRequestError";
+    this.code = error.code;
+  }
+}
+
 function toACPRequestError(error: unknown): Error {
   if (!isACPError(error)) {
     return error instanceof Error ? error : new Error(String(error));
   }
-
-  const summary = summarizeACPRequestError(error);
-  const next = new Error(summary.message);
-  next.name = "ACPRequestError";
-  return next;
+  return new ACPRequestError(error);
 }
 
 function resolveTerminalCommand(
@@ -943,6 +962,7 @@ export class ACPAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.assertProvider(config);
+    const providerOptions = ACPProviderOptionsSchema.parse(config.providerOptions ?? {});
     const session = new ACPAgentSession(
       { ...config, provider: this.provider },
       {
@@ -955,14 +975,18 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
-        clientCapabilities: this.clientCapabilities,
+        clientCapabilities: providerOptions.clientCapabilities ?? this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
         beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
-        capabilities: this.capabilities,
+        capabilities: {
+          ...this.capabilities,
+          supportsMcpServers:
+            providerOptions.supportsMcpServers ?? this.capabilities.supportsMcpServers,
+        },
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
@@ -995,6 +1019,7 @@ export class ACPAgentClient implements AgentClient {
       provider: this.provider,
       cwd,
     };
+    const providerOptions = ACPProviderOptionsSchema.parse(mergedConfig.providerOptions ?? {});
     const session = new ACPAgentSession(mergedConfig, {
       provider: this.provider,
       logger: this.logger,
@@ -1005,14 +1030,18 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
-      clientCapabilities: this.clientCapabilities,
+      clientCapabilities: providerOptions.clientCapabilities ?? this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
       beforeModeWriter: this.beforeModeWriter,
       thinkingOptionWriter: this.thinkingOptionWriter,
-      capabilities: this.capabilities,
+      capabilities: {
+        ...this.capabilities,
+        supportsMcpServers:
+          providerOptions.supportsMcpServers ?? this.capabilities.supportsMcpServers,
+      },
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
@@ -1064,6 +1093,7 @@ export class ACPAgentClient implements AgentClient {
         raceProviderRefreshAbort(
           context?.signal,
           this.spawnProcess(PROBE_ENV, {
+            providerOptions: options.providerOptions,
             onSpawned: (spawned) => {
               probe = spawned;
               if (context?.signal.aborted) void closeProbe().catch(() => undefined);
@@ -1309,6 +1339,7 @@ export class ACPAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     options?: {
       initializeTimeoutMs?: number;
+      providerOptions?: Record<string, unknown>;
       onSpawned?: (probe: UninitializedACPProcess) => void;
       client?: ACPClient;
     },
@@ -1321,7 +1352,11 @@ export class ACPAgentClient implements AgentClient {
     };
     options?.onSpawned?.(probe);
     try {
-      const initialize = await this.initializeTransport(transport, options?.initializeTimeoutMs);
+      const initialize = await this.initializeTransport(
+        transport,
+        options?.initializeTimeoutMs,
+        options?.providerOptions,
+      );
       const initializedProbe: SpawnedACPProcess = {
         ...probe,
         initialize,
@@ -1354,12 +1389,7 @@ export class ACPAgentClient implements AgentClient {
       stderrChunks.push(chunk.toString());
     });
 
-    const spawnErrorPromise = new Promise<never>((_, reject) => {
-      child.once("error", (error) => {
-        const stderr = stderrChunks.join("").trim();
-        reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
-      });
-    });
+    const spawnErrorPromise = rejectOnSpawnError(child, stderrChunks);
     const spawnReadyPromise = new Promise<void>((resolve) => {
       child.once("spawn", () => {
         resolve();
@@ -1385,7 +1415,9 @@ export class ACPAgentClient implements AgentClient {
   protected async initializeTransport(
     transport: ACPProcessTransport,
     initializeTimeoutMs?: number,
+    providerOptions?: Record<string, unknown>,
   ): Promise<InitializeResponse> {
+    const configuredOptions = ACPProviderOptionsSchema.parse(providerOptions ?? {});
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const initializeTimeoutPromise = initializeTimeoutMs
       ? new Promise<never>((_, reject) => {
@@ -1402,7 +1434,7 @@ export class ACPAgentClient implements AgentClient {
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: buildACPClientCapabilities(
               this.clientCapabilityMeta,
-              this.clientCapabilities,
+              configuredOptions.clientCapabilities ?? this.clientCapabilities,
             ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
@@ -1670,6 +1702,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
+  private readonly earlySessionUpdates: SessionNotification[] = [];
   private currentMode: string | null = null;
   private availableModes: AgentMode[];
   private currentModel: string | null = null;
@@ -1746,6 +1779,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
+      for (const update of this.earlySessionUpdates.splice(0)) {
+        await this.sessionUpdate(update);
+      }
       await this.applyConfiguredOverrides();
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
@@ -2011,8 +2047,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const context = this.createProviderModeWriterContext(modeId, selection);
-    const providerResult = this.providerModeWriter
-      ? await this.providerModeWriter(context)
+    const providerModeWriter = this.providerModeWriter;
+    const providerResult = providerModeWriter
+      ? await this.runACPRequest(() => providerModeWriter(context))
       : { handled: false };
     if (providerResult.handled) {
       this.currentMode = providerResult.currentModeId ?? modeId;
@@ -2057,15 +2094,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    if (this.beforeModeWriter) {
-      const beforeResult = await this.beforeModeWriter(context);
+    const beforeModeWriter = this.beforeModeWriter;
+    if (beforeModeWriter) {
+      const beforeResult = await this.runACPRequest(() => beforeModeWriter(context));
       if (beforeResult?.configOptions) {
         this.configOptions = this.transformConfigOptions(beforeResult.configOptions);
       }
     }
 
     if (selection.hasAvailableModes) {
-      await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
+      const { connection, sessionId } = this;
+      await this.runACPRequest(() => connection.setSessionMode({ sessionId, modeId }));
       this.currentMode = modeId;
       this.pushEvent({
         type: "mode_changed",
@@ -2081,11 +2120,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`${this.provider} does not expose ACP mode switching`);
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: modeOption.id,
-      value: modeId,
-    });
+    const { connection, sessionId } = this;
+    const response = await this.runACPRequest(() =>
+      connection.setSessionConfigOption({
+        sessionId,
+        configId: modeOption.id,
+        value: modeId,
+      }),
+    );
     this.currentMode = this.applyConfigOptionResponse({
       response,
       configId: modeOption.id,
@@ -2196,11 +2238,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: modelOption.id,
-      value: modelId,
-    });
+    const { connection, sessionId } = this;
+    const response = await this.runACPRequest(() =>
+      connection.setSessionConfigOption({
+        sessionId,
+        configId: modelOption.id,
+        value: modelId,
+      }),
+    );
     this.currentModel = this.applyConfigOptionResponse({
       response,
       configId: modelOption.id,
@@ -2224,8 +2269,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
+    const thinkingOptionWriter = this.thinkingOptionWriter;
+    if (thinkingOptionWriter) {
+      const { connection, sessionId } = this;
+      await this.runACPRequest(() => thinkingOptionWriter(connection, sessionId, thinkingOptionId));
       this.thinkingOptionId = thinkingOptionId;
       this.pushEvent({
         type: "thinking_option_changed",
@@ -2242,11 +2289,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!option) {
       throw new Error(`${this.provider} does not expose ACP thought-level selection`);
     }
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: thinkingOptionId,
-    });
+    const { connection, sessionId } = this;
+    const response = await this.runACPRequest(() =>
+      connection.setSessionConfigOption({
+        sessionId,
+        configId: option.id,
+        value: thinkingOptionId,
+      }),
+    );
     this.thinkingOptionId = this.applyConfigOptionResponse({
       response,
       configId: option.id,
@@ -2292,11 +2342,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       );
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: requestedValue,
-    });
+    const { connection, sessionId } = this;
+    const response = await this.runACPRequest(() =>
+      connection.setSessionConfigOption({
+        sessionId,
+        configId: option.id,
+        value: requestedValue,
+      }),
+    );
     const currentValue = this.applyConfigOptionResponse({
       response,
       configId: option.id,
@@ -2385,12 +2438,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!this.sessionId) {
       return null;
     }
+    const { providerOptions: _providerOptions, ...persistedConfig } = this.config;
     return {
       provider: this.provider,
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
-        ...this.config,
+        ...persistedConfig,
         title: this.currentTitle,
       },
     };
@@ -2515,6 +2569,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.raw_event",
     );
+    if (!this.sessionId) {
+      this.earlySessionUpdates.push(params);
+      return;
+    }
     if (params.sessionId !== this.sessionId) {
       return;
     }
@@ -2732,6 +2790,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
+    const spawnError = rejectOnSpawnError(child, stderrChunks);
     child.once("exit", (code, signal) => {
       if (this.closed) {
         return;
@@ -2759,14 +2818,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.child = child;
     this.connection = connection;
     const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
+      Promise.race([
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            this.clientCapabilityMeta,
+            this.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+        spawnError,
+      ]),
     );
 
     return { child, connection, initialize };

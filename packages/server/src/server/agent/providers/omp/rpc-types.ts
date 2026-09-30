@@ -8,6 +8,7 @@ export const OmpThinkingLevelSchema = z.enum([
   "high",
   "xhigh",
   "max",
+  "auto",
 ]);
 
 export const OmpImageContentSchema = z
@@ -128,6 +129,8 @@ export const OmpSessionStateSchema = z
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
     autoCompactionEnabled: z.boolean().optional(),
+    fastModeEnabled: z.boolean().optional(),
+    fastModeActive: z.boolean().optional(),
     sessionFile: z.string().optional(),
     sessionId: z.string(),
     sessionName: z.string().optional(),
@@ -333,7 +336,8 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
 export const OmpTodoItemSchema = z
   .object({
     content: z.string(),
-    status: z.enum(["pending", "in_progress", "completed", "abandoned"]),
+    status: z.enum(["pending", "in_progress", "completed", "abandoned", "blocked"]),
+    blocker: z.string().optional(),
   })
   .passthrough();
 export const OmpTodoPhaseSchema = z
@@ -444,6 +448,7 @@ const OmpExtensionUiRequestSchema = z
     title: z.string().optional(),
     message: z.string().optional(),
     options: z.array(z.string()).optional(),
+    optionDetails: z.unknown().optional(),
     placeholder: z.string().optional(),
     url: z.string().optional(),
     launchUrl: z.string().optional(),
@@ -494,6 +499,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpRpcHostToolCallRequestSchema,
   OmpRpcHostToolCancelRequestSchema,
   OmpRpcHostToolUpdateSchema,
+  z.object({ type: z.literal("model_changed") }).passthrough(),
 ]);
 
 const OmpCommandBase = { id: z.string().optional() };
@@ -512,6 +518,13 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("steer"),
+    message: z.string(),
+    images: z.array(OmpImageContentSchema).optional(),
+  }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
   z.object({
