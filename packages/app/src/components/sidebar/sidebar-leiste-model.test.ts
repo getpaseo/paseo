@@ -13,6 +13,7 @@ function question(id: string): InboxItem {
     projectName: "app",
     title: `Session ${id}`,
     since: null,
+    agentId: null,
   };
 }
 

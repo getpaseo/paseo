@@ -3358,6 +3358,12 @@ export const en = {
         mergeReady: "PR #{{number}} is green and ready to merge",
         finished: "The agent handed back and waits for you",
       },
+      reply: {
+        placeholder: "Reply to the agent…",
+        send: "Send",
+        sending: "Sending…",
+        failed: "Couldn't send",
+      },
       actions: {
         review: "Review",
         reply: "Reply",

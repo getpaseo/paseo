@@ -3104,6 +3104,12 @@ export const ja: TranslationResources = {
         mergeReady: "PR #{{number}} はグリーンでマージできます",
         finished: "エージェントがあなたの返答を待っています",
       },
+      reply: {
+        placeholder: "エージェントに返信…",
+        send: "送信",
+        sending: "送信中…",
+        failed: "送信できませんでした",
+      },
       actions: {
         review: "確認",
         reply: "返信",

@@ -3088,6 +3088,12 @@ export const ko: TranslationResources = {
         mergeReady: "PR #{{number}}이(가) 통과되어 병합할 수 있습니다",
         finished: "에이전트가 차례를 넘기고 기다립니다",
       },
+      reply: {
+        placeholder: "에이전트에게 답장…",
+        send: "보내기",
+        sending: "보내는 중…",
+        failed: "보내지 못했습니다",
+      },
       actions: {
         review: "검토",
         reply: "답장",

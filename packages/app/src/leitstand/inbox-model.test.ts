@@ -243,6 +243,21 @@ describe("buildLeitstandInbox", () => {
     expect(kinds(items)).toEqual(["finished"]);
   });
 
+  it("points a handed-back row at the agent that spoke last, for its context and reply", () => {
+    const { items } = inbox({
+      sessions: [
+        session({
+          bucket: "attention",
+          agents: [
+            agent({ id: "planner", bucket: "done", lastActivityAt: new Date(NOW - 600_000) }),
+            agent({ id: "dev", bucket: "attention", lastActivityAt: new Date(NOW - 60_000) }),
+          ],
+        }),
+      ],
+    });
+    expect(items).toEqual([expect.objectContaining({ kind: "finished", agentId: "dev" })]);
+  });
+
   it("keeps a handed-back session after it was looked at, until it is marked done", () => {
     const seen = session({ bucket: "done", agents: [agent({ bucket: "done" })] });
     expect(kinds(inbox({ sessions: [seen] }).items)).toEqual(["finished"]);

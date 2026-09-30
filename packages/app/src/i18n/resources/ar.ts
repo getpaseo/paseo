@@ -3060,6 +3060,12 @@ export const ar: TranslationResources = {
         mergeReady: "PR #{{number}} أخضر وجاهز للدمج",
         finished: "أعاد الوكيل الدور إليك وينتظر",
       },
+      reply: {
+        placeholder: "الرد على الوكيل…",
+        send: "إرسال",
+        sending: "جارٍ الإرسال…",
+        failed: "تعذّر الإرسال",
+      },
       actions: {
         review: "مراجعة",
         reply: "رد",

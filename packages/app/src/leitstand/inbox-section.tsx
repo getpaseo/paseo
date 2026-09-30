@@ -27,6 +27,7 @@ import {
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { LeitstandPanda } from "./leitstand-panda";
 import { MarkDoneButton } from "./mark-done-button";
+import { InboxReplyInput, InboxReplyPreview } from "./inbox-reply";
 import { StatusGlyph, glyphForInboxKind } from "./status-glyph";
 import { AgeText, ProjectTag } from "./tags";
 import type { SnoozableInbox } from "./use-leitstand";
@@ -118,6 +119,12 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
   );
 }
 
+function hasAgentReply(
+  item: InboxItem,
+): item is Extract<InboxItem, { kind: "question" | "finished" }> {
+  return item.kind === "question" || item.kind === "finished";
+}
+
 function InboxRow({
   item,
   isFirst,
@@ -145,7 +152,21 @@ function InboxRow({
           <Text style={[styles.kind, kindStyle(item.kind)]}>{t(KIND_LABEL_KEY[item.kind])}</Text>
           <AgeText date={item.since} />
         </View>
-        <Text style={styles.reason}>{describeReason(item, t)}</Text>
+        {hasAgentReply(item) ? (
+          <>
+            <InboxReplyPreview
+              serverId={item.serverId}
+              agentId={item.agentId}
+              fallback={describeReason(item, t)}
+              style={styles.reason}
+            />
+            {item.agentId ? (
+              <InboxReplyInput serverId={item.serverId} agentId={item.agentId} testID={testID} />
+            ) : null}
+          </>
+        ) : (
+          <Text style={styles.reason}>{describeReason(item, t)}</Text>
+        )}
       </View>
       <View style={isCompact ? [styles.actions, styles.actionsCompact] : styles.actions}>
         <InboxActions item={item} size={buttonSize} testID={testID} />

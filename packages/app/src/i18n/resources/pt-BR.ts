@@ -3122,6 +3122,12 @@ export const ptBR: TranslationResources = {
         mergeReady: "O PR #{{number}} está verde e pronto para merge",
         finished: "O agente devolveu a vez e espera por você",
       },
+      reply: {
+        placeholder: "Responder ao agente…",
+        send: "Enviar",
+        sending: "Enviando…",
+        failed: "Não foi possível enviar",
+      },
       actions: {
         review: "Revisar",
         reply: "Responder",

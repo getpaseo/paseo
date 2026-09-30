@@ -3140,6 +3140,12 @@ export const fr: TranslationResources = {
         mergeReady: "La PR #{{number}} est au vert et prête à fusionner",
         finished: "L'agent t'a rendu la main et attend",
       },
+      reply: {
+        placeholder: "Répondre à l'agent…",
+        send: "Envoyer",
+        sending: "Envoi…",
+        failed: "Échec de l'envoi",
+      },
       actions: {
         review: "Examiner",
         reply: "Répondre",

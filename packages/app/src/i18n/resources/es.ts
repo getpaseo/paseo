@@ -3152,6 +3152,12 @@ export const es: TranslationResources = {
         mergeReady: "El PR #{{number}} está en verde y listo para fusionar",
         finished: "El agente te devolvió el turno y espera",
       },
+      reply: {
+        placeholder: "Responder al agente…",
+        send: "Enviar",
+        sending: "Enviando…",
+        failed: "No se pudo enviar",
+      },
       actions: {
         review: "Revisar",
         reply: "Responder",

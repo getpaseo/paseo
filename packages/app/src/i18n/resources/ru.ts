@@ -3137,6 +3137,12 @@ export const ru: TranslationResources = {
         mergeReady: "PR #{{number}} зелёный и готов к слиянию",
         finished: "Агент вернул ход и ждёт вас",
       },
+      reply: {
+        placeholder: "Ответить агенту…",
+        send: "Отправить",
+        sending: "Отправка…",
+        failed: "Не удалось отправить",
+      },
       actions: {
         review: "Проверить",
         reply: "Ответить",

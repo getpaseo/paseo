@@ -56,6 +56,7 @@ export interface PermissionInboxItem extends SessionInboxItemBase {
 
 export interface QuestionInboxItem extends SessionInboxItemBase {
   kind: "question";
+  agentId: string | null;
 }
 
 export interface AgentErrorInboxItem extends SessionInboxItemBase {
@@ -78,6 +79,8 @@ export interface MergeReadyInboxItem extends SessionInboxItemBase {
 /** An agent handed the turn back and nobody replied or marked the session done. */
 export interface FinishedInboxItem extends SessionInboxItemBase {
   kind: "finished";
+  /** The agent that spoke last; its reply is the row's context and where a reply goes. */
+  agentId: string | null;
 }
 
 export interface ScheduleErrorInboxItem extends InboxItemBase {
@@ -117,6 +120,14 @@ function isHandedBackRecently(session: LeitstandSession, nowMs: number): boolean
   return nowMs - session.handedBackAt.getTime() <= WAITING_INBOX_WINDOW_MS;
 }
 
+function latestAgentId(session: LeitstandSession): string | null {
+  let latest: LeitstandSession["agents"][number] | null = null;
+  for (const agent of session.agents) {
+    if (!latest || agent.lastActivityAt > latest.lastActivityAt) latest = agent;
+  }
+  return latest?.id ?? null;
+}
+
 function sessionItems(session: LeitstandSession, nowMs: number): SessionInboxItem[] {
   const base = {
     serverId: session.serverId,
@@ -144,6 +155,7 @@ function sessionItems(session: LeitstandSession, nowMs: number): SessionInboxIte
         ...base,
         kind: "question",
         id: `${session.key}|question|${sinceKey(base.since)}`,
+        agentId: latestAgentId(session),
       });
     }
   }
@@ -168,6 +180,7 @@ function sessionItems(session: LeitstandSession, nowMs: number): SessionInboxIte
       since: session.handedBackAt,
       kind: "finished",
       id: `${session.key}|finished|${sinceKey(session.handedBackAt)}`,
+      agentId: latestAgentId(session),
     });
   }
 

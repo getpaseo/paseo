@@ -3035,6 +3035,12 @@ export const zhCN: TranslationResources = {
         mergeReady: "PR #{{number}} 检查通过，可以合并",
         finished: "智能体已交回，正在等你",
       },
+      reply: {
+        placeholder: "回复代理…",
+        send: "发送",
+        sending: "发送中…",
+        failed: "发送失败",
+      },
       actions: {
         review: "查看请求",
         reply: "回复",
