@@ -238,7 +238,7 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("validates complete Hub agent configurations through the current provider contract", async () => {
+  test("validates catalog choices while leaving provider options opaque", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       extraClients: {
@@ -293,11 +293,19 @@ describe("ProviderSnapshotManager public surface", () => {
           path: ["thinkingOptionId"],
           message: "Thinking option 'missing' is not available for provider 'codex'",
         },
-        {
-          path: ["providerOptions", "sandbox_workspace_write", "network_access"],
-          message: "Invalid input: expected boolean, received string",
-        },
       ]);
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "codex",
+          model: "gpt-latest",
+          modeId: "auto-review",
+          thinkingOptionId: "xhigh",
+          providerOptions: {
+            sandbox_workspace_write: { network_access: "sometimes" },
+            arbitrary: true,
+          },
+        }),
+      ).resolves.toEqual([]);
     } finally {
       manager.destroy();
     }
