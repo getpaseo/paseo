@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  panda: {
+    status: {
+      run: "الوكيل قيد التشغيل",
+      ask: "الوكيل بانتظار ردك",
+      err: "واجه الوكيل خطأ",
+      sleep: "اكتمل كل شيء",
+    },
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",

@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  panda: {
+    status: {
+      run: "에이전트가 실행 중입니다",
+      ask: "에이전트가 입력을 기다리고 있습니다",
+      err: "에이전트에서 오류가 발생했습니다",
+      sleep: "모두 완료되었습니다",
+    },
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",

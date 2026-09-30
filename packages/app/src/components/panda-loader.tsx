@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo } from "react";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -13,24 +13,12 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Rect } from "react-native-svg";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { PANDA_STAND, PANDA_WORK_FRAMES } from "@/components/panda-frames";
+import { PANDA_STAND } from "@/components/panda-frames";
 import { PANDA_GRID, buildPandaRuns } from "@/components/panda-sprite";
+import { PandaStatus } from "@/components/panda-status";
 
-// 16 frames of small steps, about 7 per second.
-const WORK_FRAME_MS = 140;
 const SALTO_MS = 950;
 const SALTO_REST_MS = 900;
-
-function useFrameIndex(frameCount: number, intervalMs: number, animate: boolean): number {
-  const [index, setIndex] = useState(0);
-  useEffect(() => {
-    if (!animate) return;
-    const advance = () => setIndex((current) => (current + 1) % frameCount);
-    const timer = setInterval(advance, intervalMs);
-    return () => clearInterval(timer);
-  }, [animate, frameCount, intervalMs]);
-  return animate ? index : 0;
-}
 
 const PandaFrameSvg = memo(function PandaFrameSvg({
   frame,
@@ -63,12 +51,10 @@ const PandaFrameSvg = memo(function PandaFrameSvg({
   );
 });
 
-/** PandaOS's working indicator: the panda chews bamboo, blinks and thinks while a turn runs. */
+/** PandaOS's working indicator: the run-mood panda, chewing bamboo while a turn runs. */
 export const PandaLoader = memo(function PandaLoader({ pixel = 1 }: { pixel?: number }) {
   const active = useRetainedPanelActive();
-  const reducedMotion = useReducedMotion();
-  const index = useFrameIndex(PANDA_WORK_FRAMES.length, WORK_FRAME_MS, active && !reducedMotion);
-  return <PandaFrameSvg frame={PANDA_WORK_FRAMES[index]!} pixel={pixel} label="PandaOS arbeitet" />;
+  return <PandaStatus mood="run" size="large" pixelScale={pixel} animate={active} />;
 });
 
 /**

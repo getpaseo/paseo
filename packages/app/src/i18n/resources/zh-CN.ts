@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  panda: {
+    status: {
+      run: "代理正在运行",
+      ask: "代理正在等待您的输入",
+      err: "代理遇到错误",
+      sleep: "全部完成",
+    },
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",

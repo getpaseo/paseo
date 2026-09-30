@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  panda: {
+    status: {
+      run: "O agente está em execução",
+      ask: "O agente precisa da sua resposta",
+      err: "O agente encontrou um erro",
+      sleep: "Tudo pronto",
+    },
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",

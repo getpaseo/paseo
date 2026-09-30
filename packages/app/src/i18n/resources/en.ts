@@ -1,4 +1,12 @@
 export const en = {
+  panda: {
+    status: {
+      run: "Agent is running",
+      ask: "Agent needs your input",
+      err: "Agent hit an error",
+      sleep: "All done",
+    },
+  },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  panda: {
+    status: {
+      run: "El agente está en ejecución",
+      ask: "El agente necesita tu respuesta",
+      err: "El agente encontró un error",
+      sleep: "Todo listo",
+    },
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",

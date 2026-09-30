@@ -10,13 +10,16 @@ export interface PandaRun {
 }
 
 /** Same-colour pixels of a row merge into one rect, far fewer shapes than pixels. */
-export function buildPandaRuns(frame: readonly string[]): PandaRun[] {
+export function buildPandaRuns(
+  frame: readonly string[],
+  palette: Record<string, string> = PANDA_PALETTE,
+): PandaRun[] {
   const runs: PandaRun[] = [];
   frame.forEach((row, y) => {
     let x = 0;
     while (x < row.length) {
       const cell = row[x]!;
-      const fill = PANDA_PALETTE[cell];
+      const fill = palette[cell];
       if (cell === "." || !fill) {
         x += 1;
         continue;

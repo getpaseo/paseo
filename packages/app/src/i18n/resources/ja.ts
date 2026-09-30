@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  panda: {
+    status: {
+      run: "エージェントは実行中です",
+      ask: "エージェントが入力を待っています",
+      err: "エージェントでエラーが発生しました",
+      sleep: "すべて完了しました",
+    },
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
