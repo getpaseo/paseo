@@ -8,6 +8,8 @@ import type { Theme } from "@/styles/theme";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
+import { matchesSearchQuery } from "@/screens/settings/settings-search";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -337,6 +339,12 @@ export function KeyboardShortcutsSection() {
   const isMac = getShortcutOs() === "mac";
   const isDesktopApp = getIsElectronRuntime();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  const [query, setQuery] = useState("");
+  const visibleSections: typeof sections = [];
+  for (const section of sections) {
+    const rows = section.rows.filter((row) => matchesSearchQuery(t(row.labelKey), query));
+    if (rows.length > 0) visibleSections.push({ ...section, rows });
+  }
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -443,7 +451,19 @@ export function KeyboardShortcutsSection() {
 
   return (
     <>
-      {sections.map(function (section, sectionIndex) {
+      <View style={styles.filterRow}>
+        <SearchField
+          value={query}
+          onChangeText={setQuery}
+          placeholder={t("settings.shortcuts.searchPlaceholder")}
+          clearAccessibilityLabel={t("settings.search.clear")}
+          testID="settings-shortcuts-filter"
+        />
+      </View>
+      {visibleSections.length === 0 ? (
+        <Text style={styles.filterEmpty}>{t("settings.shortcuts.noMatches")}</Text>
+      ) : null}
+      {visibleSections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
             key={section.id}
@@ -497,7 +517,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: theme.spacing[1],
     paddingVertical: theme.spacing[3],
   },
   rowCapturing: {
@@ -547,6 +567,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileCard: {
     padding: theme.spacing[4],
+  },
+  filterRow: {
+    flexDirection: "row",
+    marginBottom: theme.spacing[6],
+  },
+  filterEmpty: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foregroundMuted,
   },
   mobileText: {
     fontSize: theme.fontSize.base,
