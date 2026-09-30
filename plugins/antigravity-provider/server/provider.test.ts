@@ -20,6 +20,18 @@ const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
 const fake = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
 const provider = createAntigravityProvider();
+
+it("publishes a monochrome, theme-aware provider icon", async () => {
+  const icon = await readFile(new URL("../icon.svg", import.meta.url), "utf8");
+  expect(icon).toContain('viewBox="0 0 24 24"');
+  expect(icon).toContain('fill="currentColor"');
+  expect(icon).not.toMatch(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(|url\(/i);
+  expect(icon).not.toMatch(/<(?:style|mask|defs|linearGradient|radialGradient)\b|\bid=/i);
+  expect([...icon.matchAll(/\b(?:fill|stroke)="([^"]+)"/g)].map((match) => match[1])).toEqual([
+    "currentColor",
+  ]);
+});
+
 afterEach(async () => {
   await Promise.all(connections.splice(0).map((connection) => connection.close()));
   await Promise.all(
