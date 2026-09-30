@@ -540,10 +540,6 @@ export class OmpHarness {
     return this.omp.latestSession();
   }
 
-  async getUsageReference() {
-    return this.requireSession().getUsageReference();
-  }
-
   runningToolCallIds(): string[] {
     const statusByCall = new Map<string, string>();
     for (const item of this.timeline()) {

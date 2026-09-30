@@ -255,7 +255,6 @@ export async function fetchUsage(
     const weeklyWindow = toWeeklyWindow(name, model);
     if (weeklyWindow) windows.push(weeklyWindow);
   }
-  if (windows[0]) windows[0].headline = true;
 
   return {
     status: windows.length > 0 ? "available" : "unavailable",

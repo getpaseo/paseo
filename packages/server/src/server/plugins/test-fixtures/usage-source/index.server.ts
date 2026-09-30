@@ -23,7 +23,7 @@ export default function contribute(server: PluginServerContext) {
       fetches++;
       return {
         status: "available",
-        windows: [{ id: "count", label: "Count", usedPct: fetches, headline: true }],
+        windows: [{ id: "count", label: "Count", usedPct: fetches }],
       };
     },
   });

@@ -3,7 +3,6 @@ import {
   type ProviderUsage,
   type UsageReportEntry,
 } from "@getpaseo/protocol/messages";
-import type { UsageReference } from "../../agent/agent-sdk-types.js";
 
 export interface UsageSource {
   id: string;
@@ -43,12 +42,6 @@ export class UsageSourceRegistry {
     for (const key of this.cache.keys()) if (key.startsWith(`${id}:`)) this.cache.delete(key);
   }
 
-  async resolveReference(reference: UsageReference): Promise<string | null> {
-    const source = this.sources.get(reference.source);
-    if (!source) return null;
-    return this.identify(source, reference.input);
-  }
-
   private async identify(source: UsageSource, input: unknown): Promise<string | null> {
     try {
       const account = await source.identify(input);
@@ -71,9 +64,9 @@ export class UsageSourceRegistry {
   }
 
   async listReports(
-    options: { forceRefresh?: boolean; reportIds?: string[]; references?: UsageReference[] } = {},
+    options: { forceRefresh?: boolean; reportIds?: string[] } = {},
   ): Promise<UsageReportEntry[]> {
-    const ids = options.reportIds ?? (await this.discoverReportIds(options.references ?? []));
+    const ids = options.reportIds ?? (await this.discoverReportIds());
     return Promise.all(
       [...new Set(ids)]
         .filter((id) => this.known.has(id) || this.cache.has(id))
@@ -81,7 +74,7 @@ export class UsageSourceRegistry {
     );
   }
 
-  private async discoverReportIds(references: UsageReference[]): Promise<string[]> {
+  private async discoverReportIds(): Promise<string[]> {
     const discovered = await Promise.all(
       [...this.sources.values()].map(async (source) => {
         try {
@@ -97,11 +90,10 @@ export class UsageSourceRegistry {
         }
       }),
     );
-    const live = await Promise.all(references.map((reference) => this.resolveReference(reference)));
-    return [...discovered.flat(), ...live.filter((id): id is string => id !== null)];
+    return discovered.flat();
   }
 
-  // COMPAT(providerUsageList): added in v0.9.3, remove after 2027-03-26.
+  // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
   async listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
     const reports = await this.listReports();
     return {
@@ -113,7 +105,9 @@ export class UsageSourceRegistry {
         : new Date(this.now()).toISOString(),
       providers: reports.map((entry) => ({
         providerId: entry.sourceId,
-        displayName: entry.sourceLabel,
+        displayName: entry.account.label
+          ? `${entry.sourceLabel} (${entry.account.label})`
+          : entry.sourceLabel,
         status: entry.report.status,
         planLabel: entry.report.planLabel ?? null,
         windows: entry.report.windows,

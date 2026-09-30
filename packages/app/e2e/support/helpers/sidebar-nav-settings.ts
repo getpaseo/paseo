@@ -55,10 +55,25 @@ export async function seedSidebarNavPreferences(
   );
 }
 
+/** Seeds stored footer rows once; a reload keeps whatever the app wrote since. */
+export async function seedSidebarFooterPreferences(
+  page: Page,
+  preferences: SidebarNavPreference[],
+): Promise<void> {
+  await page.addInitScript(
+    ({ key, sidebarFooterItems }) => {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, JSON.stringify({ sidebarFooterItems }));
+    },
+    { key: APP_SETTINGS_KEY, sidebarFooterItems: preferences },
+  );
+}
+
 export async function openSidebarNavSettings(page: Page): Promise<void> {
   await openSettings(page);
   await openSettingsSection(page, "sidebar");
-  await expect(page.getByTestId("sidebar-nav-section")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("sidebar-nav-section-header")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("sidebar-nav-section-footer")).toBeVisible();
 }
 
 export async function leaveSettings(page: Page): Promise<void> {
@@ -125,9 +140,9 @@ export async function expectStoredSidebarNav(
     .toEqual(expected);
 }
 
-async function expectVerticalOrder(
-  keys: SidebarNavKey[],
-  locate: (key: SidebarNavKey) => Locator,
+async function expectVerticalOrder<Key extends string>(
+  keys: Key[],
+  locate: (key: Key) => Locator,
   subject: string,
 ): Promise<void> {
   await expect
@@ -136,15 +151,91 @@ async function expectVerticalOrder(
         const measured = await Promise.all(
           keys.map(async (key) => ({ key, top: await rowTop(locate(key)) })),
         );
-        if (
-          !measured.every(
-            (entry): entry is { key: SidebarNavKey; top: number } => entry.top !== null,
-          )
-        )
+        if (!measured.every((entry): entry is { key: Key; top: number } => entry.top !== null))
           return null;
         return measured.sort((a, b) => a.top - b.top).map((entry) => entry.key);
       },
       { message: `Expected ${subject} in order`, timeout: 15_000 },
     )
     .toEqual(keys);
+}
+
+/** Persisted footer row key -> the testID the app shell renders that row with. */
+function shellFooterTestID(key: string): string {
+  // With nothing pinned the Usage item is the plain Usage row.
+  if (key === "usage") return "sidebar-usage";
+  const [, pluginId, itemId] = key.split(":");
+  return `plugin-sidebar-footer-${pluginId}-${itemId}`;
+}
+
+function shellFooterRow(page: Page, key: string): Locator {
+  return page.locator(`[data-testid="${shellFooterTestID(key)}"]:visible`).first();
+}
+
+function footerSettingsRows(page: Page): Locator {
+  return page
+    .getByTestId("sidebar-nav-section-footer")
+    .locator('[data-testid^="sidebar-nav-item-"]');
+}
+
+export async function expectFooterSettingsKeys(page: Page, keys: string[]): Promise<void> {
+  await expect
+    .poll(async () =>
+      (
+        await footerSettingsRows(page).evaluateAll((rows) =>
+          rows.map((row) => row.getAttribute("data-testid")),
+        )
+      ).map((testID) => testID?.replace("sidebar-nav-item-", "")),
+    )
+    .toEqual(keys);
+}
+
+export async function moveFooterItemUp(page: Page, key: string): Promise<void> {
+  await page
+    .getByTestId("sidebar-nav-section-footer")
+    .getByTestId(`sidebar-nav-move-up-${key}`)
+    .click();
+}
+
+export async function setFooterItemVisible(
+  page: Page,
+  key: string,
+  visible: boolean,
+): Promise<void> {
+  const toggle = page
+    .getByTestId("sidebar-nav-section-footer")
+    .getByTestId(`sidebar-nav-toggle-${key}`);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", String(visible));
+}
+
+export async function expectFooterOrder(page: Page, keys: string[]): Promise<void> {
+  await expectVerticalOrder(keys, (key) => shellFooterRow(page, key), "sidebar footer rows");
+}
+
+export async function expectFooterItemHidden(page: Page, key: string): Promise<void> {
+  await expect(page.locator(`[data-testid="${shellFooterTestID(key)}"]:visible`)).toHaveCount(0);
+}
+
+const FOOTER_ICON_TEST_IDS = [
+  "sidebar-hosts-trigger",
+  "sidebar-import-session",
+  "sidebar-help",
+  "sidebar-settings",
+];
+
+/** The fixed icon row: Hosts, Import session, Help and support, Settings, left to right. */
+export async function expectFooterIconRow(page: Page): Promise<void> {
+  const boxes = await Promise.all(
+    FOOTER_ICON_TEST_IDS.map((testID) =>
+      page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
+    ),
+  );
+  const [first, ...rest] = boxes.map((box) => box!);
+  let previous = first;
+  for (const box of rest) {
+    expect(Math.abs(box.y - first.y)).toBeLessThan(2);
+    expect(box.x).toBeGreaterThan(previous.x);
+    previous = box;
+  }
 }

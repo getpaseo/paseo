@@ -1,4 +1,5 @@
 import { formatTokenCount } from "@/components/context-window-meter.utils";
+import type { UsageDisplayAs } from "./preferences";
 import type { UsageBalanceUnit } from "./types";
 
 export function clampPct(value: number): number {
@@ -7,6 +8,11 @@ export function clampPct(value: number): number {
 
 export function formatPct(value: number): string {
   return `${Math.round(clampPct(value))}%`;
+}
+
+/** "31%" of the window used, or "69% left" of it. */
+export function formatDisplayPct(value: number, displayAs: UsageDisplayAs): string {
+  return displayAs === "used" ? formatPct(value) : `${formatPct(value)} left`;
 }
 
 function relativeDuration(iso: string): string | null {

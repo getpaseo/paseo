@@ -12,7 +12,7 @@ import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { useInstalledPlugin } from "../registry";
-import { PluginRuntimeBoundary } from "../runtime-boundary";
+import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buildPluginSettingsRoute } from "./routes";
@@ -119,14 +119,15 @@ function SettingsContent({
         resetKey={attempt}
         renderError={renderError}
       >
-        <PluginRuntimeBoundary plugin={plugin} client={client}>
+        <PluginInstallationProvider plugin={plugin}>
           <Component theme={theme} layout={layout} host={host} />
-        </PluginRuntimeBoundary>
+        </PluginInstallationProvider>
       </SurfaceErrorBoundary>
     </View>
   );
 }
 const ThemedSettingsContent = withUnistyles(SettingsContent);
+// Settings routes carry no screen params.
 const themeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 export function PluginSettingsContent({
   onBackToPlugins,

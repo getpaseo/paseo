@@ -312,7 +312,6 @@ export async function fetchUsage(
   }
 
   const windows = kimiUsageWindowsFromPayload(await res.json());
-  if (windows[0]) windows[0].headline = true;
 
   return {
     status: "available",

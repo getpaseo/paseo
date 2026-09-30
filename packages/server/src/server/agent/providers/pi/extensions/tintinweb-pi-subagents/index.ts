@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { extractTextFromToolResult } from "../../tool-call-mapper.js";
+import { outputFileFromToolResult } from "../child-session.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
 
 const SpawnArgs = z
@@ -74,6 +75,9 @@ export const tintinwebPiSubagents: PiExtension = {
             }
           : { detail };
       callsByAgent.set(details.data.agentId, call.callId);
+      const file = outputFileFromToolResult(call.result);
+      const childSessions = file && !readSessions.has(file) ? [{ id: call.callId, file }] : [];
+      if (file) readSessions.add(file);
       return {
         detail,
         subagents: [
@@ -86,6 +90,7 @@ export const tintinwebPiSubagents: PiExtension = {
             status: status(details.data.status),
           },
         ],
+        childSessions,
       };
     };
     const mapFollowup = (call: PiExtensionToolCall) => {
@@ -125,10 +130,7 @@ export const tintinwebPiSubagents: PiExtension = {
         const id = callsByAgent.get(details.data.id);
         if (!id) return undefined;
         const file = details.data.outputFile;
-        const childSessions =
-          file && status(details.data.status) !== "running" && !readSessions.has(file)
-            ? [{ id, file }]
-            : [];
+        const childSessions = file && !readSessions.has(file) ? [{ id, file }] : [];
         if (childSessions.length && file) readSessions.add(file);
         return {
           subagents: [

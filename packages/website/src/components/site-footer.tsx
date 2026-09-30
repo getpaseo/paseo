@@ -87,6 +87,12 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               OpenCode
             </a>
             <a
+              href="/muse-code"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Muse Code
+            </a>
+            <a
               href="/agents"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >

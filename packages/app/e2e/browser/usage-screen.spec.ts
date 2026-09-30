@@ -1,3 +1,5 @@
+import path from "node:path";
+import type { Page } from "@playwright/test";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -9,8 +11,24 @@ function twoHoursAgo(): string {
   return new Date(Date.now() - 2 * 60 * 60_000).toISOString();
 }
 
+/** Set PASEO_QA_SCREENSHOT_DIR to keep a QA screenshot. */
+async function qaScreenshot(page: Page, name: string) {
+  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
+  if (!directory) return;
+  await page.waitForTimeout(600);
+  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
+  await page.screenshot({ path: path.join(directory, `${name}.png`) });
+}
+
+/** The host selector names the host shown, even when it is the only one. */
+async function shownHostLabel(page: Page): Promise<string> {
+  const selector = page.locator('[data-testid="usage-host-switcher"]:visible');
+  await expect(selector).toHaveAccessibleName(/^Usage host: .+/, { timeout: 10_000 });
+  return (await selector.innerText()).trim();
+}
+
 test.describe("usage screen", () => {
-  test("opens from the sidebar and groups reports under their host", async ({ page }) => {
+  test("opens from the sidebar on the host's reports, naming the one host", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
     const usage = await installUsageReportsFixture(page, {
@@ -24,7 +42,7 @@ test.describe("usage screen", () => {
             sourceLabel: "Alpha plan",
             report: {
               status: "available",
-              windows: [{ id: "weekly", label: "Weekly", usedPct: 31, headline: true }],
+              windows: [{ id: "weekly", label: "Weekly", usedPct: 31 }],
             },
           },
           {
@@ -46,6 +64,11 @@ test.describe("usage screen", () => {
 
     const group = page.getByTestId(`usage-host-${serverId}`);
     await expect(group.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
+    const hostLabel = await shownHostLabel(page);
+    await expect(page.locator('[data-testid="usage-host-switcher"]:visible')).toHaveAccessibleName(
+      `Usage host: ${hostLabel}`,
+    );
+    await qaScreenshot(page, "phase7-usage-screen-one-host");
     await expect(group.getByText("31%")).toBeVisible();
     await expect(group.getByText("Beta plan", { exact: true })).toBeVisible();
     await expect(group.getByText("Unavailable", { exact: true })).toBeVisible();
@@ -66,7 +89,7 @@ test.describe("usage screen", () => {
       sourceLabel: "Beta plan",
       report: {
         status: "available",
-        windows: [{ id: "weekly", label: "Weekly", usedPct: 12, headline: true }],
+        windows: [{ id: "weekly", label: "Weekly", usedPct: 12 }],
       },
     };
     const alpha = (usedPct: number, fetchedAt: string): UsageReportEntry => ({
@@ -77,7 +100,7 @@ test.describe("usage screen", () => {
       sourceLabel: "Alpha plan",
       report: {
         status: "available",
-        windows: [{ id: "weekly", label: "Weekly", usedPct, headline: true }],
+        windows: [{ id: "weekly", label: "Weekly", usedPct }],
       },
     });
     const usage = await installUsageReportsFixture(page, {
@@ -138,19 +161,21 @@ test.describe("usage screen", () => {
     await expect(group.getByTestId("usage-freshness")).toHaveText("Updated 2h ago");
   });
 
-  test("tells the user to update a host without usage sources", async ({ page }) => {
+  test("tells the user to update a host without usage support", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usage = await installUsageReportsFixture(page, { usageSources: false });
+    const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
     await page.locator('[data-testid="sidebar-usage"]:visible').first().click();
 
+    const hostLabel = await shownHostLabel(page);
     await expect(
-      page.getByTestId(`usage-host-${serverId}`).getByText("Update the host to see usage", {
+      page.getByTestId(`usage-host-${serverId}`).getByText(`Update ${hostLabel} to see usage`, {
         exact: true,
       }),
     ).toBeVisible({ timeout: 10_000 });
+    await qaScreenshot(page, "phase7-usage-update-host");
     expect(usage.listRequests()).toHaveLength(0);
   });
 });

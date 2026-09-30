@@ -39,7 +39,7 @@ test.describe("usage settings", () => {
             sourceLabel: "Alpha plan",
             report: {
               planLabel: "Max",
-              windows: [{ id: "session", label: "Session", usedPct: 7, headline: true }],
+              windows: [{ id: "session", label: "Session", usedPct: 7 }],
             },
           }),
           report({
@@ -82,6 +82,10 @@ test.describe("usage settings", () => {
     await expect(card.getByText("$5.00 / $20.00", { exact: true })).toBeVisible();
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
+
+    await card.getByTestId("usage-display-remaining").click();
+    await expect(card.getByText("30% left")).toBeVisible();
+    await expect(card.getByText("93% left")).toBeVisible();
   });
 
   test("refresh forces a fresh report", async ({ page }) => {
@@ -119,17 +123,18 @@ test.describe("usage settings", () => {
     await expect(page.getByText("64%")).toBeVisible();
   });
 
-  test("asks to update a host without usage sources and never calls it", async ({ page }) => {
+  test("asks to update a host without usage support and never calls it", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usage = await installUsageReportsFixture(page, { usageSources: false });
+    const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
 
     await expect(
-      page.getByTestId("usage-card").getByText("Update the host to see usage", { exact: true }),
+      // Names the host: "Update Laptop to see usage".
+      page.getByTestId("usage-card").getByText(/^Update (?!the host ).+ to see usage$/),
     ).toBeVisible({ timeout: 10_000 });
     expect(usage.listRequests()).toHaveLength(0);
   });
