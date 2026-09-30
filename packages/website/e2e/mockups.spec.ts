@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "playwright/test";
 
 const desktopName =
-  "Paseo desktop app with coding agents, a conversation, and a code diff open side by side";
+  "PandaOS desktop app with coding agents, a conversation, and a code diff open side by side";
 
 async function openHomepage(page: Page) {
   await page.setViewportSize({ width: 1512, height: 930 });
