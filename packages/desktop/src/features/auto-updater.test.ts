@@ -1,4 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { UUID } from "builder-util-runtime";
@@ -44,6 +46,7 @@ import {
   rolloutManifestSchema,
   shouldAdmitToRollout,
   shouldInstallAppUpdateOnQuit,
+  spawnAfterExit,
 } from "./auto-updater";
 
 describe("checkForAppUpdate", () => {
@@ -148,6 +151,28 @@ describe("shouldInstallAppUpdateOnQuit", () => {
     expect(shouldInstallAppUpdateOnQuit({ platform: "linux", isAppImage: false })).toBe(true);
     expect(shouldInstallAppUpdateOnQuit({ platform: "darwin", isAppImage: false })).toBe(true);
     expect(shouldInstallAppUpdateOnQuit({ platform: "win32", isAppImage: false })).toBe(true);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("spawnAfterExit", () => {
+  it("starts the executable only after the process has exited", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "paseo-relaunch-"));
+    const marker = path.join(tempDir, "launched");
+    const executable = path.join(tempDir, "launch.sh");
+    await writeFile(executable, `#!/bin/sh\ntouch '${marker}'\n`);
+    await chmod(executable, 0o755);
+    const running = spawn("sleep", ["0.5"]);
+    const exited = new Promise((resolve) => running.once("exit", resolve));
+    try {
+      spawnAfterExit(running.pid!, executable);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(existsSync(marker)).toBe(false);
+      await exited;
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 3000 });
+    } finally {
+      running.kill();
+      await rm(tempDir, { force: true, recursive: true });
+    }
   });
 });
 
