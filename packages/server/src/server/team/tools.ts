@@ -154,7 +154,7 @@ export function registerTeamTools(
       inputSchema: { teamId: z.string(), text: z.string().min(1) },
     },
     async ({ teamId, text: body }) => {
-      await teamService.message(teamId, body, requireCaller());
+      await teamService.message(teamId, body, { type: "boss", id: requireCaller() });
       return text("Passed on.");
     },
   );

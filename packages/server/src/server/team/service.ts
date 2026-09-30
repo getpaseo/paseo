@@ -33,6 +33,7 @@ import {
   TEAM_ITEM_LABEL,
   TEAM_LABEL,
   TEAM_ROLE_LABEL,
+  type Actor,
   type Binding,
   type Decision,
   type PlannedItem,
@@ -332,11 +333,10 @@ export class TeamService {
     return out;
   }
 
-  async message(teamId: string, text: string, actorId: string): Promise<void> {
+  /** A message into the team chat from the boss session or from the person in the app. */
+  async message(teamId: string, text: string, actor: Actor): Promise<void> {
     await this.store.commit(teamId, (draft) => {
-      const events: TeamEventDraft[] = [
-        { type: "human.message", actor: { type: "boss", id: actorId }, text },
-      ];
+      const events: TeamEventDraft[] = [{ type: "human.message", actor, text }];
       // Items waiting for the boss go back into the flow with the boss's answer attached.
       for (const item of Object.values(draft.items)) {
         if (item.phase === "blocked") {
@@ -347,15 +347,7 @@ export class TeamService {
             (h) => boardOf(pack, item).phases[h.phase]?.kind === "working",
           );
           if (lastWorking) {
-            enterPhase(
-              draft,
-              pack,
-              item,
-              lastWorking.phase,
-              { type: "boss", id: actorId },
-              events,
-              "boss answered",
-            );
+            enterPhase(draft, pack, item, lastWorking.phase, actor, events, "boss answered");
           }
           continue;
         }
