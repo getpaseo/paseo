@@ -248,7 +248,9 @@ export async function startTestDaemon(options?: {
   const daemonProcess = spawn(process.execPath, [TSX_ENTRY, cliSrcPath, "daemon", "run"], {
     env: {
       ...Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+        Object.entries(process.env).filter(
+          ([key]) => !key.startsWith("PASEO_") && key !== "PANDAOS_HOME",
+        ),
       ),
       ...TEST_DAEMON_ENV_DEFAULTS,
       PASEO_HOME: paseoHome,
@@ -364,7 +366,9 @@ export async function runPaseoCli(
     const proc = spawn(process.execPath, [TSX_ENTRY, cliSrcPath, ...args], {
       env: {
         ...Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+          Object.entries(process.env).filter(
+            ([key]) => !key.startsWith("PASEO_") && key !== "PANDAOS_HOME",
+          ),
         ),
         ...TEST_DAEMON_ENV_DEFAULTS,
         PASEO_HOME: ctx.paseoHome,

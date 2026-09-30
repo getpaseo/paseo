@@ -8,6 +8,8 @@ dotenv.config({ path: path.resolve(serverRoot, ".env.test"), override: true });
 dotenv.config({ path: path.resolve(serverRoot, "../.env") });
 
 process.env.PASEO_SUPERVISED = "0";
+// PANDAOS_HOME outranks the PASEO_HOME that test daemons set, so an inherited one would leak the real home.
+delete process.env.PANDAOS_HOME;
 process.env.GIT_TERMINAL_PROMPT = "0";
 process.env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes";
 process.env.SSH_ASKPASS = "/usr/bin/false";

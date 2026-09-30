@@ -10,7 +10,7 @@ export PASEO_LISTEN="${PASEO_LISTEN:-127.0.0.1:6768}"
 configure_dev_paseo_home
 
 if [ -z "${PASEO_LOCAL_MODELS_DIR}" ]; then
-  export PASEO_LOCAL_MODELS_DIR="$HOME/.paseo/models/local-speech"
+  export PASEO_LOCAL_MODELS_DIR="$(default_user_paseo_home)/models/local-speech"
   mkdir -p "$PASEO_LOCAL_MODELS_DIR"
 fi
 

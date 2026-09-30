@@ -81,7 +81,7 @@ export async function setDaemonPasswordInConfig(
   newPassword: string,
   options: SetPasswordOptions = {},
 ): Promise<SetPasswordResult> {
-  const paseoHome = resolvePaseoHome({ PASEO_HOME: options.home });
+  const paseoHome = resolvePaseoHome(options.home ? { PANDAOS_HOME: options.home } : process.env);
   const configPath = path.join(paseoHome, CONFIG_FILENAME);
   const persisted = readPersistedConfig(paseoHome);
   const nextConfig: PersistedConfig = {

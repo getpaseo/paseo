@@ -19,6 +19,14 @@ test("local operations ignore routing environment but reject an explicit endpoin
   expect(() => selectDaemonTarget({ host: "chosen:23456" }, {}, true)).toThrow();
 });
 
+test("PANDAOS_HOME outranks PASEO_HOME and counts as a home selector", () => {
+  expect(selectDaemonTarget({}, { PANDAOS_HOME: "/tmp/p", PASEO_HOME: "/tmp/a" })).toEqual({
+    kind: "instance",
+    home: "/tmp/p",
+  });
+  expect(() => selectDaemonTarget({}, { PANDAOS_HOME: "/tmp/p", PASEO_HOST: "h:1" })).toThrow();
+});
+
 test("endpoint descriptions redact pairing material and credentials", () => {
   expect(
     describeDaemonTarget({

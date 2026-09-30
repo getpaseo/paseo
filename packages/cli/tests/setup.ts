@@ -22,7 +22,11 @@ const TEST_ENV_DEFAULTS = {
 
 function testEnvironment(paseoHome: string): NodeJS.ProcessEnv {
   return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => !key.startsWith("PASEO_") && key !== "PANDAOS_HOME",
+      ),
+    ),
     ...TEST_ENV_DEFAULTS,
     PASEO_HOME: paseoHome,
     HOME: paseoHome,

@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Summarizes System One shadow mode: how often Jev predicted each agent's next step,
 // and how much time prefetching could have saved. Usage: node scripts/shadow-stats.mjs [file]
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const file =
   process.argv[2] ??
   path.join(
-    process.env.PASEO_HOME ?? path.join(os.homedir(), ".paseo"),
+    process.env.PANDAOS_HOME ??
+      process.env.PASEO_HOME ??
+      (existsSync(path.join(os.homedir(), ".pandaos"))
+        ? path.join(os.homedir(), ".pandaos")
+        : path.join(os.homedir(), ".paseo")),
     "system-one",
     "shadow.jsonl",
   );

@@ -84,6 +84,9 @@ export function daemonLaunchEnvironment(input: {
   }
   delete env.PASEO_HOST;
   delete env.PASEO_DESKTOP_MANAGED;
+  // Agents inherit this env, and test harnesses isolate by setting only PASEO_HOME; an inherited
+  // PANDAOS_HOME would outrank theirs. COMPAT(paseoHomeEnv): switch to PANDAOS_HOME after 2027-04-01.
+  delete env.PANDAOS_HOME;
   env.PASEO_HOME = input.home;
   if (input.desktopManaged) env.PASEO_DESKTOP_MANAGED = "1";
   return env;

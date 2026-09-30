@@ -26,6 +26,11 @@ const killTree = (pid: number, signal: string): Promise<void> =>
 // Process ownership only: desktop and CLI load this entry in their own processes.
 // Keep daemon bootstrap and WebSocket schemas out of its dependency tree.
 export { resolvePaseoHome } from "./paseo-home.js";
+export {
+  migrateLegacyHome,
+  HomeMigrationError,
+  type HomeMigrationResult,
+} from "./home-migration.js";
 export { ensurePrivateDirectory } from "./private-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
 export {

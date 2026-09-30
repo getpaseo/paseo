@@ -30,8 +30,17 @@ has_files() {
   [ -d "$1" ] && [ -n "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]
 }
 
+# Mirrors resolvePaseoHome in packages/server/src/server/paseo-home.ts for the user's real home.
+default_user_paseo_home() {
+  if [ ! -e "$HOME/.pandaos" ] && [ -e "$HOME/.paseo" ]; then
+    echo "$HOME/.paseo"
+  else
+    echo "$HOME/.pandaos"
+  fi
+}
+
 seed_worktree_paseo_home() {
-  local source_home="${PASEO_DEV_SEED_HOME:-$HOME/.paseo}"
+  local source_home="${PASEO_DEV_SEED_HOME:-$(default_user_paseo_home)}"
   local target_home="$1"
 
   if [ ! -d "$source_home" ]; then
@@ -96,8 +105,13 @@ resolve_dev_daemon_endpoint() {
 }
 
 configure_dev_paseo_home() {
+  # PANDAOS_HOME outranks PASEO_HOME in the daemon, so keep both on the same dev home.
+  if [ -n "${PANDAOS_HOME:-}" ]; then
+    PASEO_HOME="$PANDAOS_HOME"
+  fi
   if [ -n "${PASEO_HOME:-}" ]; then
     export PASEO_HOME
+    export PANDAOS_HOME="$PASEO_HOME"
     if [ -n "${PASEO_DEV_SEED_HOME:-}" ]; then
       seed_worktree_paseo_home "$PASEO_HOME"
     fi
@@ -112,6 +126,7 @@ configure_dev_paseo_home() {
   local dev_root
   dev_root="${PASEO_DEV_ROOT:-$(default_dev_paseo_root)}"
   PASEO_HOME="$dev_root/.dev/paseo-home"
+  export PANDAOS_HOME="$PASEO_HOME"
   export PASEO_DEV_MANAGED_HOME=1
 
   if [ -n "${PASEO_DEV_SEED_HOME:-}" ]; then
