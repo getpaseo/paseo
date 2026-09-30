@@ -321,6 +321,11 @@ export const zhCN: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Paperclip 任务 {{key}}",
+      untitled: "Paperclip 任务",
+      show: "显示说明",
+    },
     diagram: {
       diagram: "图表",
       zoomIn: "放大",
@@ -660,6 +665,7 @@ export const zhCN: TranslationResources = {
       },
       errors: {
         failedToLoad: "页面加载失败",
+        hostOnly: "无法从此设备访问 {{url}}。它可能只在主机上运行。",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
       },

@@ -325,6 +325,11 @@ export const ru: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Задача Paperclip {{key}}",
+      untitled: "Задача Paperclip",
+      show: "Показать инструкции",
+    },
     diagram: {
       diagram: "Диаграмма",
       zoomIn: "Увеличить масштаб",
@@ -666,6 +671,8 @@ export const ru: TranslationResources = {
       },
       errors: {
         failedToLoad: "Не удалось загрузить страницу",
+        hostOnly:
+          "{{url}} недоступен с этого устройства. Скорее всего, он работает только на хост-машине.",
         invalidUrl: "Недопустимый URL браузера",
         unsupportedProtocol:
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",

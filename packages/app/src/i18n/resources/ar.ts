@@ -321,6 +321,11 @@ export const ar: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "مهمة Paperclip {{key}}",
+      untitled: "مهمة Paperclip",
+      show: "عرض التعليمات",
+    },
     diagram: {
       diagram: "مخطط",
       zoomIn: "تكبير",
@@ -660,6 +665,7 @@ export const ar: TranslationResources = {
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
+        hostOnly: "{{url}} غير متاح من هذا الجهاز. على الأرجح يعمل على الجهاز المضيف فقط.",
         invalidUrl: "متصفح غير صالح URL",
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",
       },

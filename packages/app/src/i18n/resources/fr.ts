@@ -327,6 +327,11 @@ export const fr: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Tâche Paperclip {{key}}",
+      untitled: "Tâche Paperclip",
+      show: "Afficher les instructions",
+    },
     diagram: {
       diagram: "Diagramme",
       zoomIn: "Zoomer",
@@ -666,6 +671,8 @@ export const fr: TranslationResources = {
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
+        hostOnly:
+          "{{url}} n'est pas accessible depuis cet appareil. Il ne tourne probablement que sur la machine hôte.",
         invalidUrl: "NavigateurURLinvalide",
         unsupportedProtocol: "Navigateur non pris en charge bloquéURL:{{protocol}}",
       },

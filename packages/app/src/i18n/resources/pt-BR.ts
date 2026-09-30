@@ -325,6 +325,11 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Tarefa do Paperclip {{key}}",
+      untitled: "Tarefa do Paperclip",
+      show: "Mostrar instruções",
+    },
     diagram: {
       diagram: "Diagrama",
       zoomIn: "Aproximar",
@@ -665,6 +670,8 @@ export const ptBR: TranslationResources = {
       },
       errors: {
         failedToLoad: "Falha ao carregar página",
+        hostOnly:
+          "{{url}} não está acessível neste dispositivo. Provavelmente só roda na máquina host.",
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
       },

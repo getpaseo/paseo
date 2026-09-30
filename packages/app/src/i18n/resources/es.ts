@@ -326,6 +326,11 @@ export const es: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Tarea de Paperclip {{key}}",
+      untitled: "Tarea de Paperclip",
+      show: "Mostrar instrucciones",
+    },
     diagram: {
       diagram: "Diagrama",
       zoomIn: "Acercar",
@@ -666,6 +671,8 @@ export const es: TranslationResources = {
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
+        hostOnly:
+          "{{url}} no es accesible desde este dispositivo. Probablemente solo funciona en el equipo anfitrión.",
         invalidUrl: "Navegador no válidoURL",
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",
       },

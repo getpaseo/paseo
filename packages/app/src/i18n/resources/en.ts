@@ -318,6 +318,11 @@ export const en = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Paperclip task {{key}}",
+      untitled: "Paperclip task",
+      show: "Show instructions",
+    },
     diagram: {
       diagram: "Diagram",
       zoomIn: "Zoom in",
@@ -665,6 +670,8 @@ export const en = {
       },
       errors: {
         failedToLoad: "Failed to load page",
+        hostOnly:
+          "{{url}} is not reachable from this device. It probably runs only on the host machine.",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
       },

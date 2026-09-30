@@ -1,3 +1,4 @@
+import { isLoopbackUrl } from "@/utils/host-loopback-url";
 import {
   useCallback,
   useEffect,
@@ -165,7 +166,14 @@ function truncateText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength).trim()}...` : value;
 }
 
-function getWebviewLoadErrorMessage(event: Event, failedToLoadLabel: string): string | null {
+// Chromium's net::ERR_CONNECTION_REFUSED.
+const ERR_CONNECTION_REFUSED = -102;
+
+function getWebviewLoadErrorMessage(
+  event: Event,
+  failedToLoadLabel: string,
+  hostOnlyLabel: (url: string) => string,
+): string | null {
   const details = event as Event & {
     errorCode?: unknown;
     errorDescription?: unknown;
@@ -184,6 +192,10 @@ function getWebviewLoadErrorMessage(event: Event, failedToLoadLabel: string): st
     typeof details.validatedURL === "string" && details.validatedURL.trim()
       ? details.validatedURL.trim()
       : null;
+  // A refused local or host address usually means a service that listens only on the host.
+  if (url && (details.errorCode === ERR_CONNECTION_REFUSED || isLoopbackUrl(url))) {
+    return hostOnlyLabel(url);
+  }
 
   return url ? `${description}: ${url}` : description;
 }
@@ -668,6 +680,7 @@ export function BrowserPane({
   const browserErrorLabels = useMemo(
     () => ({
       failedToLoad: t("workspace.browser.errors.failedToLoad"),
+      hostOnly: (url: string) => t("workspace.browser.errors.hostOnly", { url }),
       invalidUrl: t("workspace.browser.errors.invalidUrl"),
       unsupportedProtocol: (protocol: string) =>
         t("workspace.browser.errors.unsupportedProtocol", { protocol }),
@@ -835,7 +848,8 @@ export function BrowserPane({
       updateBrowserRef.current(browserIdRef.current, { faviconUrl: favicons[0] ?? null });
     };
     const handleLoadFailed = (event: Event) => {
-      const message = getWebviewLoadErrorMessage(event, browserErrorLabelsRef.current.failedToLoad);
+      const labels = browserErrorLabelsRef.current;
+      const message = getWebviewLoadErrorMessage(event, labels.failedToLoad, labels.hostOnly);
       if (!message) {
         return;
       }

@@ -1,3 +1,5 @@
+import { rewriteLoopbackUrl } from "@/utils/host-loopback-url";
+
 /** Paperclip issue prefixes of this host's board and the address its web app answers on. */
 export interface PaperclipLinkConfig {
   webBaseUrl: string;
@@ -5,8 +7,6 @@ export interface PaperclipLinkConfig {
 }
 
 export type PaperclipTextSegment = { kind: "text"; text: string } | { kind: "issue"; key: string };
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 function keyPattern(prefixes: readonly string[]): RegExp | null {
   const safe = prefixes.filter((prefix) => /^[A-Z][A-Z0-9]*$/.test(prefix));
@@ -18,17 +18,7 @@ function keyPattern(prefixes: readonly string[]): RegExp | null {
 
 /** The daemon reads Paperclip on loopback; a client elsewhere reaches it on the host's address. */
 export function resolvePaperclipWebBase(webBaseUrl: string, hostEndpoint: string | null): string {
-  if (!hostEndpoint) return webBaseUrl;
-  try {
-    const base = new URL(webBaseUrl);
-    if (!LOOPBACK_HOSTS.has(base.hostname)) return webBaseUrl;
-    const hostname = new URL(`http://${hostEndpoint}`).hostname;
-    if (LOOPBACK_HOSTS.has(hostname)) return webBaseUrl;
-    base.hostname = hostname;
-    return base.toString().replace(/\/+$/, "");
-  } catch {
-    return webBaseUrl;
-  }
+  return rewriteLoopbackUrl(webBaseUrl, hostEndpoint).replace(/\/+$/, "");
 }
 
 export function paperclipIssueUrl(config: PaperclipLinkConfig, key: string): string {

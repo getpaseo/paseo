@@ -1,3 +1,4 @@
+import { directHostEndpoint, rewriteLoopbackUrl } from "@/utils/host-loopback-url";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
@@ -370,7 +371,10 @@ async function openBrowserTabForRequest(params: {
     });
   }
 
-  const url = command.args.url ?? DEFAULT_BROWSER_URL;
+  const url = rewriteLoopbackUrl(
+    command.args.url ?? DEFAULT_BROWSER_URL,
+    directHostEndpoint(serverId),
+  );
   const { browserId, url: normalizedUrl } = createWorkspaceBrowser({
     initialUrl: url,
     ...(request.agentId ? { ownerAgentId: request.agentId } : {}),

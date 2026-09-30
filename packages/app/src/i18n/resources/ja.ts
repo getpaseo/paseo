@@ -326,6 +326,11 @@ export const ja: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Paperclip タスク {{key}}",
+      untitled: "Paperclip タスク",
+      show: "指示を表示",
+    },
     diagram: {
       diagram: "図",
       zoomIn: "拡大",
@@ -666,6 +671,8 @@ export const ja: TranslationResources = {
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
+        hostOnly:
+          "{{url}} にはこのデバイスから接続できません。ホストマシン上でのみ動作している可能性があります。",
         invalidUrl: "無効なブラウザURL",
         unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",
       },

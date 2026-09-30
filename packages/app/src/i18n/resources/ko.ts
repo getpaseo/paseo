@@ -322,6 +322,11 @@ export const ko: TranslationResources = {
     },
   },
   message: {
+    paperclipPrompt: {
+      title: "Paperclip 작업 {{key}}",
+      untitled: "Paperclip 작업",
+      show: "지침 보기",
+    },
     diagram: {
       diagram: "다이어그램",
       zoomIn: "확대",
@@ -661,6 +666,8 @@ export const ko: TranslationResources = {
       },
       errors: {
         failedToLoad: "페이지를 불러오지 못했습니다",
+        hostOnly:
+          "이 기기에서 {{url}}에 연결할 수 없습니다. 호스트 머신에서만 실행 중일 수 있습니다.",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
       },
