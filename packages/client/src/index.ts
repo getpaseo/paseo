@@ -1,4 +1,3 @@
-export { supportsUsageReports } from "./daemon-client.js";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";

@@ -1,4 +1,4 @@
-import { supportsUsageReports } from "@getpaseo/client";
+import { supportsUsageReports } from "@getpaseo/client/internal/daemon-client";
 import { useCallback, useMemo } from "react";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/shallow";

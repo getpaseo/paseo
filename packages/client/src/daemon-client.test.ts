@@ -1,8 +1,8 @@
-import { supportsUsageReports } from "./index";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
   type DaemonTransport,
