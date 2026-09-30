@@ -16,7 +16,6 @@ export const usageCopy = {
   clientUnavailable: "Host connection is not ready",
   retry: "Try again",
   pin: "Pin",
-  host: "Usage host",
   displayUsed: "Used",
   displayRemaining: "Remaining",
 } as const;

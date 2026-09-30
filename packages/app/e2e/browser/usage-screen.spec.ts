@@ -1,10 +1,22 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { addConnectedHostAndReload } from "../support/helpers/hosts";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { getServerId } from "../support/helpers/server-id";
-import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import {
+  installUsageReportsFixture,
+  type UsageListRequest,
+  type UsageReportsFixture,
+} from "../support/helpers/usage-reports";
+import { expectPinnedUsage, usageItem } from "../support/helpers/usage-sidebar-item";
+
+function forcedRefreshes(usage: UsageReportsFixture): UsageListRequest[] {
+  return usage.listRequests().filter((request) => request.forceRefresh);
+}
 
 // Two hours reads "2h ago" for an hour, so the assertion cannot race the clock.
 function twoHoursAgo(): string {
@@ -20,15 +32,25 @@ async function qaScreenshot(page: Page, name: string) {
   await page.screenshot({ path: path.join(directory, `${name}.png`) });
 }
 
-/** The host selector names the host shown, even when it is the only one. */
-async function shownHostLabel(page: Page): Promise<string> {
-  const selector = page.locator('[data-testid="usage-host-switcher"]:visible');
-  await expect(selector).toHaveAccessibleName(/^Usage host: .+/, { timeout: 10_000 });
-  return (await selector.innerText()).trim();
+function hostFilter(page: Page) {
+  return page.locator('[data-testid="usage-host-filter-trigger"]:visible');
+}
+
+function weeklyReport(sourceId: string, usedPct: number): UsageReportEntry {
+  return {
+    id: `${sourceId}:a`,
+    account: {},
+    fetchedAt: twoHoursAgo(),
+    sourceId,
+    sourceLabel: `${sourceId} plan`,
+    report: { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct }] },
+  };
 }
 
 test.describe("usage screen", () => {
-  test("opens from the sidebar on the host's reports, naming the one host", async ({ page }) => {
+  test("opens from the sidebar on the host's reports, with no host filter for one host", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
     const usage = await installUsageReportsFixture(page, {
@@ -64,10 +86,7 @@ test.describe("usage screen", () => {
 
     const group = page.getByTestId(`usage-host-${serverId}`);
     await expect(group.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
-    const hostLabel = await shownHostLabel(page);
-    await expect(page.locator('[data-testid="usage-host-switcher"]:visible')).toHaveAccessibleName(
-      `Usage host: ${hostLabel}`,
-    );
+    await expect(hostFilter(page)).toHaveCount(0);
     await qaScreenshot(page, "phase7-usage-screen-one-host");
     await expect(group.getByText("31%")).toBeVisible();
     await expect(group.getByText("Beta plan", { exact: true })).toBeVisible();
@@ -103,13 +122,13 @@ test.describe("usage screen", () => {
         windows: [{ id: "weekly", label: "Weekly", usedPct }],
       },
     });
+    // The sidebar summary and the screen each load reports; only a card's Refresh forces one.
     const usage = await installUsageReportsFixture(page, {
       lists: [
-        [alpha(31, twoHoursAgo()), beta],
-        () => [
-          alpha(58, new Date().toISOString()),
-          { ...beta, fetchedAt: new Date().toISOString() },
-        ],
+        (request) =>
+          request.forceRefresh
+            ? [alpha(58, new Date().toISOString())]
+            : [alpha(31, twoHoursAgo()), beta],
       ],
     });
 
@@ -120,11 +139,9 @@ test.describe("usage screen", () => {
 
     const alphaRefresh = group.getByTestId("usage-refresh").first();
     await alphaRefresh.click();
-    await usage.waitForListRequests(2);
-    expect(usage.listRequests()).toEqual([
-      { forceRefresh: false, reportIds: undefined },
-      { forceRefresh: true, reportIds: ["alpha:a"] },
-    ]);
+    await expect
+      .poll(() => forcedRefreshes(usage))
+      .toEqual([{ forceRefresh: true, reportIds: ["alpha:a"] }]);
     await expect(group.getByText("58%")).toBeVisible();
     await expect(group.getByText("12%")).toBeVisible();
 
@@ -169,13 +186,60 @@ test.describe("usage screen", () => {
     await gotoAppShell(page);
     await page.locator('[data-testid="sidebar-usage"]:visible').first().click();
 
-    const hostLabel = await shownHostLabel(page);
     await expect(
-      page.getByTestId(`usage-host-${serverId}`).getByText(`Update ${hostLabel} to see usage`, {
-        exact: true,
-      }),
+      page.getByTestId(`usage-host-${serverId}`).getByText(/^Update .+ to see usage$/),
     ).toBeVisible({ timeout: 10_000 });
     await qaScreenshot(page, "phase7-usage-update-host");
     expect(usage.listRequests()).toHaveLength(0);
+  });
+
+  test("a host picked on the Usage screen is the sidebar's host too, after a reload", async ({
+    page,
+  }) => {
+    test.setTimeout(420_000);
+    const primaryServerId = getServerId();
+    const secondary = await startIsolatedHostDaemon(
+      `srv_usage_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+    );
+    try {
+      await installUsageReportsFixture(page, { lists: [[weeklyReport("alpha", 31)]] });
+      await installUsageReportsFixture(page, {
+        port: secondary.port,
+        lists: [[weeklyReport("beta", 12)]],
+      });
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: "Secondary box",
+        port: secondary.port,
+      });
+
+      // Nothing picked and no workspace open: the first host.
+      await expectPinnedUsage(page, ["31%"]);
+      await usageItem(page).click();
+      await expect(page.getByTestId(`usage-host-${primaryServerId}`)).toBeVisible();
+
+      await hostFilter(page).click();
+      await page.getByTestId(`usage-host-filter-item-${secondary.serverId}`).click();
+      await expect(
+        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12%"),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(hostFilter(page)).toContainText("Secondary box");
+      await qaScreenshot(page, "usage-screen-picked-host");
+      await expectPinnedUsage(page, ["12%"]);
+
+      // The e2e seed resets the host list on every load, so reopening re-adds the second host.
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: "Secondary box",
+        port: secondary.port,
+      });
+      await expectPinnedUsage(page, ["12%"]);
+      await expect(
+        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12%"),
+      ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await secondary.close().catch(() => undefined);
+    }
   });
 });

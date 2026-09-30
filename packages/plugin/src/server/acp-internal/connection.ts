@@ -40,6 +40,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderLaunch,
   type ProviderPermissionResponse,
   type ProviderPersistence,
   type ProviderSessionConfig,
@@ -69,6 +70,7 @@ export async function createAcpProviderConnection(
   }
   const probe = await AcpRuntime.start({
     options,
+    launch: request.launch,
     boundarySessionId: "capability-probe",
     env: {},
     emit: () => undefined,
@@ -97,6 +99,7 @@ export async function createAcpProviderConnection(
   };
   const state: AcpConnectionState = {
     options,
+    launch: request.launch,
     capabilities,
     sessions,
     emit,
@@ -141,6 +144,7 @@ export async function createAcpProviderConnection(
 }
 
 interface AcpConnectionState {
+  launch?: ProviderLaunch;
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
@@ -245,6 +249,7 @@ async function discover(
 ): Promise<void> {
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: "catalog",
     env: {},
     emit: state.emit,
@@ -269,6 +274,7 @@ async function listSessions(
 ): Promise<void> {
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: "sessions",
     env: {},
     emit: state.emit,
@@ -299,6 +305,7 @@ async function openSession(
     throw new Error(`Session already exists: ${input.sessionId}`);
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: input.sessionId,
     env: input.config.env,
     emit: state.emit,
@@ -336,6 +343,7 @@ function requireSession(state: AcpConnectionState, sessionId: string): AcpBounda
 }
 
 interface StartRuntimeOptions {
+  launch?: ProviderLaunch;
   options: RunAcpProviderOptions;
   boundarySessionId: string;
   env: Readonly<Record<string, string>>;
@@ -385,9 +393,15 @@ class AcpRuntime {
     let stream: Stream;
     let closeConnector = async () => {};
     if (options.options.command) {
-      const [executable, ...args] = options.options.command;
-      child = spawn(executable, args, {
-        env: { ...process.env, ...options.env },
+      // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
+      // Standalone callers and older hosts do not send a daemon-resolved launch.
+      const launch = options.launch ?? {
+        command: options.options.command[0],
+        args: options.options.command.slice(1),
+        env: process.env,
+      };
+      child = spawn(launch.command, launch.args, {
+        env: { ...launch.env, ...options.env },
         stdio: ["pipe", "pipe", "pipe"],
       });
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));

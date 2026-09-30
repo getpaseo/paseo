@@ -179,7 +179,7 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
   );
 }
 
-/** Settings > Sidebar: one card per section. The footer's Add project row and icon row are fixed and not listed. */
+/** Settings > Sidebar: one card per section. The footer's bottom line is fixed and not listed. */
 export function SidebarNavSection(): ReactElement {
   return (
     <>

@@ -1,0 +1,46 @@
+# Settings with Add host visible: no saved hosts, or the host picker already open.
+context platform=ios timeout=180000 retries=0
+env APP_ID=sh.paseo.debug
+open "${APP_ID}"
+wait "id=\"settings-add-host\"" 20000
+screenshot "${OUT}/09-settings.png"
+press "id=\"settings-add-host\""
+wait stable
+wait "id=\"add-host-method-direct\"" 10000
+screenshot "${OUT}/10-add-host-methods.png"
+press "id=\"add-host-method-direct\""
+wait stable
+press "id=\"direct-host-advanced-toggle\""
+wait stable
+fill "id=\"direct-host-uri-input\"" "${PAIRING_LINK}"
+wait stable
+screenshot "${OUT}/11-add-host-relay-input.png"
+press "id=\"direct-host-submit\""
+wait stable
+wait "id=\"host-confirmation-connect\"" 10000
+screenshot "${OUT}/12-add-host-confirmation-on-top.png"
+press "id=\"host-confirmation-cancel\""
+wait stable
+wait "id=\"direct-host-submit\" enabled=true" 10000
+screenshot "${OUT}/13-cancel-returns-to-add-host.png"
+# Editing the underlying sheet proves it still accepts input after closing the top sheet.
+fill "id=\"direct-host-uri-input\"" "${PAIRING_LINK}"
+wait stable
+press "id=\"direct-host-submit\""
+wait stable
+wait "id=\"host-confirmation-connect\"" 10000
+screenshot "${OUT}/14-add-host-confirmation-reopens.png"
+press "id=\"host-confirmation-connect\""
+wait stable
+wait "id=\"direct-password-input\"" 20000
+screenshot "${OUT}/15-add-host-password.png"
+fill "id=\"direct-password-input\"" "${PASSWORD}"
+wait stable
+press "id=\"direct-host-submit\""
+wait stable
+open "${APP_ID}" "paseo://settings"
+wait "label=\"Connections\"" 10000
+press "label=\"Connections\""
+wait stable
+wait "id=\"host-page-connections-card\"" 30000
+screenshot "${OUT}/16-settings-connected.png"

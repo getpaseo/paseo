@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
+  AgentPermissionRequest,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -1163,6 +1164,23 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("provider persistence leaves options owned by the stored agent config", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.createSession(
+      createConfig({ providerOptions: { sandbox_mode: "read-only", approval_policy: "never" } }),
+    );
+    try {
+      await session.startTurn("persist the configured session");
+      await appServer.waitForTurnStart();
+      const handle = session.describePersistence()!;
+      expect(handle.metadata).not.toHaveProperty("providerOptions");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,
@@ -1346,6 +1364,75 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("answers each concurrent command approval callback that shares one item", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const requested: AgentPermissionRequest[] = [];
+    session.subscribe((event) => {
+      if (event.type === "permission_requested") requested.push(event.request);
+    });
+
+    try {
+      await session.connect();
+
+      const firstPermission = waitForNextPermission(session);
+      appServer.requestCommandApproval({
+        itemId: "shared-item",
+        approvalId: "callback-a",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "git add a.txt",
+        cwd: "/workspace/project",
+        reason: "subcommand a",
+      });
+      await firstPermission;
+      const secondPermission = waitForNextPermission(session);
+      appServer.requestCommandApproval({
+        itemId: "shared-item",
+        approvalId: "callback-b",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "git add b.txt",
+        cwd: "/workspace/project",
+        reason: "subcommand b",
+      });
+      await secondPermission;
+
+      expect(requested.map((request) => request.input?.command)).toEqual([
+        "git add a.txt",
+        "git add b.txt",
+      ]);
+      expect(new Set(requested.map((request) => request.id)).size).toBe(2);
+      expect(session.getPendingPermissions()).toHaveLength(2);
+
+      await session.respondToPermission(requested[0]!.id, { behavior: "allow" });
+      await session.respondToPermission(requested[1]!.id, {
+        behavior: "deny",
+        message: "not b",
+      });
+
+      await expect(appServer.waitForCommandApprovalDecision("callback-a")).resolves.toEqual({
+        decision: "accept",
+      });
+      await expect(appServer.waitForCommandApprovalDecision("callback-b")).resolves.toEqual({
+        decision: "decline",
+      });
+      expect(session.getPendingPermissions()).toHaveLength(0);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("shows a successful shell command that produces no output", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -1507,6 +1594,51 @@ describe("Codex app-server provider", () => {
       await session.close();
     }
   });
+
+  test.each(["python3 -i", "/usr/bin/zsh -lc 'python3 -i'"])(
+    "labels a terminal write started as %s with the command that started the terminal",
+    async (command) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/workspace/project" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+
+      try {
+        await session.connect();
+        appServer.startsTerminalCommand({
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "interactive-shell",
+          processId: "73",
+          command,
+        });
+
+        const terminalWrite = waitForTimelineToolCall(session, "terminal-session-73-1");
+        appServer.typesIntoTerminal({
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "interactive-shell",
+          processId: "73",
+          text: "print(1)\n",
+        });
+
+        await expect(terminalWrite).resolves.toMatchObject({
+          item: {
+            callId: "terminal-session-73-1",
+            name: "terminal",
+            detail: { type: "plain_text", label: "python3 -i", text: "print(1)\n" },
+            metadata: { processId: "73" },
+          },
+        });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("keeps repeated writes to one terminal as separate timeline rows", async () => {
     const appServer = createFakeCodexAppServer();

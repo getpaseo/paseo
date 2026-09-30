@@ -84,52 +84,65 @@ const hosts: UsageHost[] = [
 ];
 
 describe("resolveUsageHostId", () => {
-  it("reads the active workspace's host", () => {
-    expect(resolveUsageHostId("b", hosts)).toBe("b");
+  const choose = (pickedServerId: string | null, activeServerId: string | null) =>
+    resolveUsageHostId({ pickedServerId, activeServerId, hosts });
+
+  it("reads the picked host over the active workspace's host", () => {
+    expect(choose("a", "b")).toBe("a");
+  });
+
+  it("reads the active workspace's host when nothing usable is picked", () => {
+    expect(choose(null, "b")).toBe("b");
+    expect(choose("offline", "b")).toBe("b");
+    expect(choose("old", "b")).toBe("b");
   });
 
   it("falls back to the first connected host that reports usage", () => {
-    expect(resolveUsageHostId(null, hosts)).toBe("a");
-    expect(resolveUsageHostId("offline", hosts)).toBe("a");
-    expect(resolveUsageHostId("old", hosts)).toBe("a");
+    expect(choose(null, null)).toBe("a");
+    expect(choose(null, "offline")).toBe("a");
+    expect(choose(null, "old")).toBe("a");
   });
 
   it("has no host when none reports usage", () => {
-    expect(resolveUsageHostId("old", hosts.slice(0, 2))).toBeNull();
+    expect(
+      resolveUsageHostId({
+        pickedServerId: "old",
+        activeServerId: "old",
+        hosts: hosts.slice(0, 2),
+      }),
+    ).toBeNull();
   });
 });
 
 describe("resolveUsageScreenHostId", () => {
-  it("keeps the user's pick while it stays connected", () => {
-    expect(resolveUsageScreenHostId({ selectedServerId: "old", activeServerId: "b", hosts })).toBe(
+  it("shows the picked host while it stays connected, even one that cannot report usage", () => {
+    expect(resolveUsageScreenHostId({ pickedServerId: "old", activeServerId: "b", hosts })).toBe(
       "old",
     );
     expect(
-      resolveUsageScreenHostId({ selectedServerId: "offline", activeServerId: "b", hosts }),
+      resolveUsageScreenHostId({ pickedServerId: "offline", activeServerId: "b", hosts }),
     ).toBe("b");
   });
 
-  it("defaults to the host the sidebar row reads", () => {
-    for (const activeServerId of ["b", null, "old", "offline"]) {
-      expect(resolveUsageScreenHostId({ selectedServerId: null, activeServerId, hosts })).toBe(
-        resolveUsageHostId(activeServerId, hosts),
-      );
+  it("otherwise shows the host the sidebar row reads", () => {
+    for (const pickedServerId of [null, "a", "offline"]) {
+      for (const activeServerId of ["b", null, "old", "offline"]) {
+        const choice = { pickedServerId, activeServerId, hosts };
+        expect(resolveUsageScreenHostId(choice)).toBe(resolveUsageHostId(choice));
+      }
     }
-    expect(resolveUsageScreenHostId({ selectedServerId: null, activeServerId: "old", hosts })).toBe(
-      "a",
-    );
   });
 
   it("shows the first connected host when none reports usage, so the screen says to update it", () => {
     expect(
       resolveUsageScreenHostId({
-        selectedServerId: null,
+        pickedServerId: null,
         activeServerId: null,
         hosts: hosts.slice(0, 2),
       }),
     ).toBe("old");
     expect(
-      resolveUsageScreenHostId({ selectedServerId: null, activeServerId: null, hosts: [] }),
+      resolveUsageScreenHostId({ pickedServerId: null, activeServerId: null, hosts: [] }),
     ).toBeNull();
   });
 });

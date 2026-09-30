@@ -1,7 +1,7 @@
 import { RotateCw } from "lucide-react-native";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { HostSwitcher } from "@/components/hosts/host-switcher";
+import { HostFilter } from "@/components/hosts/host-filter";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
@@ -25,9 +25,9 @@ export interface UsageHostSelection {
 }
 
 /**
- * The controls on the right of every usage title row: the host selector, which also names the
- * host shown, the used/remaining toggle and Refresh. A host that cannot report usage keeps only
- * the selector.
+ * The controls on the right of every usage title row: the host filter when there is more than one
+ * host, the used/remaining toggle and Refresh. A host that cannot report usage keeps only the
+ * host filter.
  */
 export function UsageControls({
   view,
@@ -45,14 +45,14 @@ export function UsageControls({
   const iconSize = paneContentToolbarIconSize(compact);
   return (
     <View style={styles.controls}>
-      {hostSelection && hostSelection.hosts.length > 0 ? (
-        <HostSwitcher
+      {hostSelection && hostSelection.hosts.length > 1 ? (
+        <HostFilter
           hosts={hostSelection.hosts}
-          value={hostSelection.serverId}
-          onSelect={hostSelection.onSelect}
-          title={usageCopy.host}
-          accessibilityLabel={usageCopy.host}
-          testID="usage-host-switcher"
+          selectedHost={hostSelection.serverId}
+          onSelectHost={hostSelection.onSelect}
+          includeAllHost={false}
+          triggerTestID="usage-host-filter-trigger"
+          hostOptionTestID={usageHostOptionTestID}
         />
       ) : null}
       {view.kind === "unavailable" ? null : (
@@ -76,6 +76,10 @@ export function UsageControls({
       )}
     </View>
   );
+}
+
+function usageHostOptionTestID(serverId: string): string {
+  return `usage-host-filter-item-${serverId}`;
 }
 
 const styles = StyleSheet.create((theme) => ({

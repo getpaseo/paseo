@@ -13,14 +13,21 @@ export interface UsagePin {
 export interface UsagePreferences {
   displayAs: UsageDisplayAs;
   pinned: UsagePin[];
+  /** The host the user picked to show usage for; null until they pick one. */
+  serverId: string | null;
 }
 
-export const DEFAULT_USAGE_PREFERENCES: UsagePreferences = { displayAs: "used", pinned: [] };
+export const DEFAULT_USAGE_PREFERENCES: UsagePreferences = {
+  displayAs: "used",
+  pinned: [],
+  serverId: null,
+};
 
 export const UsagePreferencesSchema = z
   .object({
     displayAs: z.enum(["used", "remaining"]).catch("used"),
     pinned: z.array(z.object({ sourceId: z.string(), windowId: z.string() })).catch([]),
+    serverId: z.string().nullable().catch(null),
   })
   .catch(DEFAULT_USAGE_PREFERENCES);
 
@@ -45,4 +52,8 @@ export function setUsageDisplayAs(
   displayAs: UsageDisplayAs,
 ): UsagePreferences {
   return { ...preferences, displayAs };
+}
+
+export function setUsageHost(preferences: UsagePreferences, serverId: string): UsagePreferences {
+  return { ...preferences, serverId };
 }

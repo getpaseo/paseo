@@ -40,10 +40,50 @@ function preferences(
   pinned: UsagePreferences["pinned"],
   displayAs: UsagePreferences["displayAs"] = "used",
 ): UsagePreferences {
-  return { displayAs, pinned };
+  return { displayAs, pinned, serverId: null };
 }
 
 describe("resolvePinnedUsage", () => {
+  it("defaults to the first window with a percent for each source account", () => {
+    const work = report({
+      sourceId: "claude",
+      sourceLabel: "Claude",
+      account: "work",
+      windows: [
+        { id: "empty", label: "Empty" },
+        { id: "weekly", label: "Weekly", usedPct: 90 },
+      ],
+    });
+    const empty = report({
+      sourceId: "empty",
+      sourceLabel: "Empty",
+      windows: [{ id: "empty", label: "Empty" }],
+    });
+    expect(
+      resolvePinnedUsage([claude, codex, work, empty], preferences([])).map((item) => [
+        item.key,
+        item.percentText,
+      ]),
+    ).toEqual([
+      ["claude:default/five-hour", "31%"],
+      ["codex:default/weekly", "12%"],
+      ["claude:work/weekly", "90%"],
+    ]);
+  });
+
+  it("pins replace defaults, and removing all pins restores defaults", () => {
+    const reports = [claude, codex];
+    expect(
+      resolvePinnedUsage(reports, preferences([{ sourceId: "claude", windowId: "weekly" }])).map(
+        (item) => item.key,
+      ),
+    ).toEqual(["claude:default/weekly"]);
+    expect(resolvePinnedUsage(reports, preferences([])).map((item) => item.key)).toEqual([
+      "claude:default/five-hour",
+      "codex:default/weekly",
+    ]);
+  });
+
   it("shows pinned windows in pin order, not report order", () => {
     const items = resolvePinnedUsage(
       [claude, codex],
@@ -54,11 +94,16 @@ describe("resolvePinnedUsage", () => {
     );
 
     expect(items).toEqual([
-      { key: "codex:default/weekly", icon: null, label: "Codex Weekly", percentText: "12%" },
+      {
+        key: "codex:default/weekly",
+        icon: null,
+        label: "Codex Weekly 12% used",
+        percentText: "12%",
+      },
       {
         key: "claude:default/five-hour",
         icon: "<svg/>",
-        label: "Claude 5-hour",
+        label: "Claude 5-hour 31% used",
         percentText: "31%",
       },
     ]);
@@ -76,7 +121,11 @@ describe("resolvePinnedUsage", () => {
       ),
     );
 
-    expect(items.map((item) => item.percentText)).toEqual(["69% left", "88% left"]);
+    expect(items.map((item) => item.percentText)).toEqual(["69%", "88%"]);
+    expect(items.map((item) => item.label)).toEqual([
+      "Claude 5-hour 69% left",
+      "Codex Weekly 88% left",
+    ]);
   });
 
   it("leaves out a pinned window that no report has, or that reports no percent", () => {
@@ -116,8 +165,8 @@ describe("resolvePinnedUsage", () => {
     );
 
     expect(items.map((item) => [item.label, item.percentText])).toEqual([
-      ["Claude (personal) 5-hour", "10%"],
-      ["Claude (work) 5-hour", "90%"],
+      ["Claude (personal) 5-hour 10% used", "10%"],
+      ["Claude (work) 5-hour 90% used", "90%"],
     ]);
   });
 });

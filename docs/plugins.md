@@ -88,12 +88,23 @@ never deletes it. The global `pluginsEnabled` switch remains available.
 
 ## Built-in plugins
 
-Built-in plugins live in `plugins/<id>/` and ship with the daemon. Add a directory and one ID to
-`builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. The workspace, build
-copy, and CI checks cover every listed directory; unlisted directories do not load. Built-ins run
-in process, ignore `pluginsEnabled`, and do not appear in `config.json` or the installed plugin
-list. Their client bundles appear in the plugin catalog. Editing one in development requires a
-daemon restart. Directory, Git, and npm installs cannot use a built-in ID.
+Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.server.ts`,
+`server/`, and optional client entry and icon. Add the plugin ID to `builtinPlugins` in
+`packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
+checks cover that registry. Unlisted directories do not load.
+
+Built-ins run in process and remain active independently of `pluginsEnabled`. They are
+absent from the installed plugin list and source configuration; their client bundles
+appear in the plugin catalog. Editing one in development requires a daemon restart.
+Directory, Git, and npm installs cannot use a built-in ID.
+
+Provider plugins use separate installation and provider IDs. `muse-provider` registers the
+selectable `muse` provider (Muse Code) and a usage source. Its `status({ launch })` reports
+availability and a diagnostic after the daemon resolves the executable. Configure command,
+environment, or enablement overrides under `agents.providers.muse`. Omit `extends` to keep
+the bundled integration; an entry with `extends` shadows it with a custom provider. See
+[provider contributions](#contribute-a-provider) for the contract and
+[Muse Code](../public-docs/muse-code.md) for setup, per-agent options, and version limitations.
 
 ## Install a Git source
 
@@ -381,9 +392,38 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
+Declare `command: ["agent", "serve"]` when your provider launches an executable. The daemon applies
+`agents.providers.<id>.command` and `env`, resolves the executable against the effective PATH, and
+removes parent-session and daemon-control environment variables. `connect({ launch })` receives
+`{ command, args, env }`: an executable path, effective arguments, and the complete sanitized
+environment. Spawn with those values; do not merge the plugin process's environment back in.
+The launch travels as data through the same provider protocol for built-in and subprocess plugins.
+Without a declared command, existing providers keep their connection behavior and receive no launch.
+
+Implement optional `status({ launch })` to check credentials, versions, or other prerequisites using
+that effective launch. Return `{ available: true }` or
+`{ available: false, diagnostic: "Run agent login" }`. The daemon checks executable availability
+before calling status; it exposes your diagnostic through the normal provider diagnostic command.
+A command-backed provider without status is available when its executable resolves. Providers with
+neither command nor status retain connection-based availability.
+
+A same-ID config entry without `extends` overrides the plugin's `enabled`, `command`, `env`, label,
+description, and model configuration through the normal provider registry. `enabled: false` disables
+selection and discovery. An entry with `extends` defines the user's own provider, shadows the plugin,
+and logs a warning. Overrides validate before plugins load; an override for an absent plugin stays
+inactive and logs a warning naming the unmatched ID after built-in and configured plugin startup
+settles (including disabled plugins), then on each installed registry generation.
+Use IDs matching `/^[a-z][a-z0-9-]*$/` for configurable providers. Dots and underscores
+remain valid for plugin registration but cannot be used as config provider IDs.
+
+Provider config changes rebuild the affected registry entry and invalidate its catalogue; the next
+connection receives the new launch without restarting the daemon. Running sessions keep their
+current launch until refreshed, as native providers do.
+
 Implement optional `ProviderRegistration.getCatalogCacheKey(options)` to share equivalent catalogue
 probes. The callback runs in the plugin process before discovery and receives the actual global or
-workspace target. Return a key covering effective configuration and execution environment, or
+workspace target plus the resolved `launch` when a command is declared. Return a key covering
+effective configuration and execution environment, or
 `undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
 need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
@@ -391,15 +431,22 @@ need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
 Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
-the opaque `providerOptions` config object.
+the opaque `ProviderSessionConfig.providerOptions` object on `session.open`.
+It contains the provider defaults and per-agent overrides merged by the daemon.
+Validate and apply it inside the provider; core does not know your option shape.
+See [provider options](custom-providers.md#provider-options) for configuration and
+merge semantics.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
-persistence. Providers re-read credentials, environment, global configuration, and MCP servers on
-`session.open`; there is no provider reload input.
+persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
+daemon launch from `connect` and the per-session env and MCP servers from `session.open`. There is
+no provider reload input.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
 `@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
-whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`
+whole provider event stream. The shim uses the resolved launch for every probe and session, overlaying
+only the supplied per-session env for sessions. The direct and ACP examples live in
+`plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.
 
 Provider-emitted plugin timeline items use the same renderer registration as transformed and

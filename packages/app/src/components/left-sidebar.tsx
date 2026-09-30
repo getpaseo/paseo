@@ -23,6 +23,7 @@ import {
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
+import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
@@ -309,7 +310,7 @@ function FooterIconButton({
           )}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
+      <TooltipContent side="top" align="center" offset={8} testID={`${testID}-tooltip`}>
         <IconTooltipContent label={label} shortcutKeys={shortcutKeys} />
       </TooltipContent>
     </Tooltip>
@@ -367,7 +368,7 @@ function FooterAddProjectButton({
           }}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
+      <TooltipContent side="top" align="center" offset={8} testID="sidebar-add-project-tooltip">
         <IconTooltipContent label={label} shortcutKeys={shortcutKeys} />
       </TooltipContent>
     </Tooltip>
@@ -473,37 +474,39 @@ function SidebarFooter({
   const settingsKeys = useShortcutKeys("toggle-settings");
 
   return (
-    <View style={styles.sidebarFooter}>
-      <FooterAddProjectButton
-        onPress={handleOpenProject}
-        label={labels.addProject}
-        shortcutKeys={newAgentKeys}
-        theme={theme}
-      />
+    <View style={styles.footerContainer} testID="sidebar-footer">
       <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
-      <View style={styles.footerIconRow}>
-        <SidebarHostPicker
-          theme={theme}
-          label={labels.hosts}
-          onAddHost={handleAddHost}
-          onOpenHostSettings={handleOpenHostSettings}
-        />
-        <FooterIconButton
-          onPress={handleImportSession}
-          testID="sidebar-import-session"
-          label={labels.importSession}
-          icon={Import}
+      <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
+        <FooterAddProjectButton
+          onPress={handleOpenProject}
+          label={labels.addProject}
+          shortcutKeys={newAgentKeys}
           theme={theme}
         />
-        <SidebarHelpMenu />
-        <FooterIconButton
-          onPress={handleSettings}
-          testID="sidebar-settings"
-          label={labels.settings}
-          icon={Settings}
-          shortcutKeys={settingsKeys}
-          theme={theme}
-        />
+        <View style={styles.footerIconRow}>
+          <SidebarHostPicker
+            theme={theme}
+            label={labels.hosts}
+            onAddHost={handleAddHost}
+            onOpenHostSettings={handleOpenHostSettings}
+          />
+          <FooterIconButton
+            onPress={handleImportSession}
+            testID="sidebar-import-session"
+            label={labels.importSession}
+            icon={Import}
+            theme={theme}
+          />
+          <SidebarHelpMenu />
+          <FooterIconButton
+            onPress={handleSettings}
+            testID="sidebar-settings"
+            label={labels.settings}
+            icon={Settings}
+            shortcutKeys={settingsKeys}
+            theme={theme}
+          />
+        </View>
       </View>
     </View>
   );
@@ -516,21 +519,24 @@ function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void
   const visibleItems = items.filter((item) => item.visible);
   if (visibleItems.length === 0) return null;
   return (
-    <View ref={rowsRef} collapsable={false} style={styles.footerRows}>
-      {visibleItems.map((item) =>
-        item.kind === "plugin" ? (
-          <PluginSidebarItem
-            key={item.key}
-            group={item.group}
-            section="footer"
-            fallbackAnchorRef={rowsRef}
-            onBeforeNavigate={onBeforeNavigate}
-          />
-        ) : (
-          <UsageSidebarItem key={item.key} />
-        ),
-      )}
-    </View>
+    <>
+      <View ref={rowsRef} collapsable={false} style={styles.footerRows}>
+        {visibleItems.map((item) =>
+          item.kind === "plugin" ? (
+            <PluginSidebarItem
+              key={item.key}
+              group={item.group}
+              section="footer"
+              fallbackAnchorRef={rowsRef}
+              onBeforeNavigate={onBeforeNavigate}
+            />
+          ) : (
+            <UsageSidebarItem key={item.key} />
+          ),
+        )}
+      </View>
+      <SidebarSeparator testID="sidebar-footer-separator" />
+    </>
   );
 }
 
@@ -961,32 +967,32 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
-  sidebarFooter: {
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[3],
+  footerContainer: {
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
-  // Every footer row is 28px tall with `spacing[1]` between rows, the same as the gap above.
-  footerRows: {
-    gap: theme.spacing[1],
+  sidebarFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
   },
   footerIconRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    flexShrink: 0,
   },
-  // The leading glyph sits on the footer icons' rail: a 16px icon centered in a 28px button
-  // starts 6px in, `spacing[1.5]`.
   footerAddProjectButton: {
     minWidth: 0,
-    minHeight: 28,
+    minHeight: 32,
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[1.5],
+    paddingVertical: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
   },
   footerAddProjectButtonHovered: {
@@ -1001,6 +1007,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerAddProjectLabelHovered: {
     color: theme.colors.foreground,
+  },
+  // Usage and plugin rows sit above the restored footer line.
+  footerRows: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    gap: theme.spacing[1],
   },
   footerIconButton: {
     width: 28,

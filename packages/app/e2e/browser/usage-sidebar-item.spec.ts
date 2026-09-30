@@ -8,7 +8,6 @@ import { leaveSettings, openSidebarNavSettings } from "../support/helpers/sideba
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import {
   claudeAndCodexReports,
-  expectNoPinnedUsage,
   expectOnUsageScreen,
   expectPinnedUsage,
   leaveUsageScreen,
@@ -33,7 +32,7 @@ async function qaScreenshot(page: Page, name: string, area: ScreenshotArea = { k
   await page.waitForTimeout(600);
   // Expo's fast-refresh indicator sits over the footer's Hosts icon.
   await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
-  const file = path.join(directory, `phase4-${name}.png`);
+  const file = path.join(directory, `${name}.png`);
   if (area.kind === "element") {
     await area.locator.screenshot({ path: file });
     return;
@@ -42,14 +41,9 @@ async function qaScreenshot(page: Page, name: string, area: ScreenshotArea = { k
   await page.screenshot({ path: file, clip });
 }
 
-/** The sidebar footer, from Add project down to the icon row, with some margin. */
+/** Includes summary rows above the fixed icon row. */
 async function footerClip(page: Page) {
-  const top = (await page.locator('[data-testid="sidebar-add-project"]:visible').boundingBox())!;
-  const bottom = (await page.locator('[data-testid="sidebar-settings"]:visible').boundingBox())!;
-  const margin = 16;
-  const x = Math.max(0, top.x - margin);
-  const y = Math.max(0, top.y - margin);
-  return { x, y, width: 300, height: bottom.y + bottom.height + margin - y };
+  return (await page.locator('[data-testid="sidebar-footer"]:visible').boundingBox())!;
 }
 
 test.describe("Usage item", () => {
@@ -63,21 +57,32 @@ test.describe("Usage item", () => {
     await gotoAppShell(page);
     const screen = page.getByTestId(`usage-host-${serverId}`);
 
-    await test.step("a fresh device shows the plain Usage row, which opens the Usage screen", async () => {
+    await test.step("a fresh device shows default windows, which opens the Usage screen", async () => {
       await expect(usageItem(page)).toBeVisible({ timeout: 30_000 });
-      await expectNoPinnedUsage(page);
-      await qaScreenshot(page, "desktop-footer-empty", { kind: "footer" });
+      await expectPinnedUsage(page, ["31%", "7%"]);
+      await qaScreenshot(page, "desktop-footer-defaults", { kind: "footer" });
+      await openSidebarNavSettings(page);
+      await qaScreenshot(page, "desktop-settings-sidebar-footer");
+      await page.setViewportSize(COMPACT);
+      await qaScreenshot(page, "compact-settings-sidebar-footer");
+      await gotoAppShell(page);
+      await openCompactSidebar(page);
+      await expectPinnedUsage(page, ["31%", "7%"]);
+      await qaScreenshot(page, "compact-footer-defaults");
+      await page.setViewportSize(WIDE);
+      await gotoAppShell(page);
       await usageItem(page).click();
       await expectOnUsageScreen(page);
     });
 
     await test.step("pinning Claude 5-hour and Codex weekly shows both in the Usage item", async () => {
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 10_000 });
-      // One host: the selector still names it.
-      await expect(
-        page.locator('[data-testid="usage-host-switcher"]:visible'),
-      ).toHaveAccessibleName(/^Usage host: .+/);
+      // One host: no host filter, as on History.
+      await expect(page.locator('[data-testid="usage-host-filter-trigger"]:visible')).toHaveCount(
+        0,
+      );
       await togglePin(screen, "Claude", "Session");
+      await expectPinnedUsage(page, ["31%"]);
       await togglePin(screen, "Codex", "Weekly");
       await expectPinnedUsage(page, ["31%", "12%"]);
       await expect(usageItem(page)).not.toHaveText("Usage");
@@ -95,7 +100,8 @@ test.describe("Usage item", () => {
 
     await test.step("remaining flips the Usage item and the Usage screen", async () => {
       await showUsageAs(page, "remaining");
-      await expectPinnedUsage(page, ["69% left", "88% left"]);
+      await expectPinnedUsage(page, ["69%", "88%"]);
+      await expect(usageItem(page)).toHaveAccessibleName(/Claude .*69% left, Codex .*88% left/);
       await expect(
         screen.getByTestId("usage-report-claude:default").getByText("69% left"),
       ).toBeVisible();
@@ -117,7 +123,7 @@ test.describe("Usage item", () => {
       await leaveUsageScreen(page);
       await openCompactSidebar(page);
       await expect(usageItem(page)).toBeInViewport();
-      await expectPinnedUsage(page, ["69% left", "88% left"]);
+      await expectPinnedUsage(page, ["69%", "88%"]);
       await qaScreenshot(page, "compact-footer");
       await usageItem(page).click();
       const sheet = usageSheet(page);
@@ -129,10 +135,7 @@ test.describe("Usage item", () => {
       await expect(pinRow(sheet, "Claude", "Session")).toHaveAccessibleName(
         /^Pin Claude Session, \d+% left( · .+)?$/,
       );
-      // The sheet carries the Usage screen's controls, host selector included.
-      await expect(
-        page.locator('[data-testid="usage-host-switcher"]:visible'),
-      ).toHaveAccessibleName(/^Usage host: .+/);
+      // The sheet carries the Usage screen's controls.
       await expect(page.locator('[data-testid="usage-refresh-all"]:visible')).toBeVisible();
       await expect(page).not.toHaveURL(/\/usage$/);
       const sheetBox = (await sheet.boundingBox())!;
@@ -150,7 +153,7 @@ test.describe("Usage item", () => {
 
     await test.step("a reload keeps the pins and the toggle", async () => {
       await page.reload();
-      await expectPinnedUsage(page, ["69% left", "88% left"]);
+      await expectPinnedUsage(page, ["69%", "88%"]);
       await expect(
         page.locator('[data-testid="usage-display-remaining"]:visible').first(),
       ).toHaveAttribute("aria-selected", "true");
@@ -167,13 +170,13 @@ test.describe("Usage item", () => {
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 10_000 });
     });
 
-    await test.step("unpinning both brings back the Usage row, and that survives a reload", async () => {
+    await test.step("unpinning both brings back default windows, and that survives a reload", async () => {
       await togglePin(screen, "Claude", "Session");
       await togglePin(screen, "Codex", "Weekly");
-      await expectNoPinnedUsage(page);
+      await expectPinnedUsage(page, ["69%", "93%"]);
       await page.reload();
       await expect(screen.getByText("88% left")).toBeVisible({ timeout: 10_000 });
-      await expectNoPinnedUsage(page);
+      await expectPinnedUsage(page, ["69%", "93%"]);
       await gotoAppShell(page);
       await usageItem(page).click();
       await expectOnUsageScreen(page);
@@ -189,4 +192,32 @@ test.describe("Usage item", () => {
       await leaveSettings(page);
     });
   });
+});
+
+test("released hosts supply source logos through the client conversion", async ({ page }) => {
+  await installUsageReportsFixture(page, {
+    lists: [() => claudeAndCodexReports()],
+    providerUsageListOnly: true,
+  });
+  await page.setViewportSize(WIDE);
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31%", "7%"]);
+  // Source logos are decorative SVGs with no accessible role. Their path data distinguishes
+  // the source artwork from the fallback gauge.
+  const claudePath = /<path[^>]* d="([^"]+)"/.exec(claudeAndCodexReports()[0]!.icon!)![1]!;
+  const codexPath = /<path[^>]* d="([^"]+)"/.exec(claudeAndCodexReports()[1]!.icon!)![1]!;
+  const summary = usageItem(page).getByTestId("sidebar-usage-pinned-window");
+  await expect(summary.nth(0).locator("svg path").first()).toHaveAttribute("d", claudePath);
+  await expect(summary.nth(1).locator("svg path").first()).toHaveAttribute("d", codexPath);
+  await qaScreenshot(page, "released-host-footer", { kind: "footer" });
+  await usageItem(page).click();
+  await expectOnUsageScreen(page);
+  const screen = page.getByTestId(`usage-host-${getServerId()}`);
+  await expect(
+    screen.getByTestId("usage-report-claude").locator("svg path").first(),
+  ).toHaveAttribute("d", claudePath);
+  await expect(
+    screen.getByTestId("usage-report-codex").locator("svg path").first(),
+  ).toHaveAttribute("d", codexPath);
+  await qaScreenshot(page, "released-host-usage-screen");
 });

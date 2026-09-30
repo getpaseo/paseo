@@ -25,15 +25,14 @@ const NO_REPORTS: UsageReportEntry[] = [];
 const NO_ITEMS: PinnedUsageWindow[] = [];
 
 /**
- * The sidebar footer's usage entry: each pinned window's source icon and percent, or a plain
- * "Usage" row while no pinned window has data. Pressing it opens the Usage screen; on compact
+ * The sidebar footer's usage entry: each summary window's source icon and percent, or a plain
+ * "Usage" row while no summary window has data. Pressing it opens the Usage screen; on compact
  * layouts it opens the usage sheet instead.
  */
 export function UsageSidebarItem() {
   const { preferences, display } = useUsagePreferences();
   const serverId = useUsageHostId();
-  // Without pins there is nothing to summarize, so the host is not asked for reports.
-  if (!serverId || preferences.pinned.length === 0) {
+  if (!serverId) {
     return <UsageEntry serverId={serverId} items={NO_ITEMS} display={display} />;
   }
   return (
@@ -84,7 +83,7 @@ function UsageEntry({
   const isCompact = useIsCompactFormFactor();
   const openUsageScreen = useOpenUsageScreen();
   const [open, setOpen] = useState(false);
-  // The sheet mounts on first open, so an unopened sidebar never asks the host for reports.
+  // The sheet mounts on first open; the summary already owns the report query.
   const [sheetMounted, setSheetMounted] = useState(false);
   // Without a host there are no reports to show, so compact goes to the screen, which says so.
   const usesSheet = isCompact && serverId !== null;
@@ -170,7 +169,7 @@ function HostUsageSheet({
 }
 
 function pinnedUsageLabel(label: string, items: readonly PinnedUsageWindow[]): string {
-  return `${label}: ${items.map((item) => `${item.label} ${item.percentText}`).join(", ")}`;
+  return `${label}: ${items.map((item) => item.label).join(", ")}`;
 }
 
 function triggerStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
