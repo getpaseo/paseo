@@ -25,6 +25,13 @@ interface FakeSilentCommand {
   command: string;
   cwd: string;
 }
+interface FakeTerminalCommand {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  processId: string;
+  command: string;
+}
 interface FakeTerminalInput {
   threadId: string;
   turnId: string;
@@ -81,6 +88,7 @@ export interface FakeCodexAppServer {
   completesCommand(params: FakeLegacyCommand): void;
   completesSilentCommand(params: FakeSilentCommand): void;
   completesSilentLegacyCommand(params: FakeSilentCommand): void;
+  startsTerminalCommand(params: FakeTerminalCommand): void;
   typesIntoTerminal(params: FakeTerminalInput): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
@@ -485,6 +493,19 @@ export function createFakeCodexAppServer(
         aggregatedOutput: null,
         exit_code: 0,
         success: true,
+      });
+    },
+    startsTerminalCommand(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        item: {
+          type: "commandExecution",
+          id: params.itemId,
+          status: "inProgress",
+          command: params.command,
+          processId: params.processId,
+        },
       });
     },
     typesIntoTerminal(params) {

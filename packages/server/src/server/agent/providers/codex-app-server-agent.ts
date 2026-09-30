@@ -6730,6 +6730,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
     const itemId = parsed.item.id;
     if (normalizedItemType === "commandExecution") {
+      this.rememberTerminalProcessForItem(parsed.item);
       const callId = timelineItem.callId || itemId;
       if (callId && this.emittedExecCommandStartedCallIds.has(callId)) {
         return;
@@ -6849,6 +6850,19 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private rememberTerminalProcessForCommand(command: unknown, output: string | null): void {
+    const processId = extractCodexTerminalSessionId(output ?? undefined);
+    if (processId) {
+      this.rememberTerminalProcess(processId, command);
+    }
+  }
+
+  private rememberTerminalProcessForItem(item: { [key: string]: unknown }): void {
+    if (typeof item.processId === "string" && item.processId) {
+      this.rememberTerminalProcess(item.processId, item.command);
+    }
+  }
+
+  private rememberTerminalProcess(processId: string, command: unknown): void {
     const normalizedCommand = normalizeCodexCommandValue(command);
     if (!normalizedCommand) {
       return;
@@ -6858,10 +6872,6 @@ export class CodexAppServerAgentSession implements AgentSession {
         ? normalizedCommand
         : normalizedCommand.join(" ").trim();
     if (!displayCommand) {
-      return;
-    }
-    const processId = extractCodexTerminalSessionId(output ?? undefined);
-    if (!processId) {
       return;
     }
     this.terminalCommandByProcessId.set(processId, displayCommand);

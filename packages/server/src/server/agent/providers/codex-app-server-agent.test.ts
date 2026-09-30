@@ -1578,6 +1578,48 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("labels a terminal write with the command that started the terminal", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      appServer.startsTerminalCommand({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "73",
+        command: "python3 -i",
+      });
+
+      const terminalWrite = waitForTimelineToolCall(session, "terminal-session-73-1");
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "73",
+        text: "print(1)\n",
+      });
+
+      await expect(terminalWrite).resolves.toMatchObject({
+        item: {
+          callId: "terminal-session-73-1",
+          name: "terminal",
+          detail: { type: "plain_text", label: "python3 -i", text: "print(1)\n" },
+          metadata: { processId: "73" },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("keeps repeated writes to one terminal as separate timeline rows", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
