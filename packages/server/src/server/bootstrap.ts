@@ -1485,6 +1485,9 @@ export async function createPaseoDaemon(
     agentStorage,
     createAgent,
     packs: new PackRegistry(),
+    getUsage: getProviderUsageForRouting,
+    listFallbackProviders: () =>
+      (daemonConfigStore.get().agentProfiles ?? []).map((profile) => profile.provider),
   });
   await teamService.start();
   daemonConfigStore.onFieldChange("resourcePolicy", (value) => {
@@ -1706,6 +1709,7 @@ export async function createPaseoDaemon(
       if (sorted > 0) logger.info({ sorted }, "handoff backfill sorted open sessions");
     })().catch((error: unknown) => logger.warn({ err: error }, "handoff backfill failed"));
   }, HANDOFF_BACKFILL_DELAY_MS).unref();
+  agentManager.setUsageSource(getProviderUsageForRouting);
   agentManager.setTurnRouter(
     createSystemOneTurnRouter({
       paseoHome: config.paseoHome,

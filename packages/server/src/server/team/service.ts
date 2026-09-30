@@ -1,3 +1,5 @@
+import type { ProviderUsage } from "@getpaseo/protocol/messages";
+import { earliestReset, limitedProviders } from "../system-one/usage-limits.js";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -66,6 +68,10 @@ export interface TeamServiceOptions {
   /** Tests drive dispatch and health themselves. */
   timers?: boolean;
   sendPrompt?: typeof sendPromptToAgent;
+  /** Provider usage, used to wait for a known limit reset instead of guessing. */
+  getUsage?: () => Promise<{ providers: ProviderUsage[] } | null>;
+  /** Providers of the configured fallback chain (agent profiles), in order. */
+  listFallbackProviders?: () => string[];
 }
 
 export interface TeamCallerBinding {
@@ -435,6 +441,7 @@ export class TeamService {
     errored: boolean,
     decisionId?: string,
   ): Promise<void> {
+    const retryAt = errored ? await this.nextProviderSlot() : null;
     await this.store.commit(teamId, (draft) => {
       const events: TeamEventDraft[] = [];
       // Checked inside the commit: an idle event from reloading a session can queue up behind the
@@ -445,10 +452,10 @@ export class TeamService {
       const item = draft.items[binding.workItemId];
       if (!item) return { events, result: null };
       binding.lastEventAt = this.now().toISOString();
-      if (errored && binding.errors < MAX_ERROR_RETRIES) {
-        // Provider errors (limits, capacity, crashes) retry the same seat with growing pauses;
-        // each turn goes through the agent manager's own profile fallback again.
-        binding.errors += 1;
+      if (errored && (retryAt?.knownReset || binding.errors < MAX_ERROR_RETRIES)) {
+        // Provider errors retry the same seat: at the next known limit reset when every profile is
+        // exhausted, otherwise after a growing pause. Each turn runs the profile fallback again.
+        if (!retryAt?.knownReset) binding.errors += 1;
         binding.turn = "idle";
         const decision = addDecision(
           draft,
@@ -457,13 +464,15 @@ export class TeamService {
           { bindingId: binding.id, retry: true },
           `error-retry:${binding.id}:${item.revision}:${binding.errors}`,
         );
-        const waitMs = Math.min(30, 2 ** binding.errors) * 60_000;
-        decision.availableAt = new Date(this.now().getTime() + waitMs).toISOString();
+        const backoff = this.now().getTime() + Math.min(30, 2 ** binding.errors) * 60_000;
+        decision.availableAt = retryAt?.at ?? new Date(backoff).toISOString();
         events.push({
           type: "health.provider-error",
           actor: RUNTIME,
           workItemId: item.id,
-          text: `${binding.role} stopped with a provider error; retrying in ${waitMs / 60_000} min`,
+          text: retryAt?.knownReset
+            ? `${binding.role} stopped: every profile is at its limit; continuing at ${decision.availableAt.slice(11, 16)} UTC when the first one resets`
+            : `${binding.role} stopped with a provider error; retrying at ${decision.availableAt.slice(11, 16)} UTC`,
         });
       } else if (binding.nudges < 1) {
         binding.nudges += 1;
@@ -494,6 +503,25 @@ export class TeamService {
       return { events, result: null };
     });
     void this.dispatchAll();
+  }
+
+  /**
+   * When to retry after a provider error. A free profile means soon; all profiles at a limit means
+   * the earliest reset the usage data knows of.
+   */
+  private async nextProviderSlot(): Promise<{ at: string; knownReset: boolean } | null> {
+    const providers = this.options.listFallbackProviders?.() ?? [];
+    if (!this.options.getUsage || providers.length === 0) return null;
+    const usage = await this.options.getUsage().catch(() => null);
+    const limited = limitedProviders(usage?.providers);
+    if (providers.some((p) => !limited.has(p))) {
+      return { at: new Date(this.now().getTime() + 2 * 60_000).toISOString(), knownReset: false };
+    }
+    const reset = earliestReset(providers, limited);
+    if (!reset) return null;
+    const cap = this.now().getTime() + 6 * 3_600_000;
+    const at = Math.min(Date.parse(reset) + 60_000, cap);
+    return { at: new Date(at).toISOString(), knownReset: true };
   }
 
   // ---------------------------------------------------------------- dispatcher

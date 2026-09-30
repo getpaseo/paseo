@@ -276,4 +276,41 @@ describe("provider errors", () => {
     const retry = Object.values(state.decisions).find((d) => d.payload.retry === true)!;
     expect(Date.parse(retry.availableAt)).toBeGreaterThan(Date.now());
   });
+
+  it("waits for the earliest known reset when every profile is at its limit", async () => {
+    const host = fakeHost();
+    const reset = new Date(Date.now() + 3 * 3_600_000).toISOString();
+    const later = new Date(Date.now() + 5 * 3_600_000).toISOString();
+    const window = (resetsAt: string) => ({ id: "5h", label: "5h", usedPct: 100, resetsAt });
+    const svc = new TeamService({
+      ...(host.options as unknown as TeamServiceOptions),
+      storageRoot: root,
+      listFallbackProviders: () => ["codex-business", "opencode"],
+      getUsage: async () => ({
+        providers: [
+          {
+            providerId: "codex-business",
+            displayName: "b",
+            status: "available",
+            planLabel: null,
+            windows: [window(later)],
+          },
+          {
+            providerId: "opencode",
+            displayName: "o",
+            status: "available",
+            planLabel: null,
+            windows: [window(reset)],
+          },
+        ],
+      }),
+    });
+    await svc.start();
+    const started = await svc.startTeam({ bossAgentId: "boss", title: "Reset", objective: "x" });
+    await svc.dispatchAll();
+    await svc.onTurnEnded(started.team.id, host.agentFor("po").id, true);
+    const { state } = await svc.status(started.team.id);
+    const retry = Object.values(state.decisions).find((d) => d.payload.retry === true)!;
+    expect(Date.parse(retry.availableAt)).toBe(Date.parse(reset) + 60_000);
+  });
 });
