@@ -7,14 +7,14 @@ import {
   usePullRequestCuration,
 } from "@/git/pull-request-curation-store";
 import { applyPullRequestCuration } from "@/git/pull-request-curation";
-import { refreshAttachedPullRequests } from "@/git/use-attach-pull-request";
+import {
+  persistWorkspaceCuration,
+  useAttachedPullRequestRefresh,
+} from "@/git/use-attached-pull-request-refresh";
 import type { RelatedPullRequest } from "@/git/related-pull-requests";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { ChangeRequestSetList } from "./change-request-set";
-
-const ATTACHED_REFRESH_INTERVAL_MS = 5 * 60_000;
-const attachedRefreshedAt = new Map<string, number>();
 
 /**
  * The expanded set with its two ways of growing wired up, and with what the user decides about
@@ -74,42 +74,12 @@ export function ManagedChangeRequestSetList({
 
   // The facts go with the decision. The daemon cannot draw a bare number, so a
   // set sent without them comes back empty on the next client that asks.
-  const persistCuration = useCallback(() => {
-    if (!client) return;
-    void client
-      .curateWorkspacePullRequests(
-        workspaceId,
-        pullRequestCurationStore.getCuration(workspaceKey),
-        pullRequestCurationStore.getFacts(workspaceKey),
-      )
-      .catch(() => {
-        // The set still reads correctly from the cache; the daemon rejects loudly enough in its
-        // own log, and nothing here is worth interrupting the sidebar for.
-      });
-  }, [client, workspaceId, workspaceKey]);
+  const persistCuration = useCallback(
+    () => persistWorkspaceCuration(client, workspaceId, workspaceKey),
+    [client, workspaceId, workspaceKey],
+  );
 
-  // Opening the set rereads attached pull requests that still read open, so a merge shows here
-  // and, once stored, on every other client too.
-  const cwd = workspace?.workspaceDirectory ?? null;
-  const openAttached = pullRequests
-    .filter((pullRequest) => pullRequest.origin === "manual" && pullRequest.state === "open")
-    .map((pullRequest) => pullRequest.number)
-    .join(",");
-  useEffect(() => {
-    if (!client || !cwd || !openAttached) return;
-    const now = Date.now();
-    if (now - (attachedRefreshedAt.get(workspaceKey) ?? 0) < ATTACHED_REFRESH_INTERVAL_MS) return;
-    attachedRefreshedAt.set(workspaceKey, now);
-    void refreshAttachedPullRequests({
-      client: { searchForge: (options) => client.searchForge(options) },
-      cwd,
-      workspaceKey,
-      pullRequests,
-    }).then((changed) => {
-      if (changed > 0) persistCuration();
-      return undefined;
-    });
-  }, [client, cwd, openAttached, persistCuration, pullRequests, workspaceKey]);
+  useAttachedPullRequestRefresh({ serverId, workspaceId, workspaceKey, pullRequests });
 
   const handleRemove = useCallback(
     (number: number) => {
