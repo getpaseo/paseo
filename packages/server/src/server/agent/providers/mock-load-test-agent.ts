@@ -91,6 +91,17 @@ const MODELS: AgentModelDefinition[] = [
   },
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "quiet-thirty-minute-turn",
+    label: "Quiet thirty minute turn",
+    description:
+      "Stays in a running turn for thirty minutes and emits one stream event every 20 seconds, like an agent thinking or waiting on a long command. Use this to measure what a running turn costs when nothing streams, such as the working indicator and status rings; a streaming model's text rendering hides that cost.",
+    metadata: {
+      durationMs: 30 * 60 * 1000,
+      intervalMs: 20_000,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "legacy-five-minute-stream",
     label: "Legacy five minute stream",
     isSelectable: false,
