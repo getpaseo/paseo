@@ -151,6 +151,7 @@ function InboxRow({
   );
 }
 
+// Row actions are secondary, not outline: the outline border is the inbox surface's own colour.
 function InboxActions({
   item,
   size,
@@ -187,7 +188,7 @@ function InboxActions({
       );
     default:
       return (
-        <Button variant="outline" size={size} onPress={openSession} testID={`${testID}-open`}>
+        <Button variant="secondary" size={size} onPress={openSession} testID={`${testID}-open`}>
           {t(PRIMARY_ACTION_KEY[item.kind])}
         </Button>
       );
@@ -223,7 +224,7 @@ function PullRequestButton({
   }, [url]);
   return (
     <Button
-      variant="outline"
+      variant="secondary"
       size={size}
       onPress={open}
       accessibilityRole="link"
@@ -270,7 +271,7 @@ function ScheduleErrorActions({
         <Text style={styles.error}>{t("leitstand.inbox.actions.runFailed")}</Text>
       ) : null}
       <Button
-        variant="outline"
+        variant="secondary"
         size={size}
         onPress={runAgain}
         loading={runState === "pending"}
