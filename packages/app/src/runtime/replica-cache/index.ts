@@ -315,7 +315,8 @@ const StoredWorkspaceSchema = z.strictObject({
   labels: z.array(z.string()).optional(),
   // Optional for entries cached before the done marker existed; same reasoning as labels.
   doneAt: z.string().nullable().optional(),
-  // Optional for entries cached before handoff sorting existed; same reasoning as labels.
+  // Required on purpose, unlike labels: a row cached before handoff sorting fails to parse,
+  // which drops the workspace cursor, so the daemon resends every workspace once with it.
   handoff: z
     .object({
       agentId: z.string(),
@@ -323,8 +324,7 @@ const StoredWorkspaceSchema = z.strictObject({
       need: z.string().nullable(),
       at: z.string(),
     })
-    .nullable()
-    .optional(),
+    .nullable(),
   // Optional for entries cached before topics existed; same reasoning as labels.
   topic: z
     .strictObject({ id: z.string(), title: z.string(), description: z.string().nullable() })

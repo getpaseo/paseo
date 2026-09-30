@@ -730,6 +730,29 @@ describe("ReplicaCache", () => {
     });
   });
 
+  it("resyncs workspaces cached before handoff sorting existed", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    commitDirectory(
+      writer,
+      SERVER_ID,
+      directory({
+        workspaces: { generation: "g", afterSeq: 7 },
+        agents: { generation: "g", afterSeq: 12 },
+      }),
+    );
+    await writer.flush();
+    const [key, row] = [...storage.rows].find(([, stored]) => stored.kind === "workspace")!;
+    const legacy = JSON.parse(row.payload) as Record<string, unknown>;
+    delete legacy.handoff;
+    storage.rows.set(key, { ...row, payload: JSON.stringify(legacy) });
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 12 } });
+  });
+
   it("commits directory rows and their checkpoint in one storage transaction", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
