@@ -43,10 +43,10 @@ const PLUGIN_SOURCE = `export default function contribute(plugin) {
   return () => {};
 }`;
 
-// settingsStyles.sectionHeaderTitle paints from foregroundMuted, so the section heading proves the
+// The SettingsSection title paints from foreground, so the section heading proves the
 // contributed palette reached the semantic tokens rather than just the swatch.
-const MOCHA_MUTED_FOREGROUND = "rgb(166, 173, 200)";
-const LATTE_MUTED_FOREGROUND = "rgb(108, 111, 133)";
+const MOCHA_FOREGROUND = "rgb(205, 214, 244)";
+const LATTE_FOREGROUND = "rgb(76, 79, 105)";
 
 test("applies a contributed theme and falls back when its plugin is gone", async ({
   page,
@@ -80,13 +80,13 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     await test.step("a contributed light theme uses the light palette", async () => {
       await page.getByText("Catppuccin Latte", { exact: true }).click();
       await expect(page.getByLabel("Theme: Catppuccin Latte", { exact: true })).toBeVisible();
-      await expect(sectionTitle).toHaveCSS("color", LATTE_MUTED_FOREGROUND);
+      await expect(sectionTitle).toHaveCSS("color", LATTE_FOREGROUND);
       await page.getByLabel("Theme: Catppuccin Latte", { exact: true }).click();
     });
 
     await mochaItem.click();
     await expect(page.getByLabel("Theme: Catppuccin Mocha", { exact: true })).toBeVisible();
-    await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+    await expect(sectionTitle).toHaveCSS("color", MOCHA_FOREGROUND);
     await page.screenshot({
       path: testInfo.outputPath("plugin-theme-applied.png"),
       fullPage: true,
@@ -97,7 +97,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       await expect(page.getByLabel("Theme: Catppuccin Mocha", { exact: true })).toBeVisible({
         timeout: 30_000,
       });
-      await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+      await expect(sectionTitle).toHaveCSS("color", MOCHA_FOREGROUND);
     });
 
     await test.step("removing the plugin falls back to the default theme", async () => {
@@ -105,7 +105,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       await expect(page.getByLabel("Theme: System", { exact: true })).toBeVisible({
         timeout: 30_000,
       });
-      await expect(sectionTitle).not.toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+      await expect(sectionTitle).not.toHaveCSS("color", MOCHA_FOREGROUND);
       await page.screenshot({
         path: testInfo.outputPath("plugin-theme-fallback.png"),
         fullPage: true,

@@ -81,7 +81,8 @@ test("applies the interface font size to settings text", async ({ page }) => {
   await openSettingsSection(page, "appearance");
 
   const sectionTitle = page.getByText("Theme", { exact: true }).first();
-  await expect(sectionTitle).toHaveCSS("font-size", "18px");
+  // Section titles use fontSize.base, which tracks the interface size one to one.
+  await expect(sectionTitle).toHaveCSS("font-size", "21px");
 
   const interfaceSizeInput = page.getByLabel("Interface font size");
   const contentSizeInput = page.getByLabel("Content font size");
@@ -92,5 +93,5 @@ test("applies the interface font size to settings text", async ({ page }) => {
 
   await expect(interfaceSizeInput).toHaveValue("12");
   await expect(contentSizeInput).toHaveValue("21");
-  await expect(sectionTitle).toHaveCSS("font-size", "10px");
+  await expect(sectionTitle).toHaveCSS("font-size", "12px");
 });

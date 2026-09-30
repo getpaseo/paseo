@@ -181,6 +181,9 @@ function bundledSkillsLabel(page: Parameters<typeof openSkillSelection>[0]) {
   return page.getByText("Bundled skills", { exact: true });
 }
 
+// The section header's 12px bottom padding plus its 1px hairline rule.
+const BELOW_LABEL_GAP = 13;
+
 test.describe("Agent skills sheet inset", () => {
   test.describe.configure({ timeout: 120_000 });
 
@@ -195,7 +198,7 @@ test.describe("Agent skills sheet inset", () => {
       expect({
         aboveLabel: await readVerticalGap(allSkillsCard(page), bundledSkillsLabel(page)),
         belowLabel: await readVerticalGap(bundledSkillsLabel(page), skillListCard(page)),
-      }).toEqual({ aboveLabel: 16, belowLabel: 12 });
+      }).toEqual({ aboveLabel: 16, belowLabel: BELOW_LABEL_GAP });
     });
   });
 
@@ -209,7 +212,7 @@ test.describe("Agent skills sheet inset", () => {
       expect({
         aboveLabel: await readVerticalGap(allSkillsCard(page), bundledSkillsLabel(page)),
         belowLabel: await readVerticalGap(bundledSkillsLabel(page), skillListCard(page)),
-      }).toEqual({ aboveLabel: 16, belowLabel: 12 });
+      }).toEqual({ aboveLabel: 16, belowLabel: BELOW_LABEL_GAP });
     });
   });
 });
