@@ -1,6 +1,31 @@
 # Team runtime
 
-Status: accepted 2026-10-01. The pilot (`software-basic`) is being built.
+Status: accepted 2026-10-01. Runtime and `software-basic` are built (`packages/server/src/server/team/`).
+
+Pilot evidence, real Codex sessions against an isolated daemon (2026-10-01):
+
+| Acceptance                             | Result                                                                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Team start from a boss session       | verified: `team_start` → PO plan → items                                                                                          |
+| 2 Daemon restart mid-work              | verified: restarts during reviewer and tester turns resumed the same sessions, no new agents, no false findings                   |
+| 3 Parallel developers in own worktrees | verified: three developers ran at once                                                                                            |
+| 4 Conflicting item waits               | verified: `titleCase` started after `countWords` finished                                                                         |
+| 5 Red test goes back to the developer  | verified: same developer session, then pass                                                                                       |
+| 6 Review finding goes back             | verified in unit test; real runs had no finding                                                                                   |
+| 7 Provider limit switches profile      | in-turn fallback skips profiles at their limit; exhausted seats wait for the earliest known reset (unit tests); not yet seen live |
+| 8 Readable team feed                   | `team_status` shows the event log; no app tab yet                                                                                 |
+
+Decisions taken while building:
+
+- The boss decides team vs. single itself by calling `team_start`; a Jev `team-needed` check is not wired yet.
+- A seat is written before its agent starts and is found by the `pandaos.team.decision` label, so a
+  report that races the agent id still lands and a crash leaves a seat recovery can finish.
+- Tool gating uses the agent's labels at session launch, and the MCP endpoint falls back to the stored
+  record, because a resuming session lists its tools before the agent is registered again.
+- `canEdit: false` is prompt-only on Codex (no read-only mode); Claude and OpenCode `plan` modes are
+  not used yet because testers must run commands.
+- A worker's own branch claims are ignored; the runtime records the branch the developer's worktree has
+  at handover, because PandaOS renames worktree branches after the first prompt.
 
 The team runtime lets one PandaOS session hand a larger job to a team of agents and get one result
 back. The runtime is generic. Everything a company or project does differently lives in a
