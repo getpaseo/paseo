@@ -478,6 +478,7 @@ type SessionConnection = ReconnectableSessionConnection | PluginSessionConnectio
 interface SocketSessionOptions {
   clientId: string;
   appVersion: string | null;
+  interactive: boolean;
   clientCapabilities: Record<string, unknown> | null;
   permissions: readonly DaemonPermission[];
   connectionLogger: pino.Logger;
@@ -1384,6 +1385,7 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike;
     clientId: string;
     appVersion: string | null;
+    interactive: boolean;
     clientCapabilities: Record<string, unknown> | null;
     connectionLogger: pino.Logger;
     lifecycle: { kind: "reconnectable" } | { kind: "ephemeral-plugin"; pluginId: string };
@@ -1396,6 +1398,7 @@ export class VoiceAssistantWebSocketServer {
     const session = this.createSocketSession({
       clientId,
       appVersion,
+      interactive: params.interactive,
       clientCapabilities,
       permissions: admission.permissions,
       connectionLogger,
@@ -1473,6 +1476,7 @@ export class VoiceAssistantWebSocketServer {
       verifyEvidence: this.verifyEvidence,
       clientId: options.clientId,
       appVersion: options.appVersion,
+      interactive: options.interactive,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,
       onMessage: options.onMessage,
@@ -1642,6 +1646,7 @@ export class VoiceAssistantWebSocketServer {
       ws,
       clientId,
       appVersion: message.appVersion ?? null,
+      interactive: message.clientType === "mobile" || message.clientType === "browser",
       clientCapabilities: message.capabilities ?? null,
       connectionLogger,
       lifecycle: pluginId ? { kind: "ephemeral-plugin", pluginId } : { kind: "reconnectable" },

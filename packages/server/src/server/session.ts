@@ -485,6 +485,8 @@ export interface SessionOptions {
   clientId: string;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
+  // The app's own screens; resource policies throttle agents and scripts, not the person.
+  interactive?: boolean;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
   onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
@@ -759,6 +761,7 @@ export class Session {
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
+  private readonly interactive: boolean;
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
@@ -923,6 +926,7 @@ export class Session {
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
     this.appVersion = appVersion ?? null;
+    this.interactive = options.interactive === true;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
@@ -6887,6 +6891,7 @@ export class Session {
   private assertResourcePolicyStatusReadAllowed(
     request: Extract<SessionInboundMessage, { type: "fetch_agents_request" }>,
   ): void {
+    if (this.interactive) return;
     const statusRead = this.resourcePolicyRuntime.checkStatusRead({
       consumerId: this.clientId,
       requestKey: JSON.stringify({

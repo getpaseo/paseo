@@ -323,6 +323,8 @@ interface SessionForTestOptions {
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
+  interactive?: boolean;
+  resourcePolicyRuntime?: SessionOptions["resourcePolicyRuntime"];
   serverId?: SessionOptions["serverId"];
   daemonVersion?: SessionOptions["daemonVersion"];
   daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
@@ -376,6 +378,10 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     messageReceipts: createMessageReceiptsStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
+    ...(options.interactive !== undefined ? { interactive: options.interactive } : {}),
+    ...(options.resourcePolicyRuntime
+      ? { resourcePolicyRuntime: options.resourcePolicyRuntime }
+      : {}),
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {
@@ -5990,4 +5996,35 @@ test("provider snapshots preserve versionless visibility while capabilities upda
     "plugin-provider",
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
+});
+
+describe("resource policy status reads", () => {
+  const denyAll = {
+    checkStatusRead: vi.fn(() => ({ allowed: false, reason: "economy allows 1 read per 30s" })),
+  };
+
+  it("throttles scripts and agents but never the app's own screens", async () => {
+    const scriptMessages: SessionOutboundMessage[] = [];
+    const script = createSessionForTest({
+      messages: scriptMessages,
+      resourcePolicyRuntime: denyAll,
+    });
+    await script.handleMessage({ type: "fetch_agents_request", requestId: "cli-read" });
+    expect(JSON.stringify(scriptMessages)).toContain("resource_policy_status_limit");
+
+    const appMessages: SessionOutboundMessage[] = [];
+    const app = createSessionForTest({
+      messages: appMessages,
+      interactive: true,
+      resourcePolicyRuntime: denyAll,
+    });
+    await app.handleMessage({ type: "fetch_agents_request", requestId: "history" });
+    expect(JSON.stringify(appMessages)).not.toContain("resource_policy_status_limit");
+    expect(appMessages).toContainEqual(
+      expect.objectContaining({
+        type: "fetch_agents_response",
+        payload: expect.objectContaining({ requestId: "history" }),
+      }),
+    );
+  });
 });
