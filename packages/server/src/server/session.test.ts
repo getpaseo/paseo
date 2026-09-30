@@ -6028,3 +6028,30 @@ describe("resource policy status reads", () => {
     );
   });
 });
+
+describe("agent.last_replies", () => {
+  it("answers from stored replies without loading or resuming any agent", async () => {
+    const peekLastAssistantMessage = vi.fn(async (agentId: string) =>
+      agentId === "talked" ? "x".repeat(900) : null,
+    );
+    const resumeAgentFromPersistence = vi.fn();
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { peekLastAssistantMessage, resumeAgentFromPersistence },
+    });
+
+    await session.handleMessage({
+      type: "agent.last_replies.request",
+      requestId: "previews",
+      agentIds: ["talked", "silent"],
+    });
+
+    expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
+    const response = messages.find((message) => message.type === "agent.last_replies.response");
+    expect(response?.payload).toEqual({
+      requestId: "previews",
+      replies: { talked: "x".repeat(600), silent: null },
+    });
+  });
+});

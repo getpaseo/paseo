@@ -1,60 +1,94 @@
-import { useCallback, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import type { z } from "zod";
-import type { AgentTimelineEntryPayloadSchema } from "@getpaseo/protocol/messages";
 import { Button } from "@/components/ui/button";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { useFetchQuery } from "@/data/query";
+import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 
-type TimelineEntry = z.infer<typeof AgentTimelineEntryPayloadSchema>;
-
-const TAIL_ENTRIES = 12;
 const PREVIEW_STALE_MS = 60_000;
 const PREVIEW_MAX_CHARS = 280;
 
-/** The newest assistant text in a timeline tail, flattened to one line for a preview. */
-export function lastAssistantText(entries: readonly TimelineEntry[]): string | null {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const item = entries[index]?.item;
-    if (item?.type !== "assistant_message") continue;
-    const text = toPlainText(item.text);
-    if (text)
-      return text.length > PREVIEW_MAX_CHARS ? `${text.slice(0, PREVIEW_MAX_CHARS)}…` : text;
-  }
-  return null;
-}
-
 /** A preview line reads as prose: Markdown marks and code fences would only be noise here. */
-function toPlainText(markdown: string): string {
-  return markdown
+export function toPreviewText(markdown: string): string | null {
+  const text = markdown
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gm, "")
     .replace(/(\*\*|__|\*|_|`|~~)/g, "")
     .replace(/\s+/g, " ")
     .trim();
+  if (!text) return null;
+  return text.length > PREVIEW_MAX_CHARS ? `${text.slice(0, PREVIEW_MAX_CHARS)}…` : text;
 }
 
-function useLastAgentReply(serverId: string, agentId: string | null): string | null {
+type RepliesByServer = ReadonlyMap<string, Record<string, string | null>>;
+const LastRepliesContext = createContext<RepliesByServer>(new Map());
+
+function HostReplies({
+  serverId,
+  agentIds,
+  onLoaded,
+}: {
+  serverId: string;
+  agentIds: readonly string[];
+  onLoaded: (serverId: string, replies: Record<string, string | null>) => void;
+}) {
   const client = useHostRuntimeClient(serverId);
+  const supported = useHostFeature(serverId, "agentLastReplies");
   const query = useFetchQuery({
-    queryKey: ["leitstandLastReply", serverId, agentId],
-    enabled: Boolean(client && agentId),
+    queryKey: ["leitstandLastReplies", serverId, agentIds.join(",")],
+    enabled: Boolean(client && supported && agentIds.length > 0),
     dataShape: "value",
     staleTimeMs: PREVIEW_STALE_MS,
-    queryFn: async () => {
-      const payload = await client!.fetchAgentTimeline(agentId!, {
-        direction: "tail",
-        limit: TAIL_ENTRIES,
-        projection: "projected",
-      });
-      return lastAssistantText(payload.entries);
-    },
+    queryFn: async () => client!.getAgentLastReplies(agentIds),
   });
-  return query.data ?? null;
+  useEffect(() => {
+    if (query.data) onLoaded(serverId, query.data);
+  }, [onLoaded, query.data, serverId]);
+  return null;
+}
+
+/** One stored-replies request per host for every row that shows an agent's last words. */
+export function LastRepliesProvider({
+  targets,
+  children,
+}: {
+  targets: ReadonlyArray<{ serverId: string; agentId: string }>;
+  children: ReactNode;
+}) {
+  const [replies, setReplies] = useState<RepliesByServer>(new Map());
+  const byServer = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    for (const target of targets) {
+      const ids = grouped.get(target.serverId) ?? [];
+      if (!ids.includes(target.agentId)) ids.push(target.agentId);
+      grouped.set(target.serverId, ids);
+    }
+    return grouped;
+  }, [targets]);
+  const onLoaded = useCallback((serverId: string, loaded: Record<string, string | null>) => {
+    setReplies((current) => new Map(current).set(serverId, loaded));
+  }, []);
+  return (
+    <LastRepliesContext.Provider value={replies}>
+      {[...byServer].map(([serverId, agentIds]) => (
+        <HostReplies key={serverId} serverId={serverId} agentIds={agentIds} onLoaded={onLoaded} />
+      ))}
+      {children}
+    </LastRepliesContext.Provider>
+  );
 }
 
 /** What the agent said last, so the row explains itself without opening the session. */
@@ -69,7 +103,8 @@ export function InboxReplyPreview({
   fallback: string;
   style: object;
 }) {
-  const reply = useLastAgentReply(serverId, agentId);
+  const stored = useContext(LastRepliesContext).get(serverId)?.[agentId ?? ""];
+  const reply = stored ? toPreviewText(stored) : null;
   return (
     <Text style={style} numberOfLines={2}>
       {reply ?? fallback}

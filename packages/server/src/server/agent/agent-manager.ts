@@ -3584,6 +3584,11 @@ export class AgentManager {
     return await this.getLastAssistantMessageFromStores(agentId);
   }
 
+  /** The stored last reply, read without loading or resuming the agent. */
+  async peekLastAssistantMessage(agentId: string): Promise<string | null> {
+    return await this.getLastAssistantMessageFromStores(agentId);
+  }
+
   private getLastAssistantMessageFromTimeline(
     timeline: readonly AgentTimelineItem[],
   ): string | null {

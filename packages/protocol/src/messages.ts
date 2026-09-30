@@ -1084,6 +1084,14 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// COMPAT(agentLastReplies): added in v0.9.3. Gate on server_info.features.agentLastReplies.
+// Reads stored replies only: previews must never load or resume an agent.
+export const AgentLastRepliesRequestSchema = z.object({
+  type: z.literal("agent.last_replies.request"),
+  agentIds: z.array(z.string()).max(100),
+  requestId: z.string(),
+});
+
 // COMPAT(workspaceDone): added in v0.9.3. Gate on server_info.features.workspaceDone.
 // Only the person closes a session: finishing a turn hands it back, it never marks it done.
 export const WorkspaceDoneSetRequestSchema = z.object({
@@ -2353,6 +2361,14 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const AgentLastRepliesResponseSchema = z.object({
+  type: z.literal("agent.last_replies.response"),
+  payload: z.object({
+    requestId: z.string(),
+    replies: z.record(z.string(), z.string().nullable()),
+  }),
+});
+
 export const WorkspaceDoneSetResponseSchema = z.object({
   type: z.literal("workspace.done.set.response"),
   payload: z.object({
@@ -3571,6 +3587,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceDoneSetRequestSchema,
+  AgentLastRepliesRequestSchema,
   WorkspaceTopicCreateRequestSchema,
   WorkspaceTopicAssignRequestSchema,
   WorkspaceTopicUpdateRequestSchema,
@@ -4075,6 +4092,8 @@ export const ServerInfoStatusPayloadSchema = z
         systemOneUsage: z.boolean().optional(),
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
         workspaceDone: z.boolean().optional(),
+        // COMPAT(agentLastReplies): added in v0.9.3, remove gate after 2027-04-01.
+        agentLastReplies: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(workspaceForgeAccount): added in v0.8.1, remove gate after 2027-06-30.
@@ -7368,6 +7387,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
   WorkspaceDoneSetResponseSchema,
+  AgentLastRepliesResponseSchema,
   WorkspaceTopicCreateResponseSchema,
   WorkspaceTopicAssignResponseSchema,
   WorkspaceTopicUpdateResponseSchema,

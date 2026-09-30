@@ -3334,6 +3334,19 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  /** Stored last replies per agent; loads no agent. Gate on `server_info.features.agentLastReplies`. */
+  async getAgentLastReplies(
+    agentIds: readonly string[],
+    requestId?: string,
+  ): Promise<Record<string, string | null>> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.last_replies.request", agentIds: [...agentIds] },
+      responseType: "agent.last_replies.response",
+    });
+    return payload.replies;
+  }
+
   /** Marks a session done or open again. Gate on `server_info.features.workspaceDone`. */
   async setWorkspaceDone(
     workspaceId: string,

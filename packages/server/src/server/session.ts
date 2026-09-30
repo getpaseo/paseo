@@ -325,6 +325,8 @@ type ProviderSubagentManagerEvent = Extract<
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
+// Previews show two lines; the full reply stays in the timeline.
+const LAST_REPLY_MAX_CHARS = 600;
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -3191,6 +3193,8 @@ export class Session {
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
         return this.handleWorkspaceMarkUnreadRequest(msg);
+      case "agent.last_replies.request":
+        return this.handleAgentLastRepliesRequest(msg.agentIds, msg.requestId);
       case "workspace.done.set.request":
         return this.handleWorkspaceDoneSetRequest(msg.workspaceId, msg.done, msg.requestId);
       default:
@@ -4193,6 +4197,22 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleAgentLastRepliesRequest(
+    agentIds: readonly string[],
+    requestId: string,
+  ): Promise<void> {
+    const entries = await Promise.all(
+      agentIds.map(async (agentId) => {
+        const text = await this.agentManager.peekLastAssistantMessage(agentId).catch(() => null);
+        return [agentId, text ? text.slice(0, LAST_REPLY_MAX_CHARS) : null] as const;
+      }),
+    );
+    this.emit({
+      type: "agent.last_replies.response",
+      payload: { requestId, replies: Object.fromEntries(entries) },
+    });
   }
 
   private async handleWorkspaceDoneSetRequest(

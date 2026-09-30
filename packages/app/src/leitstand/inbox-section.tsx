@@ -27,7 +27,7 @@ import {
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { LeitstandPanda } from "./leitstand-panda";
 import { MarkDoneButton } from "./mark-done-button";
-import { InboxReplyInput, InboxReplyPreview } from "./inbox-reply";
+import { InboxReplyInput, InboxReplyPreview, LastRepliesProvider } from "./inbox-reply";
 import { StatusGlyph, glyphForInboxKind } from "./status-glyph";
 import { AgeText, ProjectTag } from "./tags";
 import type { SnoozableInbox } from "./use-leitstand";
@@ -111,11 +111,19 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
           </View>
         </View>
       ) : (
-        inbox.items.map((item, index) => (
-          <InboxRow key={item.id} item={item} isFirst={index === 0} snooze={inbox.snooze} />
-        ))
+        <LastRepliesProvider targets={replyTargets(inbox.items)}>
+          {inbox.items.map((item, index) => (
+            <InboxRow key={item.id} item={item} isFirst={index === 0} snooze={inbox.snooze} />
+          ))}
+        </LastRepliesProvider>
       )}
     </View>
+  );
+}
+
+function replyTargets(items: readonly InboxItem[]): { serverId: string; agentId: string }[] {
+  return items.flatMap((item) =>
+    hasAgentReply(item) && item.agentId ? [{ serverId: item.serverId, agentId: item.agentId }] : [],
   );
 }
 

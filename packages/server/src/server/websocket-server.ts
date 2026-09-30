@@ -1846,6 +1846,8 @@ export class VoiceAssistantWebSocketServer {
         systemOneUsage: true,
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
         workspaceDone: true,
+        // COMPAT(agentLastReplies): added in v0.9.3, remove gate after 2027-04-01.
+        agentLastReplies: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: true,
         workspaceForgeAccount: true,
