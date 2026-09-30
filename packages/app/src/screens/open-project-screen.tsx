@@ -1,8 +1,23 @@
-import { useHosts, useHostRuntimeLastError } from "@/runtime/host-runtime";
-import { useCallback, useEffect, useState, type ComponentType } from "react";
+import {
+  useHostRuntimeConnectionStatuses,
+  useHostRuntimeLastError,
+  useHosts,
+} from "@/runtime/host-runtime";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { View, Text, Pressable } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { LeitstandScreen } from "@/leitstand/leitstand-screen";
+import { useLeitstandSessions } from "@/leitstand/use-leitstand";
+import type { Theme } from "@/styles/theme";
 import { useRouter } from "expo-router";
 import { FolderOpen, Inbox, Plug, Smartphone } from "@/components/icons/ui-icons";
 import { PandaOSLogo } from "@/components/icons/pandaos-logo";
@@ -23,9 +38,15 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const spinnerColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
 export function OpenProjectScreen() {
-  const { t } = useTranslation();
   const hosts = useHosts();
+  const leitstand = useLeitstandSessions();
+  const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
+  const isAnyHostOnline = [...connectionStatuses.values()].includes("online");
   const router = useRouter();
   const openDesktopAgentList = usePanelStore((s) => s.openDesktopAgentList);
   const openProjectPicker = useOpenAddProject();
@@ -58,9 +79,60 @@ export function OpenProjectScreen() {
     });
   }, [chooseHost, router]);
 
+  let body: ReactNode;
+  if (leitstand.hasProjects) {
+    body = <LeitstandScreen state={leitstand} />;
+  } else if (leitstand.isInitialLoad && isAnyHostOnline) {
+    // A connected host is still sending its projects; the tiles would flash before the Leitstand.
+    body = (
+      <View style={styles.loading}>
+        <ThemedLoadingSpinner size="large" uniProps={spinnerColor} />
+      </View>
+    );
+  } else {
+    body = (
+      <OnboardingTiles
+        hosts={hosts}
+        onAddProject={handleOpenPicker}
+        onImportSession={importSession.open}
+        onSetupProviders={handleOpenProviders}
+        onPairDevice={localServerId ? handleOpenPairDevice : null}
+      />
+    );
+  }
+
   return (
     <View style={styles.container}>
       <MenuHeader borderless />
+      {body}
+      <PairDeviceModal
+        serverId={localServerId ?? ""}
+        visible={isPairDeviceOpen}
+        onClose={handleClosePairDevice}
+        testID="open-project-pair-device-modal"
+      />
+      {importSession.sheet}
+    </View>
+  );
+}
+
+/** First run, and the Leitstand's state before any project exists. */
+function OnboardingTiles({
+  hosts,
+  onAddProject,
+  onImportSession,
+  onSetupProviders,
+  onPairDevice,
+}: {
+  hosts: ReturnType<typeof useHosts>;
+  onAddProject: () => void;
+  onImportSession: () => void;
+  onSetupProviders: () => void;
+  onPairDevice: (() => void) | null;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
       <View style={styles.content}>
         <TitlebarDragRegion />
         <View style={styles.logo}>
@@ -74,7 +146,7 @@ export function OpenProjectScreen() {
             icon={FolderOpen}
             title={t("openProject.tiles.addProject.title")}
             description={t("openProject.tiles.addProject.description")}
-            onPress={handleOpenPicker}
+            onPress={onAddProject}
             testID="open-project-submit"
             accent
           />
@@ -82,22 +154,22 @@ export function OpenProjectScreen() {
             icon={Inbox}
             title={t("openProject.tiles.importSession.title")}
             description={t("openProject.tiles.importSession.description")}
-            onPress={importSession.open}
+            onPress={onImportSession}
             testID="open-project-import-session"
           />
           <HomeTile
             icon={Plug}
             title={t("openProject.tiles.setupProviders.title")}
             description={t("openProject.tiles.setupProviders.description")}
-            onPress={handleOpenProviders}
+            onPress={onSetupProviders}
             testID="open-project-setup-providers"
           />
-          {localServerId ? (
+          {onPairDevice ? (
             <HomeTile
               icon={Smartphone}
               title={t("openProject.tiles.pairDevice.title")}
               description={t("openProject.tiles.pairDevice.description")}
-              onPress={handleOpenPairDevice}
+              onPress={onPairDevice}
               testID="open-project-pair-device"
             />
           ) : null}
@@ -106,14 +178,7 @@ export function OpenProjectScreen() {
       <View style={styles.communityRow}>
         <CommunityLinks />
       </View>
-      <PairDeviceModal
-        serverId={localServerId ?? ""}
-        visible={isPairDeviceOpen}
-        onClose={handleClosePairDevice}
-        testID="open-project-pair-device-modal"
-      />
-      {importSession.sheet}
-    </View>
+    </>
   );
 }
 
@@ -191,6 +256,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   logo: {
     marginBottom: theme.spacing[8],
+  },
+  loading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   hostError: {
     color: theme.colors.destructive,
