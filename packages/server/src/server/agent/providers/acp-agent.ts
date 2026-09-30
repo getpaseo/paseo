@@ -3857,23 +3857,19 @@ function selectQuestionPermissionOption(
 ): PermissionOption | null {
   if (response.behavior === "allow" && response.selectedActionId === undefined) {
     const answers = readRecord(response.updatedInput?.answers);
-    if (answers) {
-      const values = Object.values(answers).filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      );
-      if (values.length > 0) {
-        const match = options.find(
-          (option) =>
-            option.kind.startsWith("allow") &&
-            values.some(
-              (value) => value === option.name || value.split(", ").includes(option.name),
-            ),
-        );
-        // Question forms answer with labels, not selectedActionId. Do not fall back to the
-        // first allow_once option when labels fail to match — that would pick arbitrarily.
-        return match ?? null;
-      }
-    }
+    const values = answers
+      ? Object.values(answers).filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : [];
+    const match = options.find(
+      (option) =>
+        option.kind.startsWith("allow") &&
+        values.some((value) => value === option.name || value.split(", ").includes(option.name)),
+    );
+    // Question forms answer with labels, not selectedActionId. Empty, missing, or
+    // unmatched answers cancel instead of selecting the first allow option.
+    return match ?? null;
   }
   return selectPermissionOption(options, response);
 }
