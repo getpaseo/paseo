@@ -107,6 +107,7 @@ import {
   isTypeSafeApiKeyAccepted,
 } from "./system-one/tools.js";
 import { summarizeSystemOneUsage } from "./system-one/usage-log.js";
+import { readPaperclipLinks } from "./paperclip-links.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
@@ -3193,6 +3194,8 @@ export class Session {
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
         return this.handleWorkspaceMarkUnreadRequest(msg);
+      case "paperclip.links.get.request":
+        return this.handlePaperclipLinksRequest(msg.requestId);
       case "agent.last_replies.request":
         return this.handleAgentLastRepliesRequest(msg.agentIds, msg.requestId);
       case "workspace.done.set.request":
@@ -4194,6 +4197,25 @@ export class Session {
           accepted: false,
           title: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
+        },
+      });
+    }
+  }
+
+  private async handlePaperclipLinksRequest(requestId: string): Promise<void> {
+    try {
+      const links = await readPaperclipLinks();
+      this.emit({
+        type: "paperclip.links.get.response",
+        payload: { requestId, links, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "paperclip.links.get.response",
+        payload: {
+          requestId,
+          links: null,
+          error: getErrorMessageOr(error, "Paperclip unreachable"),
         },
       });
     }
