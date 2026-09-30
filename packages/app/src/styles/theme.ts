@@ -565,21 +565,27 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   terminalBrightBlack: "#4a4f5e",
 });
 
+// Android phones read denser than the same sizes elsewhere, so spacing there gets more room.
+const ANDROID_SPACE = Platform.OS === "android" ? 1.2 : 1;
+const ANDROID_ICON = Platform.OS === "android" ? 1.15 : 1;
+const space = (value: number) => Math.round(value * ANDROID_SPACE);
+const icon = (value: number) => Math.round(value * ANDROID_ICON);
+
 export const SPACING = {
   0: 0,
-  0.5: 2,
-  1: 4,
-  1.5: 6,
-  2: 8,
-  3: 12,
-  4: 16,
-  6: 24,
-  8: 32,
-  12: 48,
-  16: 64,
-  20: 80,
-  24: 96,
-  32: 128,
+  0.5: space(2),
+  1: space(4),
+  1.5: space(6),
+  2: space(8),
+  3: space(12),
+  4: space(16),
+  6: space(24),
+  8: space(32),
+  12: space(48),
+  16: space(64),
+  20: space(80),
+  24: space(96),
+  32: space(128),
 } as const;
 
 export const FONT_SIZE = {
@@ -599,10 +605,10 @@ export const LINE_HEIGHT = {
 } as const;
 
 export const ICON_SIZE = {
-  xs: 12,
-  sm: 14,
-  md: 16,
-  lg: 20,
+  xs: icon(12),
+  sm: icon(14),
+  md: icon(16),
+  lg: icon(20),
 } as const;
 
 export const FONT_WEIGHT = {

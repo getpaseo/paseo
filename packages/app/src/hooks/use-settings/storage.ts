@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { QueryClient } from "@tanstack/react-query";
@@ -46,18 +47,33 @@ export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
-export function defaultUiBaseFontSize(native: boolean): number {
-  return native ? 15 : FONT_SIZE.base;
+// Android reads small at the shared native size; it gets one step more.
+export function defaultUiBaseFontSize(native: boolean, android = false): number {
+  if (!native) return FONT_SIZE.base;
+  return android ? 16 : 15;
 }
 
-export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
+const isAndroid = Platform.OS === "android";
+export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative, isAndroid);
 export const MIN_UI_BASE_FONT_SIZE = 10;
 export const MAX_UI_BASE_FONT_SIZE = 21;
-export function defaultContentFontSize(native: boolean): number {
-  return native ? 16 : FONT_SIZE.content;
+export function defaultContentFontSize(native: boolean, android = false): number {
+  if (!native) return FONT_SIZE.content;
+  return android ? 17 : 16;
 }
 
-export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
+export function bumpAndroidDefault(input: {
+  android: boolean;
+  revision: number | undefined;
+  size: number;
+  oldDefault: number;
+  newDefault: number;
+}): number {
+  if (!input.android || (input.revision ?? 0) >= ANDROID_TYPE_REVISION) return input.size;
+  return input.size === input.oldDefault ? input.newDefault : input.size;
+}
+
+export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative, isAndroid);
 export const MIN_CONTENT_FONT_SIZE = 10;
 export const MAX_CONTENT_FONT_SIZE = 21;
 export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
@@ -97,6 +113,7 @@ export interface AppSettings {
   toolCallLayoutRevision: number;
   /** Bumped when the default sidebar trailing slot changes, so old defaults move with it. */
   sidebarTrailingRevision: number;
+  androidTypeRevision: number;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
@@ -126,6 +143,9 @@ export const DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES: OpenInSidePanePreferences = 
 
 const TOOL_CALL_LAYOUT_REVISION = 2;
 const SIDEBAR_TRAILING_REVISION = 1;
+// Revision 1 raised Android's default type one step; a size saved before it at the old
+// default was that default, not a choice.
+const ANDROID_TYPE_REVISION = 1;
 
 export interface Settings extends AppSettings {
   manageBuiltInDaemon: boolean;
@@ -160,6 +180,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   toolCallDetailLevel: "overview",
   toolCallLayoutRevision: TOOL_CALL_LAYOUT_REVISION,
   sidebarTrailingRevision: SIDEBAR_TRAILING_REVISION,
+  androidTypeRevision: ANDROID_TYPE_REVISION,
   chatOutlineEnabled: true,
   vimKeybindings: false,
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
@@ -263,6 +284,7 @@ const StoredAppSettingsSchema = z
       .catch("overview"),
     toolCallLayoutRevision: z.number().optional().catch(undefined),
     sidebarTrailingRevision: z.number().optional().catch(undefined),
+    androidTypeRevision: z.number().optional().catch(undefined),
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
@@ -323,8 +345,20 @@ const StoredAppSettingsSchema = z
       openInSidePane,
       pullRequestOpenLocation:
         stored.pullRequestOpenLocation ?? (legacyPullRequestsInSidePane ? "side" : "explorer"),
-      uiBaseFontSize,
-      contentFontSize: stored.contentFontSize ?? uiBaseFontSize,
+      uiBaseFontSize: bumpAndroidDefault({
+        android: isAndroid,
+        revision: stored.androidTypeRevision,
+        size: uiBaseFontSize,
+        oldDefault: 15,
+        newDefault: 16,
+      }),
+      contentFontSize: bumpAndroidDefault({
+        android: isAndroid,
+        revision: stored.androidTypeRevision,
+        size: stored.contentFontSize ?? uiBaseFontSize,
+        oldDefault: 16,
+        newDefault: 17,
+      }),
       sidebarChecksDisplay,
       sidebarRowItems: {
         ...stored.sidebarRowItems,
@@ -342,6 +376,7 @@ const StoredAppSettingsSchema = z
           ? "timestamp"
           : stored.sidebarWorkspaceTrailing,
       sidebarTrailingRevision: SIDEBAR_TRAILING_REVISION,
+      androidTypeRevision: ANDROID_TYPE_REVISION,
       needsWrite,
     };
   })

@@ -8,6 +8,7 @@ import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_CONTENT_FONT_SIZE,
   DEFAULT_UI_BASE_FONT_SIZE,
+  bumpAndroidDefault,
   defaultUiBaseFontSize,
   defaultContentFontSize,
   loadAppSettingsFromStorage,
@@ -770,9 +771,20 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("icon");
   });
 
-  it("uses a 15px mobile base and a 14px web base", () => {
+  it("uses a 15px mobile base, 16px on Android, and a 14px web base", () => {
     expect(defaultUiBaseFontSize(true)).toBe(15);
+    expect(defaultUiBaseFontSize(true, true)).toBe(16);
     expect(defaultUiBaseFontSize(false)).toBe(14);
+    expect(defaultContentFontSize(true, true)).toBe(17);
+  });
+
+  it("raises Android's old default size once and keeps a size someone chose", () => {
+    const bump = (size: number, revision?: number, android = true) =>
+      bumpAndroidDefault({ android, revision, size, oldDefault: 15, newDefault: 16 });
+    expect(bump(15)).toBe(16);
+    expect(bump(18)).toBe(18);
+    expect(bump(15, 1)).toBe(15);
+    expect(bump(15, undefined, false)).toBe(15);
   });
 
   it("uses a 16px content default on mobile and a 15px default on web", () => {
