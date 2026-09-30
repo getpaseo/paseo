@@ -7,6 +7,7 @@ import {
   type PaperclipTextSegment,
 } from "@/paperclip/links";
 import { usePaperclipLinks } from "@/paperclip/use-paperclip-links";
+import { PaperclipPromptCard, usePaperclipPromptSummary } from "@/paperclip/prompt-card";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -474,6 +475,9 @@ export const UserMessage = memo(function UserMessage({
     [timestamp],
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
+  const paperclipPrompt = usePaperclipPromptSummary({ serverId, agentId, message });
+  const [isPaperclipPromptOpen, setPaperclipPromptOpen] = useState(false);
+  const openPaperclipPrompt = useCallback(() => setPaperclipPromptOpen(true), []);
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -519,6 +523,10 @@ export const UserMessage = memo(function UserMessage({
     ],
     [showTrailingRow],
   );
+
+  if (paperclipPrompt && !isPaperclipPromptOpen) {
+    return <PaperclipPromptCard summary={paperclipPrompt} onExpand={openPaperclipPrompt} />;
+  }
 
   return (
     <View style={containerStyle} testID="user-message" aria-busy={isPending}>
