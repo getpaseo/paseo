@@ -356,6 +356,32 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
   });
 });
 
+describe("routeKeyboardShortcut — leitstand.toggle", () => {
+  it("opens the Leitstand from a workspace", () => {
+    expect(
+      routeKeyboardShortcut({ action: "leitstand.toggle", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({ kind: "router-push", route: "/open-project" });
+  });
+
+  it("returns to the last workspace from the Leitstand on desktop", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "leitstand.toggle", payload: null },
+        makeCtx({ pathname: "/open-project", isMobile: false }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
+  });
+
+  it("goes back on mobile", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "leitstand.toggle", payload: null },
+        makeCtx({ pathname: "/open-project", isMobile: true }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "router-back" });
+  });
+});
+
 describe("routeKeyboardShortcut — callbacks and pickers", () => {
   it.each([
     ["sidebar.toggle.left", "toggle-agent-list"],

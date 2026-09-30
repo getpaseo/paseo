@@ -158,6 +158,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "toggle-command-center",
     "search-files",
     "show-shortcuts",
+    "toggle-leitstand",
     "toggle-settings",
     "cycle-theme",
   ],
@@ -240,6 +241,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "toggle-right-sidebar": "settings.shortcuts.help.toggleRightSidebar",
   "toggle-both-sidebars": "settings.shortcuts.help.toggleBothSidebars",
   "toggle-settings": "settings.shortcuts.help.toggleSettings",
+  "toggle-leitstand": "sidebar.leitstand.toggle",
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
@@ -973,6 +975,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-both-sidebars",
       section: "layout",
       label: "Toggle both sidebars",
+    },
+  },
+
+  // --- Leitstand toggle ---
+  {
+    id: "leitstand-toggle-cmd-shift-l-mac",
+    action: "leitstand.toggle",
+    combo: "Cmd+Shift+L",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "toggle-leitstand",
+      section: "general",
+      label: "Toggle Leitstand",
+    },
+  },
+  {
+    id: "leitstand-toggle-ctrl-shift-l-non-mac",
+    action: "leitstand.toggle",
+    combo: "Ctrl+Shift+L",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-leitstand",
+      section: "general",
+      label: "Toggle Leitstand",
     },
   },
 

@@ -44,6 +44,7 @@ export type KeyboardActionId =
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
   | "settings.toggle"
+  | "leitstand.toggle"
   | "command-center.toggle"
   | "command-center.files"
   | "shortcuts.dialog.toggle"

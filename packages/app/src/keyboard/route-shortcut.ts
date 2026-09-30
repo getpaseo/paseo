@@ -1,6 +1,11 @@
 import type { KeyboardShortcutPayload, MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import { buildSettingsRoute, parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
+import {
+  buildOpenProjectRoute,
+  buildSettingsRoute,
+  isLeitstandPathname,
+  parseHostWorkspaceRouteFromPathname,
+} from "@/utils/host-routes";
 import {
   getRelativeSidebarShortcutTarget,
   type SidebarShortcutWorkspaceTarget,
@@ -171,6 +176,17 @@ function routeSettingsToggle(ctx: ShortcutRoutingContext): ShortcutAction {
   return { kind: "router-back" };
 }
 
+// Mirrors the settings toggle: away from the Leitstand it opens, on it it returns to your session.
+function routeLeitstandToggle(ctx: ShortcutRoutingContext): ShortcutAction {
+  if (!isLeitstandPathname(ctx.pathname)) {
+    return { kind: "router-push", route: buildOpenProjectRoute() };
+  }
+  if (!ctx.isMobile) {
+    return { kind: "navigate-last-workspace" };
+  }
+  return { kind: "router-back" };
+}
+
 export function routeKeyboardShortcut(
   input: ShortcutRoutingInput,
   ctx: ShortcutRoutingContext,
@@ -207,6 +223,8 @@ export function routeKeyboardShortcut(
       return { kind: "open-project-picker" };
     case "settings.toggle":
       return routeSettingsToggle(ctx);
+    case "leitstand.toggle":
+      return routeLeitstandToggle(ctx);
     case "command-center.toggle":
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
     case "command-center.files":
