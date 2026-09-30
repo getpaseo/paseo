@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type {
   AgentCapabilityFlags,
@@ -6,6 +6,8 @@ import type {
   AgentSession,
   AgentStreamEvent,
   AgentRuntimeInfo,
+  SteerActiveTurnOptions,
+  SteerResult,
 } from "./agent-sdk-types.js";
 import { wrapSessionProvider } from "./provider-registry.js";
 
@@ -18,6 +20,7 @@ type OptionalAgentSessionMethodName = {
 }[keyof AgentSession];
 
 const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
+  "steerActiveTurn",
   "listCommands",
   "setModel",
   "setThinkingOption",
@@ -69,6 +72,14 @@ class FakeSession implements AgentSession {
   async startTurn() {
     this.recordedCalls.push("startTurn");
     return { turnId: "turn-1" };
+  }
+
+  async steerActiveTurn(
+    _prompt: AgentPromptInput,
+    _options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    this.recordedCalls.push("steerActiveTurn");
+    return { status: "accepted" };
   }
 
   subscribe(_callback: (event: AgentStreamEvent) => void) {
@@ -172,6 +183,7 @@ describe("wrapSessionProvider", () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);
 
+    await wrapped.steerActiveTurn?.("follow-up", { expectedTurnId: "turn-1" });
     await wrapped.listCommands?.();
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
@@ -183,6 +195,7 @@ describe("wrapSessionProvider", () => {
     await handler?.run({ emit: () => {} });
 
     expect(session.recordedCalls).toEqual([
+      "steerActiveTurn",
       "listCommands",
       "setModel",
       "setThinkingOption",
@@ -193,5 +206,40 @@ describe("wrapSessionProvider", () => {
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
     ]);
+  });
+
+  test("steers a completion notification into the inner turn with its original receiver", async () => {
+    const session = new FakeSession();
+    const steer = vi.spyOn(session, "steerActiveTurn");
+    const wrapped = wrapSessionProvider("custom-opencode", session);
+    const prompt = "<paseo-system>\nAgent child finished.\n</paseo-system>";
+    const options = { expectedTurnId: "turn-1", clientMessageId: "notification-1" };
+
+    expect(await wrapped.steerActiveTurn?.(prompt, options)).toEqual({ status: "accepted" });
+    expect(steer).toHaveBeenCalledExactlyOnceWith(prompt, options);
+    expect(steer.mock.contexts).toEqual([session]);
+    expect(session.recordedCalls).toEqual(["steerActiveTurn"]);
+  });
+
+  test("keeps steering unavailable when the inner provider does not support it", () => {
+    const session: AgentSession = new FakeSession();
+    session.steerActiveTurn = undefined;
+
+    const wrapped = wrapSessionProvider("custom-opencode", session);
+
+    expect(wrapped.steerActiveTurn).toBeUndefined();
+  });
+
+  test("propagates a steering failure without interrupting or starting another turn", async () => {
+    const session = new FakeSession();
+    const error = new Error("Steer transport failed");
+    const steer = vi.spyOn(session, "steerActiveTurn").mockRejectedValue(error);
+    const wrapped = wrapSessionProvider("custom-opencode", session);
+    const prompt = "<paseo-system>\nAgent child finished.\n</paseo-system>";
+    const options = { expectedTurnId: "turn-1" };
+
+    await expect(wrapped.steerActiveTurn?.(prompt, options)).rejects.toBe(error);
+    expect(steer).toHaveBeenCalledExactlyOnceWith(prompt, options);
+    expect(session.recordedCalls).toEqual([]);
   });
 });
