@@ -106,6 +106,7 @@ import {
   createConfiguredSystemOneDecisionSource,
   isTypeSafeApiKeyAccepted,
 } from "./system-one/tools.js";
+import { summarizeSystemOneUsage } from "./system-one/usage-log.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
@@ -2908,11 +2909,7 @@ export class Session {
       case "agent.config.apply.request":
         return this.agentConfigSession.handleAgentConfigApplyRequest(msg);
       case "get_daemon_config_request":
-        this.emit({
-          type: "get_daemon_config_response",
-          payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
-        });
-        return undefined;
+        return this.handleGetDaemonConfigRequest(msg.requestId);
       case "daemon.get_status.request":
         return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
@@ -3253,8 +3250,22 @@ export class Session {
         decisionSource: createConfiguredSystemOneDecisionSource(
           this.paseoHome,
           this.daemonConfigStore,
+          undefined,
+          "browser",
         ),
         minConfidence: () => this.daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
+      },
+    });
+  }
+
+  private async handleGetDaemonConfigRequest(requestId: string): Promise<void> {
+    const systemOneUsage = await summarizeSystemOneUsage(this.paseoHome).catch(() => undefined);
+    this.emit({
+      type: "get_daemon_config_response",
+      payload: {
+        requestId,
+        config: this.daemonConfigStore.get(),
+        ...(systemOneUsage ? { systemOneUsage } : {}),
       },
     });
   }

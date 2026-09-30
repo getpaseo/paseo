@@ -144,6 +144,7 @@ import type {
 import type {
   AgentConfigApply,
   MutableDaemonConfig,
+  SystemOneUsageSummary,
   MutableDaemonConfigPatch,
 } from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
@@ -5388,9 +5389,11 @@ export class DaemonClient {
     });
   }
 
-  async getDaemonConfig(
-    requestId?: string,
-  ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+  async getDaemonConfig(requestId?: string): Promise<{
+    requestId: string;
+    config: MutableDaemonConfig;
+    systemOneUsage?: SystemOneUsageSummary;
+  }> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {

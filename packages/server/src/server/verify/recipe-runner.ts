@@ -21,7 +21,7 @@ import { findSnapshotRef } from "./page-snapshot.js";
 import type { DaemonPlaywrightHost } from "./playwright-host.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { interpolateRecipeParams } from "./recipe-params.js";
-import { JevBrowserGoalRunner } from "../browser-tools/jev-goal-runner.js";
+import { formatJevUsage, JevBrowserGoalRunner } from "../browser-tools/jev-goal-runner.js";
 import type { TypeSafeDecisionSource } from "../browser-tools/jev-client.js";
 import { SYSTEM_ONE_EXCLUDED_MESSAGE } from "../system-one/scope.js";
 import type {
@@ -454,7 +454,8 @@ export class RecipeRunner {
         context.activity ? goalStepReporter(context.activity, step.goal) : undefined,
       );
       context.route = result.url;
-      const detail = `${result.status} after ${result.steps.length} Jev steps: ${result.message}`;
+      const usage = result.usage ? ` (${formatJevUsage(result.usage)})` : "";
+      const detail = `${result.status} after ${result.steps.length} Jev steps${usage}: ${result.message}`;
       return result.status === "passed" ? { name, ok: true, detail } : fail(name, detail);
     } catch (error) {
       return fail(name, error instanceof Error ? error.message : String(error));

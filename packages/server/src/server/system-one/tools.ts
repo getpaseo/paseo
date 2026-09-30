@@ -15,6 +15,7 @@ import type {
 import { SYSTEM_ONE_CALL_EXAMPLE } from "../agent/writing-block-instruction.js";
 import { SystemOneCredentialStore } from "./credential-store.js";
 import { isSystemOneExcluded, SYSTEM_ONE_EXCLUDED_MESSAGE } from "./scope.js";
+import { recordSystemOneUsage, type SystemOneUsagePurpose } from "./usage-log.js";
 
 const StructuredValueSchema = z.json();
 const SENSITIVE_FIELD_PATTERN =
@@ -112,10 +113,14 @@ interface RegisterSystemOneToolsOptions {
   resolveCwd?: () => string | undefined;
 }
 
+export const BROWSER_GOALS_OFF_MESSAGE =
+  "Jev browser goals are turned off in PandaOS Settings → System One. Drive the browser_* tools step by step instead, and do not call browser_goal again this session.";
+
 export function createConfiguredSystemOneDecisionSource(
   paseoHome: string,
   daemonConfigStore: Pick<DaemonConfigStore, "get">,
   resolveCwd: () => string | undefined = () => undefined,
+  purpose: SystemOneUsagePurpose = "tool",
 ): TypeSafeDecisionSource {
   return {
     async decide(request) {
@@ -129,6 +134,9 @@ export function createConfiguredSystemOneDecisionSource(
       if (!config.enabled) {
         throw new Error("System One is disabled. Enable it in Paseo Settings → System One.");
       }
+      if (purpose === "browser" && config.browserGoals === false) {
+        throw new Error(BROWSER_GOALS_OFF_MESSAGE);
+      }
       const credentials = new SystemOneCredentialStore(paseoHome).candidates();
       if (credentials.length === 0) {
         throw new Error("TypeSafe API key is not configured in Paseo Settings → System One.");
@@ -136,11 +144,14 @@ export function createConfiguredSystemOneDecisionSource(
       const rejected: string[] = [];
       for (const credential of credentials) {
         try {
-          return await new TypeSafeSystemOneClient({
+          const decision = await new TypeSafeSystemOneClient({
             apiKey: credential.apiKey,
             model: config.model,
             endpoint: config.endpoint,
           }).decide(request);
+          // Usage stats must never fail or slow a decision.
+          void recordSystemOneUsage(paseoHome, purpose, decision.usage).catch(() => {});
+          return decision;
         } catch (error) {
           // A stale saved key must not hide a working key from the environment or env file.
           if (!isTypeSafeAuthError(error)) throw error;

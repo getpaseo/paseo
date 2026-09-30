@@ -421,6 +421,7 @@ export interface PaseoDaemonConfig {
     model: string;
     endpoint?: string;
     minimumConfidence: number;
+    browserGoals?: boolean;
   };
   git?: {
     maxProcessesPerSecond: number;
@@ -614,6 +615,7 @@ function createInitialSystemOneConfig(
     model: config?.model ?? "jev-latest",
     endpoint: config?.endpoint ?? "https://api.typesafe.ai/v1/systemone",
     minimumConfidence: config?.minimumConfidence ?? 0.5,
+    browserGoals: config?.browserGoals ?? true,
     ...credential,
   };
 }
@@ -1579,6 +1581,8 @@ export async function createPaseoDaemon(
           decisionSource: createConfiguredSystemOneDecisionSource(
             config.paseoHome,
             daemonConfigStore,
+            undefined,
+            "browser",
           ),
           minConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
         },
@@ -1594,7 +1598,12 @@ export async function createPaseoDaemon(
   const shadowPredictor = new ShadowPredictor({
     isEnabled: (cwd) => isShadowModeEnabled(config.paseoHome, daemonConfigStore, cwd),
     decisionSource: (cwd) =>
-      createConfiguredSystemOneDecisionSource(config.paseoHome, daemonConfigStore, () => cwd),
+      createConfiguredSystemOneDecisionSource(
+        config.paseoHome,
+        daemonConfigStore,
+        () => cwd,
+        "shadow",
+      ),
     logFile: path.join(config.paseoHome, "system-one", "shadow.jsonl"),
   });
   agentManager.setStreamObserver((agent, event) => shadowPredictor.observe(agent, event));

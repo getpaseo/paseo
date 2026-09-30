@@ -118,6 +118,7 @@ async function decideTurnTiers(
       options.paseoHome,
       options.daemonConfigStore,
       () => input.cwd,
+      "routing",
     ).decide({
       state: { task, provider: input.provider, currentModel: input.model ?? null },
       questions,

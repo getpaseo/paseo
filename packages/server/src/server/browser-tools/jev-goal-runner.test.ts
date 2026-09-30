@@ -77,7 +77,12 @@ class ScriptedDecisions implements TypeSafeDecisionSource {
     if (operation === "CLICK") {
       answers.click_target = answerFor(request, "click_target", "2");
     }
-    return { answers, model: "jev-test", latencyMs: 7 };
+    return {
+      answers,
+      model: "jev-test",
+      latencyMs: 7,
+      usage: { inputTokens: 100, outputTokens: 10 },
+    };
   }
 }
 
@@ -100,6 +105,7 @@ describe("JevBrowserGoalRunner", () => {
 
     expect(result.status).toBe("passed");
     expect(result.steps.map((step) => step.operation)).toEqual(["FILL", "CLICK"]);
+    expect(result.usage).toEqual({ decisions: 2, inputTokens: 200, outputTokens: 20 });
     expect(broker.filledValue).toBe(secretValue);
     expect(JSON.stringify(decisions.requests)).not.toContain(secretValue);
     expect(JSON.stringify(result)).not.toContain(secretValue);

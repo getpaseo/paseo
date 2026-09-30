@@ -123,6 +123,7 @@ async function decideComplexityTier(params: {
       params.paseoHome,
       params.daemonConfigStore,
       () => params.cwd,
+      "routing",
     ).decide({ state: { task: params.task }, questions });
     const parsed = parseChoiceAnswer(decision.answers.complexity, ["tier1", "tier2", "tier3"]);
     if (parsed.confidence < params.minimumConfidence) return 0;

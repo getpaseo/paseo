@@ -529,6 +529,7 @@ function resolveSystemOneConfig(persisted: ReturnType<typeof loadPersistedConfig
     model: persisted.daemon?.systemOne?.model ?? "jev-latest",
     endpoint: persisted.daemon?.systemOne?.endpoint ?? DEFAULT_TYPESAFE_API_ENDPOINT,
     minimumConfidence: persisted.daemon?.systemOne?.minimumConfidence ?? 0.5,
+    browserGoals: persisted.daemon?.systemOne?.browserGoals ?? true,
   };
 }
 

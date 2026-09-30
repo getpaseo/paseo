@@ -12,6 +12,7 @@ import {
   type TypeSafeChoiceQuestion,
   type TypeSafeDecisionRequest,
   type TypeSafeDecisionSource,
+  type TypeSafeUsage,
 } from "./jev-client.js";
 
 const DEFAULT_MAX_STEPS = 12;
@@ -95,6 +96,13 @@ export interface JevBrowserGoalResult {
   message: string;
   steps: JevBrowserGoalTraceEntry[];
   model?: string;
+  usage?: JevBrowserGoalUsage;
+}
+
+export interface JevBrowserGoalUsage {
+  decisions: number;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 interface JevBrowserGoalRunnerOptions {
@@ -133,6 +141,17 @@ interface OperationPlan {
   fillValues: Candidate<{ name: string; value: ResolvedJevBrowserValue }>[];
 }
 
+export function formatJevUsage(usage: JevBrowserGoalUsage): string {
+  const plural = usage.decisions === 1 ? "decision" : "decisions";
+  return `Jev: ${usage.decisions} ${plural}, ${usage.inputTokens} input + ${usage.outputTokens} output tokens`;
+}
+
+function addDecisionUsage(total: JevBrowserGoalUsage, usage: TypeSafeUsage | undefined): void {
+  total.decisions += 1;
+  total.inputTokens += usage?.inputTokens ?? 0;
+  total.outputTokens += usage?.outputTokens ?? 0;
+}
+
 export class JevBrowserGoalRunner {
   private readonly broker: Pick<BrowserToolsBroker, "execute">;
   private readonly decisionSource: TypeSafeDecisionSource;
@@ -168,15 +187,20 @@ export class JevBrowserGoalRunner {
             kind: "goal",
             label: redactValues(input.goal, redactions),
           });
+    const usage: JevBrowserGoalUsage = { decisions: 0, inputTokens: 0, outputTokens: 0 };
     try {
-      const result = await this.decideUntilDone({
-        input,
-        context,
-        browserId,
-        values,
-        redactions,
-        activity: reporter ?? ownRun ?? NOOP_BROWSER_ACTIVITY,
-      });
+      const result = {
+        ...(await this.decideUntilDone({
+          input,
+          context,
+          browserId,
+          values,
+          redactions,
+          activity: reporter ?? ownRun ?? NOOP_BROWSER_ACTIVITY,
+          usage,
+        })),
+        usage,
+      };
       ownRun?.finish({
         status: result.status === "passed" ? "passed" : "failed",
         message: result.message,
@@ -198,8 +222,9 @@ export class JevBrowserGoalRunner {
     values: Record<string, ResolvedJevBrowserValue>;
     redactions: string[];
     activity: BrowserActivityReporter;
+    usage: JevBrowserGoalUsage;
   }): Promise<JevBrowserGoalResult> {
-    const { input, context, browserId, values, redactions, activity } = params;
+    const { input, context, browserId, values, redactions, activity, usage } = params;
     const maxSteps = input.maxSteps ?? DEFAULT_MAX_STEPS;
     const minConfidence = input.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
     const steps: JevBrowserGoalTraceEntry[] = [];
@@ -247,6 +272,7 @@ export class JevBrowserGoalRunner {
         redactions,
       });
       const decision = await this.decisionSource.decide(request);
+      addDecisionUsage(usage, decision.usage);
       lastModel = decision.model;
       const operation = parseChoiceAnswer(decision.answers.operation, plan.operations);
       // DONE mutates nothing and the verify checks decide it, so even an unsure DONE

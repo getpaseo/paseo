@@ -218,6 +218,8 @@ const MutableSystemOneConfigSchema = z
     // COMPAT(systemOneEndpoint): added in v0.9, keep optional while older daemons are supported.
     endpoint: SafeSystemOneEndpointSchema.default("https://api.typesafe.ai/v1/systemone"),
     minimumConfidence: z.number().min(0).max(1).default(0.5),
+    // COMPAT(systemOneBrowserGoals): added in v0.9.2, older daemons always let Jev drive browser goals.
+    browserGoals: z.boolean().default(true),
     configured: z.boolean().default(false),
     credentialSource: z.enum(["paseo", "environment", "env-file"]).nullable().default(null),
   })
@@ -228,6 +230,7 @@ const MutableSystemOnePatchSchema = z
     model: z.string().trim().min(1).optional(),
     endpoint: SafeSystemOneEndpointSchema.optional(),
     minimumConfidence: z.number().min(0).max(1).optional(),
+    browserGoals: z.boolean().optional(),
   })
   .strict();
 const MutableRelayConfigSchema = z
@@ -4044,6 +4047,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceTopics): added in v0.9.2, remove gate after 2027-04-01.
         workspaceTopics: z.boolean().optional(),
+        // COMPAT(systemOneUsage): added in v0.9.2, gates the browser-goal switch and Jev usage.
+        systemOneUsage: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(workspaceForgeAccount): added in v0.8.1, remove gate after 2027-06-30.
@@ -5373,12 +5378,27 @@ export const WaitForFinishResponseMessageSchema = z.object({
   }),
 });
 
+const SystemOneUsageBucketSchema = z.object({
+  calls: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+});
+// Keyed by purpose (browser, shadow, routing, tool); a record so new purposes stay readable.
+const SystemOneUsageSummarySchema = z.object({
+  today: z.record(z.string(), SystemOneUsageBucketSchema),
+  last7Days: z.record(z.string(), SystemOneUsageBucketSchema),
+});
+export type SystemOneUsageBucket = z.infer<typeof SystemOneUsageBucketSchema>;
+export type SystemOneUsageSummary = z.infer<typeof SystemOneUsageSummarySchema>;
+
 export const GetDaemonConfigResponseMessageSchema = z.object({
   type: z.literal("get_daemon_config_response"),
   payload: z
     .object({
       requestId: z.string(),
       config: MutableDaemonConfigSchema,
+      // COMPAT(systemOneUsage): added in v0.9.2, absent from older daemons.
+      systemOneUsage: SystemOneUsageSummarySchema.optional(),
     })
     .passthrough(),
 });

@@ -1299,6 +1299,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
               options.paseoHome,
               options.daemonConfigStore,
               () => resolveCallerAgent()?.cwd,
+              "browser",
             ),
           })
         : null;

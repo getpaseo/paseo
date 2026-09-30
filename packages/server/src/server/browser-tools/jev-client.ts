@@ -41,10 +41,16 @@ export interface TypeSafeDecisionRequest {
   questions: Record<string, TypeSafeQuestion>;
 }
 
+export interface TypeSafeUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface TypeSafeDecisionResponse {
   answers: Record<string, unknown>;
   model: string;
   latencyMs: number;
+  usage?: TypeSafeUsage;
 }
 
 export interface TypeSafeDecisionSource {
@@ -119,10 +125,12 @@ export class TypeSafeSystemOneClient implements TypeSafeDecisionSource {
         throw new Error("TypeSafe returned an invalid response; no browser action executed.");
       }
 
+      const usage = parseUsage(payload.usage);
       return {
         answers: payload.answers,
         model: payload.model,
         latencyMs: Math.round(performance.now() - startedAt),
+        ...(usage ? { usage } : {}),
       };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
@@ -230,4 +238,11 @@ function stripMatchingQuotes(value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseUsage(value: unknown): TypeSafeUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const { input_tokens: inputTokens, output_tokens: outputTokens } = value;
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") return undefined;
+  return { inputTokens, outputTokens };
 }

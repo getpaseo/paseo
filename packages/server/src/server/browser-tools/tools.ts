@@ -13,6 +13,7 @@ import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.
 import {
   JevBrowserGoalRunner,
   type JevBrowserGoalInput,
+  formatJevUsage,
   type JevBrowserGoalResult,
 } from "./jev-goal-runner.js";
 import type {
@@ -1052,6 +1053,7 @@ function browserGoalToolResult(
           `Browser goal ${result.status}: ${result.message}`,
           `Title: ${result.title || "Untitled"}`,
           `URL: ${result.url}`,
+          ...(result.usage ? [formatJevUsage(result.usage)] : []),
           ...(trace ? ["", trace] : []),
         ].join("\n"),
       },

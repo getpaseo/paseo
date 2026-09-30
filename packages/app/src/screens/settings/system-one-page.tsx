@@ -17,6 +17,8 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
+import { useHostFeature } from "@/runtime/host-features";
+import { SystemOneUsageSection } from "./system-one-usage-section";
 
 const CONFIDENCE_OPTIONS = [
   { value: "0.35", label: "35%" },
@@ -53,6 +55,7 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
   const router = useRouter();
   const openPaperclip = useCallback(() => router.push("/paperclip" as Href), [router]);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const hasUsage = useHostFeature(serverId, "systemOneUsage");
   const { config, patchConfig } = useDaemonConfig(serverId);
   const systemOne = config?.systemOne;
   const [apiKey, setApiKey] = useState("");
@@ -98,6 +101,10 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
   const clearPaseoKey = useCallback(() => mutation.mutate({ systemOneApiKey: null }), [mutation]);
   const toggleEnabled = useCallback(
     (enabled: boolean) => mutation.mutate({ systemOne: { enabled } }),
+    [mutation],
+  );
+  const toggleBrowserGoals = useCallback(
+    (browserGoals: boolean) => mutation.mutate({ systemOne: { browserGoals } }),
     [mutation],
   );
   const credentialLabel = useMemo(
@@ -218,6 +225,15 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
           </Text>
         ) : null}
       </SettingsSection>
+
+      {hasUsage ? (
+        <SystemOneUsageSection
+          serverId={serverId}
+          browserGoals={systemOne.browserGoals}
+          disabled={mutation.isPending || !systemOne.enabled}
+          onBrowserGoalsChange={toggleBrowserGoals}
+        />
+      ) : null}
 
       <SettingsSection
         title={t("settings.systemOne.agentUse.title")}

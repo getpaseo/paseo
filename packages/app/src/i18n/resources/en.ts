@@ -2390,6 +2390,32 @@ export const en = {
         action: "Save",
         saving: "Saving…",
       },
+      usage: {
+        title: "Jev usage",
+        info: "Tokens TypeSafe reports for every Jev call on this host, counted since this PandaOS version.",
+        browserGoals: {
+          label: "Let Jev drive browser goals",
+          hint: "browser_goal and goal steps in browser_test hand clicks and typing to Jev. Off: agents drive the browser tools themselves, which costs them more of their own tokens.",
+        },
+        purposes: {
+          browser: "Browser goals",
+          shadow: "Shadow predictions",
+          routing: "Model routing",
+          tool: "Agent questions",
+        },
+        purposeHints: {
+          browser: "One call per browser step Jev decides.",
+          shadow: "Jev guesses each agent's next step to learn; nothing acts on it.",
+          routing: "Picks the model tier when a session starts.",
+          tool: "Agents calling system_one_decide.",
+        },
+        today: "Today",
+        week: "7 days",
+        summary_one: "{{count}} call · {{tokens}} tokens",
+        summary_other: "{{count}} calls · {{tokens}} tokens",
+        empty: "No Jev calls counted yet",
+        emptyHint: "Counts appear after the next Jev call.",
+      },
       agentUse: {
         title: "How agents use Jev",
         info: "PandaOS adds one shared instruction and one shared tool to every supported agent provider.",

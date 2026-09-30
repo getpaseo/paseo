@@ -1837,6 +1837,8 @@ export class VoiceAssistantWebSocketServer {
         workspacePinning: true,
         // COMPAT(workspaceTopics): added in v0.9.2, remove gate after 2027-04-01.
         workspaceTopics: true,
+        // COMPAT(systemOneUsage): added in v0.9.2, remove gate after 2027-04-01.
+        systemOneUsage: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: true,
         workspaceForgeAccount: true,
