@@ -73,6 +73,7 @@ export const BindingSchema = z.object({
   status: z.enum(["active", "revoked"]),
   turn: z.enum(["starting", "running", "idle", "reported"]),
   nudges: z.number().int(),
+  errors: z.number().int().default(0),
   lastEventAt: z.string(),
   createdAt: z.string(),
   revokedAt: z.string().optional(),

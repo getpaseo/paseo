@@ -110,7 +110,8 @@ export const softwareBasicPack: WorkflowPack = validatePack({
         "Call `item_plan` once with every work item: a short key, title, objective, acceptance criteria that a " +
         "tester can check, dependencies (keys of items that must be done first) and conflicts (keys of items " +
         "that touch the same files and must not run at the same time). Keep items small enough for one developer " +
-        "session. Do not write code. Then report outcome `planned`. " +
+        "session. Every item is tested and reviewed by the team automatically, so never create items " +
+        "for testing, review or verification. Do not write code. Then report outcome `planned`. " +
         REPORT_RULE,
     },
     developer: {

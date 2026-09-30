@@ -1725,9 +1725,16 @@ export async function createPaseoDaemon(
     const agentMcpRoute = "/mcp/agents";
 
     const createAgentMcpSession = async (callerAgentId?: string) => {
+      // A resuming session lists its tools before the agent is registered again; the stored
+      // record still carries the labels that decide a team seat's tool set.
+      const callerLabels = callerAgentId
+        ? (agentManager.getAgent(callerAgentId)?.labels ??
+          (await agentStorage.get(callerAgentId))?.labels)
+        : undefined;
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
+          callerLabels,
           paseoToolPolicy: callerAgentId
             ? agentManager.getPaseoToolPolicy(callerAgentId)
             : undefined,

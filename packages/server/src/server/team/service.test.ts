@@ -252,3 +252,28 @@ describe("team tool gate", () => {
     expect(isToolAllowedForTeamRole(undefined, "create_agent")).toBe(true);
   });
 });
+
+describe("provider errors", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "pandaos-team-"));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("retries a seat that stopped with a provider error later instead of calling the boss", async () => {
+    const host = fakeHost();
+    const svc = makeService(root, host);
+    await svc.start();
+    const started = await svc.startTeam({ bossAgentId: "boss", title: "Limits", objective: "x" });
+    await svc.dispatchAll();
+    const po = host.agentFor("po");
+    await svc.onTurnEnded(started.team.id, po.id, true);
+    const { state, events } = await svc.status(started.team.id);
+    expect(events.some((e) => e.type === "health.provider-error")).toBe(true);
+    expect(events.some((e) => e.type === "boss.notified")).toBe(false);
+    const retry = Object.values(state.decisions).find((d) => d.payload.retry === true)!;
+    expect(Date.parse(retry.availableAt)).toBeGreaterThan(Date.now());
+  });
+});

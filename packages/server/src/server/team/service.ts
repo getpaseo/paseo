@@ -46,6 +46,7 @@ const HEALTH_INTERVAL_MS = 60_000;
 const LEASE_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 5;
 const NO_PROGRESS_MS = 45 * 60_000;
+const MAX_ERROR_RETRIES = 4;
 
 type TeamAgentManager = Pick<
   AgentManager,
@@ -444,7 +445,27 @@ export class TeamService {
       const item = draft.items[binding.workItemId];
       if (!item) return { events, result: null };
       binding.lastEventAt = this.now().toISOString();
-      if (binding.nudges < 1) {
+      if (errored && binding.errors < MAX_ERROR_RETRIES) {
+        // Provider errors (limits, capacity, crashes) retry the same seat with growing pauses;
+        // each turn goes through the agent manager's own profile fallback again.
+        binding.errors += 1;
+        binding.turn = "idle";
+        const decision = addDecision(
+          draft,
+          item,
+          "message-role",
+          { bindingId: binding.id, retry: true },
+          `error-retry:${binding.id}:${item.revision}:${binding.errors}`,
+        );
+        const waitMs = Math.min(30, 2 ** binding.errors) * 60_000;
+        decision.availableAt = new Date(this.now().getTime() + waitMs).toISOString();
+        events.push({
+          type: "health.provider-error",
+          actor: RUNTIME,
+          workItemId: item.id,
+          text: `${binding.role} stopped with a provider error; retrying in ${waitMs / 60_000} min`,
+        });
+      } else if (binding.nudges < 1) {
         binding.nudges += 1;
         binding.turn = "idle";
         addDecision(
@@ -592,6 +613,8 @@ export class TeamService {
         } else if (decision.payload.nudge) {
           text =
             "You ended your turn without calling `team_report`. Finish your part if needed, then call `team_report` with one of the allowed outcomes.";
+        } else if (decision.payload.retry) {
+          text = `Your last turn stopped with a provider error. Continue where you left off.\n\n${text}`;
         } else if (decision.payload.resume) {
           text = `The PandaOS daemon restarted while you were working. Continue where you left off.\n\n${text}`;
         }
@@ -692,6 +715,7 @@ export class TeamService {
         status: "active",
         turn: "starting",
         nudges: 0,
+        errors: 0,
         lastEventAt: now,
         createdAt: now,
       };
