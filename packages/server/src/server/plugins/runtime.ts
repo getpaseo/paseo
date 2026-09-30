@@ -1,3 +1,8 @@
+import {
+  ProviderStatusSchema,
+  type ProviderStatus,
+  type ProviderStatusRequest,
+} from "@getpaseo/plugin/server/provider";
 import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
@@ -24,9 +29,12 @@ import type {
   PluginProcessMessage,
   PluginProcessRequest,
   PluginProviderMetadata,
+  PluginUsageSourceMetadata,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
+import { InternalPluginChild } from "./internal-child.js";
+import { evaluateBundle } from "./bundle-evaluator.js";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
 const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
@@ -65,6 +73,7 @@ interface LoadedPlugin {
   methods: ReadonlySet<string>;
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
+  usageSources: readonly PluginUsageSourceMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -332,6 +341,29 @@ export class PluginRuntime {
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
 
+  async startBuiltinPlugin(input: { id: string; directory: string }): Promise<void> {
+    if (this.plugins.has(input.id)) throw new Error(`Plugin is already running: ${input.id}`);
+    this.appendLog(input.id, "stdout", "[paseo] Loading plugin");
+    const directory = path.resolve(input.directory);
+    const manifest = await readPluginManifest(directory);
+    if (manifest.id !== input.id) {
+      throw new Error(`Built-in plugin ${input.id} has manifest ID ${manifest.id}`);
+    }
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
+    const bundles = await compilePlugin(await resolveEntryPaths(directory));
+    if (!bundles.serverBundle) throw new Error(`Built-in plugin ${input.id} needs a server entry`);
+    const loaded = await this.launchPlugin({
+      pluginId: input.id,
+      pluginDirectory: directory,
+      requirements: manifest.requirements,
+      child: new InternalPluginChild(evaluateBundle(bundles.serverBundle)),
+      bundle: "",
+      clientBundle: bundles.clientBundle ?? "",
+    });
+    this.plugins.set(input.id, loaded);
+    this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
+  }
+
   async validatePlugin(configuredPath: string): Promise<void> {
     const directory = path.resolve(configuredPath);
     const manifest = await readPluginManifest(directory);
@@ -357,6 +389,50 @@ export class PluginRuntime {
 
   getProviderRegistrations(pluginId: string): readonly PluginProviderMetadata[] {
     return this.plugins.get(pluginId)?.providers ?? [];
+  }
+
+  getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[] {
+    return this.plugins.get(pluginId)?.usageSources ?? [];
+  }
+
+  identifyUsage(pluginId: string, sourceId: string, input: unknown): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return this.request(loaded, {
+      type: "usage.identify",
+      requestId: randomUUID(),
+      sourceId,
+      input,
+    });
+  }
+
+  fetchUsage(pluginId: string, sourceId: string, input: unknown): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return this.request(loaded, { type: "usage.fetch", requestId: randomUUID(), sourceId, input });
+  }
+
+  discoverUsage(pluginId: string, sourceId: string): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return this.request(loaded, { type: "usage.discover", requestId: randomUUID(), sourceId });
+  }
+
+  async getProviderStatus(
+    pluginId: string,
+    providerId: string,
+    request: ProviderStatusRequest,
+  ): Promise<ProviderStatus> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderStatusSchema.parse(
+      await this.request(loaded, {
+        type: "provider.status",
+        requestId: randomUUID(),
+        providerId,
+        request,
+      }),
+    );
   }
 
   async connectProvider(
@@ -566,6 +642,7 @@ export class PluginRuntime {
         methods: new Set(),
         hooks: { events: [], before: [] },
         providers: [],
+        usageSources: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -575,9 +652,27 @@ export class PluginRuntime {
         sessionClosed: null,
       };
     }
+    return this.launchPlugin({
+      pluginId,
+      pluginDirectory: directory,
+      requirements: manifest.requirements,
+      child: this.spawnChild(),
+      bundle: serverBundle,
+      clientBundle: bundles.clientBundle ?? "",
+    });
+  }
+
+  private async launchPlugin(input: {
+    pluginId: string;
+    pluginDirectory: string;
+    requirements: PluginRequirements | undefined;
+    child: PluginChild;
+    bundle: string;
+    clientBundle: string;
+  }): Promise<LoadedPlugin> {
+    const { pluginId, requirements, child, bundle, clientBundle } = input;
     const sessionHost = this.sessionHost;
     if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
-    const child = this.spawnChild();
     const outputCapture = new PluginOutputCapture(child, (stream, message) => {
       this.appendLog(pluginId, stream, message);
     });
@@ -653,8 +748,9 @@ export class PluginRuntime {
           void send(child, {
             type: "initialize",
             pluginId,
+            pluginDirectory: input.pluginDirectory,
             appVersion: this.daemonVersion,
-            bundle: serverBundle,
+            bundle,
             settingsDirectory: this.dependencies.settingsDirectory
               ? path.join(this.dependencies.settingsDirectory, pluginId)
               : undefined,
@@ -669,11 +765,12 @@ export class PluginRuntime {
     }
     loaded = {
       id: pluginId,
-      clientBundle: bundles.clientBundle ?? "",
-      requirements: manifest.requirements,
+      clientBundle,
+      requirements,
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
+      usageSources: ready.usageSources ?? [],
       child,
       outputCapture,
       pending,

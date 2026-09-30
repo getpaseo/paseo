@@ -17,12 +17,14 @@ import {
   hoverChatOutlinePrompt,
   chatOutlineRail,
   movePointerOffChatOutline,
+  observePromptIndexRequests,
   pointAtChatOutlineRowEdge,
   pressEnterOnFocusedPrompt,
   splitCurrentPanelRight,
   withStreamingMarkdownOutline,
   expectReadingStreamedMarkdown,
 } from "../support/helpers/chat-outline";
+import { createCreationScenario } from "../support/helpers/creation";
 import {
   expectTimelineAtMaximumScrollWithPromptVisible,
   expectTimelinePromptNotMounted,
@@ -265,4 +267,22 @@ test.describe("desktop chat outline", () => {
       await agent.cleanup();
     }
   });
+});
+
+test("indexes a new agent's prompts only once the agent exists", async ({ page }) => {
+  const promptIndex = await observePromptIndexRequests(page);
+  const creation = await createCreationScenario(page);
+  try {
+    await page.setViewportSize(WIDE_VIEWPORT);
+    await creation.openAgentDraft();
+    await creation.submitPrompt("Start an agent with an outline.");
+    await creation.expectPromptVisible();
+
+    const agentIds = await creation.agentIds();
+    expect(agentIds).toHaveLength(1);
+    await promptIndex.waitForRequestFor(agentIds[0]!);
+    expect(promptIndex.requestedAgentIds()).toEqual(agentIds);
+  } finally {
+    await creation.cleanup();
+  }
 });

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import {
   clearAssistantImageMetadataCache,
   estimateAssistantMessageHeightFromCache,
@@ -52,6 +53,7 @@ describe("assistant image metadata", () => {
     expect(
       estimateAssistantMessageHeightFromCache(
         "Here is the screenshot\n\n![Screenshot](https://example.com/landscape.png)",
+        DEFAULT_CONTENT_MAX_WIDTH,
       ),
     ).toBeGreaterThan(220);
   });
@@ -60,8 +62,14 @@ describe("assistant image metadata", () => {
     const source = `data:image/png;base64,${"a".repeat(512)}`;
     setAssistantImageMetadata({ source }, { width: 1200, height: 800 });
 
-    const imageOnlyHeight = estimateAssistantMessageHeightFromCache(`![Screenshot](${source})`);
-    const mixedHeight = estimateAssistantMessageHeightFromCache(`Text\n\n![Screenshot](${source})`);
+    const imageOnlyHeight = estimateAssistantMessageHeightFromCache(
+      `![Screenshot](${source})`,
+      DEFAULT_CONTENT_MAX_WIDTH,
+    );
+    const mixedHeight = estimateAssistantMessageHeightFromCache(
+      `Text\n\n![Screenshot](${source})`,
+      DEFAULT_CONTENT_MAX_WIDTH,
+    );
 
     expect(imageOnlyHeight).toBeGreaterThan(220);
     expect(mixedHeight).toBeGreaterThan(imageOnlyHeight ?? 0);

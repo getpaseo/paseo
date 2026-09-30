@@ -117,17 +117,16 @@ export function SettingsSelect<Value extends string>({
   disabled,
   ...row
 }: SettingsSelectProps<Value>) {
+  const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <SettingsRow {...row}>
       <DropdownMenu>
         <DropdownTrigger
           disabled={disabled}
           accessibilityRole="button"
-          accessibilityLabel={row.label}
+          accessibilityLabel={`${row.label}: ${selectedLabel}`}
         >
-          <Text style={styles.value}>
-            {options.find((option) => option.value === value)?.label ?? value}
-          </Text>
+          {selectedLabel}
         </DropdownTrigger>
         <DropdownMenuContent side="bottom" align="end" width={220}>
           {options.map((option) => (
@@ -203,6 +202,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   accessoryLabel: { flexShrink: 1, minWidth: 0 },
   control: { flexShrink: 1, maxWidth: "100%" },
-  value: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
   input: { minWidth: 180 },
 }));

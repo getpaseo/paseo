@@ -4,6 +4,24 @@ import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 
 describe("@tintinweb/pi-subagents adapter", () => {
+  test("exposes the background output file while the child is running", () => {
+    const mapping = createPiExtensionHost().mapToolCall({
+      callId: "call-1",
+      toolName: "Agent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: {
+        details: { agentId: "native-1", status: "background" },
+        content: [
+          { type: "text", text: "Agent started in background.\nOutput file: /tmp/child.output\n" },
+        ],
+      },
+    });
+    expect(mapping?.subagents).toEqual([
+      expect.objectContaining({ id: "call-1", status: "running" }),
+    ]);
+    expect(mapping?.childSessions).toEqual([{ id: "call-1", file: "/tmp/child.output" }]);
+  });
   test("maps captured foreground lifecycle live and on replay", async () => {
     const events = await verifySubagentFixture(
       readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url)),

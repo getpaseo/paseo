@@ -79,10 +79,10 @@ function pickSelectedModel(
   preferredModelId: string | null,
   fallbackModel: AgentModelDefinition | null,
 ): AgentModelDefinition | null {
-  if (!models || !preferredModelId) {
+  if (!preferredModelId) {
     return fallbackModel;
   }
-  return findModelById(models, preferredModelId) ?? fallbackModel;
+  return findModelById(models, preferredModelId);
 }
 
 function resolveThinkingId(
@@ -164,7 +164,7 @@ export function resolveAgentModelSelection(input: {
   const thinkingOptions = selectedModel?.thinkingOptions ?? null;
   const resolvedThinkingId = resolveThinkingId(explicitThinkingOptionId, selectedModel);
   const effectiveThinking = resolveEffectiveThinking(thinkingOptions, resolvedThinkingId);
-  const selectedThinkingId = effectiveThinking?.id ?? null;
+  const selectedThinkingId = effectiveThinking?.id ?? resolvedThinkingId;
   const displayThinking = resolveThinkingDisplay(
     effectiveThinking,
     selectedThinkingId,

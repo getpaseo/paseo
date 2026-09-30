@@ -5,7 +5,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
+import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
@@ -286,19 +286,22 @@ export function resolveEffectiveComposerThinkingOptionId(
   return selectedModelDefinition?.defaultThinkingOptionId ?? "";
 }
 
-export function buildDraftCommandConfig(input: {
+export function buildDraftCommandTarget(input: {
   selection: ProviderSelectionState;
   cwd: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues?: Record<string, unknown>;
-}): DraftCommandConfig | undefined {
+}): DraftCommandTarget {
   const cwd = input.cwd.trim();
-  if (!input.selection.provider || !cwd) {
-    return undefined;
+  if (!cwd) {
+    return { status: "needs-project" };
+  }
+  if (!input.selection.provider) {
+    return { status: "needs-provider" };
   }
 
-  return {
+  const config = {
     provider: input.selection.provider,
     cwd,
     ...(input.selection.modeOptions.length > 0 && input.selection.modeId !== ""
@@ -310,6 +313,7 @@ export function buildDraftCommandConfig(input: {
       : {}),
     ...(input.featureValues ? { featureValues: input.featureValues } : {}),
   };
+  return { status: "ready", config };
 }
 
 export function resolveSubmissionReadiness(input: {

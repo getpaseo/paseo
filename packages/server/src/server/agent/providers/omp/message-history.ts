@@ -1,12 +1,18 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
-import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
-  extractTextFromToolResult,
+  ompCustomMessageId,
+  ompSkillPromptUserText,
+  shouldDisplayOmpCustomMessage,
+} from "./custom-message.js";
+import {
   mapToolDetail,
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  toolFailureMessage,
+  isOmpToolFailure,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -26,7 +32,7 @@ export interface OmpHistoryMapperHooks {
   mapToolDetail?: (
     toolCall: OmpTrackedToolCall,
     result: OmpToolResult,
-    context: { toolCallId: string },
+    context: { toolCallId: string; bridgedTool?: OmpBridgedToolIdentity },
   ) => ToolCallDetail | null;
 }
 
@@ -58,11 +64,13 @@ export class OmpHistoryMapper {
   private readonly pendingToolCalls = new Map<string, OmpTrackedToolCall>();
   private userIndex = 0;
   private assistantIndex = 0;
+  private customIndex = 0;
 
   constructor(
     private readonly provider: string,
     private readonly userEntries: readonly OmpCapturedUserMessageEntry[] = [],
     private readonly hooks: OmpHistoryMapperHooks = {},
+    private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity> = new Map(),
   ) {}
 
   mapMessages(messages: readonly OmpAgentMessage[]): AgentStreamEvent[] {
@@ -126,15 +134,30 @@ export class OmpHistoryMapper {
     if (mappedEvent) {
       return [mappedEvent];
     }
-    return text
-      ? [
-          {
-            type: "timeline",
-            provider: this.provider,
-            item: { type: "assistant_message", text },
-          },
-        ]
-      : [];
+    if (!text) {
+      return [];
+    }
+    const messageId = ompCustomMessageId(message, () => {
+      this.customIndex += 1;
+      return this.customIndex;
+    });
+    const skillPrompt = ompSkillPromptUserText(message);
+    if (skillPrompt) {
+      return [
+        {
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "user_message", text: skillPrompt, messageId: `${messageId}-user` },
+        },
+      ];
+    }
+    return [
+      {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text, messageId },
+      },
+    ];
   }
 
   private mapAssistantMessage(
@@ -174,7 +197,7 @@ export class OmpHistoryMapper {
           item: {
             type: "tool_call",
             callId: this.resolveToolCallId(content.id, tracked),
-            name: tracked.toolName,
+            name: this.toolName(tracked, null),
             status: "running",
             detail,
             error: null,
@@ -201,10 +224,10 @@ export class OmpHistoryMapper {
       provider: this.provider,
       item: toToolResultTimelineItem({
         callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: resolveToolCallName(tracked, result),
-        isError: Boolean(message.isError),
+        name: this.toolName(tracked, result),
+        isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
         detail,
-        errorText: extractTextFromToolResult(result) ?? "Tool call failed",
+        errorText: toolFailureMessage(result),
       }),
     };
   }
@@ -242,7 +265,17 @@ export class OmpHistoryMapper {
     result: OmpToolResult,
   ): ToolCallDetail | null {
     const hook = this.hooks.mapToolDetail;
-    return hook ? hook(toolCall, result, { toolCallId }) : mapToolDetail(toolCall, result);
+    return hook
+      ? hook(toolCall, result, {
+          toolCallId,
+          bridgedTool: this.bridgedTools.get(toolCall.toolName),
+        })
+      : mapToolDetail(toolCall, result);
+  }
+
+  private toolName(toolCall: OmpTrackedToolCall, result: OmpToolResult): string {
+    const bridged = this.bridgedTools.get(toolCall.toolName);
+    return bridged ? `${bridged.server} / ${bridged.tool}` : resolveToolCallName(toolCall, result);
   }
 }
 

@@ -24,7 +24,6 @@ import type {
   ProjectPlacementPayload,
   WorkspaceProjectDescriptorPayload,
   RefreshProvidersSnapshotResponseMessage,
-  SendAgentMessageRequest,
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
@@ -55,6 +54,7 @@ import type {
   FetchAgentTimelineDirection,
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
+  SendMessageOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
 
@@ -282,11 +282,7 @@ export interface PaseoAgentTimelineRefetchOptions {
   requestId?: string;
 }
 
-export interface PaseoAgentSendOptions {
-  messageId?: string;
-  images?: Array<{ data: string; mimeType: string }>;
-  attachments?: SendAgentMessageRequest["attachments"];
-}
+export type PaseoAgentSendOptions = SendMessageOptions;
 
 export interface PaseoAgentRunOptions extends PaseoAgentSendOptions {
   timeoutMs?: number;

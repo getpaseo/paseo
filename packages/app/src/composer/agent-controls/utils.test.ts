@@ -186,4 +186,30 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.selectedThinkingId).toBe("low");
     expect(selection.displayThinking).toBe("Low");
   });
+
+  it("shows the agent's own model when the catalog does not list it", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "gpt-6-sol",
+          provider: "codex",
+          label: "GPT-6-Sol",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "medium", label: "medium" },
+            { id: "max", label: "max" },
+          ],
+          defaultThinkingOptionId: "medium",
+        },
+      ],
+      runtimeModelId: "gpt-6.1-sol",
+      configuredModelId: "gpt-6.1-sol",
+      explicitThinkingOptionId: "max",
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.activeModelId).toBe("gpt-6.1-sol");
+    expect(selection.displayModel).toBe("gpt-6.1-sol");
+    expect(selection.displayThinking).toBe("Max");
+  });
 });

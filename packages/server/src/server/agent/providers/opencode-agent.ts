@@ -1,3 +1,4 @@
+import { validateProviderOptions } from "../provider-options.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -1930,7 +1931,9 @@ export class OpenCodeAgentClient implements AgentClient {
     if (config.provider !== "opencode") {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);
     }
-    const providerOptions = OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const providerOptions =
+      validateProviderOptions("opencode", OpenCodeProviderOptionsSchema, config.providerOptions) ??
+      {};
     return normalizeOpenCodeConfig({ ...config, provider: "opencode", providerOptions });
   }
 
@@ -3279,7 +3282,7 @@ function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boole
 }
 
 function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
-  return event.type === "provider_subagent";
+  return event.type === "provider_subagent" || event.type === "model_changed";
 }
 
 function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo | null {
@@ -3549,16 +3552,37 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       model: this.config.model ?? null,
       modeId: this.currentMode,
+      thinkingOptionId: this.config.thinkingOptionId ?? null,
     };
   }
 
   async setModel(modelId: string | null): Promise<void> {
+    await this.reconnectIfServerExited();
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    let variant = this.config.thinkingOptionId;
+    if (!normalizedModelId) {
+      variant = undefined;
+    } else if (variant) {
+      const model = this.parseModel(normalizedModelId);
+      const response = await this.client.provider.list({ directory: this.config.cwd });
+      if (response.error)
+        throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
+      const provider = response.data?.all.find((entry) => entry.id === model?.providerID);
+      const target = model && provider?.models[model.modelID];
+      if (!target) throw new Error(`OpenCode model unavailable: ${normalizedModelId}`);
+      if (!Object.hasOwn(target.variants ?? {}, variant)) variant = undefined;
+    }
     this.config.model = normalizedModelId ?? undefined;
+    this.config.thinkingOptionId = variant;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       this.config.model,
     );
+    this.notifySubscribers({
+      type: "thinking_option_changed",
+      provider: "opencode",
+      thinkingOptionId: variant ?? null,
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -5346,6 +5370,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
     const eventSessionId = getOpenCodeEventSessionId(event);
+    const runtimeModelChanged = this.syncRuntimeModel(event, eventSessionId);
     if (
       event.type !== "session.created" &&
       eventSessionId &&
@@ -5362,6 +5387,12 @@ class OpenCodeAgentSession implements AgentSession {
       }
     }
     const translated = translateOpenCodeEvent(event, this.createTranslationState());
+    if (runtimeModelChanged)
+      translated.push({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: await this.getRuntimeInfo(),
+      });
     this.appendProviderSubagentEvents(event, translated);
 
     const events: AgentStreamEvent[] = [];
@@ -5400,6 +5431,20 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private syncRuntimeModel(event: OpenCodeEvent, eventSessionId: string | null): boolean {
+    if (event.type !== "message.updated" || eventSessionId !== this.sessionId) return false;
+    const info = event.properties.info;
+    let model: string | undefined;
+    if (info.role === "assistant") model = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
+    if (info.role === "user" && info.model)
+      model = buildOpenCodeModelLookupKey(info.model.providerID, info.model.modelID);
+    if (!model || model === this.config.model) return false;
+    this.config.model = model;
+    this.selectedModelContextWindowMaxTokens =
+      this.resolveConfiguredModelContextWindowMaxTokens(model);
+    return true;
   }
 
   private async tryAutoApproveToolPermission(
