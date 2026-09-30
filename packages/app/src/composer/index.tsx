@@ -283,8 +283,6 @@ function renderContextWindowMeter(
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
   showPercentage: boolean,
-  serverId: string,
-  agentId: string,
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
@@ -298,8 +296,6 @@ function renderContextWindowMeter(
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
-      serverId={serverId}
-      agentId={agentId}
       pending={pending}
       glyphSize={glyphSize}
     />
@@ -2094,8 +2090,6 @@ function ComposerContentImpl({
         contextWindowUsedTokens,
         agentState.totalCostUsd,
         isCompactLayout,
-        serverId,
-        agentId,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -2104,28 +2098,13 @@ function ComposerContentImpl({
       contextWindowUsedTokens,
       agentState.totalCostUsd,
       isCompactLayout,
-      serverId,
-      agentId,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],
   );
   const { beforeVoiceContent, compactContextWindowContent } = useMemo(
-    () => {
-      const placement = resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout);
-      return {
-        ...placement,
-        beforeVoiceContent: (
-          <>
-            {placement.beforeVoiceContent}
-            {hasAgent && !isCompactLayout ? (
-              <UsageComposerPill serverId={serverId} agentId={agentId} />
-            ) : null}
-          </>
-        ),
-      };
-    },
-    [agentId, contextWindowMeter, hasAgent, isCompactLayout, serverId],
+    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
+    [contextWindowMeter, hasAgent, isCompactLayout],
   );
 
   const hasGithubAttachment = useMemo(

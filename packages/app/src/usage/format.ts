@@ -29,7 +29,11 @@ export function formatPct(value: number, locale?: string): string {
 }
 
 /** A localized percentage that says whether it is used or remaining. */
-export function formatDisplayPct(value: number, displayAs: UsageDisplayAs, locale?: string): string {
+export function formatDisplayPct(
+  value: number,
+  displayAs: UsageDisplayAs,
+  locale?: string,
+): string {
   const percentage = formatPct(value, locale);
   return displayAs === "used"
     ? i18n.t("providerUsage.values.used", { percentage })
