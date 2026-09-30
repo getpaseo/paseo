@@ -80,7 +80,7 @@ A `<Pressable>` wrapping a `<Text>` is a sixth variant. It is wrong. `<Button>` 
 
 Borders group, separate, or rarely emphasize.
 
-A logical block of related rows lives inside a card — one border around the whole group. The card primitive is `settingsStyles.card`; the keyboard-shortcuts dialog uses the same shape inline (`packages/app/src/components/keyboard-shortcuts-dialog.tsx:68-73`). The border defines what belongs together.
+A logical block of related rows lives inside a card. The card primitive is `settingsStyles.card`: a hairline below the group (the `<SettingsSection>` header rules the line above), no fill, no side borders, no radius, and rows inset by the same step as the section header so labels share its rail. The keyboard-shortcuts dialog draws its own rows inline (`packages/app/src/components/keyboard-shortcuts-dialog.tsx`). The rules define what belongs together.
 
 Rows after the first inside a card carry `settingsStyles.rowBorder` — a single top border. The first row never has one. The same divider pattern appears in the keyboard-shortcuts dialog rows (`packages/app/src/components/keyboard-shortcuts-dialog.tsx:74-83`). Rows do not need their own background to feel separated.
 
@@ -151,7 +151,7 @@ Compact-first. The small case is designed; the large case adds chrome around it.
 The list+detail pattern is canonical and reused across surfaces. The settings shell (`packages/app/src/screens/settings-screen.tsx`) and the projects screen (`packages/app/src/screens/projects-screen.tsx`) implement it identically:
 
 - On compact: full-screen list with `<BackHeader>` at the top. Tapping a row pushes a full-screen detail with its own `<BackHeader>` that returns to the list.
-- On desktop: a 320px sidebar on the left holds the list with `surfaceSidebar` background. The content pane on the right holds the selected detail with `<ScreenHeader>`, `<HeaderIconBadge>`, and `<ScreenTitle>`.
+- On desktop: a 320px sidebar on the left holds the list with `surfaceSidebar` background. The content pane on the right holds the selected detail with `<ScreenHeader>`, `<HeaderIconBadge>`, and `<ScreenTitle>`. Settings replaces the icon badge with a muted group crumb and opens the page with a `hub` `<ScreenTitle>`; its sidebar groups pages by `SETTINGS_PAGES` (`packages/app/src/screens/settings/settings-pages.ts`), leads with a search over every page, and fills the current page with ink.
 
 The branching is one `useIsCompactFormFactor()` check at the top of the screen component. The list and the detail are the same components in both layouts; only the framing changes.
 

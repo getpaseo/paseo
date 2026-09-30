@@ -23,7 +23,7 @@ interface SettingsSectionProps {
 }
 
 /**
- * iOS-style grouped settings block: muted label + children stacked with a
+ * Settings block: a titled run of hairline-ruled rows, stacked with a
  * consistent gap. The single primitive used for every section across settings;
  * don't reach for ad-hoc `<Text>` headers or bare card margins.
  */
@@ -44,7 +44,7 @@ export function SettingsSection({
     <View style={sectionStyle} testID={testID}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <Text style={settingsStyles.sectionHeaderTitle}>{title}</Text>
+          <Text style={styles.title}>{title}</Text>
           {info ? (
             <SettingsInfoTip
               title={title}
@@ -66,13 +66,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
-    marginBottom: theme.spacing[3],
-    marginLeft: theme.spacing[1],
+    paddingBottom: theme.spacing[3],
+    paddingLeft: theme.spacing[1],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  // Names the group of rows below it, so it carries the structural weight (docs/design.md §3).
+  title: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
   },
   content: {
     gap: theme.spacing[3],

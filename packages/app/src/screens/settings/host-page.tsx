@@ -1918,7 +1918,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
     gap: theme.spacing[3],
     paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
+    paddingHorizontal: theme.spacing[1],
   },
   emptyCard: {
     padding: theme.spacing[4],

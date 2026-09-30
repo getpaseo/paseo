@@ -25,19 +25,20 @@ export const settingsStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
+  // Ink on paper: rows are ruled off by hairlines, not boxed. The section header
+  // draws the rule above, so stacked cards never show a doubled line.
   card: {
-    backgroundColor: theme.colors.surface1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
+    borderBottomWidth: 1,
     borderColor: theme.colors.border,
     overflow: "hidden",
   },
+  // The inset matches the section header's, so titles and row labels share one rail.
   row: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
+    paddingHorizontal: theme.spacing[1],
   },
   rowBorder: {
     borderTopWidth: 1,

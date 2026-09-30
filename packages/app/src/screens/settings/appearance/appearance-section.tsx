@@ -951,7 +951,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
+    paddingHorizontal: theme.spacing[1],
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
