@@ -1,7 +1,7 @@
 # Connected host with a selected model, 1600x2560 at density 320. See README.md.
 # FORM_URL=paseo://new?serverId=<serverId>; MODEL_ID and MODEL_LABEL name a real catalog model.
 context platform=android timeout=60000 retries=0
-env APP_ID=sh.paseo.debug
+env APP_ID=sh.pandaos.debug
 env PROVIDER_ID=codex
 
 open "${APP_ID}" "${FORM_URL}"

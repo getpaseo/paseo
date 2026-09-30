@@ -28,7 +28,7 @@ export function downloadUrls(release: ReleaseAssetInfo) {
 }
 
 export const appStoreUrl = "https://apps.apple.com/app/paseo-pocket-engineer/id6758887924";
-export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.paseo";
+export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.pandaos";
 export const webAppUrl = "https://app.paseo.sh";
 
 export interface PrimaryDownload {

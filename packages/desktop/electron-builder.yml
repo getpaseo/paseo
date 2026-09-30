@@ -1,5 +1,5 @@
 npmRebuild: false
-appId: sh.paseo.desktop
+appId: sh.pandaos.desktop
 productName: PandaOS
 executableName: PandaOS
 protocols:

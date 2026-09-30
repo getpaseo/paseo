@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import { parseTeamIdentifier, verifyMacBundleSignatures } from "./mac-signature-check.js";
 
 const ADHOC_OUTPUT = `Executable=/Applications/Paseo.app/Contents/MacOS/Paseo
-Identifier=sh.paseo.desktop
+Identifier=sh.pandaos.desktop
 Format=app bundle with Mach-O thin (arm64)
 Signature=adhoc
 TeamIdentifier=not set
 `;
 
 const SIGNED_OUTPUT = `Executable=/Applications/Paseo.app/Contents/MacOS/Paseo
-Identifier=sh.paseo.desktop
+Identifier=sh.pandaos.desktop
 Format=app bundle with Mach-O thin (arm64)
 Authority=Developer ID Application: Example (TEAM123456)
 TeamIdentifier=TEAM123456
@@ -19,7 +19,7 @@ TeamIdentifier=TEAM123456
 // codesign prints no TeamIdentifier line for an Apple Distribution certificate;
 // the team is only in the Authority line. Taken from a real local build.
 const APPLE_DISTRIBUTION_OUTPUT = `Executable=/Users/x/Paseo.app/Contents/MacOS/Paseo
-Identifier=sh.paseo.desktop
+Identifier=sh.pandaos.desktop
 Format=app bundle with Mach-O thin (arm64)
 Authority=Apple Distribution: Marushan Anpalahan (BPQGF93XS4)
 Authority=Apple Worldwide Developer Relations Certification Authority

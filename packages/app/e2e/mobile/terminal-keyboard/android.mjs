@@ -6,7 +6,7 @@ import { setTimeout } from "node:timers/promises";
 
 // Open an idle terminal with an empty prompt and hide its keyboard before running.
 // The app must already run the checkout/build being verified against a real daemon.
-const appId = process.env.PASEO_TERMINAL_KEYBOARD_APP_ID ?? "sh.paseo.debug";
+const appId = process.env.PASEO_TERMINAL_KEYBOARD_APP_ID ?? "sh.pandaos.debug";
 const serial = process.env.ANDROID_SERIAL ?? "emulator-5554";
 const artifacts = resolve(".dev/agent-device-artifacts/terminal-keyboard-android");
 const session = "terminal-keyboard-android";

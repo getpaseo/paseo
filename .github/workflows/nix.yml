@@ -104,5 +104,5 @@ jobs:
           app="result-desktop/Applications/PandaOS.app"
           test -x "$app/Contents/MacOS/PandaOS"
           test -L result-desktop/bin/paseo-desktop
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "sh.paseo.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "sh.pandaos.desktop"
           find "$app" -name Info.plist -print0 | xargs -0 -n 1 plutil -lint

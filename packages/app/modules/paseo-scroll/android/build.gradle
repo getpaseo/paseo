@@ -1,6 +1,6 @@
 apply plugin: 'com.android.library'
 
-group = 'sh.paseo.scroll'
+group = 'sh.pandaos.scroll'
 version = '0.1.0'
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
@@ -10,7 +10,7 @@ useCoreDependencies()
 useDefaultAndroidSdkVersions()
 
 android {
-  namespace "sh.paseo.scroll"
+  namespace "sh.pandaos.scroll"
   defaultConfig {
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }

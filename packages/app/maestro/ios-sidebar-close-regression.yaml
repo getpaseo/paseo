@@ -1,4 +1,4 @@
-appId: sh.paseo.debug
+appId: sh.pandaos.debug
 ---
 # Establish History with the sidebar closed. The host filter then proves a close
 # swipe did not activate the row below it.

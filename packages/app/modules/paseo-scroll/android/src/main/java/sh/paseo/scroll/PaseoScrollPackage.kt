@@ -1,4 +1,4 @@
-package sh.paseo.scroll
+package sh.pandaos.scroll
 
 import android.graphics.Rect
 import com.facebook.react.ReactPackage

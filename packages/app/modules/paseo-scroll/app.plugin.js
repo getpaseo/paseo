@@ -1,7 +1,7 @@
 const { withMainApplication } = require("expo/config-plugins");
 
 const PACKAGE_LIST = "PackageList(this).packages.apply {";
-const REGISTRATION = "add(0, sh.paseo.scroll.PaseoScrollPackage())";
+const REGISTRATION = "add(0, sh.pandaos.scroll.PaseoScrollPackage())";
 
 function configureScrollPackage(contents) {
   if (contents.includes(REGISTRATION)) return contents;
