@@ -431,16 +431,27 @@ function mergeModelAdditions(
   );
 }
 
+// Every session member must cross this boundary, including optional capabilities.
+type ForwardedAgentSession = { [K in keyof Required<AgentSession>]: AgentSession[K] };
+
 export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
   return {
     provider,
-    id: inner.id,
-    capabilities: inner.capabilities,
+    get id() {
+      return inner.id;
+    },
+    get capabilities() {
+      return inner.capabilities;
+    },
+    get initialTimeline() {
+      return inner.initialTimeline;
+    },
     get features() {
       return inner.features;
     },
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
+    steerActiveTurn: inner.steerActiveTurn?.bind(inner),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
     async *streamHistory() {
       for await (const event of inner.streamHistory()) {
@@ -464,7 +475,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
-  };
+  } satisfies ForwardedAgentSession;
 }
 
 function wrapClientProvider(
