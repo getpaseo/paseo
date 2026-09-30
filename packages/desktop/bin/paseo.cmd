@@ -3,9 +3,9 @@ setlocal
 
 set "SCRIPT_DIR=%~dp0"
 set "RESOURCES_DIR=%SCRIPT_DIR%.."
-set "APP_EXECUTABLE=%RESOURCES_DIR%\..\Paseo.exe"
+set "APP_EXECUTABLE=%RESOURCES_DIR%\..\PandaOS.exe"
 if not exist "%APP_EXECUTABLE%" (
-  echo Bundled Paseo executable not found at %APP_EXECUTABLE% 1>&2
+  echo Bundled PandaOS executable not found at %APP_EXECUTABLE% 1>&2
   exit /b 1
 )
 
