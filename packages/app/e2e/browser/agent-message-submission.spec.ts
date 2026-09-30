@@ -200,6 +200,16 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
   return page.getByTestId("user-message").filter({ hasText: prompt }).last();
 }
 
+// Overview mode folds a turn's tool calls into one group row when the turn ends, so single
+// badges can be gone before a poll sees them; the group row below the prompt stays.
+async function hasToolCallGroupBelow(page: Page, anchor: Locator): Promise<boolean> {
+  const anchorTop = (await anchor.boundingBox())?.y ?? Number.POSITIVE_INFINITY;
+  const groupTops = await page
+    .getByTestId("tool-call-group")
+    .evaluateAll((groups) => groups.map((group) => group.getBoundingClientRect().top));
+  return groupTops.some((top) => top > anchorTop);
+}
+
 async function submitImageOnlyMessage(page: Page): Promise<Locator> {
   await attachImageFromMenu(page, IMAGE);
   await expectAttachmentPill(page, "composer-image-attachment-pill");
@@ -1148,16 +1158,13 @@ test.describe("Agent message submission", () => {
       page.getByTestId("assistant-message").last(),
     );
     const assistantMessageCount = await page.getByTestId("assistant-message").count();
-    const toolCallCount = await page.getByTestId("tool-call-badge").count();
     await composer.press("Enter");
     const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
     await expect(userMessage).toBeVisible();
     await expect
       .poll(async () => page.getByTestId("assistant-message").count())
       .toBeGreaterThan(assistantMessageCount);
-    await expect
-      .poll(async () => page.getByTestId("tool-call-badge").count())
-      .toBeGreaterThan(toolCallCount);
+    await expect.poll(() => hasToolCallGroupBelow(page, userMessage)).toBe(true);
     await finishTimelineRowStabilityCheck();
   });
 
