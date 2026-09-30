@@ -2139,7 +2139,9 @@ export const ko: TranslationResources = {
     title: "설정",
     loading: "설정 불러오는 중...",
     groups: {
-      app: "앱",
+      you: "나",
+      agents: "에이전트",
+      work: "작업",
       host: "호스트",
     },
     hostPicker: {
@@ -2188,6 +2190,48 @@ export const ko: TranslationResources = {
       sentDescription: "PandaOS가 알림을 운영 체제에 전달했습니다.",
       sendFailedTitle: "테스트 알림을 보낼 수 없음",
     },
+    search: {
+      placeholder: "설정 검색",
+      clear: "검색 지우기",
+      empty: "일치하는 설정이 없습니다",
+      hints: {
+        general: "보내기, 엔터, 중단, 조정, 대기열, 언어, 링크, 서비스 URL, 터미널, 스크롤백",
+        appearance:
+          "테마, 다크 모드, 라이트 모드, 강조색, 색상, 글꼴, 글자 크기, 타이포그래피, 밀도, 추론, 도구 호출, 사이드바, 카드, 구문 강조",
+        layout: "사이드 패널, 분할, 탐색기, 여는 위치, 차이점, 파일",
+        editor: "vim, 키 바인딩, 코드 편집기",
+        shortcuts: "키보드, 단축키, 핫키, 키 바인딩, 명령",
+        notifications: "소리, 알림, 테스트 알림, 권한",
+        providers:
+          "계정, 모델, Claude, Codex, OpenCode, Copilot, Pi, API 키, 로그인, 사용자 지정 제공자",
+        usage: "할당량, 한도, 크레딧, 토큰, 비용, 속도 제한, 요금제",
+        agents:
+          "MCP, 도구, PandaOS 도구, 리소스 정책, 일정, 시스템 프롬프트, 스킬, 에이전트 프로필, 오케스트레이션",
+        systemOne: "Jev, TypeSafe, 라우팅, 판단, 신뢰도",
+        metadata: "제목, 브랜치 이름, 커밋 메시지, 이름 짓기, 생성",
+        plugins: "확장 기능, 애드온, 설치, 신뢰할 수 있는 소스",
+        projects: "저장소, 리포지토리, 스크립트, paseo.json, 프로젝트 설정",
+        workspaces: "세션, 보관, 병합됨, 자동 보관, 정리",
+        linkedAccounts: "GitHub, gh, 계정, 로그인, 포지, 풀 리퀘스트, Jira, 계획",
+        host: "개요, 데몬, 재시작, 업데이트, 버전, 호스트 제거, 색상, 배지, 위험 구역",
+        connections: "릴레이, 직접, SSH, 주소, 포트, 원격",
+        pairDevice: "휴대폰, 모바일, QR 코드, 페어링, 기기 연결",
+        browser: "웹, 시작 페이지, 스트리밍, 쿠키, 비밀번호, 인터넷 사용 기록, 가져오기",
+        terminals: "셸, 터미널 프로필, 훅, 터미널 에이전트, 활동",
+        integrations: "CLI, 명령줄, 설치, PATH",
+        permissions: "마이크, 접근, macOS, 개인정보",
+        diagnostics: "디버그, 로그, 오디오 테스트, 기존 렌더러, 문제 해결, 보고서",
+        about: "버전, 업데이트, 새로운 기능, 릴리스 채널, 베타, 커뮤니티",
+      },
+    },
+    linkedAccounts: {
+      github: {
+        title: "GitHub",
+        info: "이 호스트의 gh 로그인입니다. 프로젝트가 어떤 계정으로 push할지는 해당 프로젝트 설정에서 고릅니다.",
+        loading: "계정을 불러오는 중...",
+        offline: "GitHub 로그인을 보려면 이 호스트에 연결하세요",
+      },
+    },
     hostSections: {
       projects: "프로젝트",
       connections: "연결",
@@ -2200,6 +2244,7 @@ export const ko: TranslationResources = {
       usage: "사용량",
       terminals: "터미널",
       plugins: "플러그인",
+      linkedAccounts: "연결된 계정",
       host: "개요",
     },
     systemOne: en.settings.systemOne,
@@ -2432,6 +2477,7 @@ export const ko: TranslationResources = {
       },
     },
     shortcuts: {
+      noMatches: "일치하는 단축키가 없습니다",
       dialogTitle: "단축키",
       searchPlaceholder: "검색 단축키",
       unavailableOnMobile: "키보드 단축키는 데스크톱에서만 사용할 수 있습니다",

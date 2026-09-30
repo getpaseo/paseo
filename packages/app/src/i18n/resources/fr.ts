@@ -2172,8 +2172,10 @@ export const fr: TranslationResources = {
     title: "Paramètres",
     loading: "Chargement des paramètres...",
     groups: {
-      app: "Application",
-      host: "Host",
+      you: "Vous",
+      agents: "Agents",
+      work: "Travail",
+      host: "Hôte",
     },
     hostPicker: {
       switchHost: "Changer d'hôte",
@@ -2221,6 +2223,50 @@ export const fr: TranslationResources = {
       sentDescription: "PandaOS a transmis la notification au système d’exploitation.",
       sendFailedTitle: "Impossible d’envoyer la notification de test",
     },
+    search: {
+      placeholder: "Rechercher dans les paramètres",
+      clear: "Effacer la recherche",
+      empty: "Aucun paramètre correspondant",
+      hints: {
+        general:
+          "envoyer, entrée, interrompre, orienter, file d'attente, langue, liens, URL de service, terminal, historique",
+        appearance:
+          "thème, mode sombre, mode clair, accent, couleurs, polices, taille du texte, typographie, densité, raisonnement, appels d'outils, barre latérale, cartes, coloration syntaxique",
+        layout: "panneau latéral, scinder, explorateur, emplacement, diffs, fichiers",
+        editor: "vim, raccourcis clavier, éditeur de code",
+        shortcuts: "clavier, touches, raccourcis, combinaisons, commandes",
+        notifications: "son, alertes, notification de test, autorisation",
+        providers:
+          "comptes, modèles, Claude, Codex, OpenCode, Copilot, Pi, clé API, connexion, fournisseur personnalisé",
+        usage: "quota, limites, crédits, jetons, coûts, limite de débit, forfait",
+        agents:
+          "MCP, outils, outils PandaOS, politique de ressources, planifications, prompt système, skills, profils d'agent, orchestration",
+        systemOne: "Jev, TypeSafe, routage, décisions, confiance",
+        metadata: "titres, noms de branche, messages de commit, nommage, génération",
+        plugins: "extensions, modules, installer, sources de confiance",
+        projects: "dépôts, repos, scripts, paseo.json, paramètres du projet",
+        workspaces: "sessions, archiver, fusionné, archivage automatique, nettoyage",
+        linkedAccounts: "GitHub, gh, comptes, connexion, forge, pull requests, Jira, planification",
+        host: "aperçu, daemon, redémarrer, mettre à jour, version, supprimer l'hôte, couleur, badge, zone de danger",
+        connections: "relais, directe, SSH, adresse, port, distant",
+        pairDevice: "téléphone, mobile, code QR, appairage, associer un appareil",
+        browser:
+          "web, page d'accueil, streaming, cookies, mots de passe, données de navigation, importer",
+        terminals: "shell, profils de terminal, hooks, agents de terminal, activité",
+        integrations: "CLI, ligne de commande, installer, PATH",
+        permissions: "microphone, accès, macOS, confidentialité",
+        diagnostics: "débogage, journaux, test audio, ancien moteur de rendu, dépannage, rapport",
+        about: "version, mises à jour, nouveautés, canal de publication, bêta, communauté",
+      },
+    },
+    linkedAccounts: {
+      github: {
+        title: "GitHub",
+        info: "Les connexions gh de cet hôte. Choisissez celle avec laquelle un projet pousse dans les paramètres de ce projet.",
+        loading: "Chargement des comptes...",
+        offline: "Connectez-vous à cet hôte pour voir ses connexions GitHub",
+      },
+    },
     hostSections: {
       projects: "Projets",
       connections: "Relations",
@@ -2233,6 +2279,7 @@ export const fr: TranslationResources = {
       usage: "Utilisation",
       terminals: "Terminals",
       plugins: "Plugins",
+      linkedAccounts: "Comptes liés",
       host: "Aperçu",
     },
     systemOne: en.settings.systemOne,
@@ -2469,6 +2516,7 @@ export const fr: TranslationResources = {
       },
     },
     shortcuts: {
+      noMatches: "Aucun raccourci correspondant",
       dialogTitle: "Raccourcis",
       searchPlaceholder: "Rechercher des raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur le bureau",

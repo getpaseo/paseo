@@ -2166,7 +2166,9 @@ export const en = {
     title: "Settings",
     loading: "Loading settings...",
     groups: {
-      app: "App",
+      you: "You",
+      agents: "Agents",
+      work: "Work",
       host: "Host",
     },
     hostPicker: {
@@ -2250,6 +2252,49 @@ export const en = {
       sentDescription: "PandaOS handed the notification to the operating system.",
       sendFailedTitle: "Unable to send test notification",
     },
+    search: {
+      placeholder: "Search settings",
+      clear: "Clear search",
+      empty: "No matching settings",
+      hints: {
+        general:
+          "send, enter, interrupt, steer, queue, language, locale, links, service URLs, terminal, scrollback, history",
+        appearance:
+          "theme, dark mode, light mode, accent, colors, fonts, font size, typography, density, reasoning, tool calls, sidebar, cards, syntax highlighting",
+        layout: "side pane, split, explorer, open location, diffs, files",
+        editor: "vim, keybindings, code editor",
+        shortcuts: "keyboard, hotkeys, keybindings, key bindings, commands",
+        notifications: "sound, alerts, test notification, permission",
+        providers:
+          "accounts, models, Claude, Codex, OpenCode, Copilot, Pi, API key, login, custom provider",
+        usage: "quota, limits, credits, tokens, costs, rate limit, plan",
+        agents:
+          "MCP, tools, PandaOS tools, resource policy, schedules, system prompt, skills, agent profiles, orchestration",
+        systemOne: "Jev, TypeSafe, routing, decisions, confidence",
+        metadata: "titles, branch names, commit messages, naming, generation",
+        plugins: "extensions, add-ons, install, trusted sources",
+        projects: "repositories, repos, scripts, paseo.json, project settings",
+        workspaces: "sessions, archive, merged, auto archive, cleanup",
+        linkedAccounts: "GitHub, gh, accounts, login, forge, pull requests, Jira, planning",
+        host: "overview, daemon, restart, update, version, remove host, color, badge, danger zone",
+        connections: "relay, direct, SSH, address, port, remote",
+        pairDevice: "phone, mobile, QR code, pairing, link device",
+        browser: "web, start page, streaming, cookies, passwords, browsing data, import",
+        terminals: "shell, terminal profiles, hooks, terminal agents, activity",
+        integrations: "CLI, command line, install, PATH",
+        permissions: "microphone, access, macOS, privacy",
+        diagnostics: "debug, logs, audio test, legacy renderer, troubleshooting, report",
+        about: "version, updates, changelog, what's new, release channel, beta, community",
+      },
+    },
+    linkedAccounts: {
+      github: {
+        title: "GitHub",
+        info: "The gh logins on this host. Pick which one a project pushes as in that project's settings.",
+        loading: "Loading accounts...",
+        offline: "Connect to this host to see its GitHub logins",
+      },
+    },
     hostSections: {
       projects: "Projects",
       connections: "Connections",
@@ -2262,6 +2307,7 @@ export const en = {
       usage: "Usage",
       terminals: "Terminals",
       plugins: "Plugins",
+      linkedAccounts: "Linked accounts",
       host: "Overview",
     },
     systemOne: {
@@ -2676,6 +2722,7 @@ export const en = {
       },
     },
     shortcuts: {
+      noMatches: "No matching shortcuts",
       dialogTitle: "Shortcuts",
       searchPlaceholder: "Search shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",

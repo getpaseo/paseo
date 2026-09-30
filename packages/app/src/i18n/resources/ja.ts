@@ -2152,7 +2152,9 @@ export const ja: TranslationResources = {
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {
-      app: "アプリ",
+      you: "あなた",
+      agents: "エージェント",
+      work: "作業",
       host: "ホスト",
     },
     hostPicker: {
@@ -2201,6 +2203,50 @@ export const ja: TranslationResources = {
       sentDescription: "PandaOS が通知をオペレーティングシステムに渡しました。",
       sendFailedTitle: "テスト通知を送信できません",
     },
+    search: {
+      placeholder: "設定を検索",
+      clear: "検索をクリア",
+      empty: "一致する設定はありません",
+      hints: {
+        general:
+          "送信, Enter, 中断, ステア, キュー, 言語, リンク, サービス URL, ターミナル, スクロールバック",
+        appearance:
+          "テーマ, ダークモード, ライトモード, アクセント, 色, フォント, 文字サイズ, タイポグラフィ, 密度, 推論, ツール呼び出し, サイドバー, カード, シンタックスハイライト",
+        layout: "サイドペイン, 分割, エクスプローラー, 開く場所, 差分, ファイル",
+        editor: "vim, キーバインド, コードエディター",
+        shortcuts: "キーボード, ホットキー, ショートカット, キー割り当て, コマンド",
+        notifications: "サウンド, 通知, テスト通知, 権限",
+        providers:
+          "アカウント, モデル, Claude, Codex, OpenCode, Copilot, Pi, API キー, ログイン, カスタムプロバイダー",
+        usage: "クォータ, 上限, クレジット, トークン, コスト, レート制限, プラン",
+        agents:
+          "MCP, ツール, PandaOS ツール, リソースポリシー, スケジュール, システムプロンプト, スキル, エージェントプロファイル, オーケストレーション",
+        systemOne: "Jev, TypeSafe, ルーティング, 判断, 信頼度",
+        metadata: "タイトル, ブランチ名, コミットメッセージ, 命名, 生成",
+        plugins: "拡張機能, アドオン, インストール, 信頼済みソース",
+        projects: "リポジトリ, スクリプト, paseo.json, プロジェクト設定",
+        workspaces: "セッション, アーカイブ, マージ済み, 自動アーカイブ, クリーンアップ",
+        linkedAccounts: "GitHub, gh, アカウント, ログイン, フォージ, プルリクエスト, Jira, 計画",
+        host: "概要, デーモン, 再起動, 更新, バージョン, ホストを削除, 色, バッジ, 危険な操作",
+        connections: "リレー, 直接, SSH, アドレス, ポート, リモート",
+        pairDevice: "スマートフォン, モバイル, QR コード, ペアリング, デバイスを連携",
+        browser:
+          "ウェブ, スタートページ, ストリーミング, Cookie, パスワード, 閲覧データ, インポート",
+        terminals: "シェル, ターミナルプロファイル, フック, ターミナルエージェント, アクティビティ",
+        integrations: "CLI, コマンドライン, インストール, PATH",
+        permissions: "マイク, アクセス, macOS, プライバシー",
+        diagnostics: "デバッグ, ログ, 音声テスト, 旧レンダラー, トラブルシューティング, レポート",
+        about: "バージョン, アップデート, 新機能, リリースチャンネル, ベータ, コミュニティ",
+      },
+    },
+    linkedAccounts: {
+      github: {
+        title: "GitHub",
+        info: "このホストにある gh のログインです。プロジェクトがどのアカウントで push するかは、そのプロジェクトの設定で選びます。",
+        loading: "アカウントを読み込み中...",
+        offline: "GitHub のログインを見るにはこのホストに接続してください",
+      },
+    },
     hostSections: {
       projects: "プロジェクト",
       connections: "接続",
@@ -2213,6 +2259,7 @@ export const ja: TranslationResources = {
       usage: "使用状況",
       terminals: "ターミナル",
       plugins: "プラグイン",
+      linkedAccounts: "連携アカウント",
       host: "概要",
     },
     systemOne: en.settings.systemOne,
@@ -2445,6 +2492,7 @@ export const ja: TranslationResources = {
       },
     },
     shortcuts: {
+      noMatches: "一致するショートカットはありません",
       dialogTitle: "ショートカット",
       searchPlaceholder: "ショートカットを検索",
       unavailableOnMobile: "キーボードショートカットはデスクトップでのみ利用できます",

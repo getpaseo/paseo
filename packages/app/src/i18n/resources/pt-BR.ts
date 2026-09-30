@@ -2162,7 +2162,9 @@ export const ptBR: TranslationResources = {
     title: "Configurações",
     loading: "Carregando configurações...",
     groups: {
-      app: "App",
+      you: "Você",
+      agents: "Agentes",
+      work: "Trabalho",
       host: "Host",
     },
     hostPicker: {
@@ -2211,6 +2213,50 @@ export const ptBR: TranslationResources = {
       sentDescription: "O PandaOS entregou a notificação ao sistema operacional.",
       sendFailedTitle: "Não foi possível enviar a notificação de teste",
     },
+    search: {
+      placeholder: "Buscar configurações",
+      clear: "Limpar busca",
+      empty: "Nenhuma configuração encontrada",
+      hints: {
+        general:
+          "enviar, enter, interromper, direcionar, fila, idioma, links, URLs de serviço, terminal, histórico",
+        appearance:
+          "tema, modo escuro, modo claro, destaque, cores, fontes, tamanho da fonte, tipografia, densidade, raciocínio, chamadas de ferramenta, barra lateral, cartões, realce de sintaxe",
+        layout: "painel lateral, dividir, explorador, local de abertura, diffs, arquivos",
+        editor: "vim, atalhos de teclado, editor de código",
+        shortcuts: "teclado, teclas de atalho, atalhos, combinações, comandos",
+        notifications: "som, alertas, notificação de teste, permissão",
+        providers:
+          "contas, modelos, Claude, Codex, OpenCode, Copilot, Pi, chave de API, login, provedor personalizado",
+        usage: "cota, limites, créditos, tokens, custos, limite de taxa, plano",
+        agents:
+          "MCP, ferramentas, ferramentas do PandaOS, política de recursos, agendamentos, prompt do sistema, skills, perfis de agente, orquestração",
+        systemOne: "Jev, TypeSafe, roteamento, decisões, confiança",
+        metadata: "títulos, nomes de branch, mensagens de commit, nomenclatura, geração",
+        plugins: "extensões, complementos, instalar, fontes confiáveis",
+        projects: "repositórios, repos, scripts, paseo.json, configurações do projeto",
+        workspaces: "sessões, arquivar, mesclado, arquivamento automático, limpeza",
+        linkedAccounts: "GitHub, gh, contas, login, forge, pull requests, Jira, planejamento",
+        host: "visão geral, daemon, reiniciar, atualizar, versão, remover host, cor, selo, zona de perigo",
+        connections: "relay, direta, SSH, endereço, porta, remoto",
+        pairDevice: "celular, telefone, código QR, pareamento, vincular dispositivo",
+        browser: "web, página inicial, streaming, cookies, senhas, dados de navegação, importar",
+        terminals: "shell, perfis de terminal, hooks, agentes de terminal, atividade",
+        integrations: "CLI, linha de comando, instalar, PATH",
+        permissions: "microfone, acesso, macOS, privacidade",
+        diagnostics:
+          "depuração, logs, teste de áudio, renderizador legado, solução de problemas, relatório",
+        about: "versão, atualizações, novidades, canal de lançamento, beta, comunidade",
+      },
+    },
+    linkedAccounts: {
+      github: {
+        title: "GitHub",
+        info: "Os logins do gh neste host. Escolha com qual deles um projeto faz push nas configurações desse projeto.",
+        loading: "Carregando contas...",
+        offline: "Conecte-se a este host para ver os logins do GitHub",
+      },
+    },
     hostSections: {
       projects: "Projetos",
       connections: "Conexões",
@@ -2223,6 +2269,7 @@ export const ptBR: TranslationResources = {
       usage: "Uso",
       terminals: "Terminais",
       plugins: "Plugins",
+      linkedAccounts: "Contas vinculadas",
       host: "Visão geral",
     },
     systemOne: en.settings.systemOne,
@@ -2457,6 +2504,7 @@ export const ptBR: TranslationResources = {
       },
     },
     shortcuts: {
+      noMatches: "Nenhum atalho encontrado",
       dialogTitle: "Atalhos",
       searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
