@@ -2294,6 +2294,10 @@ export const en = {
         loading: "Loading accounts...",
         offline: "Connect to this host to see its GitHub logins",
       },
+      jira: {
+        title: "Jira",
+        info: "Ticket keys in sessions, branches and pull requests link to this Jira site. Stored on this device.",
+      },
     },
     hostSections: {
       projects: "Projects",
@@ -3311,6 +3315,7 @@ export const en = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "Running",
       planned: "Scheduled",
       done: "Done",

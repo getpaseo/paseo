@@ -6,6 +6,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
+import { JiraSiteSetting } from "@/leitstand/jira-site-setting";
 
 /**
  * Accounts this host acts as toward planning and code hosting. GitHub lists the
@@ -52,7 +53,17 @@ export function HostLinkedAccountsPage({ serverId }: { serverId: string }) {
       >
         <SettingsCard>{body}</SettingsCard>
       </SettingsSection>
-      {/* Integration point: the Jira site setting (leitstand/jira-site-setting.tsx) mounts here as its own section. */}
+      <SettingsSection
+        title={t("settings.linkedAccounts.jira.title")}
+        info={t("settings.linkedAccounts.jira.info")}
+        testID="linked-accounts-jira"
+      >
+        <SettingsCard>
+          <View style={settingsStyles.row}>
+            <JiraSiteSetting />
+          </View>
+        </SettingsCard>
+      </SettingsSection>
     </View>
   );
 }

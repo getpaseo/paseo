@@ -5,6 +5,7 @@ import type { Agent } from "@/stores/session-store";
 import {
   buildLeitstandBoard,
   buildLeitstandSession,
+  formatModelLabel,
   groupRootAgentsByWorkspace,
   projectMonogram,
   resolveScheduleProject,
@@ -337,5 +338,16 @@ describe("projectMonogram and summarizeStack", () => {
       ],
     });
     expect(summarizeStack(session.pullRequests)).toEqual({ merged: 1, total: 2 });
+  });
+});
+
+describe("formatModelLabel", () => {
+  it("names models the way people say them", () => {
+    expect(formatModelLabel("claude-sonnet-5-5")).toBe("Sonnet 5.5");
+    expect(formatModelLabel("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
+    expect(formatModelLabel("gpt-6.1-sol")).toBe("GPT-6.1 Sol");
+    expect(formatModelLabel("openai/gpt-6-luna")).toBe("GPT-6 Luna");
+    expect(formatModelLabel("gpt-5.5")).toBe("GPT-5.5");
+    expect(formatModelLabel("kimi-k2")).toBe("kimi-k2");
   });
 });

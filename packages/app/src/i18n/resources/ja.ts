@@ -2246,6 +2246,10 @@ export const ja: TranslationResources = {
         loading: "アカウントを読み込み中...",
         offline: "GitHub のログインを見るにはこのホストに接続してください",
       },
+      jira: {
+        title: "Jira",
+        info: "セッション、ブランチ、プルリクエスト内のチケットキーはこの Jira サイトにリンクされます。このデバイスに保存されます。",
+      },
     },
     hostSections: {
       projects: "プロジェクト",
@@ -3083,6 +3087,7 @@ export const ja: TranslationResources = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "実行中",
       planned: "予定",
       done: "完了",

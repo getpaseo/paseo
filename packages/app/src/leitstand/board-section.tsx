@@ -166,6 +166,9 @@ function cardStyle({ pressed, hovered }: PressableStateCallbackType & { hovered?
   return [styles.card, (hovered || pressed) && styles.cardActive];
 }
 
+// The card is a glance, not the agent list; the session itself has every tab.
+const MAX_AGENT_CHIPS = 3;
+
 function SessionCard({ session }: { session: LeitstandSession }) {
   const { t } = useTranslation();
   const open = useCallback(() => {
@@ -188,9 +191,11 @@ function SessionCard({ session }: { session: LeitstandSession }) {
         ) : null}
         <StatusGlyph name={glyphForBucket(session.bucket)} size={14} />
       </View>
-      <Text style={styles.context} numberOfLines={1}>
-        {session.context}
-      </Text>
+      {session.context ? (
+        <Text style={styles.context} numberOfLines={1}>
+          {session.context}
+        </Text>
+      ) : null}
       <View style={styles.meta}>
         {stack.total > 1 ? (
           <View style={styles.metaItem}>
@@ -204,13 +209,22 @@ function SessionCard({ session }: { session: LeitstandSession }) {
           <ExternalLink href={linkedPr.url} label={`#${linkedPr.number}`} testID={`${testID}-pr`} />
         ) : null}
         <AgeText date={session.since} />
-        <JiraTags keys={session.jiraKeys} testID={testID} />
       </View>
+      {session.jiraKeys.length > 0 ? (
+        <View style={styles.jira}>
+          <JiraTags keys={session.jiraKeys} testID={testID} />
+        </View>
+      ) : null}
       {session.agents.length > 0 ? (
         <View style={styles.agents}>
-          {session.agents.map((agent) => (
+          {session.agents.slice(0, MAX_AGENT_CHIPS).map((agent) => (
             <AgentChip key={agent.id} agent={agent} />
           ))}
+          {session.agents.length > MAX_AGENT_CHIPS ? (
+            <Text style={styles.mono}>
+              {t("leitstand.board.moreAgents", { count: session.agents.length - MAX_AGENT_CHIPS })}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </Pressable>
@@ -343,6 +357,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1.5],
+  },
+  jira: {
+    marginTop: theme.spacing[1],
   },
   agents: {
     flexDirection: "row",

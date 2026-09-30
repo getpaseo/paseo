@@ -318,6 +318,7 @@ describe("deriveLeitstandMood", () => {
     expect(deriveLeitstandMood({ items: ask.items, runningAgentCount: 3 })).toBe("ask");
     const finished = inbox({ sessions: [session({ bucket: "attention" })] });
     expect(deriveLeitstandMood({ items: finished.items, runningAgentCount: 1 })).toBe("run");
+    expect(deriveLeitstandMood({ items: finished.items, runningAgentCount: 0 })).toBe("ask");
     expect(deriveLeitstandMood({ items: [], runningAgentCount: 0 })).toBe("sleep");
   });
 });

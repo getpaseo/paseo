@@ -2266,6 +2266,10 @@ export const fr: TranslationResources = {
         loading: "Chargement des comptes...",
         offline: "Connectez-vous à cet hôte pour voir ses connexions GitHub",
       },
+      jira: {
+        title: "Jira",
+        info: "Les clés de tickets des sessions, branches et pull requests renvoient vers ce site Jira. Enregistré sur cet appareil.",
+      },
     },
     hostSections: {
       projects: "Projets",
@@ -3116,6 +3120,7 @@ export const fr: TranslationResources = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "En cours",
       planned: "Planifié",
       done: "Terminé",

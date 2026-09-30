@@ -285,5 +285,7 @@ export function deriveLeitstandMood(input: {
 }): PandaMood {
   if (input.items.some((item) => ERROR_KINDS.has(item.kind))) return "err";
   if (input.items.some((item) => ASK_KINDS.has(item.kind))) return "ask";
-  return input.runningAgentCount > 0 ? "run" : "sleep";
+  if (input.runningAgentCount > 0) return "run";
+  // Sleeping means nothing needs you, so an unread result keeps the paw up.
+  return input.items.length > 0 ? "ask" : "sleep";
 }

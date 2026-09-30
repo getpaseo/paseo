@@ -99,7 +99,7 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
       </View>
       {count === 0 ? (
         <View style={styles.empty} testID="leitstand-inbox-empty">
-          <LeitstandPanda mood="sleep" size={48} />
+          <LeitstandPanda mood="sleep" size={64} />
           <View style={styles.emptyText}>
             <Text style={styles.emptyTitle}>{t("leitstand.inbox.empty")}</Text>
             <Text style={styles.reason}>{t("leitstand.inbox.emptyHint")}</Text>

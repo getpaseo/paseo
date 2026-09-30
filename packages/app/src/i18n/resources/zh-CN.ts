@@ -2197,6 +2197,10 @@ export const zhCN: TranslationResources = {
         loading: "正在加载账号...",
         offline: "连接到此主机以查看其 GitHub 登录",
       },
+      jira: {
+        title: "Jira",
+        info: "会话、分支和拉取请求中的工单编号会链接到此 Jira 站点。仅保存在此设备上。",
+      },
     },
     hostSections: {
       projects: "项目",
@@ -3014,6 +3018,7 @@ export const zhCN: TranslationResources = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "运行中",
       planned: "已计划",
       done: "已完成",

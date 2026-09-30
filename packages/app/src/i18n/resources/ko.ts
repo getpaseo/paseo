@@ -2231,6 +2231,10 @@ export const ko: TranslationResources = {
         loading: "계정을 불러오는 중...",
         offline: "GitHub 로그인을 보려면 이 호스트에 연결하세요",
       },
+      jira: {
+        title: "Jira",
+        info: "세션, 브랜치, 풀 리퀘스트의 티켓 키가 이 Jira 사이트로 연결됩니다. 이 기기에 저장됩니다.",
+      },
     },
     hostSections: {
       projects: "프로젝트",
@@ -3064,6 +3068,7 @@ export const ko: TranslationResources = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "실행 중",
       planned: "예약됨",
       done: "완료",

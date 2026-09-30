@@ -2264,6 +2264,10 @@ export const ru: TranslationResources = {
         loading: "Загрузка аккаунтов...",
         offline: "Подключитесь к этому хосту, чтобы увидеть его входы в GitHub",
       },
+      jira: {
+        title: "Jira",
+        info: "Ключи задач в сессиях, ветках и пул-реквестах ведут на этот сайт Jira. Хранится на этом устройстве.",
+      },
     },
     hostSections: {
       projects: "Проекты",
@@ -3116,6 +3120,7 @@ export const ru: TranslationResources = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "Работает",
       planned: "Запланировано",
       done: "Готово",

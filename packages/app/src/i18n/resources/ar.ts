@@ -2211,6 +2211,10 @@ export const ar: TranslationResources = {
         loading: "جارٍ تحميل الحسابات...",
         offline: "اتصل بهذا المضيف لعرض حسابات GitHub الخاصة به",
       },
+      jira: {
+        title: "Jira",
+        info: "ترتبط مفاتيح التذاكر في الجلسات والفروع وطلبات الدمج بموقع Jira هذا. يُحفظ على هذا الجهاز.",
+      },
     },
     hostSections: {
       projects: "المشاريع",
@@ -3039,6 +3043,7 @@ export const ar: TranslationResources = {
       },
     },
     board: {
+      moreAgents: "+{{count}}",
       running: "قيد التشغيل",
       planned: "مجدول",
       done: "منتهٍ",

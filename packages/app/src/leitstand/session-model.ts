@@ -37,8 +37,8 @@ export interface LeitstandSession {
   projectRootPath: string | null;
   name: string;
   branch: string | null;
-  /** Branch, or the workspace directory when there is none. */
-  context: string;
+  /** The checked-out branch; a directory path says nothing a card title does not. */
+  context: string | null;
   bucket: SidebarStateBucket;
   since: Date | null;
   agents: LeitstandAgent[];
@@ -63,13 +63,30 @@ function agentLifecycleStatus(agent: Agent): Agent["status"] {
   return agent.status === "running" ? "idle" : agent.status;
 }
 
+const CLAUDE_MODEL = /^claude-(haiku|sonnet|opus|fable)-(\d+)-(\d+)(?:-\d{8})?$/;
+const GPT_MODEL = /^gpt-(\d+(?:\.\d+)?)(?:-([a-z]+))?$/;
+
+/** Model ids as people say them: "claude-sonnet-5-5" is Sonnet 5.5, "gpt-6.1-sol" GPT-6.1 Sol. */
+export function formatModelLabel(modelId: string): string {
+  const id = modelId.slice(modelId.lastIndexOf("/") + 1);
+  const claude = CLAUDE_MODEL.exec(id);
+  if (claude) return `${capitalize(claude[1]!)} ${claude[2]}.${claude[3]}`;
+  const gpt = GPT_MODEL.exec(id);
+  if (gpt) return gpt[2] ? `GPT-${gpt[1]} ${capitalize(gpt[2])}` : `GPT-${gpt[1]}`;
+  return id;
+}
+
+function capitalize(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
 function toLeitstandAgent(agent: Agent): LeitstandAgent {
   const permission = agent.pendingPermissions[0];
   return {
     id: agent.id,
     title: agent.title,
     provider: agent.provider,
-    model: agent.model,
+    model: agent.model ? formatModelLabel(agent.model) : null,
     bucket: deriveSidebarStateBucket({
       status: agentLifecycleStatus(agent),
       pendingPermissionCount: agent.pendingPermissions.length,
@@ -152,7 +169,7 @@ export function buildLeitstandSession(input: {
     projectRootPath: entry.projectRootPath ?? null,
     name: entry.name,
     branch: entry.currentBranch,
-    context: entry.currentBranch ?? entry.workspaceDirectoryLabel,
+    context: entry.currentBranch,
     bucket: entry.statusBucket,
     since: entry.statusEnteredAt,
     agents: [...input.agents],

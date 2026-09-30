@@ -27,7 +27,7 @@ export function LeitstandScreen({ state }: { state: LeitstandSessionsState }) {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={styles.head}>
           <View style={styles.brand} testID={`leitstand-panda-${mood}`}>
-            <LeitstandPanda mood={mood} size={36} />
+            <LeitstandPanda mood={mood} size={32} />
             <Text style={styles.title} accessibilityRole="header">
               {t("leitstand.title")}
             </Text>
