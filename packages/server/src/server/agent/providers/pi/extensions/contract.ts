@@ -48,6 +48,8 @@ export interface PiExtensionUiReply {
 
 export interface PiExtensionSession {
   mapToolCall?(call: PiExtensionToolCall): PiExtensionToolMapping | undefined;
+  mapRuntimeNotification?(message: string): PiExtensionCustomMapping | undefined;
+  poll?(): PiExtensionCustomMapping | undefined;
   mapCustomMessage?(
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): PiExtensionCustomMapping | undefined;

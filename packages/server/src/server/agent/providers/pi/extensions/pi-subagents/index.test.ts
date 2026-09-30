@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createPiExtensionHost } from "../index.js";
 import {
   parseToolArgs,
@@ -27,7 +30,63 @@ function mapToolDetail(toolCall: PiTrackedToolCall, result: PiToolResult) {
   return mapping(toolCall, result)?.detail;
 }
 
+function hasChildTimeline(events: AgentStreamEvent[]) {
+  return events.some(
+    (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+  );
+}
+
+function hasCompletedChild(events: AgentStreamEvent[]) {
+  return events.some(
+    (event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.status === "completed",
+  );
+}
+
 describe("pi-subagents adapter", () => {
+  test("follows async status and transcript without bg_wait", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-pi-async-"));
+    const file = join(dir, "child.jsonl");
+    const received: AgentStreamEvent[] = [];
+    const host = createPiExtensionHost();
+    try {
+      host.follow((event) => received.push(event));
+      host.mapToolCall({
+        callId: "call-1",
+        toolName: "subagent",
+        args: { agent: "scout", task: "Inspect", async: true },
+        status: "completed",
+        result: {
+          details: { mode: "single", runId: "run-1", asyncId: "run-1", asyncDir: dir, results: [] },
+        },
+      });
+      await writeFile(
+        file,
+        '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"BEGIN"}]}}\n',
+      );
+      await writeFile(
+        join(dir, "status.json"),
+        JSON.stringify({
+          state: "running",
+          steps: [{ agent: "scout", status: "running", sessionFile: file }],
+        }),
+      );
+      await expect.poll(() => hasChildTimeline(received)).toBe(true);
+      await writeFile(
+        join(dir, "status.json"),
+        JSON.stringify({
+          state: "complete",
+          steps: [{ agent: "scout", status: "complete", sessionFile: file }],
+        }),
+      );
+      await expect.poll(() => hasCompletedChild(received)).toBe(true);
+    } finally {
+      host.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("maps completed subagent calls with task input to sub-agent detail", () => {
     const toolCall = parseToolArgs("subagent", {
       agent: "reviewer",

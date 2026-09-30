@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import type { PiExtension, PiExtensionToolCall, PiExtensionToolMapping } from "../contract.js";
 
@@ -27,16 +29,44 @@ const Details = z
     mode: z.string(),
     runId: z.string().optional(),
     asyncId: z.string().optional(),
+    asyncDir: z.string().trim().min(1).optional(),
     results: z.array(Row),
     completions: z.array(Completion).optional(),
   })
   .passthrough();
+const AsyncStatus = z
+  .object({
+    state: z.string(),
+    steps: z.array(
+      z
+        .object({
+          agent: z.string().trim().min(1),
+          status: z.string().optional(),
+          sessionFile: z.string().trim().min(1).optional(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+function asyncChildStatus(runState: string, stepStatus?: string) {
+  if (!["complete", "failed", "stopped"].includes(runState)) return "running";
+  if (runState === "stopped" || stepStatus === "stopped") return "canceled";
+  if (runState === "failed" || stepStatus === "failed" || stepStatus === "error") return "failed";
+  return "completed";
+}
 
 export const piSubagents: PiExtension = {
   id: "pi-subagents",
   createSession: () => {
     const callsByRun = new Map<string, string>();
     const readSessions = new Set<string>();
+    const asyncRuns = new Map<string, { owner: string; dir: string }>();
+    const rememberAsyncRun = (details: z.infer<typeof Details>, call: PiExtensionToolCall) => {
+      if (details.runId && details.asyncDir && call.status !== "failed") {
+        asyncRuns.set(details.runId, { owner: call.callId, dir: details.asyncDir });
+      }
+    };
     const collectRows = (
       owner: string,
       rows: z.infer<typeof Row>[],
@@ -109,7 +139,8 @@ export const piSubagents: PiExtension = {
           ? { detail, subagents: [{ ...base, status: "failed" as const }] }
           : { detail };
       if (details.data.runId) callsByRun.set(details.data.runId, call.callId);
-      if (details.data.results.length === 0 && (details.data.asyncId || args.data.async))
+      if (details.data.results.length === 0 && (details.data.asyncId || args.data.async)) {
+        rememberAsyncRun(details.data, call);
         return {
           detail,
           subagents: [
@@ -119,6 +150,7 @@ export const piSubagents: PiExtension = {
             },
           ],
         };
+      }
       if (details.data.results.length === 0 && call.status === "failed")
         return { detail, subagents: [{ ...base, status: "failed" as const }] };
       return {
@@ -131,6 +163,41 @@ export const piSubagents: PiExtension = {
         if (call.toolName === "bg_wait") return mapWait(call);
         if (call.toolName === "subagent") return mapSpawn(call);
         return undefined;
+      },
+      poll() {
+        const subagents: NonNullable<PiExtensionToolMapping["subagents"]> = [];
+        const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
+        for (const [runId, run] of asyncRuns) {
+          let raw: unknown;
+          try {
+            raw = JSON.parse(readFileSync(join(run.dir, "status.json"), "utf8"));
+          } catch {
+            continue;
+          }
+          const parsed = AsyncStatus.safeParse(raw);
+          if (!parsed.success) continue;
+          const terminal = ["complete", "failed", "stopped"].includes(parsed.data.state);
+          for (const [index, step] of parsed.data.steps.entries()) {
+            const id = parsed.data.steps.length === 1 ? run.owner : `${run.owner}:${index}`;
+            const status = asyncChildStatus(parsed.data.state, step.status);
+            subagents.push({ type: "upsert", id, title: step.agent, status });
+            if (step.sessionFile && !readSessions.has(step.sessionFile)) {
+              readSessions.add(step.sessionFile);
+              childSessions.push({ id, file: step.sessionFile });
+            }
+          }
+          if (terminal) {
+            if (parsed.data.steps.length === 0) {
+              subagents.push({
+                type: "upsert",
+                id: run.owner,
+                status: parsed.data.state === "complete" ? "completed" : "failed",
+              });
+            }
+            asyncRuns.delete(runId);
+          }
+        }
+        return subagents.length || childSessions.length ? { subagents, childSessions } : undefined;
       },
     };
   },

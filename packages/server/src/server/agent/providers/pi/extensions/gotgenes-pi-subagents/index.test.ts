@@ -3,8 +3,47 @@ import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import { streamPiHistory } from "../../history-mapper.js";
+import { GOTGENES_CHILD_SESSION_MARKER } from "./runtime-bridge.js";
 
 describe("@gotgenes/pi-subagents adapter", () => {
+  test("accepts a live child path before or after the spawn result", () => {
+    for (const early of [true, false]) {
+      const host = createPiExtensionHost();
+      const marker = `${GOTGENES_CHILD_SESSION_MARKER} ${JSON.stringify({ agentId: "native-1", file: "/tmp/child.jsonl" })}`;
+      if (early) expect(host.mapRuntimeNotification(marker)?.subagents).toEqual([]);
+      const spawn = host.mapToolCall({
+        callId: "call-1",
+        toolName: "subagent",
+        args: { subagent_type: "Explore", prompt: "Inspect" },
+        status: "completed",
+        result: { details: { agentId: "native-1", status: "background" } },
+      });
+      const path = early
+        ? spawn?.childSessions
+        : host.mapRuntimeNotification(marker)?.childSessions;
+      expect(path).toEqual([{ id: "call-1", file: "/tmp/child.jsonl" }]);
+    }
+  });
+
+  test("accepts a running subagent-update without a status field", () => {
+    const host = createPiExtensionHost();
+    host.mapToolCall({
+      callId: "call-1",
+      toolName: "subagent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: { details: { agentId: "native-1", status: "background" } },
+    });
+    const update = host.mapCustomMessage({
+      role: "custom",
+      customType: "subagent-update",
+      content: "progress",
+      details: { id: "native-1", description: "Inspect", message: "progress" },
+    });
+    expect(update?.subagents).toEqual([
+      { type: "upsert", id: "call-1", description: "Inspect", status: "running" },
+    ]);
+  });
   test("maps captured foreground lifecycle live and on replay", async () => {
     const events = await verifySubagentFixture(
       readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url)),
