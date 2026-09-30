@@ -1954,6 +1954,34 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("completes the advisor server tool call and hides its encrypted result", async () => {
+    const session = await createSessionForTest();
+    try {
+      // The transcript shape Claude Code writes: both blocks in one assistant message.
+      const events = session.translateMessageToEvents({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "server_tool_use", id: "srvtoolu_advisor_1", name: "advisor", input: {} },
+            {
+              type: "advisor_tool_result",
+              tool_use_id: "srvtoolu_advisor_1",
+              content: { type: "advisor_redacted_result", encrypted_content: "ErZBCioIFBgC" },
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const calls = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(calls.at(-1)).toMatchObject({ callId: "srvtoolu_advisor_1", status: "completed" });
+      expect(JSON.stringify(calls)).not.toContain("ErZBCioIFBgC");
+    } finally {
+      await session.close();
+    }
+  });
+
   async function collectStreamEvents(session: AgentSession, prompt = "turn") {
     const events: AgentStreamEvent[] = [];
     for await (const event of streamSession(session, prompt)) {

@@ -697,6 +697,17 @@ function toBase64ImageOutput(block: unknown): ProviderImageOutput | null {
 // reach coerceToolResultContentToString, which JSON.stringifies the whole array — dumping base64
 // into the tool output. We pull those blocks out to render them as image markdown and leave a
 // "[image]" placeholder so image-only results still produce non-empty output.
+const REDACTED_TOOL_RESULT_TEXT = "Answered privately; only the model can read the response.";
+
+// Redacted results (the advisor's) carry an encrypted blob that is useless to show.
+function withoutRedactedContent(block: ClaudeContentChunk): ClaudeContentChunk {
+  const content = toObjectRecord(block.content);
+  if (typeof content?.type !== "string" || !content.type.endsWith("_redacted_result")) {
+    return block;
+  }
+  return { ...block, content: REDACTED_TOOL_RESULT_TEXT };
+}
+
 function splitClaudeToolResultImages(content: unknown): {
   images: ProviderImageOutput[];
   text: unknown;
@@ -5210,6 +5221,11 @@ class ClaudeAgentSession implements AgentSession {
         this.handleToolResult(block, context.items);
         break;
       default:
+        // Server tools keep adding result types (advisor_tool_result, …); an unlisted one
+        // must still close its call, or the app shows a loading skeleton forever.
+        if (typeof block.type === "string" && block.type.endsWith("_tool_result")) {
+          this.handleToolResult(withoutRedactedContent(block), context.items);
+        }
         break;
     }
   }
