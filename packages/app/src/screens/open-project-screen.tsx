@@ -6,7 +6,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { FolderOpen, Inbox, Plug, Smartphone } from "@/components/icons/ui-icons";
 import { PandaOSLogo } from "@/components/icons/pandaos-logo";
-import { CommunityLinks } from "@/components/community-links";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
@@ -102,9 +101,6 @@ export function OpenProjectScreen() {
             />
           ) : null}
         </View>
-      </View>
-      <View style={styles.communityRow}>
-        <CommunityLinks />
       </View>
       <PairDeviceModal
         serverId={localServerId ?? ""}
@@ -236,18 +232,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     lineHeight: 18,
-  },
-  communityRow: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: {
-      xs: HEADER_INNER_HEIGHT_MOBILE + HEADER_TOP_PADDING_MOBILE + theme.spacing[2],
-      md: HEADER_INNER_HEIGHT + theme.spacing[2],
-    },
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 0,
   },
 }));

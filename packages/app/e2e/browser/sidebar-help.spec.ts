@@ -3,10 +3,8 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { openSettingsSection } from "../support/helpers/settings";
 import { openWhatsNew, release, serveChangelog } from "../support/helpers/changelog";
 
-const DISCORD_DESTINATION =
-  /^https:\/\/(?:discord\.gg\/jz8T2uahpH|discord\.com\/invite\/jz8T2uahpH)(?:[/?#]|$)/;
 const GITHUB_ISSUE_DESTINATION =
-  /^https:\/\/github\.com\/(?:getpaseo\/paseo\/issues\/new(?:\/choose)?(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fgetpaseo%2Fpaseo%2Fissues%2Fnew$)/;
+  /^https:\/\/github\.com\/(?:marushan49\/pandaos\/issues\/new(?:\/choose)?(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fmarushan49%2Fpandaos%2Fissues%2Fnew$)/;
 const CHANGELOG_DESTINATION = /^https:\/\/paseo\.sh\/changelog(?:[/?#]|$)/;
 // The name and the version are separate cells of a key/value row, so they meet with no space
 // between them in the row's text content.
@@ -64,9 +62,6 @@ test("opens troubleshooting and support destinations", async ({ page }) => {
   });
 
   await test.step("opens support pages", async () => {
-    await openHelpMenu(page);
-    await expectExternalPage(page, "sidebar-help-discord", DISCORD_DESTINATION);
-
     await openHelpMenu(page);
     await expectExternalPage(page, "sidebar-help-github", GITHUB_ISSUE_DESTINATION);
   });

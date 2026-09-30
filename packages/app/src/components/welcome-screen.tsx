@@ -1,16 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, ScrollView } from "react-native";
-import { useRouter, type Href } from "expo-router";
+import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import {
-  QrCode,
-  Link2,
-  ClipboardPaste,
-  Settings,
-  Terminal,
-  Paperclip,
-} from "@/components/icons/ui-icons";
+import { QrCode, Link2, ClipboardPaste, Settings, Terminal } from "@/components/icons/ui-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
 import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
@@ -190,9 +183,6 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const handleOpenSettings = useCallback(() => {
     router.push("/settings");
   }, [router]);
-  const handleOpenPaperclip = useCallback(() => {
-    router.push("/paperclip" as Href);
-  }, [router]);
 
   const handleOpenDirect = useCallback(() => setIsDirectOpen(true), []);
   const handleCloseDirect = useCallback(() => setIsDirectOpen(false), []);
@@ -305,16 +295,6 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
             testID="welcome-open-settings"
           >
             {t("onboarding.actions.settings")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={Paperclip}
-            onPress={handleOpenPaperclip}
-            style={styles.settingsButton}
-            testID="welcome-open-paperclip"
-          >
-            {t("onboarding.actions.paperclip")}
           </Button>
         </View>
         <Text style={styles.versionLabel}>{appVersionText}</Text>
