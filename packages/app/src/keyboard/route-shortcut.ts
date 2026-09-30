@@ -193,9 +193,10 @@ export function routeKeyboardShortcut(
 ): ShortcutAction {
   const passthrough = PASSTHROUGH_DISPATCH[input.action];
   if (passthrough) {
+    // Esc leaves the full-screen pages that have no agent to interrupt.
     if (
       input.action === "agent.interrupt" &&
-      ctx.pathname.startsWith("/settings") &&
+      (ctx.pathname.startsWith("/settings") || isLeitstandPathname(ctx.pathname)) &&
       !ctx.isMobile
     ) {
       return { kind: "navigate-last-workspace" };

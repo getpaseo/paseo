@@ -69,6 +69,15 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
   });
 
+  it("leaves the desktop dashboard for the last session on Escape", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "agent.interrupt", payload: null },
+        makeCtx({ pathname: "/dashboard" }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
+  });
+
   it("keeps agent interrupt behavior on compact settings layouts", () => {
     expect(
       routeKeyboardShortcut(
