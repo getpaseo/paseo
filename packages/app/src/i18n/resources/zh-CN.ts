@@ -3032,6 +3032,8 @@ export const zhCN: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} 个会话",
+      topicSessions_other: "{{count}} 个会话",
       moreAgents: "+{{count}}",
       running: "运行中",
       planned: "已计划",

@@ -96,6 +96,7 @@ export function useLeitstandSessions(): LeitstandSessionsState {
           entry,
           githubRuntime: workspace?.githubRuntime,
           agents: agentsByServer.get(entry.serverId)?.get(entry.workspaceId) ?? [],
+          topic: workspace?.topic ?? null,
         }),
       );
     }

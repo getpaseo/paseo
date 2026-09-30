@@ -3101,6 +3101,8 @@ export const ja: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} 件のセッション",
+      topicSessions_other: "{{count}} 件のセッション",
       moreAgents: "+{{count}}",
       running: "実行中",
       planned: "予定",

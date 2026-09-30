@@ -11,9 +11,11 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { buildSchedulesRoute } from "@/utils/host-routes";
 import { formatCadence, formatNextRun, resolveScheduleTitle } from "@/utils/schedule-format";
 import {
+  arrangeBoardColumns,
   buildLeitstandBoard,
   summarizeStack,
   type BoardColumnId,
+  type LeitstandBoardEntry,
   type LeitstandAgent,
   type LeitstandSchedule,
   type LeitstandSession,
@@ -124,14 +126,22 @@ function ColumnCards({
   board: ReturnType<typeof buildLeitstandBoard>;
 }) {
   const { t } = useTranslation();
-  const count = board[column].length;
-  if (count === 0) {
-    return <Text style={styles.columnEmpty}>{t(COLUMN_EMPTY_KEY[column])}</Text>;
-  }
+  const empty = <Text style={styles.columnEmpty}>{t(COLUMN_EMPTY_KEY[column])}</Text>;
   if (column === "planned") {
+    if (board.planned.length === 0) return empty;
     return board.planned.map((schedule) => <ScheduleCard key={schedule.key} entry={schedule} />);
   }
-  return board[column].map((session) => <SessionCard key={session.key} session={session} />);
+  // A topic sits in the column of its most urgent child, so a column's own sessions can all
+  // have moved into a topic card elsewhere.
+  const entries = arrangeBoardColumns(board)[column];
+  if (entries.length === 0) return empty;
+  return entries.map((entry) =>
+    entry.kind === "session" ? (
+      <SessionCard key={entry.session.key} session={entry.session} />
+    ) : (
+      <TopicCard key={entry.key} entry={entry} />
+    ),
+  );
 }
 
 function FilterChip({
@@ -164,6 +174,59 @@ function FilterChip({
 
 function cardStyle({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) {
   return [styles.card, (hovered || pressed) && styles.cardActive];
+}
+
+function TopicCard({ entry }: { entry: Extract<LeitstandBoardEntry, { kind: "topic" }> }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(true);
+  const toggle = useCallback(() => setExpanded((value) => !value), []);
+  const first = entry.children[0];
+  const testID = `leitstand-topic-${entry.key}`;
+  return (
+    <View style={styles.card} testID={testID}>
+      <View style={styles.cardHead}>
+        {first ? <ProjectTag name={first.projectName} /> : null}
+        <Text style={styles.cardTitle} numberOfLines={2}>
+          {entry.topic.title}
+        </Text>
+        <StatusGlyph name={glyphForBucket(entry.bucket)} size={14} />
+      </View>
+      <Pressable onPress={toggle} accessibilityRole="button" testID={`${testID}-toggle`}>
+        <Text style={styles.context}>
+          {`${expanded ? "▾" : "▸"} ${t("leitstand.board.topicSessions", { count: entry.children.length })}`}
+        </Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.topicChildren}>
+          {entry.children.map((child) => (
+            <TopicChildRow key={child.key} session={child} />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function TopicChildRow({ session }: { session: LeitstandSession }) {
+  const open = useCallback(() => {
+    navigateToWorkspace({ serverId: session.serverId, workspaceId: session.workspaceId });
+  }, [session.serverId, session.workspaceId]);
+  const stack = summarizeStack(session.pullRequests);
+  return (
+    <Pressable
+      onPress={open}
+      style={styles.topicChild}
+      accessibilityRole="button"
+      testID={`leitstand-card-${session.key}`}
+    >
+      <StatusGlyph name={glyphForBucket(session.bucket)} size={12} />
+      <Text style={styles.topicChildName} numberOfLines={1}>
+        {session.name}
+      </Text>
+      {stack.total > 1 ? <StackBar pullRequests={session.pullRequests} /> : null}
+      <AgeText date={session.since} />
+    </Pressable>
+  );
 }
 
 // The card is a glance, not the agent list; the session itself has every tab.
@@ -360,6 +423,27 @@ const styles = StyleSheet.create((theme) => ({
   },
   jira: {
     marginTop: theme.spacing[1],
+  },
+  topicChildren: {
+    marginTop: theme.spacing[1.5],
+    marginLeft: theme.spacing[1.5],
+    paddingLeft: theme.spacing[3],
+    borderLeftWidth: 1,
+    borderStyle: "dashed",
+    borderColor: theme.colors.surface4,
+    gap: theme.spacing[1.5],
+  },
+  topicChild: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  topicChildName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
   },
   agents: {
     flexDirection: "row",

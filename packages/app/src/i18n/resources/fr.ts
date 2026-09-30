@@ -3137,6 +3137,8 @@ export const fr: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} session",
+      topicSessions_other: "{{count}} sessions",
       moreAgents: "+{{count}}",
       running: "En cours",
       planned: "Planifié",

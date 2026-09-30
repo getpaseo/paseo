@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 import type { Agent } from "@/stores/session-store";
 import {
+  arrangeBoardColumns,
   buildLeitstandBoard,
   buildLeitstandSession,
   formatModelLabel,
@@ -349,5 +350,45 @@ describe("formatModelLabel", () => {
     expect(formatModelLabel("openai/gpt-6-luna")).toBe("GPT-6 Luna");
     expect(formatModelLabel("gpt-5.5")).toBe("GPT-5.5");
     expect(formatModelLabel("kimi-k2")).toBe("kimi-k2");
+  });
+});
+
+describe("arrangeBoardColumns", () => {
+  const topic = { id: "top_riesling", title: "Riesling", description: null };
+
+  it("puts a topic once, in the column of its most urgent child, children most urgent first", () => {
+    const phase1 = leitstandSession({
+      key: "p1",
+      bucket: "done",
+      topic,
+      since: new Date("2026-09-29T00:00:00Z"),
+    });
+    const phase2 = leitstandSession({
+      key: "p2",
+      bucket: "needs_input",
+      topic,
+      since: new Date("2026-09-30T09:00:00Z"),
+    });
+    const loose = leitstandSession({
+      key: "x",
+      bucket: "done",
+      since: new Date("2026-09-30T08:00:00Z"),
+    });
+    const columns = arrangeBoardColumns(
+      buildLeitstandBoard({
+        sessions: [phase1, phase2, loose],
+        schedules: [],
+        projectViewKey: null,
+      }),
+    );
+    expect(columns.running).toHaveLength(1);
+    const [card] = columns.running;
+    expect(card?.kind).toBe("topic");
+    if (card?.kind !== "topic") return;
+    expect(card.bucket).toBe("needs_input");
+    expect(card.children.map((child) => child.key)).toEqual(["p2", "p1"]);
+    expect(
+      columns.done.map((item) => (item.kind === "session" ? item.session.key : item.key)),
+    ).toEqual(["x"]);
   });
 });

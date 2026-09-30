@@ -3149,6 +3149,8 @@ export const es: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} sesión",
+      topicSessions_other: "{{count}} sesiones",
       moreAgents: "+{{count}}",
       running: "En marcha",
       planned: "Programado",

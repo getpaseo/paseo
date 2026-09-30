@@ -3119,6 +3119,8 @@ export const ptBR: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} sessão",
+      topicSessions_other: "{{count}} sessões",
       moreAgents: "+{{count}}",
       running: "Em execução",
       planned: "Agendado",

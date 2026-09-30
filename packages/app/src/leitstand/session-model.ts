@@ -4,6 +4,7 @@ import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { deriveSidebarStateBucket, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { extractJiraKeys } from "./jira";
+import type { WorkspaceTopic } from "@getpaseo/protocol/messages";
 
 export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
@@ -41,6 +42,8 @@ export interface LeitstandSession {
   context: string | null;
   bucket: SidebarStateBucket;
   since: Date | null;
+  /** The topic this session is a child of, if any. */
+  topic: WorkspaceTopic | null;
   agents: LeitstandAgent[];
   /** Stack order, bottom first. */
   pullRequests: LeitstandPullRequest[];
@@ -157,6 +160,7 @@ export function buildLeitstandSession(input: {
   entry: SidebarWorkspaceEntry;
   githubRuntime: WorkspaceDescriptor["githubRuntime"];
   agents: readonly LeitstandAgent[];
+  topic?: WorkspaceTopic | null;
 }): LeitstandSession {
   const { entry } = input;
   const pullRequests = selectSessionPullRequests(entry, input.githubRuntime);
@@ -172,6 +176,7 @@ export function buildLeitstandSession(input: {
     context: entry.currentBranch,
     bucket: entry.statusBucket,
     since: entry.statusEnteredAt,
+    topic: input.topic ?? null,
     agents: [...input.agents],
     pullRequests,
     jiraKeys: extractJiraKeys([
@@ -270,5 +275,77 @@ export function summarizeStack(pullRequests: readonly LeitstandPullRequest[]): P
   return {
     merged: pullRequests.filter((pr) => pr.state === "merged").length,
     total: pullRequests.length,
+  };
+}
+
+export type LeitstandBoardEntry =
+  | { kind: "session"; session: LeitstandSession }
+  | {
+      kind: "topic";
+      key: string;
+      topic: WorkspaceTopic;
+      /** Most urgent child first. */
+      children: LeitstandSession[];
+      bucket: SidebarStateBucket;
+      since: Date | null;
+    };
+
+const BUCKET_URGENCY: Record<SidebarStateBucket, number> = {
+  failed: 0,
+  needs_input: 1,
+  running: 2,
+  attention: 3,
+  done: 4,
+};
+
+/**
+ * A topic is one card, in the column of its most urgent child, so a finished phase does not
+ * pull its topic into "done" while another phase still runs.
+ */
+export function arrangeBoardColumns(board: LeitstandBoard): {
+  running: LeitstandBoardEntry[];
+  done: LeitstandBoardEntry[];
+} {
+  const topics = new Map<string, Extract<LeitstandBoardEntry, { kind: "topic" }>>();
+  const loose: LeitstandSession[] = [];
+  for (const session of [...board.running, ...board.done]) {
+    if (!session.topic) {
+      loose.push(session);
+      continue;
+    }
+    const key = `${session.serverId}:${session.topic.id}`;
+    const group = topics.get(key) ?? {
+      kind: "topic" as const,
+      key,
+      topic: session.topic,
+      children: [],
+      bucket: session.bucket,
+      since: session.since,
+    };
+    group.children.push(session);
+    if (BUCKET_URGENCY[session.bucket] < BUCKET_URGENCY[group.bucket])
+      group.bucket = session.bucket;
+    if ((session.since?.getTime() ?? 0) > (group.since?.getTime() ?? 0))
+      group.since = session.since;
+    topics.set(key, group);
+  }
+  const entries: LeitstandBoardEntry[] = [
+    ...loose.map((session) => ({ kind: "session" as const, session })),
+    ...topics.values(),
+  ];
+  for (const group of topics.values()) {
+    group.children.sort(
+      (left, right) => BUCKET_URGENCY[left.bucket] - BUCKET_URGENCY[right.bucket],
+    );
+  }
+  const bucketOf = (entry: LeitstandBoardEntry) =>
+    entry.kind === "session" ? entry.session.bucket : entry.bucket;
+  const sinceOf = (entry: LeitstandBoardEntry) =>
+    (entry.kind === "session" ? entry.session.since : entry.since)?.getTime() ?? 0;
+  const newest = (left: LeitstandBoardEntry, right: LeitstandBoardEntry) =>
+    sinceOf(right) - sinceOf(left);
+  return {
+    running: entries.filter((entry) => RUNNING_BUCKETS.has(bucketOf(entry))).sort(newest),
+    done: entries.filter((entry) => !RUNNING_BUCKETS.has(bucketOf(entry))).sort(newest),
   };
 }

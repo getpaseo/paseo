@@ -3057,6 +3057,8 @@ export const ar: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} جلسات",
+      topicSessions_other: "{{count}} جلسات",
       moreAgents: "+{{count}}",
       running: "قيد التشغيل",
       planned: "مجدول",

@@ -3085,6 +3085,8 @@ export const ko: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "세션 {{count}}개",
+      topicSessions_other: "세션 {{count}}개",
       moreAgents: "+{{count}}",
       running: "실행 중",
       planned: "예약됨",

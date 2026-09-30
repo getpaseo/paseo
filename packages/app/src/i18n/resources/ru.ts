@@ -3134,6 +3134,8 @@ export const ru: TranslationResources = {
       },
     },
     board: {
+      topicSessions_one: "Сессий: {{count}}",
+      topicSessions_other: "Сессий: {{count}}",
       moreAgents: "+{{count}}",
       running: "Работает",
       planned: "Запланировано",

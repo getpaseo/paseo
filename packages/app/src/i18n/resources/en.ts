@@ -3329,6 +3329,8 @@ export const en = {
       },
     },
     board: {
+      topicSessions_one: "{{count}} session",
+      topicSessions_other: "{{count}} sessions",
       moreAgents: "+{{count}}",
       running: "Running",
       planned: "Scheduled",

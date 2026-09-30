@@ -43,6 +43,7 @@ function pr(overrides: Partial<LeitstandPullRequest> = {}): LeitstandPullRequest
 
 function session(overrides: Partial<LeitstandSession> = {}): LeitstandSession {
   return {
+    topic: null,
     key: "srv:ws-1",
     serverId: "srv",
     workspaceId: "ws-1",
