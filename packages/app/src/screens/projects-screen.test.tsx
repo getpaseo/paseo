@@ -20,8 +20,7 @@ const { projectsState, push } = vi.hoisted(() => ({
   push: vi.fn(),
 }));
 
-vi.mock("react-native", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-native")>();
+vi.mock("react-native", () => {
   const passthrough = ({
     children,
     testID,
@@ -68,7 +67,6 @@ vi.mock("react-native", async (importOriginal) => {
   };
 
   return {
-    ...actual,
     View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
       React.createElement("div", { "data-testid": testID }, children),
     Text: ({ children }: { children?: React.ReactNode }) =>
@@ -83,20 +81,25 @@ vi.mock("react-native", async (importOriginal) => {
   };
 });
 
-vi.mock("lucide-react-native", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("lucide-react-native")>();
+vi.mock("lucide-react-native", () => {
   const icon = (name: string) => {
     const Icon = () => React.createElement("span", { "data-icon": name });
     Icon.displayName = name;
     return Icon;
   };
   return {
-    ...actual,
     ChevronRight: icon("ChevronRight"),
     MoreVertical: icon("MoreVertical"),
     ExternalLink: icon("ExternalLink"),
     Pencil: icon("Pencil"),
     FolderGit2: icon("FolderGit2"),
+    Info: icon("Info"),
+    CheckCircle2: icon("CheckCircle2"),
+    AlertTriangle: icon("AlertTriangle"),
+    ArrowLeft: icon("ArrowLeft"),
+    Search: icon("Search"),
+    X: icon("X"),
+    XCircle: icon("XCircle"),
   };
 });
 
