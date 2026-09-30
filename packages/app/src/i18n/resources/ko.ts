@@ -1254,7 +1254,7 @@ export const ko: TranslationResources = {
       failed: "실패",
       attention: "검토 준비됨",
       running: "작업 중",
-      done: "완료",
+      done: "대기 중",
     },
     display: {
       trigger: "표시 설정",

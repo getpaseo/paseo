@@ -1261,7 +1261,7 @@ export const ja: TranslationResources = {
       failed: "失敗",
       attention: "レビュー待ち",
       running: "作業中",
-      done: "完了",
+      done: "待機中",
     },
     display: {
       trigger: "表示設定",

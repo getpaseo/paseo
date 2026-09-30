@@ -60,7 +60,7 @@ describe("buildStatusGroups", () => {
     expect(groups.map((g) => g.bucket)).toEqual(["needs_input", "running", "done"]);
     expect(groups[0]?.label).toBe("Needs input");
     expect(groups[1]?.label).toBe("Working");
-    expect(groups[2]?.label).toBe("Done");
+    expect(groups[2]?.label).toBe("Waiting");
   });
 
   it("omits empty buckets", () => {

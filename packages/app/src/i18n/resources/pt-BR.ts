@@ -1274,7 +1274,7 @@ export const ptBR: TranslationResources = {
       failed: "Com falha",
       attention: "Pronto para revisar",
       running: "Em andamento",
-      done: "Concluído",
+      done: "Aguardando",
     },
     display: {
       trigger: "Preferências de exibição",

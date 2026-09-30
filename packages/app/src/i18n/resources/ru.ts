@@ -1264,7 +1264,7 @@ export const ru: TranslationResources = {
       failed: "С ошибкой",
       attention: "Готово к просмотру",
       running: "В работе",
-      done: "Готово",
+      done: "Ждёт",
     },
     display: {
       trigger: "Настройки отображения",

@@ -1284,7 +1284,7 @@ export const es: TranslationResources = {
       failed: "Con errores",
       attention: "Listo para revisar",
       running: "En curso",
-      done: "Terminado",
+      done: "En espera",
     },
     display: {
       trigger: "Preferencias de visualización",

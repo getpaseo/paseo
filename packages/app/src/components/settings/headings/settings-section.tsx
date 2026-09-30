@@ -1,8 +1,11 @@
-import { useMemo, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SettingsInfoTip } from "./settings-info-tip";
 import { settingsStyles } from "@/styles/settings";
+
+/** The title the settings page already shows; a section with the same name skips its own. */
+export const SettingsPageTitleContext = createContext<string | null>(null);
 
 interface SettingsSectionProps {
   title: string;
@@ -40,6 +43,14 @@ export function SettingsSection({
     () => [settingsStyles.section, flush ? styles.flush : null, style],
     [flush, style],
   );
+  const repeatsPageTitle = useContext(SettingsPageTitleContext) === title;
+  if (repeatsPageTitle && !info && !trailing) {
+    return (
+      <View style={sectionStyle} testID={testID}>
+        <View style={styles.content}>{children}</View>
+      </View>
+    );
+  }
   return (
     <View style={sectionStyle} testID={testID}>
       <View style={styles.header}>

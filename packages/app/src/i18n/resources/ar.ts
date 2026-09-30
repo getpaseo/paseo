@@ -1244,7 +1244,7 @@ export const ar: TranslationResources = {
       failed: "فشل",
       attention: "جاهز للمراجعة",
       running: "قيد العمل",
-      done: "منتهٍ",
+      done: "بانتظارك",
     },
     display: {
       trigger: "تفضيلات العرض",

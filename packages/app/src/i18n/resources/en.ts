@@ -1261,7 +1261,7 @@ export const en = {
       failed: "Failed",
       attention: "Ready to review",
       running: "Working",
-      done: "Done",
+      done: "Waiting",
     },
     display: {
       trigger: "Display preferences",

@@ -1283,7 +1283,7 @@ export const fr: TranslationResources = {
       failed: "En échec",
       attention: "Prêt à relire",
       running: "En cours",
-      done: "Terminé",
+      done: "En attente",
     },
     display: {
       trigger: "Préférences d'affichage",

@@ -19,7 +19,10 @@ import { Buffer } from "buffer";
 import { ChevronRight } from "@/components/icons/ui-icons";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ScreenTitle } from "@/components/headers/screen-title";
-import { SettingsSection } from "@/components/settings/headings/settings-section";
+import {
+  SettingsPageTitleContext,
+  SettingsSection,
+} from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { LayoutSection } from "@/screens/settings/layout/layout-section";
 import {
@@ -512,6 +515,20 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
       </SettingsSection>
       <ConnectedHostsSection clientVersion={appVersion} />
     </>
+  );
+}
+
+function PageTitleScope({
+  header,
+  children,
+}: {
+  header: { title: string } | null | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsPageTitleContext.Provider value={header?.title ?? null}>
+      {children}
+    </SettingsPageTitleContext.Provider>
   );
 }
 
@@ -1223,7 +1240,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <View style={styles.content}>
             {pageTitle}
-            {content}
+            <PageTitleScope header={detailHeader}>{content}</PageTitleScope>
           </View>
         </ScrollView>
         {addHostModals}
@@ -1254,7 +1271,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
             <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
               <View style={styles.content}>
                 {pageTitle}
-                {content}
+                <PageTitleScope header={detailHeader}>{content}</PageTitleScope>
               </View>
             </ScrollView>
           </View>

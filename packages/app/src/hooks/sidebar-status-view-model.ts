@@ -10,7 +10,7 @@ export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   failed: "Failed",
   attention: "Ready to review",
   running: "Working",
-  done: "Done",
+  done: "Waiting",
 };
 
 /** Translation keys for the labels above; the sidebar renders these. */
