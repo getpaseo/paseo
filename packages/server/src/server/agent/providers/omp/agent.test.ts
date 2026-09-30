@@ -9,7 +9,7 @@ import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
-import { resolveOmpProviderParams } from "./provider-config.js";
+import { resolveOmpProviderOptions } from "./provider-config.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
@@ -40,11 +40,11 @@ const ABORTED_TERMINAL_RESPONSE: OmpAgentMessage = {
 };
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
-  expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
+  expect(resolveOmpProviderOptions({}).runtimeOptions).toMatchObject({
     readyTimeoutMs: 20_000,
     rpcTimeoutMs: 60_000,
   });
-  expect(resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams).toMatchObject({
+  expect(resolveOmpProviderOptions({ rpcTimeoutMs: 90_000 }).runtimeOptions).toMatchObject({
     readyTimeoutMs: 90_000,
     rpcTimeoutMs: 90_000,
   });

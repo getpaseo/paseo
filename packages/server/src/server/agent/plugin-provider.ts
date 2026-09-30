@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
-import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
@@ -876,8 +876,6 @@ export class PluginAgentClientRegistry {
   }
 }
 
-const PluginProviderOptionsSchema: z.ZodType<ProviderOptions> = z.record(z.string(), z.json());
-
 function createPluginProviderDefinition(
   registration: ProviderRegistration,
   createClient: RegisteredProviderDefinition["createClient"],
@@ -889,7 +887,6 @@ function createPluginProviderDefinition(
     iconSvg: registration.icon,
     defaultModeId: null,
     modes: [],
-    optionsSchema: PluginProviderOptionsSchema,
     supportsExactMcpPreapproval: true,
     createClient,
   };
@@ -1625,9 +1622,7 @@ function mapSessionConfig(
     mode: config.modeId,
     thinkingOption: config.thinkingOptionId,
     settings: toJsonObject(config.featureValues ?? {}, "provider settings"),
-    providerOptions: config.providerOptions
-      ? toJsonObject(config.providerOptions, "provider options")
-      : undefined,
+    providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,
   };

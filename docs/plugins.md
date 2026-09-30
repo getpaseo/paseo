@@ -431,7 +431,11 @@ need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
 Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
-the opaque `providerOptions` config object.
+the opaque `ProviderSessionConfig.providerOptions` object on `session.open`.
+It contains the provider defaults and per-agent overrides merged by the daemon.
+Validate and apply it inside the provider; core does not know your option shape.
+See [provider options](custom-providers.md#provider-options) for configuration and
+merge semantics.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the

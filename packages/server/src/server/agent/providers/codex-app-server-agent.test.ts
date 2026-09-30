@@ -1164,6 +1164,23 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("provider persistence leaves options owned by the stored agent config", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.createSession(
+      createConfig({ providerOptions: { sandbox_mode: "read-only", approval_policy: "never" } }),
+    );
+    try {
+      await session.startTurn("persist the configured session");
+      await appServer.waitForTurnStart();
+      const handle = session.describePersistence()!;
+      expect(handle.metadata).not.toHaveProperty("providerOptions");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,

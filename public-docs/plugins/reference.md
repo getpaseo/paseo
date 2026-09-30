@@ -288,7 +288,10 @@ effects. Repeat `clientMessageId` on the live user timeline item and publish exa
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
 
 Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
-provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
+provider-private options under `ProviderSessionConfig.providerOptions` on `session.open`.
+This record includes configured defaults and per-agent overrides; validate and apply it in your
+provider. See [Provider options](/docs/sdk/provider-options) for configuration and merge semantics.
+Host tools arrive as MCP servers in the complete
 session config.
 
 Paseo refreshes an agent by closing its current provider session and opening it with current
@@ -603,7 +606,7 @@ type PluginTurnOutcome =
 | `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
 | `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
 | `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Provider-specific validated options                                        |
+| `providerOptions`                             | Opaque provider-specific options                                           |
 | `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
 | `cwd`                                         | Cannot change                                                              |
 | `internal`                                    | Daemon-owned; cannot change through this hook                              |
