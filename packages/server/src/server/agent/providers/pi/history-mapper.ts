@@ -5,6 +5,7 @@ import {
   type PiExtensionHost,
 } from "./extensions/index.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
+import { shouldDisplayPiCustomMessage } from "./custom-message.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -125,7 +126,9 @@ export class PiHistoryMapper {
   ): AgentStreamEvent[] {
     const extensionMapping = this.extensionHost.mapCustomMessage(message);
     const extensionEvents = this.extensionEvents(extensionMapping);
-    const text = getUserMessageText(message.content);
+    const text = shouldDisplayPiCustomMessage(message)
+      ? getUserMessageText(message.content)
+      : null;
     const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
     if (mappedEvent) {
       return [...extensionEvents, mappedEvent];
