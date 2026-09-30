@@ -1,3 +1,4 @@
+import { readTranscriptLastReply } from "./transcript-last-reply.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { TurnRouter } from "../system-one/model-routing.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
@@ -3586,7 +3587,12 @@ export class AgentManager {
 
   /** The stored last reply, read without loading or resuming the agent. */
   async peekLastAssistantMessage(agentId: string): Promise<string | null> {
-    return await this.getLastAssistantMessageFromStores(agentId);
+    if (this.agents.has(agentId)) return await this.getLastAssistantMessageFromStores(agentId);
+    // An unloaded agent's timeline lives only in the provider's own transcript on disk.
+    const durable = await this.durableTimelineStore?.getLastAssistantMessage(agentId);
+    if (durable) return durable;
+    const record = await this.registry?.get(agentId);
+    return await readTranscriptLastReply(record?.persistence ?? null);
   }
 
   private getLastAssistantMessageFromTimeline(
