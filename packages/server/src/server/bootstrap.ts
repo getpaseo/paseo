@@ -1488,6 +1488,17 @@ export async function createPaseoDaemon(
     getUsage: getProviderUsageForRouting,
     listFallbackProviders: () =>
       (daemonConfigStore.get().agentProfiles ?? []).map((profile) => profile.provider),
+    decide: (cwd) =>
+      daemonConfigStore.get().systemOne?.enabled === true &&
+      !isSystemOneExcluded(config.paseoHome, cwd)
+        ? createConfiguredSystemOneDecisionSource(
+            config.paseoHome,
+            daemonConfigStore,
+            () => cwd,
+            "team",
+          )
+        : null,
+    minConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
   });
   await teamService.start();
   daemonConfigStore.onFieldChange("resourcePolicy", (value) => {

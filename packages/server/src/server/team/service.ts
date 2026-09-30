@@ -1,7 +1,8 @@
+import { parseChoiceAnswer, type TypeSafeDecisionSource } from "../browser-tools/jev-client.js";
 import type { ProviderUsage } from "@getpaseo/protocol/messages";
 import { earliestReset, limitedProviders } from "../system-one/usage-limits.js";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import type { Logger } from "pino";
@@ -72,6 +73,16 @@ export interface TeamServiceOptions {
   getUsage?: () => Promise<{ providers: ProviderUsage[] } | null>;
   /** Providers of the configured fallback chain (agent profiles), in order. */
   listFallbackProviders?: () => string[];
+  /** Jev for the decisions that need interpretation; null when Jev is off for this cwd. */
+  decide?: (cwd: string) => TypeSafeDecisionSource | null;
+  minConfidence?: () => number;
+}
+
+export class TeamNotNeededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TeamNotNeededError";
+  }
 }
 
 export interface TeamCallerBinding {
@@ -253,11 +264,28 @@ export class TeamService {
     objective: string;
     cwd?: string;
     packId?: string;
+    /** Skip Jev's "does this need a team" check. */
+    force?: boolean;
   }): Promise<TeamState> {
     const boss = await this.options.agentStorage.get(params.bossAgentId);
     if (!boss) throw new Error(`Boss agent ${params.bossAgentId} not found`);
     if (boss.labels?.[TEAM_ROLE_LABEL]) throw new Error("Team members cannot start teams");
     const cwd = params.cwd ?? boss.cwd;
+    if (!params.force) {
+      const verdict = await this.ask(cwd, { objective: params.objective }, "team-needed", {
+        question: "Does this job need a team, or can one agent do it in one session?",
+        criteria: {
+          single:
+            "A small, contained change one agent finishes in one session without separate test and review.",
+          team: "Several changes, files or steps that benefit from planning, parallel work, testing and review.",
+        },
+      });
+      if (verdict?.choice === "single") {
+        throw new TeamNotNeededError(
+          `Jev thinks this is small enough to do yourself (${Math.round(verdict.confidence * 100)}% sure). Do it directly, or call team_start again with force: true.`,
+        );
+      }
+    }
     const profile = await readProjectProfile(cwd);
     const pack = this.options.packs.get(params.packId ?? profile.workflowPack ?? "software-basic");
     if (!pack)
@@ -395,16 +423,18 @@ export class TeamService {
       role?.workspace === "own-worktree"
         ? await currentBranch((await this.options.agentStorage.get(agentId))?.cwd ?? "")
         : undefined;
+    const judged = team ? await this.judgeReport(team, caller.binding, payload) : null;
+    const applied = judged?.payload ?? payload;
     try {
       const result = await this.store.commit(caller.teamId, (draft) => {
         const binding = draft.bindings[caller.binding.id]!;
-        const events: TeamEventDraft[] = [];
+        const events: TeamEventDraft[] = judged ? [judged.event] : [];
         const target = draft.items[binding.workItemId];
         if (branch && target && binding.phase === target.phase) {
           target.artifacts = target.artifacts.filter((a) => a.kind !== "branch");
           target.artifacts.push({ kind: "branch", ref: branch });
         }
-        const item = applyReport(draft, this.pack(draft.team), binding, payload, events);
+        const item = applyReport(draft, this.pack(draft.team), binding, applied, events);
         return {
           events,
           result: `Report accepted. ${item.title} is now in ${item.phase}. Stop here.`,
@@ -519,6 +549,78 @@ export class TeamService {
       return { events, result: null };
     });
     void this.dispatchAll();
+  }
+
+  /** One Jev choice question; null when Jev is off, fails, or is not sure enough. */
+  private async ask(
+    cwd: string,
+    state: Record<string, unknown>,
+    kind: string,
+    question: { question: string; criteria: Record<string, string> },
+  ): Promise<{ choice: string; confidence: number } | null> {
+    const source = this.options.decide?.(cwd);
+    if (!source) return null;
+    try {
+      const decision = await source.decide({
+        state,
+        questions: {
+          [kind]: { type: "choice", instructions: question.question, criteria: question.criteria },
+        },
+      });
+      const answer = parseChoiceAnswer(decision.answers[kind], Object.keys(question.criteria));
+      const floor = this.options.minConfidence?.() ?? 0.5;
+      return answer.confidence >= floor
+        ? { choice: answer.choice, confidence: answer.confidence }
+        : null;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, kind },
+        "Jev decision failed; keeping the deterministic route",
+      );
+      return null;
+    }
+  }
+
+  /** Jev routes a report whose outcome the pack wants judged; facts are never asked. */
+  private async judgeReport(
+    state: TeamState,
+    binding: Binding,
+    payload: TeamReportPayload,
+  ): Promise<{ payload: TeamReportPayload; event: TeamEventDraft } | null> {
+    const item = state.items[binding.workItemId];
+    if (!item || item.phase !== binding.phase) return null;
+    const judge = boardOf(this.pack(state.team), item).phases[item.phase]?.judge;
+    if (!judge || payload.outcome !== judge.outcome) return null;
+    const verdict = await this.ask(
+      state.team.cwd,
+      {
+        objective: item.objective,
+        acceptanceCriteria: item.acceptanceCriteria.map((c) => c.text),
+        report: payload.summary,
+      },
+      "judge",
+      judge,
+    );
+    if (!verdict) return null;
+    const route = judge.routes[verdict.choice];
+    if (!route) return null;
+    const event: TeamEventDraft = {
+      type: "jev.decision",
+      actor: { type: "runtime", id: "jev" },
+      workItemId: item.id,
+      text: `Jev: ${verdict.choice} (${Math.round(verdict.confidence * 100)}%) → ${route === "@boss" ? "goes to the boss" : route}`,
+      data: { question: judge.question, choice: verdict.choice, confidence: verdict.confidence },
+    };
+    if (route === "@boss") {
+      return {
+        payload: {
+          ...payload,
+          needs: { kind: "human", text: `${verdict.choice}: ${payload.summary}` },
+        },
+        event,
+      };
+    }
+    return { payload: { ...payload, outcome: route }, event };
   }
 
   /**
@@ -885,6 +987,15 @@ export class TeamService {
       );
     }
     if (role.skills.length) lines.push("", `## Skills to use`, role.skills.join(", "));
+    if (role.evidence && item.board === "item") {
+      const file = await this.writeEvidence(state, item);
+      lines.push(
+        "",
+        "## Review inputs",
+        `- Evidence file: ${file}`,
+        `- Base branch: ${state.team.baseBranch ?? "main"}`,
+      );
+    }
     lines.push(
       "",
       "## Rules",
@@ -893,6 +1004,30 @@ export class TeamService {
       "- You cannot start other agents. Everything you hand on goes through team_report.",
     );
     return lines.join("\n");
+  }
+
+  private async writeEvidence(state: TeamState, item: WorkItem): Promise<string> {
+    const dir = join(this.options.storageRoot, "teams", state.team.id, "evidence");
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, `${item.id}.md`);
+    const body = [
+      `# ${item.title}`,
+      "",
+      "## Team goal",
+      state.team.objective,
+      "",
+      "## Work item",
+      item.objective,
+      "",
+      "## Acceptance criteria",
+      ...item.acceptanceCriteria.map((c) => `- [${c.id}] ${c.text}`),
+      "",
+      "## History",
+      ...item.reports.map((r) => `- ${r.role} (${r.phase}) → ${r.outcome}: ${r.summary}`),
+      "",
+    ].join("\n");
+    await writeFile(file, body);
+    return file;
   }
 
   // ---------------------------------------------------------------- health

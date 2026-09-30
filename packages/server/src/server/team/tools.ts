@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { PaseoToolConfig, PaseoToolResult } from "../agent/tools/types.js";
 import { PlannedItemSchema, TEAM_ROLE_LABEL, TeamReportPayloadSchema } from "./types.js";
-import type { TeamService } from "./service.js";
+import { TeamNotNeededError, type TeamService } from "./service.js";
 
 type RegisterTool = (
   name: string,
@@ -87,16 +87,27 @@ export function registerTeamTools(
           .describe("The full goal with context, constraints and what done means."),
         cwd: z.string().optional(),
         packId: z.string().optional(),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Start the team even when Jev says one agent can do it."),
       },
     },
-    async ({ title, objective, cwd, packId }) => {
-      const state = await teamService.startTeam({
-        bossAgentId: requireCaller(),
-        title,
-        objective,
-        cwd,
-        packId,
-      });
+    async ({ title, objective, cwd, packId, force }) => {
+      let state: Awaited<ReturnType<TeamService["startTeam"]>>;
+      try {
+        state = await teamService.startTeam({
+          bossAgentId: requireCaller(),
+          title,
+          objective,
+          cwd,
+          packId,
+          force,
+        });
+      } catch (error) {
+        if (error instanceof TeamNotNeededError) return text(error.message);
+        throw error;
+      }
       return text(
         `Team ${state.team.id} started with pack ${state.team.packId}. The PO is planning; you will be notified.`,
       );

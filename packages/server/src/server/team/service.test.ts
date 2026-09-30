@@ -314,3 +314,101 @@ describe("provider errors", () => {
     expect(Date.parse(retry.availableAt)).toBe(Date.parse(reset) + 60_000);
   });
 });
+
+describe("Jev decisions", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "pandaos-team-"));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  function jev(answers: Record<string, string>) {
+    return {
+      decide: async (request: {
+        questions: Record<string, { criteria: Record<string, string> }>;
+      }) => ({
+        answers: Object.fromEntries(
+          Object.entries(request.questions).map(([key, question]) => {
+            const choices = Object.keys(question.criteria);
+            const rest = 0.1 / (choices.length - 1);
+            const probabilities = Object.fromEntries(
+              choices.map((c) => [c, c === answers[key] ? 0.9 : rest]),
+            );
+            return [key, { choice: answers[key], confidence: 0.9, probabilities }];
+          }),
+        ),
+      }),
+    };
+  }
+
+  async function teamAtTest(answers: Record<string, string>) {
+    const host = fakeHost();
+    const svc = new TeamService({
+      ...(host.options as unknown as TeamServiceOptions),
+      storageRoot: root,
+      decide: () => jev(answers) as never,
+    });
+    await svc.start();
+    const started = await svc.startTeam({
+      bossAgentId: "boss",
+      title: "J",
+      objective: "x",
+      force: true,
+    });
+    await svc.dispatchAll();
+    const po = host.agentFor("po");
+    await svc.plan(po.id, [{ key: "A", title: "a", objective: "a", acceptanceCriteria: ["ok"] }]);
+    await svc.report(po.id, { outcome: "planned", summary: "one" });
+    await svc.dispatchAll();
+    let state = (await svc.status(started.team.id)).state;
+    await svc.report(host.agentFor("developer", "A", state).id, {
+      outcome: "done",
+      summary: "done",
+    });
+    await svc.dispatchAll();
+    state = (await svc.status(started.team.id)).state;
+    return { svc, host, teamId: started.team.id, state };
+  }
+
+  it("sends an environment failure to the boss instead of back to the developer", async () => {
+    const { svc, host, teamId, state } = await teamAtTest({ judge: "environment" });
+    await svc.report(host.agentFor("tester", "A", state).id, {
+      outcome: "fail",
+      summary: "no browser",
+    });
+    await svc.dispatchAll();
+    const after = await svc.status(teamId);
+    expect(itemByKey(after.state, "A").phase).toBe("blocked");
+    expect(
+      after.events.some((e) => e.type === "jev.decision" && e.text.includes("environment")),
+    ).toBe(true);
+  });
+
+  it("lets a minor review finding through", async () => {
+    const { svc, host, teamId, state } = await teamAtTest({ judge: "minor" });
+    await svc.report(host.agentFor("tester", "A", state).id, { outcome: "pass", summary: "ok" });
+    await svc.dispatchAll();
+    const mid = (await svc.status(teamId)).state;
+    await svc.report(host.agentFor("reviewer", "A", mid).id, {
+      outcome: "changes",
+      summary: "rename x",
+    });
+    await svc.dispatchAll();
+    expect(itemByKey((await svc.status(teamId)).state, "A").phase).toBe("done");
+  });
+
+  it("tells the boss to do a small job alone", async () => {
+    const host = fakeHost();
+    const svc = new TeamService({
+      ...(host.options as unknown as TeamServiceOptions),
+      storageRoot: root,
+      decide: () => jev({ "team-needed": "single" }) as never,
+    });
+    await svc.start();
+    await expect(
+      svc.startTeam({ bossAgentId: "boss", title: "t", objective: "fix a typo" }),
+    ).rejects.toThrow(/small enough/);
+  });
+});

@@ -17,6 +17,19 @@ export interface Phase {
   next?: string;
   /** Resting phases only: the item moves to this phase once all child items are terminal. */
   completeWithChildren?: string;
+  /**
+   * Working phases only: when a worker reports `outcome`, Jev classifies the report and the
+   * answer picks the route: another outcome of this phase, or "@boss" to hand it to the boss.
+   * Without Jev, or below the confidence floor, the reported outcome stands.
+   */
+  judge?: Judge;
+}
+
+export interface Judge {
+  outcome: string;
+  question: string;
+  criteria: Record<string, string>;
+  routes: Record<string, string>;
 }
 
 export interface Board {
@@ -35,6 +48,8 @@ export interface Role {
   workspace: "team" | "own-worktree" | "item-worktree";
   /** Extra team tools this role gets besides team_report. */
   tools: Array<"item_plan">;
+  /** The runtime writes the item's goal and criteria to a file and hands its path to the role. */
+  evidence?: boolean;
 }
 
 export interface PackAction {
@@ -55,31 +70,52 @@ export interface WorkflowPack {
   migrate?: (fromVersion: number, item: WorkItem) => WorkItem;
 }
 
+function phaseProblems(
+  id: string,
+  phase: Phase,
+  phaseIds: Set<string>,
+  roles: Record<string, Role>,
+): string[] {
+  const problems: string[] = [];
+  if (phase.kind === "working") {
+    if (!phase.role || !roles[phase.role]) problems.push(`working phase ${id} needs a known role`);
+    if (!phase.outcomes || Object.keys(phase.outcomes).length === 0)
+      problems.push(`working phase ${id} needs outcomes`);
+  } else if (phase.role || phase.outcomes) {
+    problems.push(`${phase.kind} phase ${id} cannot have a role or outcomes`);
+  }
+  if (phase.kind !== "resting" && (phase.next || phase.completeWithChildren))
+    problems.push(`only resting phases advance automatically (${id})`);
+  const targets = [...Object.values(phase.outcomes ?? {}), phase.next, phase.completeWithChildren];
+  for (const target of targets) {
+    if (target && !phaseIds.has(target))
+      problems.push(`phase ${id} points to unknown phase ${target}`);
+  }
+  if (phase.judge) problems.push(...judgeProblems(id, phase, phase.judge));
+  return problems;
+}
+
+function judgeProblems(id: string, phase: Phase, judge: Judge): string[] {
+  const problems: string[] = [];
+  if (!phase.outcomes?.[judge.outcome]) problems.push(`phase ${id} judges an unknown outcome`);
+  for (const route of Object.values(judge.routes)) {
+    if (route !== "@boss" && !phase.outcomes?.[route])
+      problems.push(`phase ${id} routes to unknown outcome ${route}`);
+  }
+  return problems;
+}
+
 export function validateBoard(name: string, board: Board, roles: Record<string, Role>): void {
   const phaseIds = new Set(Object.keys(board.phases));
-  const fail = (msg: string) => {
-    throw new Error(`Board ${name}: ${msg}`);
-  };
-  if (!phaseIds.has(board.initialPhase)) fail(`unknown initial phase ${board.initialPhase}`);
-  if (board.phases[board.initialPhase]?.kind !== "resting") fail("initial phase must be resting");
+  const problems: string[] = [];
+  if (!phaseIds.has(board.initialPhase))
+    problems.push(`unknown initial phase ${board.initialPhase}`);
+  if (board.phases[board.initialPhase]?.kind !== "resting")
+    problems.push("initial phase must be resting");
   for (const [id, phase] of Object.entries(board.phases)) {
-    if (phase.kind === "working") {
-      if (!phase.role || !roles[phase.role]) fail(`working phase ${id} needs a known role`);
-      if (!phase.outcomes || Object.keys(phase.outcomes).length === 0)
-        fail(`working phase ${id} needs outcomes`);
-    } else if (phase.role || phase.outcomes) {
-      fail(`${phase.kind} phase ${id} cannot have a role or outcomes`);
-    }
-    if (phase.kind !== "resting" && (phase.next || phase.completeWithChildren))
-      fail(`only resting phases advance automatically (${id})`);
-    for (const target of [
-      ...Object.values(phase.outcomes ?? {}),
-      phase.next,
-      phase.completeWithChildren,
-    ]) {
-      if (target && !phaseIds.has(target)) fail(`phase ${id} points to unknown phase ${target}`);
-    }
+    problems.push(...phaseProblems(id, phase, phaseIds, roles));
   }
+  if (problems.length > 0) throw new Error(`Board ${name}: ${problems.join("; ")}`);
 }
 
 export function validatePack(pack: WorkflowPack): WorkflowPack {
@@ -146,11 +182,13 @@ export const softwareBasicPack: WorkflowPack = validatePack({
       canEdit: false,
       workspace: "item-worktree",
       tools: [],
-      skills: [],
+      skills: ["codex-review"],
+      evidence: true,
       instructions:
-        "You are the reviewer for this work item. Review the developer's commit against the objective for " +
-        "correctness, regressions and needless complexity. Do not change code. Report `approve` when nothing " +
-        "blocks it, otherwise `changes` with each blocking finding and where it is. " +
+        "You are the reviewer for this work item. Use the `codex-review` skill: run its review script with " +
+        "the evidence file and base branch given below (`--evidence <file> --base <branch> --sandbox read-only`), " +
+        "wait for it, and read its verdict and findings. Do not change code. Report `approve` when it finds " +
+        "nothing blocking, otherwise `changes` with each blocking finding, its file and why. " +
         REPORT_RULE,
     },
   },
@@ -180,12 +218,35 @@ export const softwareBasicPack: WorkflowPack = validatePack({
           kind: "working",
           role: "tester",
           outcomes: { pass: "review", fail: "implement" },
+          judge: {
+            outcome: "fail",
+            question: "What kind of failure does this test report describe?",
+            criteria: {
+              code: "The implementation is wrong or incomplete.",
+              test: "The tests or checks themselves are wrong or flaky.",
+              environment:
+                "A missing tool, service, credential or setup blocks the test, not the code.",
+              requirement:
+                "The acceptance criteria are unclear, contradictory or impossible as written.",
+            },
+            routes: { code: "fail", test: "fail", environment: "@boss", requirement: "@boss" },
+          },
         },
         review: {
           title: "Review",
           kind: "working",
           role: "reviewer",
           outcomes: { approve: "done", changes: "implement" },
+          judge: {
+            outcome: "changes",
+            question: "How severe is the most serious finding in this review?",
+            criteria: {
+              blocker: "A finding breaks behaviour, security, data or the acceptance criteria.",
+              major: "A finding must be fixed before merge but does no harm yet.",
+              minor: "Only style, naming, wording or optional improvements.",
+            },
+            routes: { blocker: "changes", major: "changes", minor: "approve" },
+          },
         },
         blocked: { title: "Needs the boss", kind: "resting" },
         done: { title: "Done", kind: "terminal" },
