@@ -20,6 +20,7 @@ import {
   writeFileSync,
 } from "fs";
 import { join } from "path";
+import { createServer, type AddressInfo, type Socket } from "net";
 import { tmpdir } from "os";
 import { createRealpathAwarePathMatcher } from "./path";
 
@@ -50,6 +51,21 @@ function createLegacyWorktreeForTest(
     runSetup: options.runSetup ?? true,
     paseoHome: options.paseoHome,
   });
+}
+
+// A remote that accepts connections and never answers, like a VPN-only host while off the VPN.
+async function startSilentRemote(): Promise<{ url: string; close: () => Promise<void> }> {
+  const connections = new Set<Socket>();
+  const server = createServer((socket) => connections.add(socket));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/repo.git`,
+    close: () => {
+      for (const socket of connections) socket.destroy();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
 }
 
 describe("paseo worktree manager", () => {
@@ -335,6 +351,30 @@ describe("paseo worktree manager", () => {
 
       expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(cachedTip);
     });
+
+    it("branches from the cached ref when the remote accepts but never answers", async () => {
+      pushPastCachedRemoteRef("origin");
+      const cachedTip = git(["rev-parse", "refs/remotes/origin/main"], repoDir);
+      const silentRemote = await startSilentRemote();
+      git(["remote", "set-url", "origin", silentRemote.url], repoDir);
+
+      try {
+        const startedAt = Date.now();
+        const created = await createLegacyWorktreeForTest({
+          branchName: "from-silent-remote",
+          cwd: repoDir,
+          baseBranch: "origin/main",
+          worktreeSlug: "from-silent-remote",
+          paseoHome,
+        });
+
+        // Clients give up on a create request after 60s, so the fallback has to land well before.
+        expect(Date.now() - startedAt).toBeLessThan(30_000);
+        expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(cachedTip);
+      } finally {
+        await silentRemote.close();
+      }
+    }, 45_000);
   });
 });
 

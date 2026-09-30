@@ -1703,6 +1703,10 @@ async function resolveBaseBranchForWorktree(
   throw new Error(`Base branch not found: ${normalized}`);
 }
 
+// Clients give up on a create request after 60s. A remote that accepts the connection and never
+// answers (a VPN-only host while off the VPN) must fall back to the cached ref well before that.
+const REMOTE_BASE_REFRESH_TIMEOUT_MS = 15_000;
+
 // A remote-tracking base is only as fresh as the last fetch, and the background fetch only runs
 // while a workspace of the repository is observed. Refresh the one base branch so the new branch
 // starts at the remote tip; when the fetch fails (offline, auth) the cached ref is still usable.
@@ -1726,7 +1730,7 @@ async function refreshRemoteTrackingBaseRef(cwd: string, baseRef: string): Promi
     await runGitCommand(["fetch", remoteName, `+refs/heads/${remoteBranch}:${baseRef}`], {
       cwd,
       envOverlay: { GIT_TERMINAL_PROMPT: "0" },
-      timeout: 120_000,
+      timeout: REMOTE_BASE_REFRESH_TIMEOUT_MS,
       acceptExitCodes: [0, 1, 128],
     });
   } catch {
