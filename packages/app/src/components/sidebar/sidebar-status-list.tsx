@@ -84,6 +84,7 @@ import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pi
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { useWorkspaceTopicMenu } from "@/topics/use-workspace-topic-menu";
 
 // Themed icon wrappers
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -657,6 +658,10 @@ function StatusWorkspaceRowWithMenu({
   }, [onToggleWorkspacePin, workspace]);
   const onTogglePin = canPin ? handleTogglePin : undefined;
 
+  const { onCombineIntoTopic, onDetachFromTopic, topicDialog } = useWorkspaceTopicMenu({
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+  });
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, canMarkUnread, clearAttention, markUnread } =
     useWorkspaceReadState({
@@ -704,6 +709,8 @@ function StatusWorkspaceRowWithMenu({
         onCopyBranchName={workspace.projectKind === "git" ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
+        onCombineIntoTopic={onCombineIntoTopic}
+        onDetachFromTopic={onDetachFromTopic}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         onMarkAsUnread={canMarkUnread ? handleMarkAsUnread : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
@@ -721,6 +728,7 @@ function StatusWorkspaceRowWithMenu({
         onClose={handleCloseRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
       />
+      {topicDialog}
     </>
   );
 }
@@ -742,6 +750,8 @@ interface StatusWorkspaceRowInnerProps {
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onCombineIntoTopic?: () => void;
+  onDetachFromTopic?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
@@ -789,6 +799,8 @@ function StatusWorkspaceRowInnerContent({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
   onMarkAsRead,
   onMarkAsUnread,
   archiveShortcutKeys,
@@ -889,6 +901,8 @@ function StatusWorkspaceRowInnerContent({
               onCopyPath={onCopyPath}
               onCopyBranchName={onCopyBranchName}
               onRename={onRename}
+              onCombineIntoTopic={onCombineIntoTopic}
+              onDetachFromTopic={onDetachFromTopic}
               onMarkAsRead={onMarkAsRead}
               onMarkAsUnread={onMarkAsUnread}
               onArchive={onArchive}
@@ -937,6 +951,8 @@ function StatusWorkspaceRowInnerContent({
                     onCopyPath={onCopyPath}
                     onCopyBranchName={onCopyBranchName}
                     onRename={onRename}
+                    onCombineIntoTopic={onCombineIntoTopic}
+                    onDetachFromTopic={onDetachFromTopic}
                     onMarkAsRead={onMarkAsRead}
                     onMarkAsUnread={onMarkAsUnread}
                     onArchive={onArchive}
@@ -968,6 +984,8 @@ function StatusWorkspaceActionSlot({
   onCopyPath,
   onCopyBranchName,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
   onMarkAsRead,
   onMarkAsUnread,
   onArchive,
@@ -988,6 +1006,8 @@ function StatusWorkspaceActionSlot({
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onRename?: () => void;
+  onCombineIntoTopic?: () => void;
+  onDetachFromTopic?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
   onArchive?: () => void;
@@ -1016,6 +1036,8 @@ function StatusWorkspaceActionSlot({
             onCopyPath={onCopyPath}
             onCopyBranchName={onCopyBranchName}
             onRename={onRename}
+            onCombineIntoTopic={onCombineIntoTopic}
+            onDetachFromTopic={onDetachFromTopic}
             onMarkAsRead={onMarkAsRead}
             onMarkAsUnread={onMarkAsUnread}
             onArchive={onArchive}

@@ -7,11 +7,13 @@ import {
   Circle,
   CircleCheck,
   Copy,
+  Layers,
   MoreVertical,
   Pencil,
   Pin,
   PinOff,
   Tag,
+  Unlink,
   UserRound,
 } from "@/components/icons/ui-icons";
 import { isWeb } from "@/constants/platform";
@@ -61,9 +63,13 @@ const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 const ThemedTag = withUnistyles(Tag);
 const ThemedUserRound = withUnistyles(UserRound);
+const ThemedLayers = withUnistyles(Layers);
+const ThemedUnlink = withUnistyles(Unlink);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
+const combineLeadingIcon = <ThemedLayers size={14} uniProps={foregroundMutedColorMapping} />;
+const detachLeadingIcon = <ThemedUnlink size={14} uniProps={foregroundMutedColorMapping} />;
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -89,6 +95,9 @@ export interface SidebarWorkspaceMenuProps {
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onRename?: () => void;
+  /** Opens the "combine into topic" dialog; row-level for the same reason as rename. */
+  onCombineIntoTopic?: () => void;
+  onDetachFromTopic?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
   onArchive: () => void;
@@ -142,6 +151,8 @@ function SidebarWorkspaceMenuItems({
   onCopyPath,
   onCopyBranchName,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
   onMarkAsRead,
   onMarkAsUnread,
   onArchive,
@@ -198,6 +209,26 @@ function SidebarWorkspaceMenuItems({
           onSelect={onRename}
         >
           {t("sidebar.workspace.actions.rename")}
+        </WorkspaceMenuItem>
+      ) : null}
+      {onCombineIntoTopic ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-combine-topic-${workspaceKey}`}
+          leading={combineLeadingIcon}
+          onSelect={onCombineIntoTopic}
+        >
+          {t("topics.combine.open")}
+        </WorkspaceMenuItem>
+      ) : null}
+      {onDetachFromTopic ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-detach-topic-${workspaceKey}`}
+          leading={detachLeadingIcon}
+          onSelect={onDetachFromTopic}
+        >
+          {t("topics.detach")}
         </WorkspaceMenuItem>
       ) : null}
       {openForgeAccountDialog ? (
@@ -279,6 +310,8 @@ export function SidebarWorkspaceMenu({
   onCopyPath,
   onCopyBranchName,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
   onMarkAsRead,
   onMarkAsUnread,
   onArchive,
@@ -326,6 +359,8 @@ export function SidebarWorkspaceMenu({
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
+          onCombineIntoTopic={onCombineIntoTopic}
+          onDetachFromTopic={onDetachFromTopic}
           onMarkAsRead={onMarkAsRead}
           onMarkAsUnread={onMarkAsUnread}
           onArchive={onArchive}
@@ -360,6 +395,8 @@ export function SidebarWorkspaceContextMenu({
   onCopyPath,
   onCopyBranchName,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
   onMarkAsRead,
   onMarkAsUnread,
   onArchive,
@@ -440,6 +477,8 @@ export function SidebarWorkspaceContextMenu({
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
+          onCombineIntoTopic={onCombineIntoTopic}
+          onDetachFromTopic={onDetachFromTopic}
           onMarkAsRead={onMarkAsRead}
           onMarkAsUnread={onMarkAsUnread}
           onArchive={onArchive}

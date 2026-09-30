@@ -43,6 +43,7 @@ import {
   useSidebarWorkspaceTrailing,
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
+import { useWorkspaceTopicMenu } from "@/topics/use-workspace-topic-menu";
 
 function noop() {}
 
@@ -133,6 +134,10 @@ export function SidebarWorkspaceRow({
     workspaceId: workspace.workspaceId,
   });
 
+  const { onCombineIntoTopic, onDetachFromTopic, topicDialog } = useWorkspaceTopicMenu({
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+  });
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, canMarkUnread, clearAttention, markUnread } =
     useWorkspaceReadState({
@@ -182,6 +187,8 @@ export function SidebarWorkspaceRow({
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
+        onCombineIntoTopic={onCombineIntoTopic}
+        onDetachFromTopic={onDetachFromTopic}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         onMarkAsUnread={canMarkUnread ? handleMarkAsUnread : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
@@ -194,6 +201,7 @@ export function SidebarWorkspaceRow({
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
       />
       {forgeAccountDialog}
+      {topicDialog}
     </>
   );
 }
@@ -217,6 +225,8 @@ interface WorkspaceRowBodyProps {
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onCombineIntoTopic?: () => void;
+  onDetachFromTopic?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
@@ -242,6 +252,8 @@ function WorkspaceRowBody({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
   onMarkAsRead,
   onMarkAsUnread,
   archiveShortcutKeys,
@@ -319,6 +331,8 @@ function WorkspaceRowBody({
               onCopyPath={onCopyPath}
               onCopyBranchName={onCopyBranchName}
               onRename={onRename}
+              onCombineIntoTopic={onCombineIntoTopic}
+              onDetachFromTopic={onDetachFromTopic}
               onMarkAsRead={onMarkAsRead}
               onMarkAsUnread={onMarkAsUnread}
               onArchive={onArchive}
@@ -369,6 +383,8 @@ function WorkspaceRowBody({
                   onCopyBranchName={onCopyBranchName}
                   onCopyPath={onCopyPath}
                   onRename={onRename}
+                  onCombineIntoTopic={onCombineIntoTopic}
+                  onDetachFromTopic={onDetachFromTopic}
                   onMarkAsRead={onMarkAsRead}
                   onMarkAsUnread={onMarkAsUnread}
                 />
@@ -401,6 +417,8 @@ function WorkspaceRowTrailingActions({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onCombineIntoTopic,
+  onDetachFromTopic,
 }: {
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
@@ -421,6 +439,8 @@ function WorkspaceRowTrailingActions({
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onCombineIntoTopic?: () => void;
+  onDetachFromTopic?: () => void;
 }) {
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
@@ -464,6 +484,8 @@ function WorkspaceRowTrailingActions({
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
+                onCombineIntoTopic={onCombineIntoTopic}
+                onDetachFromTopic={onDetachFromTopic}
                 onMarkAsRead={onMarkAsRead}
                 onMarkAsUnread={onMarkAsUnread}
                 onArchive={onArchive}
