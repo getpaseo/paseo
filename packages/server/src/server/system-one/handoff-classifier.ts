@@ -150,6 +150,8 @@ export class HandoffClassifier {
       resolveAgent: (agentId: string) => HandoffAgent | null;
       readLastReply: (agentId: string) => Promise<string | null>;
       save: (workspaceId: string, handoff: WorkspaceHandoff) => Promise<void>;
+      /** A live turn was sorted (never the startup backfill): the place to ping the person. */
+      onLiveSorted?: (workspaceId: string, handoff: WorkspaceHandoff) => void;
       logger: pino.Logger;
       now?: () => Date;
     },
@@ -182,17 +184,22 @@ export class HandoffClassifier {
     return sorted;
   }
 
-  private async classifyReply(workspaceId: string, agentId: string, cwd: string): Promise<boolean> {
+  private async classifyReply(
+    workspaceId: string,
+    agentId: string,
+    cwd: string,
+  ): Promise<WorkspaceHandoff | null> {
     const text = await this.options.readLastReply(agentId);
-    if (!text?.trim()) return false;
+    if (!text?.trim()) return null;
     const result = await classifyHandoffText({
       decisionSource: this.options.decisionSource(cwd),
       text,
       minConfidence: this.options.minConfidence(),
     });
     const at = (this.options.now?.() ?? new Date()).toISOString();
-    await this.options.save(workspaceId, { agentId, ...result, at });
-    return true;
+    const handoff = { agentId, ...result, at };
+    await this.options.save(workspaceId, handoff);
+    return handoff;
   }
 
   private async handle(agentId: string, event: AgentStreamEvent): Promise<void> {
@@ -209,6 +216,7 @@ export class HandoffClassifier {
       return;
     }
     if (!this.options.isEnabled(agent.cwd)) return;
-    await this.classifyReply(agent.workspaceId, agentId, agent.cwd);
+    const handoff = await this.classifyReply(agent.workspaceId, agentId, agent.cwd);
+    if (handoff) this.options.onLiveSorted?.(agent.workspaceId, handoff);
   }
 }

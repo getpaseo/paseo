@@ -170,9 +170,7 @@ import { EvidenceStore } from "./verify/evidence-store.js";
 import { VerifySession } from "./verify/verify-session.js";
 import { createConfiguredSystemOneDecisionSource } from "./system-one/tools.js";
 import { HandoffClassifier, handoffBackfillCandidates } from "./system-one/handoff-classifier.js";
-
-const HANDOFF_BACKFILL_DELAY_MS = 30_000;
-const HANDOFF_BACKFILL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+import { HandoffPinger } from "./system-one/handoff-ping.js";
 import { DaemonPlaywrightHost } from "./verify/playwright-host.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
@@ -254,6 +252,9 @@ import {
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
+
+const HANDOFF_BACKFILL_DELAY_MS = 30_000;
+const HANDOFF_BACKFILL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
 const MCP_DEBUG_SECRET = "[redacted]";
@@ -1612,6 +1613,15 @@ export async function createPaseoDaemon(
       ),
     logFile: path.join(config.paseoHome, "system-one", "shadow.jsonl"),
   });
+  const handoffPinger = new HandoffPinger({
+    deliver: async ({ agentId, ...notification }) => {
+      await wsServer?.notifyAgentHandoff(agentId, notification);
+    },
+    sendMorningSummary: async (notification) => {
+      await wsServer?.sendPushNotification(notification);
+    },
+    logger,
+  });
   const handoffClassifier = new HandoffClassifier({
     isEnabled: (cwd) =>
       daemonConfigStore.get().systemOne?.enabled === true &&
@@ -1642,6 +1652,19 @@ export async function createPaseoDaemon(
         handoff,
       }));
       if (updated) await emitWorkspaceUpdatesExternal([workspaceId]);
+    },
+    onLiveSorted: (workspaceId, handoff) => {
+      void (async () => {
+        const workspace = await workspaceRegistry?.get(workspaceId);
+        const project = workspace ? await projectRegistry.get(workspace.projectId) : null;
+        handoffPinger.notify({
+          serverId,
+          workspaceId,
+          handoff,
+          projectName: project?.displayName ?? null,
+          lastUserMessageAt: agentManager.getAgent(handoff.agentId)?.lastUserMessageAt ?? null,
+        });
+      })().catch((error: unknown) => logger.warn({ err: error }, "handoff ping skipped"));
     },
     logger,
   });
@@ -1972,6 +1995,10 @@ export async function createPaseoDaemon(
               resourcePolicyRuntime,
               browserActivity,
               providerUsageService,
+            );
+            // Sorted handbacks ping when System One sorts them; a plain finish then stays quiet.
+            wsServer.setHandoffPingsActive(
+              () => daemonConfigStore.get().systemOne?.enabled === true,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
