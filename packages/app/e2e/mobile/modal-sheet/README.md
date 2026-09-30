@@ -100,6 +100,10 @@ and completes the password retry. `stacked-settings.ad` checks the same return a
 Settings → add host → Direct connection → Advanced. Run both on phones and tablets so both the
 bottom sheet and centered dialog are exercised.
 
+These integration journeys require the host-confirmation flow in the test app. Include both the
+sheet fix and that flow in the QA checkout when verifying them; the production sheet component
+has no dependency on the host-confirmation feature.
+
 Use a fresh English app with notification permission granted and first-use keyboard prompts
 already dismissed. Load this checkout from an isolated Metro. Start an isolated password-protected
 daemon and a local Wrangler relay with `--var 'PASEO_RELAY_UPSTREAM:'`; the checked-in upstream
