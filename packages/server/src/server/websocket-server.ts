@@ -2637,9 +2637,11 @@ export class VoiceAssistantWebSocketServer {
     }
 
     for (const { ws } of clientEntries) {
-      const shouldNotify =
-        plan.inAppRecipientIndex !== null &&
-        notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
+      // A handback ping reaches every app that shows notifications, not just the one used last.
+      const shouldNotify = params.forcePush
+        ? notificationEntries.some((entry) => entry.ws === ws)
+        : plan.inAppRecipientIndex !== null &&
+          notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
       const timestamp = new Date().toISOString();
       const connection = this.sessions.get(ws);
       const attentionPayload = {
