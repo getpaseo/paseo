@@ -1084,12 +1084,6 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// COMPAT(paperclipLinks): added in v0.9.3. Gate on server_info.features.paperclipLinks.
-export const PaperclipLinksGetRequestSchema = z.object({
-  type: z.literal("paperclip.links.get.request"),
-  requestId: z.string(),
-});
-
 // COMPAT(agentLastReplies): added in v0.9.3. Gate on server_info.features.agentLastReplies.
 // Reads stored replies only: previews must never load or resume an agent.
 export const AgentLastRepliesRequestSchema = z.object({
@@ -2367,16 +2361,6 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
-export const PaperclipLinksGetResponseSchema = z.object({
-  type: z.literal("paperclip.links.get.response"),
-  payload: z.object({
-    requestId: z.string(),
-    // Null when this host has no Paperclip board. Prefixes are the companies' issue prefixes.
-    links: z.object({ webBaseUrl: z.string(), prefixes: z.array(z.string()) }).nullable(),
-    error: z.string().nullable(),
-  }),
-});
-
 export const AgentLastRepliesResponseSchema = z.object({
   type: z.literal("agent.last_replies.response"),
   payload: z.object({
@@ -3604,7 +3588,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetRequestSchema,
   WorkspaceDoneSetRequestSchema,
   AgentLastRepliesRequestSchema,
-  PaperclipLinksGetRequestSchema,
   WorkspaceTopicCreateRequestSchema,
   WorkspaceTopicAssignRequestSchema,
   WorkspaceTopicUpdateRequestSchema,
@@ -4111,8 +4094,6 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceDone: z.boolean().optional(),
         // COMPAT(agentLastReplies): added in v0.9.3, remove gate after 2027-04-01.
         agentLastReplies: z.boolean().optional(),
-        // COMPAT(paperclipLinks): added in v0.9.3, remove gate after 2027-04-01.
-        paperclipLinks: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(workspaceForgeAccount): added in v0.8.1, remove gate after 2027-06-30.
@@ -7419,7 +7400,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetResponseSchema,
   WorkspaceDoneSetResponseSchema,
   AgentLastRepliesResponseSchema,
-  PaperclipLinksGetResponseSchema,
   WorkspaceTopicCreateResponseSchema,
   WorkspaceTopicAssignResponseSchema,
   WorkspaceTopicUpdateResponseSchema,

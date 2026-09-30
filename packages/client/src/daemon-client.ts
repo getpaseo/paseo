@@ -3334,19 +3334,6 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
-  /** Paperclip issue prefixes and web address. Gate on `server_info.features.paperclipLinks`. */
-  async getPaperclipLinks(
-    requestId?: string,
-  ): Promise<{ webBaseUrl: string; prefixes: string[] } | null> {
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: { type: "paperclip.links.get.request" },
-      responseType: "paperclip.links.get.response",
-    });
-    if (payload.error) throw new Error(payload.error);
-    return payload.links;
-  }
-
   /** Stored last replies per agent; loads no agent. Gate on `server_info.features.agentLastReplies`. */
   async getAgentLastReplies(
     agentIds: readonly string[],

@@ -327,11 +327,6 @@ export const fr: TranslationResources = {
     },
   },
   message: {
-    paperclipPrompt: {
-      title: "Tâche Paperclip {{key}}",
-      untitled: "Tâche Paperclip",
-      show: "Afficher les instructions",
-    },
     diagram: {
       diagram: "Diagramme",
       zoomIn: "Zoomer",
@@ -1781,7 +1776,6 @@ export const fr: TranslationResources = {
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
       settings: "Paramètres",
-      paperclip: "Configurer avec Paperclip",
     },
   },
   modelSelector: {
@@ -2099,7 +2093,6 @@ export const fr: TranslationResources = {
       origins: {
         user: "Vous",
         schedule: "Planifications",
-        paperclip: "Paperclip",
         agent: "Autres agents",
         script: "Scripts",
         internal: "Interne",
@@ -3120,7 +3113,6 @@ export const fr: TranslationResources = {
       },
     },
   },
-  paperclip: en.paperclip,
   leitstand: {
     title: "Tableau de bord",
     leave: "Sessions",

@@ -1,13 +1,6 @@
 import type { AgentHistoryEntry } from "@getpaseo/protocol/messages";
 
-export type OriginGroup =
-  | "user"
-  | "schedule"
-  | "paperclip"
-  | "agent"
-  | "script"
-  | "internal"
-  | "unknown";
+export type OriginGroup = "user" | "schedule" | "agent" | "script" | "internal" | "unknown";
 
 export interface OriginSummary {
   group: OriginGroup;
@@ -23,10 +16,12 @@ export function originGroup(origin: string | null): OriginGroup {
   switch (kind) {
     case "user":
     case "schedule":
-    case "paperclip":
     case "agent":
     case "internal":
       return kind;
+    // Sessions from the retired Paperclip integration were agents driving agents.
+    case "paperclip":
+      return "agent";
     case "systemd":
     case "process":
     case "script":

@@ -321,11 +321,6 @@ export const ar: TranslationResources = {
     },
   },
   message: {
-    paperclipPrompt: {
-      title: "مهمة Paperclip {{key}}",
-      untitled: "مهمة Paperclip",
-      show: "عرض التعليمات",
-    },
     diagram: {
       diagram: "مخطط",
       zoomIn: "تكبير",
@@ -1726,7 +1721,6 @@ export const ar: TranslationResources = {
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {
       settings: "إعدادات",
-      paperclip: "الإعداد باستخدام Paperclip",
     },
   },
   modelSelector: {
@@ -2041,7 +2035,6 @@ export const ar: TranslationResources = {
       origins: {
         user: "أنت",
         schedule: "الجداول",
-        paperclip: "Paperclip",
         agent: "وكلاء آخرون",
         script: "نصوص برمجية",
         internal: "داخلي",
@@ -3040,7 +3033,6 @@ export const ar: TranslationResources = {
       },
     },
   },
-  paperclip: en.paperclip,
   leitstand: {
     title: "لوحة التحكم",
     leave: "الجلسات",

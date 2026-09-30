@@ -318,11 +318,6 @@ export const en = {
     },
   },
   message: {
-    paperclipPrompt: {
-      title: "Paperclip task {{key}}",
-      untitled: "Paperclip task",
-      show: "Show instructions",
-    },
     diagram: {
       diagram: "Diagram",
       zoomIn: "Zoom in",
@@ -1761,22 +1756,6 @@ export const en = {
     subtitle: "Connect your computer to get started",
     actions: {
       settings: "Settings",
-      paperclip: "Set up with Paperclip",
-    },
-  },
-  paperclip: {
-    onboarding: {
-      title: "Set up PandaOS with Paperclip",
-      description: "Tell us how you work so your agent team starts with the right shape.",
-      useCase: { label: "What will you use PandaOS for?", hint: "Choose the closest fit." },
-      teamShape: { label: "What team shape do you need?", hint: "You can change this later." },
-      teamName: {
-        label: "Team name",
-        hint: "Optional label for this setup.",
-        placeholder: "My agent team",
-      },
-      saving: "Saving…",
-      continue: "Save setup",
     },
   },
   modelSelector: {
@@ -2091,7 +2070,6 @@ export const en = {
       origins: {
         user: "You",
         schedule: "Schedules",
-        paperclip: "Paperclip",
         agent: "Other agents",
         script: "Scripts",
         internal: "Internal",
