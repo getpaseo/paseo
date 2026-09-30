@@ -1983,10 +1983,6 @@ describe("Codex app-server provider", () => {
       text: "Read this image and describe it",
       turnId: "image-turn",
     });
-    asInternals(session).handleNotification("item/completed", {
-      threadId: "thread-1",
-      item: { id: "image-view-1", type: "imageView", path: "/tmp/paseo-image.png" },
-    });
     appServer.completeTurn({
       status: "failed",
       error: { message: "400 invalid_request_error: image input is not supported by this model" },
