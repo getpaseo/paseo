@@ -90,13 +90,13 @@ export async function runPluginLinksRegression({
   await expect(page.getByText("Browser available", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open workspace browser", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
-  await expectPresentedBrowser(page, url);
+  await expectPresentedBrowser(page, url, workspaceId);
   expect(popups).toHaveLength(0);
   await page.screenshot({ path: path.join(artifactDir, "plugin-workspace-browser.png") });
   await pluginEntry.click();
   await page.getByRole("button", { name: "Open remote workspace browser", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/h/plugin-links-remote/workspace/${remoteWorkspaceId}`));
-  await expectPresentedBrowser(page, url);
+  await expectPresentedBrowser(page, url, remoteWorkspaceId);
   await page.screenshot({ path: path.join(artifactDir, "plugin-remote-workspace-browser.png") });
   return {
     remoteWorkspaceId,
@@ -107,26 +107,71 @@ export async function runPluginLinksRegression({
   };
 }
 
-async function expectPresentedBrowser(page, url) {
+async function expectPresentedBrowser(page, url, workspaceId) {
+  const deck = page
+    .locator(`[data-testid^="workspace-deck-entry-"][data-testid$=":${workspaceId}"]`)
+    .filter({ visible: true });
+  const address = deck
+    .getByRole("textbox", { name: "Browser URL", exact: true })
+    .filter({ visible: true });
   await expect
-    .poll(async () => {
-      const urls = await page
-        .locator("webview")
-        .evaluateAll((views) =>
-          views
-            .filter((view) => view.parentElement?.getAttribute("aria-hidden") === "false")
-            .map((view) => view.getURL()),
-        );
-      if (urls.length > 0) return urls.includes(url);
-      return await page
-        .locator("input")
-        .evaluateAll(
-          (inputs, expectedUrl) => inputs.some((input) => input.value === expectedUrl),
-          url,
-        );
-    })
+    .poll(() =>
+      address.evaluateAll(
+        (inputs, expectedUrl) => inputs.some((input) => input.value === expectedUrl),
+        url,
+      ),
+    )
     .toBe(true);
+
+  let browserId;
   await expect
-    .poll(() => page.locator('img[src^="data:image/png;base64,"]').count())
-    .toBeGreaterThan(0);
+    .poll(
+      async () => {
+        const paneBrowserIds = await deck
+          .locator('[data-testid^="browser-webview-clip-"]')
+          .filter({ visible: true })
+          .evaluateAll((clips) =>
+            clips.map((clip) =>
+              clip.getAttribute("data-testid").slice("browser-webview-clip-".length),
+            ),
+          );
+        browserId = await page.locator("webview").evaluateAll(async (views, ids) => {
+          for (const view of views) {
+            const id = view.getAttribute("data-paseo-browser-id");
+            const bounds = view.getBoundingClientRect();
+            if (
+              !ids.includes(id) ||
+              view.parentElement?.getAttribute("aria-hidden") !== "false" ||
+              bounds.width <= 0 ||
+              bounds.height <= 0
+            )
+              continue;
+            const ready = await view.executeJavaScript(
+              "document.readyState === 'complete' && document.title === 'Desktop browser target' && Boolean(document.getElementById('bridge-target')) && Boolean(document.getElementById('typing-target'))",
+            );
+            if (ready) return id;
+          }
+          return null;
+        }, paneBrowserIds);
+        return typeof browserId === "string";
+      },
+      { timeout: 90_000 },
+    )
+    .toBe(true);
+  const screenshot = await page.evaluate(
+    ({ id, workspace }) =>
+      window.paseoDesktop.browser.executeAutomationCommand({
+        type: "browser.automation.execute.request",
+        requestId: crypto.randomUUID(),
+        workspaceId: workspace,
+        command: { command: "screenshot", args: { browserId: id } },
+      }),
+    { id: browserId, workspace: workspaceId },
+  );
+  expect(screenshot.ok).toBe(true);
+  expect(screenshot.result.command).toBe("screenshot");
+  expect(screenshot.result.browserId).toBe(browserId);
+  expect(screenshot.result.dataBase64).toMatch(/^iVBORw0KGgo/);
+  expect(screenshot.result.width).toBeGreaterThan(0);
+  expect(screenshot.result.height).toBeGreaterThan(0);
 }

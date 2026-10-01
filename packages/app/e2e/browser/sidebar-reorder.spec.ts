@@ -53,6 +53,7 @@ async function pressWorkspaceRow(rows: Locator) {
 async function quickDragFirstRowAfterSecond(
   rows: Locator,
   pressRow: (rows: Locator) => Promise<void>,
+  ordering: "manual" | "activity" = "manual",
 ) {
   await expect(rows).toHaveCount(2);
   const before = await rowTestIds(rows);
@@ -74,10 +75,12 @@ async function quickDragFirstRowAfterSecond(
     .toBeLessThan(targetBox.y - targetBox.height / 2);
   await page.mouse.up();
 
-  await expect.poll(() => rowTestIds(rows)).toEqual([before[1], before[0]]);
+  await expect
+    .poll(() => rowTestIds(rows))
+    .toEqual(ordering === "manual" ? [before[1], before[0]] : before);
 }
 
-test("projects, workspaces, and pinned chats reorder with an immediate mouse drag", async ({
+test("projects and pinned chats reorder while workspaces follow latest activity", async ({
   page,
 }) => {
   const firstProject = await seedWorkspace({ repoPrefix: "sidebar-reorder-first-" });
@@ -112,12 +115,30 @@ test("projects, workspaces, and pinned chats reorder with an immediate mouse dra
     );
     const firstWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${firstProject.workspaceId}`;
     const secondWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondWorkspace.workspace.id}`;
-    await quickDragFirstRowAfterSecond(
-      page.locator(
-        `[data-testid="${firstWorkspaceTestId}"], [data-testid="${secondWorkspaceTestId}"]`,
-      ),
-      pressWorkspaceRow,
+    const workspaceRows = page.locator(
+      `[data-testid="${firstWorkspaceTestId}"], [data-testid="${secondWorkspaceTestId}"]`,
     );
+    await expect
+      .poll(() => rowTestIds(workspaceRows))
+      .toEqual([secondWorkspaceTestId, firstWorkspaceTestId]);
+    await quickDragFirstRowAfterSecond(workspaceRows, pressWorkspaceRow, "activity");
+    const activeAgent = await firstProject.client.createAgent({
+      provider: "mock",
+      cwd: firstProject.workspaceDirectory,
+      workspaceId: firstProject.workspaceId,
+      title: "Newest sidebar activity",
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+      initialPrompt: "Update this workspace activity",
+    });
+    await firstProject.client.waitForAgentUpsert(
+      activeAgent.id,
+      (snapshot) => snapshot.status === "idle",
+      15_000,
+    );
+    await expect
+      .poll(() => rowTestIds(workspaceRows))
+      .toEqual([firstWorkspaceTestId, secondWorkspaceTestId]);
 
     await firstProject.client.setWorkspacePinned(firstProject.workspaceId, true);
     await secondProject.client.setWorkspacePinned(secondProject.workspaceId, true);

@@ -74,6 +74,7 @@ function labelRow(page: import("@playwright/test").Page, name: string) {
 }
 
 async function box(locator: import("@playwright/test").Locator) {
+  await expect(locator).toBeVisible();
   const measured = await locator.boundingBox();
   if (!measured) throw new Error("expected a visible element to measure");
   return measured;
