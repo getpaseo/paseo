@@ -27,6 +27,7 @@ export const fr: TranslationResources = {
     total: "{{total}} résultats",
   },
   common: {
+    bottomSheetBackdrop: "Arrière-plan du panneau inférieur",
     back: "Dos",
     loading: "Chargement...",
     actions: {
@@ -445,7 +446,9 @@ export const fr: TranslationResources = {
       recovery: {
         archivedTitle: "Espace de travail archivé",
         restoreDescription:
-          "{{workspaceName}} a été archivé et son worktree supprimé. Restaurez la branche {{branch}} pour le rouvrir.",
+          "Restaurez {{workspaceName}} pour retrouver ses agents. Son worktree utilisera la branche {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Restaurez {{workspaceName}} pour retrouver ses agents. Une nouvelle branche partira de la base enregistrée ou de la branche par défaut du dépôt.",
         unarchiveDescription: "{{workspaceName}} est archivé. Désarchivez-le pour le rouvrir.",
         restoreAction: "Restaurer",
         unarchiveAction: "Désarchiver",
@@ -1181,6 +1184,9 @@ export const fr: TranslationResources = {
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
     },
+    footer: {
+      usage: "Utilisation",
+    },
     help: {
       trigger: "Aide et assistance",
       sectionHelp: "Aide",
@@ -1668,6 +1674,17 @@ export const fr: TranslationResources = {
     hostPassword: {
       title: "Mot de passe pour {{host}}",
       label: "Mot de passe de l’hôte",
+    },
+    hostConfirmation: {
+      title: "Se connecter à cet hôte ?",
+      description:
+        "Cet hôte pourra exécuter du code dans cette application et accéder à vos autres hôtes connectés. Connectez-vous uniquement si vous le reconnaissez.",
+      descriptionChanged:
+        "Ce lien modifie la façon dont vous vous connectez à cet hôte. L'hôte pourra exécuter du code dans cette application et accéder à vos autres hôtes connectés. Connectez-vous uniquement si vous le reconnaissez.",
+      hostLabel: "Hôte",
+      fingerprintLabel: "Empreinte de la clé",
+      relayLabel: "Relais",
+      connect: "Se connecter",
     },
     connectionMethods: {
       title: "Ajouter une connexion",
@@ -2222,8 +2239,16 @@ export const fr: TranslationResources = {
         description: "Afficher un plan pour passer d’une requête à l’autre",
       },
       sidebar: {
-        title: "Barre latérale",
-        description: "Choisissez les éléments affichés en haut de la barre latérale et leur ordre",
+        header: {
+          title: "En-tête",
+          description:
+            "Choisissez les éléments affichés en haut de la barre latérale et leur ordre",
+        },
+        footer: {
+          title: "Pied",
+          description:
+            "Choisissez les lignes affichées en bas de la barre latérale et leur ordre. Ajouter un projet et la rangée d’icônes restent toujours visibles",
+        },
         moveUp: "Déplacer vers le haut",
         moveDown: "Déplacer vers le bas",
       },
@@ -2247,6 +2272,14 @@ export const fr: TranslationResources = {
         codeSize: "Taille du code",
         codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
+      },
+      layout: {
+        title: "Mise en page",
+        contentWidth: "Largeur du contenu",
+        contentWidthHint: "Largeur maximale du chat et des fichiers Markdown sur les grands écrans",
+        contentWidthAccessibility: "Largeur du contenu en pixels",
+        reset: "Réinitialiser",
+        resetAccessibility: "Réinitialiser la largeur du contenu",
       },
       syntax: {
         title: "Syntaxe",

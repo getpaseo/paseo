@@ -24,7 +24,7 @@ export {
 
 const SEARCHABLE_THRESHOLD = 10;
 type RenderHostOption = NonNullable<ComboboxProps["renderOption"]>;
-interface HostPickerHost {
+export interface HostPickerHost {
   serverId: string;
   label: string;
 }

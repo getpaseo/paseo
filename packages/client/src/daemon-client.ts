@@ -1,3 +1,4 @@
+import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
@@ -95,7 +96,6 @@ import type {
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
   UsageListReportsResponseMessage,
-  AgentResolveUsageReportResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
@@ -563,7 +563,6 @@ type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type UsageListReportsPayload = UsageListReportsResponseMessage["payload"];
-type AgentResolveUsageReportPayload = AgentResolveUsageReportResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -1186,6 +1185,11 @@ interface PingProbe {
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
   drivesLivenessFailure: boolean;
+}
+
+export function supportsUsageReports(features: ServerInfoStatusPayload["features"]): boolean {
+  // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+  return features?.usageSources === true || features?.providerUsageList === true;
 }
 
 export class DaemonClient {
@@ -5260,25 +5264,44 @@ export class DaemonClient {
     forceRefresh?: boolean;
     reportIds?: string[];
   }): Promise<UsageListReportsPayload> {
+    const features = this.getLastServerInfoMessage()?.features;
+    if (!supportsUsageReports(features)) {
+      throw new Error("Update the host to see usage.");
+    }
+    // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+    if (features?.usageSources !== true) {
+      // Released hosts serve a five-minute cache and have no forceRefresh option.
+      const payload = await this.listProviderUsage({ requestId: options?.requestId });
+      return {
+        requestId: payload.requestId,
+        reports: payload.providers
+          .filter(
+            (provider) => !options?.reportIds || options.reportIds.includes(provider.providerId),
+          )
+          .map((provider) => ({
+            id: provider.providerId,
+            sourceId: provider.providerId,
+            sourceLabel: provider.displayName,
+            icon: legacyUsageIcon(provider.providerId),
+            account: {},
+            fetchedAt: provider.fetchedAt ?? payload.fetchedAt,
+            report: {
+              status: provider.status,
+              windows: provider.windows,
+              balances: provider.balances ?? undefined,
+              details: provider.details ?? undefined,
+              planLabel: provider.planLabel ?? undefined,
+              error: provider.error ?? undefined,
+            },
+          })),
+      };
+    }
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "usage.list_reports.request",
         forceRefresh: options?.forceRefresh,
         reportIds: options?.reportIds,
-      },
-    });
-  }
-
-  async resolveAgentUsageReport(options: {
-    agentId: string;
-    requestId?: string;
-  }): Promise<AgentResolveUsageReportPayload> {
-    return this.sendNamespacedCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "agent.resolve_usage_report.request",
-        agentId: options.agentId,
       },
     });
   }

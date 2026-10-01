@@ -1,6 +1,5 @@
 import { createPluginHosts } from "./hosts";
 import { afterEach, expect, it } from "vitest";
-import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { PluginRegistry } from "./registry";
 
@@ -23,13 +22,14 @@ function registry(version: string) {
           },
           installation.lifetime.signal,
         ),
-        paseo: createPaseoApi(client),
+        paseo: installation.paseo,
         rpc: async () => {
           throw new Error("No RPC in this plugin");
         },
         openSettings() {
           cleanups++;
         },
+        openScreen() {},
         openSurface() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),

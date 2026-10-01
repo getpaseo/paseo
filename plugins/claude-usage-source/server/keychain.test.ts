@@ -89,7 +89,7 @@ describe("readClaudeKeychainCredentials", () => {
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchUsage } from "./usage.js";
+import { discover, fetchUsage } from "./usage.js";
 
 function fixtureFetch(expectedToken: string): typeof fetch {
   return vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -98,44 +98,57 @@ function fixtureFetch(expectedToken: string): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-describe("Claude usage input forms", () => {
-  it("reads only the selected configDir file", async () => {
+describe("Claude credential routes", () => {
+  it("reads the explicit Claude credential file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-usage-input-"));
     try {
       writeFileSync(
         join(dir, ".credentials.json"),
         JSON.stringify({ claudeAiOauth: { accessToken: "fixture-file" } }),
       );
-      expect((await fetchUsage({ configDir: dir }, fixtureFetch("fixture-file"))).status).toBe(
-        "available",
-      );
+      expect(
+        (
+          await fetchUsage(
+            { route: { store: "claude", path: join(dir, ".credentials.json") } },
+            fixtureFetch("fixture-file"),
+          )
+        ).status,
+      ).toBe("available");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  it("uses an accessToken without reading a file", async () => {
-    expect(
-      (await fetchUsage({ accessToken: "fixture-direct" }, fixtureFetch("fixture-direct"))).status,
-    ).toBe("available");
-  });
-  it("default discovery reads the credential file", async () => {
+  it("discovery reads the configured credential file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-usage-default-"));
     try {
       writeFileSync(
         join(dir, ".credentials.json"),
         JSON.stringify({ claudeAiOauth: { accessToken: "fixture-default" } }),
       );
-      vi.stubEnv("CLAUDE_HOME", dir);
-      expect((await fetchUsage({}, fixtureFetch("fixture-default"))).status).toBe("available");
+      const [input] = await discover({
+        home: dir,
+        env: { CLAUDE_CONFIG_DIR: dir },
+        platform: "linux",
+      });
+      expect(input).toEqual({ route: { store: "claude", path: join(dir, ".credentials.json") } });
+      expect((await fetchUsage(input!, fixtureFetch("fixture-default"))).status).toBe("available");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  it("stays unavailable when non-default configDir has no credentials", async () => {
+  it("stays unavailable when the routed file has no credentials", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-empty-config-"));
     try {
       const fetchApi = vi.fn() as unknown as typeof fetch;
-      expect((await fetchUsage({ configDir: dir }, fetchApi)).status).toBe("unavailable");
+      expect(
+        (
+          await fetchUsage(
+            { route: { store: "claude", path: join(dir, ".credentials.json") } },
+            fetchApi,
+            { platform: "linux" },
+          )
+        ).status,
+      ).toBe("unavailable");
       expect(fetchApi).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -151,12 +164,14 @@ describe("Claude Keychain token usage", () => {
       }),
     );
     const credentials = await readClaudeKeychainCredentials(run, "fixture-account");
-    const token = (credentials as { claudeAiOauth: { accessToken: string } }).claudeAiOauth
-      .accessToken;
     const fetchApi = vi.fn(
       async () => new Response(null, { status: 401 }),
     ) as unknown as typeof fetch;
-    const report = await fetchUsage({ accessToken: token }, fetchApi);
+    const report = await fetchUsage({ route: { store: "keychain" } }, fetchApi, {
+      platform: "darwin",
+      claudeHome: "/nonexistent-paseo-test-home",
+      readKeychainCredentials: async () => credentials,
+    });
     expect(report.status).toBe("unavailable");
     expect(fetchApi).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledTimes(1);

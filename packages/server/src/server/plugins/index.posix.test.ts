@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { rename, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  rename,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,6 +17,7 @@ import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
 import { ManagedPluginSources } from "./managed-source.js";
 import {
   startNpmRegistry,
@@ -168,6 +179,78 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it.each([
+    { shadow: false, runtime: "subprocess" },
+    { shadow: true, runtime: "subprocess" },
+    { shadow: false, runtime: "builtin" },
+    { shadow: true, runtime: "builtin" },
+  ])(
+    "publishes status and launch metadata through $runtime despite a configured provider (extends: $shadow)",
+    async ({ shadow, runtime }) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const directory = await createPlugin(
+        "provider-status",
+        `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent", "serve"],
+        async status({ launch }) { return launch.env.LOGIN === "yes" ? { available: true } : { available: false, diagnostic: "Sign in" }; },
+        async getCatalogCacheKey({ launch }) { return launch.command + ":" + launch.env.LOGIN; },
+        async connect({ launch }) {
+          if (launch.command !== process.execPath || launch.env.LOGIN !== "no") throw new Error("Unexpected launch");
+          return { version: 1, capabilities: [], async send() {}, onEvent() { return () => {}; }, async close() {} };
+        },
+      });
+      return () => {};
+    }`,
+      );
+      const store = createStore(home);
+      await store.patch({
+        providers: {
+          "plugin-agent": shadow
+            ? { extends: "acp", label: "Own provider", command: ["own-agent"] }
+            : { command: ["configured-agent"], enabled: false },
+        },
+      });
+      const builtinRoot = path.join(home, "builtins");
+      if (runtime === "builtin") {
+        await mkdir(builtinRoot);
+        await cp(directory, path.join(builtinRoot, "provider-status"), { recursive: true });
+      }
+      const builtinPlugins = new BuiltinPluginLoader(
+        builtinRoot,
+        runtime === "builtin" ? ["provider-status"] : [],
+      );
+      const service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", { builtinPlugins }),
+      );
+      await service.start();
+      try {
+        if (runtime === "subprocess") await service.installDirectory({ path: directory });
+        const [registration] = service.getProviderRegistrations();
+        expect(registration).toMatchObject({
+          id: "plugin-agent",
+          command: ["agent", "serve"],
+          status: expect.any(Function),
+        });
+        const launch = { command: process.execPath, args: [], env: { LOGIN: "no" } };
+        expect(await registration!.getCatalogCacheKey!({ scope: "global", launch })).toBe(
+          process.execPath + ":no",
+        );
+        expect(await registration!.status!({ launch })).toEqual({
+          available: false,
+          diagnostic: "Sign in",
+        });
+        expect(
+          await registration!.status!({ launch: { ...launch, env: { LOGIN: "yes" } } }),
+        ).toEqual({ available: true });
+        const connection = await registration!.connect({ versions: [1], capabilities: [], launch });
+        await connection.close();
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+  );
+
   it("resolves a provider icon path to sanitized inline SVG", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

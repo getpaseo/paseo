@@ -31,6 +31,35 @@ agent catalog during startup, raise the limit in milliseconds:
 The limit applies independently to every provider refresh and covers availability plus the entire
 catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field is absent.
 
+## Provider options
+
+Set provider defaults in `agents.providers.<id>.options`. At agent creation, use
+`providerOptions` on the wire or `config.options` in the SDK. Both are opaque
+`Record<string, unknown>` values: the provider owns validation and application.
+Claude, Codex, and OpenCode reject unknown keys with a key-specific creation error.
+Providers without option handling ignore the record.
+
+The daemon deep-merges the agent's options over the provider defaults at each
+session launch or resume. Plain objects merge recursively; arrays, scalars, and
+`null` replace the base value. Only the agent's own options are persisted, so edits
+to provider defaults apply on the next launch or resume. A profile inherits its
+base provider's options unless it sets its own options record.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "codex": {
+        "options": { "sandbox_mode": "read-only", "approval_policy": "never" }
+      }
+    }
+  }
+}
+```
+
+See the [SDK provider options guide](../public-docs/sdk/provider-options.md) for
+per-agent examples and provider-specific keys.
+
 ---
 
 ## Table of Contents
@@ -391,7 +420,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
           "XDG_CONFIG_HOME": "~/.config/omp-work",
           "XDG_STATE_HOME": "~/.local/state/omp-work"
         },
-        "params": {
+        "options": {
           "sessionDir": "~/.local/state/omp-work/omp/agent/sessions",
           "rpcTimeoutMs": 60000,
           "smolModel": "openai/gpt-5-mini",
@@ -404,7 +433,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 }
 ```
 
-`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `params.rpcTimeoutMs` overrides both deadlines.
+`options.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `options.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `options.rpcTimeoutMs` overrides both deadlines.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -416,7 +445,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
         "extends": "pi",
         "label": "My Pi Fork",
         "command": ["my-pi-fork"],
-        "params": {
+        "options": {
           "sessionDir": "~/.my-pi-fork/sessions",
           "rpcTimeoutMs": 60000
         }
@@ -426,7 +455,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
 }
 ```
 
-This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`. `params.rpcTimeoutMs` overrides the 60-second Pi control-plane RPC deadline.
+This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`. `options.rpcTimeoutMs` overrides the 60-second Pi control-plane RPC deadline.
 
 ---
 
@@ -484,7 +513,7 @@ Required fields for ACP providers:
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
 
-Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
+Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `options.supportsMcpServers: false`:
 
 ```json
 {
@@ -494,7 +523,7 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
         "extends": "acp",
         "label": "My Agent",
         "command": ["my-agent", "acp"],
-        "params": {
+        "options": {
           "supportsMcpServers": false
         }
       }
@@ -505,7 +534,7 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 
 ACP agents execute filesystem operations in their own environment by default,
 while terminal operations run through Paseo on the host. To customize which
-operations Paseo handles, configure client capabilities in provider params:
+operations Paseo handles, configure client capabilities in provider options:
 
 ```json
 {
@@ -515,7 +544,7 @@ operations Paseo handles, configure client capabilities in provider params:
         "extends": "acp",
         "label": "Container Agent",
         "command": ["container-agent", "acp"],
-        "params": {
+        "options": {
           "clientCapabilities": {
             "fs": {
               "readTextFile": false,
@@ -684,7 +713,7 @@ Every entry under `agents.providers` accepts these fields:
 | `description`      | `string`                  | No                | Short description shown in the UI                                  |
 | `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
 | `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
-| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
+| `options`          | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
 | `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
 | `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |
 | `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |

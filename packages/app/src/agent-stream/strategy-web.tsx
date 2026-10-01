@@ -303,6 +303,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     hasOlderHistory,
     olderHistoryProgressKey,
     scrollEnabled,
+    contentMaxWidth,
     isMobileBreakpoint,
   } = props;
   const historyVirtualized = useRevisedHistoryRows(
@@ -403,7 +404,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     getItemKey: (index: number) => segments.historyVirtualized[index]?.id ?? index,
     estimateSize: (index: number) => {
       const row = segments.historyVirtualized[index];
-      return row ? estimateStreamItemHeight(row) : 120;
+      return row ? estimateStreamItemHeight(row, contentMaxWidth) : 120;
     },
     measureElement: measureVirtualElement,
     rangeExtractor,

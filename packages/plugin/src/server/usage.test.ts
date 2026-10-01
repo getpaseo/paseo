@@ -17,14 +17,13 @@ test("shared usage tones preserve the app threshold contract", () => {
   expect([null, 0, 0.01].map(balanceToneFromRemaining)).toEqual(["default", "danger", "ok"]);
 });
 
-test("shared windows retain percentage, reset time, and optional headline", () => {
-  expect(windowFromUsedPct({ id: "a", label: "A", utilizationPct: 30, headline: true })).toEqual({
+test("shared windows retain percentage and reset time", () => {
+  expect(windowFromUsedPct({ id: "a", label: "A", utilizationPct: 30 })).toEqual({
     id: "a",
     label: "A",
     usedPct: 30,
     remainingPct: 70,
     resetsAt: null,
-    headline: true,
   });
   expect(windowFromUsedPct({ id: "b", label: "B", utilizationPct: null })).toEqual({
     id: "b",

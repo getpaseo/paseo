@@ -34,7 +34,7 @@ function Details({ workspaceId, theme, layout, close }) {
   React.useEffect(() => {
     const owner = paseo.observeEvents(["project.update"]);
     owner.subscribe({ snapshot(value) { setOwnerId(value.subscriptionId); }, update() { setUpdates((n) => n + 1); } });
-    // Deliberately leave this observation to the mounted host scope.
+    return () => { void owner.release(); };
   }, [paseo]);
   const rpc = useRpc(summary);
   const query = useQuery({ queryKey: ["summary"], queryFn: () => rpc({}) });

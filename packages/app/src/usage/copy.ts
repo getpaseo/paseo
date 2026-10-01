@@ -3,6 +3,7 @@
 export const usageCopy = {
   title: "Usage",
   planUsage: "Plan usage",
+  options: "Usage options",
   refresh: "Refresh",
   refreshing: "Refreshing...",
   refreshFailed: "Unable to refresh usage",
@@ -11,8 +12,13 @@ export const usageCopy = {
   empty: "No usage data",
   noHosts: "No connected hosts",
   errorTitle: "Unable to load usage",
-  hostUnavailable: "Connect to this host to see usage",
-  hostUpgradeRequired: "Update the host to see usage",
+  hostUnavailable: (host: string) => `Connect to ${host} to see usage`,
+  hostUpgradeRequired: (host: string) => `Update ${host} to see usage`,
   clientUnavailable: "Host connection is not ready",
   retry: "Try again",
+  pin: "Pin",
+  displayAs: "Show",
+  displayUsed: "Used",
+  displayRemaining: "Remaining",
+  showInSidebar: "Show in sidebar",
 } as const;

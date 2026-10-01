@@ -3,7 +3,6 @@ import {
   type ProviderUsage,
   type UsageReportEntry,
 } from "@getpaseo/protocol/messages";
-import type { UsageReference } from "../../agent/agent-sdk-types.js";
 
 export interface UsageSource {
   id: string;
@@ -16,11 +15,11 @@ export interface UsageSource {
 
 interface KnownReport {
   source: UsageSource;
-  input: unknown;
+  inputs: unknown[];
   label?: string;
 }
 
-/** Owns account identity, the latest input for each report, and the five-minute fetch cache. */
+/** Owns account identity, ordered logins for each account, and the five-minute fetch cache. */
 export class UsageSourceRegistry {
   private readonly sources = new Map<string, UsageSource>();
   private readonly known = new Map<string, KnownReport>();
@@ -43,13 +42,10 @@ export class UsageSourceRegistry {
     for (const key of this.cache.keys()) if (key.startsWith(`${id}:`)) this.cache.delete(key);
   }
 
-  async resolveReference(reference: UsageReference): Promise<string | null> {
-    const source = this.sources.get(reference.source);
-    if (!source) return null;
-    return this.identify(source, reference.input);
-  }
-
-  private async identify(source: UsageSource, input: unknown): Promise<string | null> {
+  private async identify(
+    source: UsageSource,
+    input: unknown,
+  ): Promise<{ id: string; label?: string; error?: true } | null> {
     try {
       const account = await source.identify(input);
       if (account === null) return null;
@@ -60,20 +56,18 @@ export class UsageSourceRegistry {
         throw new Error(`Invalid account identity from ${source.id}`);
       if (typeof account.key !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(account.key))
         throw new Error(`Invalid account key from ${source.id}`);
-      const id = `${source.id}:${account.key}`;
-      this.known.set(id, { source, input, label: account.label });
-      return id;
+      return { id: `${source.id}:${account.key}`, label: account.label };
     } catch (error) {
       const id = `${source.id}:!error`;
       this.writeCache(id, this.errorEntry(source, id, error));
-      return id;
+      return { id, error: true };
     }
   }
 
   async listReports(
-    options: { forceRefresh?: boolean; reportIds?: string[]; references?: UsageReference[] } = {},
+    options: { forceRefresh?: boolean; reportIds?: string[] } = {},
   ): Promise<UsageReportEntry[]> {
-    const ids = options.reportIds ?? (await this.discoverReportIds(options.references ?? []));
+    const ids = options.reportIds ?? (await this.discoverReportIds());
     return Promise.all(
       [...new Set(ids)]
         .filter((id) => this.known.has(id) || this.cache.has(id))
@@ -81,15 +75,34 @@ export class UsageSourceRegistry {
     );
   }
 
-  private async discoverReportIds(references: UsageReference[]): Promise<string[]> {
+  private async discoverReportIds(): Promise<string[]> {
     const discovered = await Promise.all(
       [...this.sources.values()].map(async (source) => {
         try {
           const inputs = await source.discover();
           if (!Array.isArray(inputs)) throw new Error("Usage discovery must return an array");
-          return (await Promise.all(inputs.map((input) => this.identify(source, input)))).filter(
-            (id): id is string => id !== null,
-          );
+          const accounts = await Promise.all(inputs.map((input) => this.identify(source, input)));
+          // Group in discovery order so an account's logins keep the source's preference.
+          const knownReports = new Map<string, KnownReport>();
+          const ids: string[] = [];
+          accounts.forEach((account, index) => {
+            if (account === null) return;
+            ids.push(account.id);
+            if (account.error) return;
+            const known = knownReports.get(account.id);
+            if (known) known.inputs.push(inputs[index]);
+            else
+              knownReports.set(account.id, {
+                source,
+                inputs: [inputs[index]],
+                label: account.label,
+              });
+          });
+          for (const key of this.known.keys()) {
+            if (key.startsWith(`${source.id}:`)) this.known.delete(key);
+          }
+          for (const [id, known] of knownReports) this.known.set(id, known);
+          return ids;
         } catch (error) {
           const id = `${source.id}:!error`;
           this.writeCache(id, this.errorEntry(source, id, error));
@@ -97,11 +110,10 @@ export class UsageSourceRegistry {
         }
       }),
     );
-    const live = await Promise.all(references.map((reference) => this.resolveReference(reference)));
-    return [...discovered.flat(), ...live.filter((id): id is string => id !== null)];
+    return discovered.flat();
   }
 
-  // COMPAT(providerUsageList): added in v0.9.3, remove after 2027-03-26.
+  // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
   async listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
     const reports = await this.listReports();
     return {
@@ -113,7 +125,9 @@ export class UsageSourceRegistry {
         : new Date(this.now()).toISOString(),
       providers: reports.map((entry) => ({
         providerId: entry.sourceId,
-        displayName: entry.sourceLabel,
+        displayName: entry.account.label
+          ? `${entry.sourceLabel} (${entry.account.label})`
+          : entry.sourceLabel,
         status: entry.report.status,
         planLabel: entry.report.planLabel ?? null,
         windows: entry.report.windows,
@@ -133,20 +147,26 @@ export class UsageSourceRegistry {
     const pending = this.pending.get(id);
     if (pending) return pending;
     const request = (async () => {
-      let entry: UsageReportEntry;
-      try {
-        const report = UsageReportSchema.parse(await known.source.fetch(known.input));
-        entry = {
-          id,
-          sourceId: known.source.id,
-          sourceLabel: known.source.label,
-          icon: known.source.icon,
-          account: { label: known.label },
-          fetchedAt: new Date(this.now()).toISOString(),
-          report,
-        };
-      } catch (error) {
-        entry = this.errorEntry(known.source, id, error, known.label);
+      let entry: UsageReportEntry = {
+        id,
+        sourceId: known.source.id,
+        sourceLabel: known.source.label,
+        icon: known.source.icon,
+        account: { label: known.label },
+        fetchedAt: new Date(this.now()).toISOString(),
+        report: { status: "unavailable", windows: [] },
+      };
+      for (const input of known.inputs) {
+        try {
+          // A harness can switch accounts between discovery and a targeted refresh.
+          const account = await known.source.identify(input);
+          if (!account || `${known.source.id}:${account.key}` !== id) continue;
+          const report = UsageReportSchema.parse(await known.source.fetch(input));
+          entry.report = report;
+          if (report.status === "available") break;
+        } catch (error) {
+          entry = this.errorEntry(known.source, id, error, known.label);
+        }
       }
       this.writeCache(id, entry);
       return entry;

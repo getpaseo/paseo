@@ -5,13 +5,19 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 export interface UsageWindow {
   id: string;
   label: string;
+  /**
+   * A few characters naming the window where space is tight, e.g. "5h" or "wk". An empty string
+   * shows the percent alone; leaving it out shows `label`.
+   */
+  shortLabel?: string;
+  /** Shown in the usage summary until the user pins windows of their own. */
+  summary?: boolean;
   usedPct?: number | null;
   remainingPct?: number | null;
   resetsAt?: string | null;
   runsOutAt?: string | null;
   shortfallPct?: number | null;
   tone?: "default" | "ok" | "warning" | "danger";
-  headline?: boolean;
 }
 
 export interface UsageBalance {
@@ -49,16 +55,17 @@ export interface UsageSourceRegistration {
   /** Stable account identity, resolved without fetching usage. */
   identify(input: unknown): Promise<{ key: string; label?: string } | null>;
   fetch(input: unknown): Promise<UsageReport>;
-  discover?(): Promise<JsonValue[]>;
+  discover(): Promise<JsonValue[]>;
 }
 
 export function windowFromUsedPct(input: {
   id: string;
   label: string;
+  shortLabel?: string;
+  summary?: boolean;
   utilizationPct: number | null | undefined;
   resetsAt?: string | null;
   tone?: UsageWindow["tone"];
-  headline?: boolean;
 }): UsageWindow {
   const usedPct = typeof input.utilizationPct === "number" ? input.utilizationPct : null;
   const window: UsageWindow = {
@@ -68,8 +75,9 @@ export function windowFromUsedPct(input: {
     remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
     resetsAt: input.resetsAt ?? null,
   };
+  if (input.shortLabel !== undefined) window.shortLabel = input.shortLabel;
+  if (input.summary) window.summary = true;
   if (input.tone) window.tone = input.tone;
-  if (input.headline) window.headline = true;
   return window;
 }
 

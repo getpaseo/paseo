@@ -18,6 +18,45 @@ Work out of the box once the underlying CLI is installed and authenticated.
 - [Codex](/docs/codex). OpenAI's workspace agent with sandbox controls and optional network access.
 - [OpenCode](https://opencode.ai/). Open-source coding assistant with multi-provider model support.
 - [Pi](https://pi.dev). Minimal terminal-based coding agent with multi-provider LLM support.
+- [Antigravity](#antigravity). Uses your installed `agy` CLI through a built-in provider plugin.
+- [Muse Code](/docs/muse-code). Meta's terminal coding agent, bundled as a provider plugin.
+
+### Antigravity
+
+Install the Antigravity CLI (`agy`) on your daemon host, then run `agy` once to sign in. Pick
+**Antigravity** in Paseo. The provider ships with Paseo; no separate plugin install is required.
+
+**Full access** is the only permission mode. Antigravity cannot ask for permission when another
+app drives it, so Paseo starts `agy` with `--dangerously-skip-permissions`. Every tool call,
+including shell commands, runs without asking. Each session starts with a warning explaining
+this, including when you reopen a chat. Antigravity's own policy can still deny
+an action.
+
+After a daemon restart, Antigravity remembers the conversation, but Paseo's transcript starts
+fresh because `agy` does not replay its history.
+
+This integration uses your installed CLI and sign-in. It is not endorsed by Google.
+
+Paseo MCP tools and steering are unavailable. Your own `agy` MCP servers still work. Attached
+images are passed as file references for the agent to read.
+
+If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config.json`. Use `env`
+for provider-specific environment variables:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "antigravity": {
+        "command": ["/absolute/path/to/agy"],
+        "env": { "EXAMPLE_VARIABLE": "value" }
+      }
+    }
+  }
+}
+```
+
+See [Custom providers](/docs/custom-providers) for command and environment overrides.
 
 ## ACP catalog
 

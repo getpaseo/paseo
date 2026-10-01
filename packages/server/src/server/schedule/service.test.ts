@@ -21,8 +21,6 @@ import type {
   AgentStreamEvent,
 } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
-import { validateProviderOptions } from "../agent/provider-options.js";
-import { ClaudeProviderOptionsSchema } from "../agent/providers/claude/options.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
@@ -66,12 +64,6 @@ const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreat
 
 const TEST_CLAUDE_PROVIDER_DEFINITION = {
   enabled: true,
-  validateOptions: (options: AgentSessionConfig["providerOptions"]) =>
-    validateProviderOptions("claude", ClaudeProviderOptionsSchema, options),
-  applyOptions: (config: AgentSessionConfig, options: AgentSessionConfig["providerOptions"]) => ({
-    ...config,
-    ...(options ? { providerOptions: options } : {}),
-  }),
 };
 
 let workspaceArchiveInProgress = false;

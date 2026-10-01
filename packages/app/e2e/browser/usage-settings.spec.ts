@@ -3,9 +3,17 @@ import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
-import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import {
+  installUsageReportsFixture,
+  type UsageReportsFixture,
+} from "../support/helpers/usage-reports";
+import { refreshAllUsage, showUsageAs } from "../support/helpers/usage-sidebar-item";
 
 const ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
+
+function forcedRefreshCount(usage: UsageReportsFixture): number {
+  return usage.listRequests().filter((request) => request.forceRefresh).length;
+}
 
 function report(input: {
   sourceId: string;
@@ -39,7 +47,7 @@ test.describe("usage settings", () => {
             sourceLabel: "Alpha plan",
             report: {
               planLabel: "Max",
-              windows: [{ id: "session", label: "Session", usedPct: 7, headline: true }],
+              windows: [{ id: "session", label: "Session", usedPct: 7 }],
             },
           }),
           report({
@@ -69,7 +77,6 @@ test.describe("usage settings", () => {
 
     await gotoAppShell(page);
     await openSettings(page);
-    expect(usage.listRequests()).toHaveLength(0);
     await openSettingsHostSection(page, serverId, "usage");
     await usage.waitForListRequests(1);
 
@@ -82,26 +89,24 @@ test.describe("usage settings", () => {
     await expect(card.getByText("$5.00 / $20.00", { exact: true })).toBeVisible();
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
+
+    await showUsageAs(page, "remaining");
+    await expect(card.getByText("30% left")).toBeVisible();
+    await expect(card.getByText("93% left")).toBeVisible();
   });
 
   test("refresh forces a fresh report", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
     const windows = (usedPct: number) => [{ id: "w", label: "Weekly", usedPct }];
+    // The sidebar summary and the section each load reports; only Refresh forces one.
     const usage = await installUsageReportsFixture(page, {
       lists: [
-        [
+        (request) => [
           report({
             sourceId: "alpha",
             sourceLabel: "Alpha plan",
-            report: { windows: windows(23) },
-          }),
-        ],
-        [
-          report({
-            sourceId: "alpha",
-            sourceLabel: "Alpha plan",
-            report: { windows: windows(64) },
+            report: { windows: windows(request.forceRefresh ? 64 : 23) },
           }),
         ],
       ],
@@ -110,26 +115,26 @@ test.describe("usage settings", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
-    await expect(page.getByText("23%")).toBeVisible({ timeout: 10_000 });
+    const card = page.getByTestId("usage-card");
+    await expect(card.getByText("23%")).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await usage.waitForListRequests(2);
-
-    expect(usage.listRequests().at(-1)).toEqual({ forceRefresh: true });
-    await expect(page.getByText("64%")).toBeVisible();
+    await refreshAllUsage(page);
+    await expect.poll(() => forcedRefreshCount(usage)).toBe(1);
+    await expect(card.getByText("64%")).toBeVisible();
   });
 
-  test("asks to update a host without usage sources and never calls it", async ({ page }) => {
+  test("asks to update a host without usage support and never calls it", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usage = await installUsageReportsFixture(page, { usageSources: false });
+    const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
 
     await expect(
-      page.getByTestId("usage-card").getByText("Update the host to see usage", { exact: true }),
+      // Names the host: "Update Laptop to see usage".
+      page.getByTestId("usage-card").getByText(/^Update (?!the host ).+ to see usage$/),
     ).toBeVisible({ timeout: 10_000 });
     expect(usage.listRequests()).toHaveLength(0);
   });

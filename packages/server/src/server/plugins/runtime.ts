@@ -1,3 +1,8 @@
+import {
+  ProviderStatusSchema,
+  type ProviderStatus,
+  type ProviderStatusRequest,
+} from "@getpaseo/plugin/server/provider";
 import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
@@ -411,6 +416,23 @@ export class PluginRuntime {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     return this.request(loaded, { type: "usage.discover", requestId: randomUUID(), sourceId });
+  }
+
+  async getProviderStatus(
+    pluginId: string,
+    providerId: string,
+    request: ProviderStatusRequest,
+  ): Promise<ProviderStatus> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderStatusSchema.parse(
+      await this.request(loaded, {
+        type: "provider.status",
+        requestId: randomUUID(),
+        providerId,
+        request,
+      }),
+    );
   }
 
   async connectProvider(

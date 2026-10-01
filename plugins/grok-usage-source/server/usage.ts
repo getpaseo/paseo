@@ -98,6 +98,7 @@ function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): Usa
   return windowFromUsedPct({
     id: weekly ? "weekly" : "monthly",
     label: weekly ? "Weekly" : "Monthly",
+    shortLabel: weekly ? "wk" : "mo",
     utilizationPct: percent,
     resetsAt: period?.end ?? null,
     tone: toneFromUsedPct(percent),
@@ -144,7 +145,6 @@ export async function fetchUsage(
   const resp = GrokUsageResponseSchema.parse(await res.json());
   const balance = grokMonthlyCreditBalance(resp);
   const window = grokUsageWindow(resp);
-  if (window) window.headline = true;
 
   return {
     status: "available",

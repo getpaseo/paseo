@@ -41,14 +41,13 @@ import {
   Paperclip,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
-import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { FOOTER_HEIGHT } from "@/constants/layout";
 import {
   AgentControls,
   DraftAgentControls,
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
-import { UsageComposerPill } from "@/usage";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -2093,13 +2092,8 @@ function ComposerContentImpl({
     ],
   );
   const beforeVoiceContent = useMemo(
-    () => (
-      <>
-        {resolveContextWindowPlacement(contextWindowMeter, hasAgent)}
-        {hasAgent ? <UsageComposerPill serverId={serverId} agentId={agentId} /> : null}
-      </>
-    ),
-    [agentId, contextWindowMeter, hasAgent, serverId],
+    () => <>{resolveContextWindowPlacement(contextWindowMeter, hasAgent)}</>,
+    [contextWindowMeter, hasAgent],
   );
 
   const hasGithubAttachment = useMemo(
@@ -2542,7 +2536,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   inputAreaContent: {
     flexShrink: 1,
     width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
+    maxWidth: theme.contentMaxWidth,
     gap: theme.spacing[3],
   },
   messageInputContainer: {

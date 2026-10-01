@@ -49,11 +49,11 @@ export async function discover(path = authPath()): Promise<Array<{}>> {
 }
 
 export async function fetchUsage(
-  input: Input,
+  _input: Input,
   fetchApi: typeof fetch = fetch,
   path = authPath(),
 ): Promise<UsageReport> {
-  const apiKey = "apiKey" in input ? input.apiKey : await readDefaultKey(path);
+  const apiKey = await readDefaultKey(path);
   if (!apiKey) return { status: "unavailable", windows: [] };
   const response = await fetchApi("https://opencode.ai/zen/go/v1/usage", {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
@@ -65,24 +65,25 @@ export async function fetchUsage(
   const data = responseSchema.parse(await response.json());
   const windows = (
     [
-      ["rolling", "Rolling", data.usage.rolling],
-      ["weekly", "Weekly", data.usage.weekly],
-      ["monthly", "Monthly", data.usage.monthly],
+      // The rolling window's length is not reported, so its percent stands without a name.
+      ["rolling", "Rolling", "", data.usage.rolling],
+      ["weekly", "Weekly", "wk", data.usage.weekly],
+      ["monthly", "Monthly", "mo", data.usage.monthly],
     ] as const
-  ).map(([id, label, value]) =>
+  ).map(([id, label, shortLabel, value]) =>
     windowFromUsedPct({
       id,
       label,
+      shortLabel,
       utilizationPct: value.percent,
       resetsAt: value.resetsAt,
       tone: toneFromUsedPct(value.percent),
-      headline: id === "rolling",
     }),
   );
   return { status: "available", planLabel: "Go", windows };
 }
 
-export async function identify(input: Input, path = authPath()) {
-  const key = "apiKey" in input ? input.apiKey : await readDefaultKey(path);
+export async function identify(_input: Input, path = authPath()) {
+  const key = await readDefaultKey(path);
   return key ? { key: hashAccountKey(key) } : null;
 }
