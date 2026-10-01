@@ -103,7 +103,31 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
       expect.objectContaining({ id: "weekly", tone: "danger" }),
     ]),
   );
-  expect(report.balances).toEqual([expect.objectContaining({ remaining: 0, tone: "danger" })]);
+  expect(report.balances).toEqual([
+    expect.objectContaining({ remaining: 0, unit: "credits", tone: "danger" }),
+  ]);
+});
+
+test("summarizes the session and weekly windows by default, not code review", async () => {
+  const report = await fetchUsage(
+    {},
+    async () =>
+      new Response(
+        JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 12 },
+            secondary_window: { used_percent: 40 },
+          },
+          code_review_rate_limit: { primary_window: { used_percent: 5 } },
+        }),
+        { status: 200 },
+      ),
+  );
+  expect(report.windows.map((window) => [window.id, window.summary ?? false])).toEqual([
+    ["session", true],
+    ["weekly", true],
+    ["code_review", false],
+  ]);
 });
 
 test("HTML usage body is unavailable", async () => {

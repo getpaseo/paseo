@@ -5,14 +5,13 @@ import {
   useEffect,
   useMemo,
   useRef,
-  type ComponentProps,
   type ReactElement,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { ChevronLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -345,6 +344,7 @@ function MenuSheetSurface({
   testID,
   keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
+  const { height: windowHeight } = useWindowDimensions();
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
   const safeAreaInsets = useSafeAreaInsets();
@@ -370,18 +370,6 @@ function MenuSheetSurface({
     onClose: handleClose,
   });
 
-  const renderBackdrop = useCallback(
-    (backdropProps: ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop
-        {...backdropProps}
-        appearsOnIndex={0}
-        disappearsOnIndex={-1}
-        opacity={0.45}
-      />
-    ),
-    [],
-  );
-
   const openPageId = currentPageId(menu.path);
   const openPage = openPageId ? pages.find((page) => page.id === openPageId) : null;
   const depth = menu.path.length;
@@ -405,9 +393,10 @@ function MenuSheetSurface({
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.
       enableDynamicSizing
+      maxDynamicContentSize={windowHeight * 0.8}
       onChange={handleSheetChange}
       onDismiss={handleSheetDismiss}
-      backdropComponent={renderBackdrop}
+      backdropOpacity={0.45}
       enablePanDownToClose
       // `interactive` rather than `extend`, which is what every other sheet in the app uses.
       // `extend` grows the sheet to its largest snap point, and with `enableDynamicSizing` that
