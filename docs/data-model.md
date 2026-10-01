@@ -111,7 +111,11 @@ The optional `submittedMessageImages` field maps client/provider message IDs to 
 references. It restores images when provider history is projected after restart. Image bytes live in
 `conversation-images/`, not in agent JSON or timeline wire payloads. The filename hash deduplicates
 identical bytes. Deleting an agent runs reference-aware cleanup across the remaining agent records,
-so a shared image survives until its last reference is gone.
+so a shared image survives until its last reference is gone. Provider history can also expose image
+bytes or original file references for messages sent before this mapping existed. On history hydration,
+available local files are copied into the durable store; missing originals cannot be reconstructed
+from text. The client replaces temporary upload references with canonical image references when the
+daemon acknowledges the message.
 
 ### Nested: SerializableConfig
 

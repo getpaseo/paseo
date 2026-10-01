@@ -1,4 +1,5 @@
 import { validateProviderOptions } from "../provider-options.js";
+import { userMessageImages } from "./user-message-images.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -1325,11 +1326,16 @@ function buildOpenCodeReplayTimelineEvents(
       )
       .map((part) => part.text)
       .join("");
-
-    return text
+    const images = userMessageImages(parts);
+    return text || images.length
       ? [
           buildOpenCodeReplayTimelineEvent({
-            item: { type: "user_message", text, messageId: info.id },
+            item: {
+              type: "user_message",
+              text,
+              messageId: info.id,
+              ...(images.length ? { images } : {}),
+            },
             message: info,
           }),
         ]

@@ -2688,6 +2688,39 @@ describe("ACPAgentSession", () => {
     expect(await listCommandsPromise).toEqual([]);
   });
 
+  test("retains an image-only ACP user message during replay", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-image",
+        content: { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-next",
+        content: { type: "text", text: "Seen" },
+      } as SessionUpdate,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          type: "user_message",
+          messageId: "user-image",
+          images: [{ id: expect.any(String), source: expect.any(String), mimeType: "image/png" }],
+        }),
+      }),
+    );
+  });
+
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
     const events: Array<{
@@ -3234,7 +3267,11 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
         turnId: expect.any(String),
       },
     ]);
@@ -3309,7 +3346,11 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
         turnId,
       },
       expect.objectContaining({ type: "turn_failed", turnId, error: "prompt failed" }),
@@ -3439,7 +3480,11 @@ describe("ACPAgentSession close() tree-kill", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
       },
     ]);
   });
@@ -4081,7 +4126,11 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "hey[image]" },
+        item: {
+          type: "user_message",
+          text: "hey[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
       },
       {
         type: "timeline",

@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -15,7 +15,10 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
-import type { ConversationImageStore } from "./conversation-image-store.js";
+import {
+  createConversationImageStore,
+  type ConversationImageStore,
+} from "./conversation-image-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -5805,10 +5808,80 @@ test("getAgent does not expose committed history internals once manager owns the
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
 });
 
+test("history images survive provider temp cleanup and manager restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "history-images-restart-"));
+  const temporaryImage = join(workdir, "provider-image.png");
+  writeFileSync(temporaryImage, "historical image bytes");
+  const storagePath = join(workdir, "agents");
+  const historyItem: AgentTimelineItem = {
+    type: "user_message",
+    messageId: "old-provider-message",
+    text: "Look at this",
+    images: [{ id: "provider-image", source: temporaryImage, mimeType: "image/png" }],
+  };
+  class HistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "timeline", provider: "codex", item: historyItem };
+    }
+  }
+  class HistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new HistorySession(config);
+    }
+  }
+  const makeManager = () =>
+    new AgentManager({
+      clients: { codex: new HistoryClient() },
+      registry: new AgentStorage(storagePath, logger),
+      conversationImageStore: createConversationImageStore(workdir),
+      logger,
+    });
+  try {
+    const manager = makeManager();
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true, broadcast: true });
+    const first = manager.getTimeline(agent.id)[0];
+    expect(first).toMatchObject({
+      type: "user_message",
+      images: [{ source: expect.stringContaining("conversation-images") }],
+    });
+    if (first.type !== "user_message" || !first.images) throw new Error("Missing user images");
+    expect(readFileSync(first.images[0].source, "utf8")).toBe("historical image bytes");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_stream",
+        event: expect.objectContaining({ item: first }),
+      }),
+    );
+    rmSync(temporaryImage);
+    await manager.closeAgent(agent.id);
+    await manager.flushForShutdown();
+
+    const restarted = makeManager();
+    await restarted.createAgent({ provider: "codex", cwd: workdir }, agent.id, {
+      workspaceId: undefined,
+    });
+    await restarted.hydrateTimelineFromProvider(agent.id, { force: true, broadcast: false });
+    expect(restarted.getTimeline(agent.id)).toEqual([first]);
+    expect(readFileSync(first.images[0].source, "utf8")).toBe("historical image bytes");
+    await restarted.closeAgent(agent.id);
+    await restarted.flushForShutdown();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("canonical user messages retain durable submitted image references", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-images-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const imageStore: ConversationImageStore = {
+    async importImage(image) {
+      return image;
+    },
     async persist(images) {
       return images.map((image) => ({
         id: "persisted-image",

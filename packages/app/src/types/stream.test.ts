@@ -1535,6 +1535,53 @@ describe("stream reducer canonical tool calls", () => {
     ]);
   });
 
+  it("replaces a submitted image cache reference with the canonical durable reference", () => {
+    const timestamp = new Date("2025-01-01T11:10:01Z");
+    const images = [
+      { id: "durable", mimeType: "image/png", source: "/paseo/conversation-images/durable.png" },
+    ];
+    const state: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "local-row",
+        clientMessageId: "client-image",
+        text: "Inspect this",
+        timestamp,
+        images: [
+          {
+            id: "temporary",
+            mimeType: "image/png",
+            storageType: "desktop-file",
+            storageKey: "/tmp/image.png",
+            createdAt: timestamp.getTime(),
+          },
+        ],
+      },
+    ];
+    const result = reduceStreamUpdate(
+      state,
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "Inspect this",
+          messageId: "provider-image",
+          clientMessageId: "client-image",
+          images,
+        },
+      },
+      timestamp,
+    );
+    expect(result).toEqual([
+      {
+        ...state[0],
+        messageId: "provider-image",
+        images,
+      },
+    ]);
+  });
+
   it("keeps canonical assistant/user/assistant order during replay", () => {
     const state: StreamItem[] = [
       {

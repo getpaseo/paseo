@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { AgentTimelineImage } from "./agent-sdk-types.js";
 
@@ -15,6 +16,7 @@ export interface ConversationImageInput {
 
 export interface ConversationImageStore {
   persist(images: readonly ConversationImageInput[]): Promise<AgentTimelineImage[]>;
+  importImage(image: AgentTimelineImage): Promise<AgentTimelineImage>;
   garbageCollect(referencedIds: ReadonlySet<string>): Promise<void>;
 }
 
@@ -77,6 +79,16 @@ export function createConversationImageStore(paseoHome: string): ConversationIma
   }
 
   return {
+    async importImage(image) {
+      const source = image.source.startsWith("file:") ? fileURLToPath(image.source) : image.source;
+      if (!path.isAbsolute(source)) return image;
+      if (path.dirname(source) === directory) return image;
+      const bytes = await readFile(source);
+      const [persisted] = await this.persist([
+        { data: bytes.toString("base64"), mimeType: image.mimeType },
+      ]);
+      return persisted;
+    },
     async persist(images) {
       await ensureDirectory();
       return await Promise.all(

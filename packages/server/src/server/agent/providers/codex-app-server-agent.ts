@@ -45,6 +45,7 @@ import type { Logger } from "pino";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { userMessageImages } from "./user-message-images.js";
 import { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -1762,6 +1763,7 @@ function mapCodexThreadUserMessageItem(
     return null;
   }
   const text = extractUserText(normalizedItem.content) ?? "";
+  const images = userMessageImages(normalizedItem.content);
   const messageId = nonEmptyString(normalizedItem.id);
   const clientMessageId = nonEmptyString(
     normalizedItem.clientId ?? normalizedItem.client_id ?? normalizedItem.clientUserMessageId,
@@ -1771,6 +1773,7 @@ function mapCodexThreadUserMessageItem(
     text,
     ...(messageId ? { messageId } : {}),
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(images.length ? { images } : {}),
   };
 }
 

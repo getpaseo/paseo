@@ -28,7 +28,26 @@ import {
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
   toAgentUsage,
+  threadItemToTimeline,
 } from "./codex-app-server-agent.js";
+
+test("user history retains local image references alongside text", () => {
+  expect(
+    threadItemToTimeline({
+      type: "UserMessage",
+      id: "historical-user",
+      content: [
+        { type: "text", text: "Look at this" },
+        { type: "local_image", path: "/tmp/paseo-attachments-old/screenshot.png" },
+      ],
+    }),
+  ).toMatchObject({
+    type: "user_message",
+    messageId: "historical-user",
+    text: "Look at this",
+    images: [{ source: "/tmp/paseo-attachments-old/screenshot.png", mimeType: "image/png" }],
+  });
+});
 
 describe("mapCodexPlanUpdateToTodo", () => {
   test("preserves checklist progress without creating a plan card", () => {

@@ -4084,6 +4084,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
+      event.item = await this.recoverHistoryImages(agent.id, event.item);
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -4154,6 +4155,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
+      event.item = await this.recoverHistoryImages(agent.id, event.item);
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -4882,11 +4884,48 @@ export class AgentManager {
     agentId: string,
     item: AgentTimelineItem,
   ): AgentTimelineItem {
-    if (item.type !== "user_message" || item.images?.length) return item;
+    if (item.type !== "user_message") return item;
     const images =
       this.findSubmittedMessageImages(agentId, item.clientMessageId).images ??
       this.findSubmittedMessageImages(agentId, item.messageId).images;
     return images ? { ...item, images } : item;
+  }
+
+  private async recoverHistoryImages(
+    agentId: string,
+    item: AgentTimelineItem,
+  ): Promise<AgentTimelineItem> {
+    const restored = this.restoreSubmittedMessageImages(agentId, item);
+    const registry = this.registry;
+    const store = this.conversationImageStore;
+    if (restored.type !== "user_message" || !restored.images?.length || !registry || !store)
+      return restored;
+    const messageId = restored.clientMessageId ?? restored.messageId;
+    if (!messageId || !(await registry.get(agentId))) return restored;
+    return await this.runConversationImageOperation(async () => {
+      const images: AgentTimelineImage[] = [];
+      for (const image of restored.images ?? []) {
+        try {
+          images.push(await store.importImage(image));
+        } catch (error) {
+          // A missing historical attachment must not prevent the rest of the chat from loading.
+          this.logger.warn(
+            { err: error, agentId, imageId: image.id },
+            "Failed to recover historical user image",
+          );
+          images.push(image);
+        }
+      }
+      if (images.every((image, index) => image === restored.images?.[index])) return restored;
+      const entry: StoredSubmittedMessageImages = {
+        clientMessageId: messageId,
+        providerMessageId: restored.messageId,
+        images,
+      };
+      await registry.setSubmittedMessageImages(agentId, entry);
+      this.indexSubmittedMessageImages(agentId, entry);
+      return { ...restored, images };
+    });
   }
 
   private linkSubmittedMessageProviderId(
