@@ -237,6 +237,7 @@ export const es: TranslationResources = {
     },
   },
   agentStream: {
+    turnFinished: "Turno finalizado",
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
@@ -1554,7 +1555,7 @@ export const es: TranslationResources = {
       fullStatus: {
         title: "Estado completo",
         modalTitle: "EstadoDaemon",
-        hint: "Ejecuta`paseo daemon status`y muestra la salida.",
+        hint: "Ejecuta`pandaos daemon status`y muestra la salida.",
         view: "Ver estado",
         copied: "Estado copiado al portapapeles.",
         fetchFailed: "No se pudo recuperar el estado del demonio:{{message}}",

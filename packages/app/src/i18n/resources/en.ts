@@ -231,6 +231,7 @@ export const en = {
     },
   },
   agentStream: {
+    turnFinished: "Turn finished",
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
@@ -1547,7 +1548,7 @@ export const en = {
       fullStatus: {
         title: "Full status",
         modalTitle: "Daemon status",
-        hint: "Runs `paseo daemon status` and shows the output",
+        hint: "Runs `pandaos daemon status` and shows the output",
         view: "View status",
         copied: "Status copied to clipboard.",
         fetchFailed: "Failed to fetch daemon status: {{message}}",

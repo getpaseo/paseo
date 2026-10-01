@@ -119,6 +119,7 @@ export interface PandaStatusProps {
   /** Off (or when the OS prefers reduced motion) freezes on the mood's first frame. */
   animate?: boolean;
   testID?: string;
+  accessibilityLabel?: string;
 }
 
 /** PandaOS's status mascot: the same pixel panda used for the loader and header, in one place. */
@@ -128,6 +129,7 @@ export const PandaStatus = memo(function PandaStatus({
   pixelScale = size === "large" ? 4 : 2,
   animate = true,
   testID,
+  accessibilityLabel,
 }: PandaStatusProps) {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
@@ -136,7 +138,7 @@ export const PandaStatus = memo(function PandaStatus({
       frames={PANDA_STATUS_FRAMES[size][mood]}
       grid={PANDA_STATUS_GRID[size]}
       pixelScale={pixelScale}
-      label={t(PANDA_STATUS_LABEL_KEYS[mood])}
+      label={accessibilityLabel ?? t(PANDA_STATUS_LABEL_KEYS[mood])}
       animate={animate && !reducedMotion}
       testID={testID}
     />

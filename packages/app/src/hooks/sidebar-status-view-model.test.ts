@@ -230,3 +230,19 @@ describe("buildStatusShortcutIndex", () => {
     expect(index.size).toBe(0);
   });
 });
+
+it("puts a moved or unpinned workspace first until newer activity arrives", () => {
+  const old = ws({ workspaceKey: "srv:old", statusEnteredAt: new Date(1000) });
+  const recent = ws({ workspaceKey: "srv:recent", statusEnteredAt: new Date(2000) });
+  expect(
+    buildStatusGroups([recent, old], new Map(), { "srv:old": 3000 })[0]?.rows.map(
+      (row) => row.workspaceKey,
+    ),
+  ).toEqual(["srv:old", "srv:recent"]);
+  recent.statusEnteredAt = new Date(4000);
+  expect(
+    buildStatusGroups([recent, old], new Map(), { "srv:old": 3000 })[0]?.rows.map(
+      (row) => row.workspaceKey,
+    ),
+  ).toEqual(["srv:recent", "srv:old"]);
+});

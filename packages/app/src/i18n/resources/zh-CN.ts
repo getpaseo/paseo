@@ -235,6 +235,7 @@ export const zhCN: TranslationResources = {
     },
   },
   agentStream: {
+    turnFinished: "本轮已结束",
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
@@ -1502,7 +1503,7 @@ export const zhCN: TranslationResources = {
       fullStatus: {
         title: "完整状态",
         modalTitle: "Daemon 状态",
-        hint: "运行 `paseo daemon status` 并显示输出",
+        hint: "运行 `pandaos daemon status` 并显示输出",
         view: "查看状态",
         copied: "状态已复制到剪贴板。",
         fetchFailed: "获取 daemon 状态失败：{{message}}",

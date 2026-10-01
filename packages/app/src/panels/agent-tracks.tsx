@@ -1,4 +1,4 @@
-import { memo, useCallback, type ReactElement } from "react";
+import { memo, useCallback, type ReactElement, type ReactNode } from "react";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
@@ -49,8 +49,96 @@ export const AgentTracks = memo(function AgentTracks({
   onArchiveFinished: () => void;
   hasPluginComposerPills: boolean;
 }): ReactElement | null {
-  const { tabId, openTab } = usePaneContext();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
+  const isCompact = useIsCompactFormFactor();
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  const handleOpenChanges = useCallback(() => {
+    if (!workspaceKey) {
+      return;
+    }
+    openComposerChanges({
+      isCompact,
+      workspaceKey,
+      checkout: { serverId, cwd, isGit: true },
+      preferences: openInSidePane,
+    });
+  }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
+
+  if (
+    !hasWorkspaceDiffStat &&
+    !hasAgentTracks({
+      subagentRows,
+      tasks,
+      archiveFinishedStatus,
+      hasPluginComposerPills,
+    })
+  ) {
+    return null;
+  }
+
+  return (
+    <ComposerTrackBar>
+      <AgentTaskList tasks={tasks} />
+      <AgentSubagentsTrack
+        serverId={serverId}
+        workspaceId={workspaceId}
+        rows={subagentRows}
+        onArchiveFinished={onArchiveFinished}
+        archiveFinishedStatus={archiveFinishedStatus}
+      />
+      <PluginComposerPills
+        serverId={serverId}
+        workspaceId={workspaceId}
+        agentId={agentId}
+        compact={isCompact}
+      />
+      <WorkspaceDiffStatPill
+        serverId={serverId}
+        workspaceId={workspaceId}
+        onPress={handleOpenChanges}
+      />
+    </ComposerTrackBar>
+  );
+});
+
+export function hasAgentTracks({
+  subagentRows,
+  tasks,
+  archiveFinishedStatus,
+  hasPluginComposerPills = false,
+}: {
+  subagentRows: readonly SubagentRow[];
+  tasks: readonly TodoEntry[] | undefined;
+  archiveFinishedStatus: ArchiveFinishedStatus;
+  hasPluginComposerPills?: boolean;
+}): boolean {
+  return (
+    subagentRows.length > 0 ||
+    Boolean(tasks?.length) ||
+    archiveFinishedStatus.kind !== "idle" ||
+    hasPluginComposerPills
+  );
+}
+
+export function AgentSubagentsTrack({
+  serverId,
+  workspaceId,
+  rows,
+  trigger,
+  testID,
+  onArchiveFinished,
+  archiveFinishedStatus,
+}: {
+  serverId: string;
+  workspaceId: string;
+  rows: SubagentRow[];
+  trigger?: ReactNode;
+  testID?: string;
+  onArchiveFinished?: () => void;
+  archiveFinishedStatus?: ArchiveFinishedStatus;
+}): ReactElement | null {
+  const { tabId, openTab } = usePaneContext();
   const isCompact = useIsCompactFormFactor();
   const canSplit = supportsDesktopPaneSplits() && !isCompact;
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
@@ -100,73 +188,18 @@ export const AgentTracks = memo(function AgentTracks({
     },
     [canSplit, isCompact, openInSidePane, openTab, tabId, workspaceKey],
   );
-  const handleOpenChanges = useCallback(() => {
-    if (!workspaceKey) {
-      return;
-    }
-    openComposerChanges({
-      isCompact,
-      workspaceKey,
-      checkout: { serverId, cwd, isGit: true },
-      preferences: openInSidePane,
-    });
-  }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
-
-  if (
-    !hasWorkspaceDiffStat &&
-    !hasAgentTracks({
-      subagentRows,
-      tasks,
-      archiveFinishedStatus,
-      hasPluginComposerPills,
-    })
-  ) {
-    return null;
-  }
-
   return (
-    <ComposerTrackBar>
-      <AgentTaskList tasks={tasks} />
-      <SubagentsTrack
-        serverId={serverId}
-        rows={subagentRows}
-        onOpenSubagent={handleOpenSubagent}
-        onOpenProviderSubagent={handleOpenProviderSubagent}
-        onArchiveSubagent={archiveSubagent}
-        onArchiveFinished={onArchiveFinished}
-        archiveFinishedStatus={archiveFinishedStatus}
-        onDetachSubagent={canDetachSubagents ? detachSubagent : undefined}
-      />
-      <PluginComposerPills
-        serverId={serverId}
-        workspaceId={workspaceId}
-        agentId={agentId}
-        compact={isCompact}
-      />
-      <WorkspaceDiffStatPill
-        serverId={serverId}
-        workspaceId={workspaceId}
-        onPress={handleOpenChanges}
-      />
-    </ComposerTrackBar>
-  );
-});
-
-export function hasAgentTracks({
-  subagentRows,
-  tasks,
-  archiveFinishedStatus,
-  hasPluginComposerPills = false,
-}: {
-  subagentRows: readonly SubagentRow[];
-  tasks: readonly TodoEntry[] | undefined;
-  archiveFinishedStatus: ArchiveFinishedStatus;
-  hasPluginComposerPills?: boolean;
-}): boolean {
-  return (
-    subagentRows.length > 0 ||
-    Boolean(tasks?.length) ||
-    archiveFinishedStatus.kind !== "idle" ||
-    hasPluginComposerPills
+    <SubagentsTrack
+      serverId={serverId}
+      rows={rows}
+      trigger={trigger}
+      testID={testID}
+      onOpenSubagent={handleOpenSubagent}
+      onOpenProviderSubagent={handleOpenProviderSubagent}
+      onArchiveSubagent={archiveSubagent}
+      onArchiveFinished={onArchiveFinished}
+      archiveFinishedStatus={archiveFinishedStatus}
+      onDetachSubagent={canDetachSubagents ? detachSubagent : undefined}
+    />
   );
 }

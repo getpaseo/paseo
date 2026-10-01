@@ -237,6 +237,7 @@ export const ru: TranslationResources = {
     },
   },
   agentStream: {
+    turnFinished: "Ход завершён",
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
@@ -1536,7 +1537,7 @@ export const ru: TranslationResources = {
       fullStatus: {
         title: "Полный статус",
         modalTitle: "Статус демона",
-        hint: "Выполняет команду `paseo daemon status` и показывает результат",
+        hint: "Выполняет команду `pandaos daemon status` и показывает результат",
         view: "Посмотреть статус",
         copied: "Статус скопирован в буфер обмена.",
         fetchFailed: "Не удалось получить статус демона: {{message}}",

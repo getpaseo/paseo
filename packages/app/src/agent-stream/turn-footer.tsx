@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { View } from "react-native";
+import { useTranslation } from "react-i18next";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { SPACING } from "@/styles/theme";
@@ -18,7 +19,9 @@ import {
 } from "@/components/message";
 import type { TurnFooterHost } from "./layout";
 import { AssistantForkMenu } from "@/components/assistant-fork-menu";
-import { PandaLoader } from "@/components/panda-loader";
+import { MenuTrigger, type MenuTriggerState } from "@/components/ui/menu";
+import { ChevronDown, ChevronUp } from "@/components/icons/ui-icons";
+import { PandaStatus } from "@/components/panda-status";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 
 export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
@@ -42,6 +45,10 @@ export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<v
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
+  workingLabel,
+  subagentsControl,
+  needsInput = false,
+  hasError = false,
   inFlightTurnStartedAt,
   host,
   strategy,
@@ -50,6 +57,10 @@ export const TurnFooter = memo(function TurnFooter({
   onForkInFlightTurn,
 }: {
   isRunning: boolean;
+  workingLabel?: string;
+  subagentsControl?: ReactNode;
+  needsInput?: boolean;
+  hasError?: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
@@ -57,10 +68,14 @@ export const TurnFooter = memo(function TurnFooter({
   onForkAssistantTurn?: AssistantTurnForkHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
-  if (isRunning) {
+  if (isRunning || needsInput || hasError) {
     return (
       <TurnFooterRow>
         <RunningTurnFooter
+          workingLabel={workingLabel}
+          subagentsControl={subagentsControl}
+          needsInput={needsInput}
+          hasError={hasError}
           inFlightTurnStartedAt={inFlightTurnStartedAt}
           onForkInFlightTurn={onForkInFlightTurn}
         />
@@ -72,6 +87,8 @@ export const TurnFooter = memo(function TurnFooter({
   }
   return (
     <CompletedTurnFooterRow
+      showStatus
+      subagentsControl={subagentsControl}
       strategy={strategy}
       items={host.items}
       timing={host.timing}
@@ -83,6 +100,8 @@ export const TurnFooter = memo(function TurnFooter({
 });
 
 export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
+  showStatus = false,
+  subagentsControl,
   strategy,
   items,
   timing,
@@ -90,6 +109,8 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
+  showStatus?: boolean;
+  subagentsControl?: ReactNode;
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
@@ -100,6 +121,8 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   return (
     <TurnFooterRow>
       <CompletedTurnFooter
+        showStatus={showStatus}
+        subagentsControl={subagentsControl}
         strategy={strategy}
         items={items}
         timing={timing}
@@ -112,19 +135,46 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 });
 
 const WorkingIndicator = memo(function WorkingIndicator({
+  workingLabel,
+  subagentsControl,
+  needsInput,
+  hasError,
   inFlightTurnStartedAt = null,
   onForkInFlightTurn,
 }: {
+  workingLabel?: string;
+  subagentsControl?: ReactNode;
+  needsInput: boolean;
+  hasError: boolean;
   inFlightTurnStartedAt?: Date | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
+  const activityMood = hasError ? "err" : "run";
   return (
     <View style={stylesheet.turnFooterContent}>
-      <View style={stylesheet.workingLoader}>
-        <PandaLoader />
+      <View style={stylesheet.activityStatus}>
+        <View style={stylesheet.workingLoader}>
+          <PandaStatus
+            mood={needsInput ? "ask" : activityMood}
+            size="small"
+            pixelScale={2}
+            testID="turn-status-panda"
+            animate={active}
+          />
+        </View>
+        {workingLabel ? (
+          <Text
+            style={stylesheet.workingLabel}
+            numberOfLines={1}
+            accessibilityLiveRegion="polite"
+            testID="turn-working-label"
+          >
+            {workingLabel}
+          </Text>
+        ) : null}
       </View>
-      {/* Match the completed-turn footer: actions precede timing metadata. */}
+      {subagentsControl}
       {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
@@ -139,15 +189,27 @@ const WorkingIndicator = memo(function WorkingIndicator({
 });
 
 function RunningTurnFooter({
+  workingLabel,
+  subagentsControl,
+  needsInput,
+  hasError,
   inFlightTurnStartedAt,
   onForkInFlightTurn,
 }: {
+  workingLabel?: string;
+  subagentsControl?: ReactNode;
+  needsInput: boolean;
+  hasError: boolean;
   inFlightTurnStartedAt: Date | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
+        workingLabel={workingLabel}
+        subagentsControl={subagentsControl}
+        needsInput={needsInput}
+        hasError={hasError}
         inFlightTurnStartedAt={inFlightTurnStartedAt}
         onForkInFlightTurn={onForkInFlightTurn}
       />
@@ -155,7 +217,40 @@ function RunningTurnFooter({
   );
 }
 
+export function WorkingSubagentsTrigger({ label }: { label: string }) {
+  const triggerStyle = useCallback(
+    ({ hovered, pressed, open }: MenuTriggerState) => [
+      stylesheet.subagentsTrigger,
+      (hovered || pressed || open) && stylesheet.subagentsTriggerActive,
+    ],
+    [],
+  );
+  return (
+    <MenuTrigger
+      testID="turn-subagents-trigger"
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={8}
+      style={triggerStyle}
+    >
+      {({ open }) => {
+        const Chevron = open ? ChevronUp : ChevronDown;
+        return (
+          <>
+            <Text style={stylesheet.workingLabel} numberOfLines={1}>
+              {label}
+            </Text>
+            <Chevron size={12} color={stylesheet.workingLabel.color} />
+          </>
+        );
+      }}
+    </MenuTrigger>
+  );
+}
+
 function CompletedTurnFooter({
+  showStatus,
+  subagentsControl,
   strategy,
   items,
   timing,
@@ -163,6 +258,8 @@ function CompletedTurnFooter({
   supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
+  showStatus: boolean;
+  subagentsControl?: ReactNode;
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
@@ -170,6 +267,7 @@ function CompletedTurnFooter({
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
+  const { t } = useTranslation();
   const getContent = useCallback(
     () =>
       collectAssistantResponseContentForStreamRenderStrategy({
@@ -194,13 +292,27 @@ function CompletedTurnFooter({
     [boundary, onForkAssistantTurn],
   );
   return (
-    <View style={stylesheet.turnFooterSlot}>
+    <View style={[stylesheet.turnFooterSlot, stylesheet.completedFooterContent]}>
+      {showStatus ? (
+        <View style={stylesheet.completedStatus} testID="turn-completed-status">
+          <PandaStatus
+            mood="sleep"
+            accessibilityLabel={t("agentStream.turnFinished")}
+            size="small"
+            pixelScale={2}
+            animate={false}
+            testID="turn-status-panda"
+          />
+          <Text style={stylesheet.workingLabel}>{t("agentStream.turnFinished")}</Text>
+        </View>
+      ) : null}
       <AssistantTurnFooter
         getContent={getContent}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
       />
+      {subagentsControl}
     </View>
   );
 }
@@ -221,23 +333,51 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[2] + 5,
   },
   turnFooterSlot: {
+    maxWidth: "100%",
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
     minHeight: 24,
     paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
-  turnFooterContent: {
-    height: 24,
+  activityStatus: {
+    maxWidth: "100%",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-start",
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
   },
+  turnFooterContent: {
+    maxWidth: "100%",
+    minHeight: 32,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: theme.spacing[2],
+  },
+  completedFooterContent: { flexWrap: "wrap", gap: theme.spacing[2] },
+  completedStatus: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  subagentsTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
+    minHeight: 24,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.sm,
+  },
+  subagentsTriggerActive: { backgroundColor: theme.colors.surface2 },
   workingElapsed: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
     fontVariant: ["tabular-nums"],
+  },
+  workingLabel: {
+    color: theme.colors.foreground,
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    flexShrink: 1,
   },
   workingLoader: {
     marginLeft: -2,

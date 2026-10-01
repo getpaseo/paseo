@@ -61,6 +61,7 @@ export interface ComposerTrackPillProps {
   accessibilityLabel?: string;
   /** Panel body. Rendered into a popover on wide screens and a sheet on compact ones. */
   children: ReactNode;
+  trigger?: ReactNode;
 }
 
 /**
@@ -85,14 +86,19 @@ export function ComposerTrackPill({
   testID,
   accessibilityLabel,
   children,
+  trigger,
 }: ComposerTrackPillProps): ReactElement {
   return (
     <MenuRoot compactMode="sheet">
-      <ComposerTrackPillTrigger
-        segments={segments}
-        testID={testID}
-        accessibilityLabel={accessibilityLabel ?? segments.map((segment) => segment.text).join(" ")}
-      />
+      {trigger ?? (
+        <ComposerTrackPillTrigger
+          segments={segments}
+          testID={testID}
+          accessibilityLabel={
+            accessibilityLabel ?? segments.map((segment) => segment.text).join(" ")
+          }
+        />
+      )}
       <MenuSurface
         side="top"
         align="start"

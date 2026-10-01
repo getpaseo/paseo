@@ -74,6 +74,7 @@ import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
   CompletedTurnFooterRow,
   TurnFooter,
+  WorkingSubagentsTrigger,
   TURN_FOOTER_BOTTOM_SPACING,
   type AssistantTurnForkHandler,
   type InFlightTurnForkHandler,
@@ -106,6 +107,13 @@ import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { AgentSubagentsTrack } from "@/panels/agent-tracks";
+import { useSubagentsForParent } from "@/subagents/select";
+import {
+  buildSubagentPillPresentation,
+  buildSubagentRowPresentationData,
+} from "@/subagents/track-presentation";
+import { buildWorkingLabel, resolveWorkingTool } from "./working-status";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
 
@@ -375,6 +383,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
+    const subagents = useSubagentsForParent({ serverId: resolvedServerId, parentAgentId: agentId });
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
@@ -962,17 +971,79 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [client, pendingPermissionItems],
     );
+    const workingSubagentCount = subagents.filter(
+      (row) => buildSubagentRowPresentationData(row).statusBucket === "running",
+    ).length;
+    const workingTool = useMemo(
+      () =>
+        resolveWorkingTool(
+          [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
+          effectiveTurnPresentation,
+        ),
+      [effectiveStreamItems, effectiveStreamHead, effectiveTurnPresentation],
+    );
+    const subagentsTrigger = useMemo(
+      () => (
+        <WorkingSubagentsTrigger
+          label={`${t("subagents.title")}: ${buildSubagentPillPresentation(t, subagents).accessibilityLabel}`}
+        />
+      ),
+      [subagents, t],
+    );
+    const subagentsControl = useMemo(() => {
+      if (readOnly || !context.workspaceId || subagents.length === 0) return undefined;
+      return (
+        <AgentSubagentsTrack
+          serverId={resolvedServerId}
+          workspaceId={context.workspaceId}
+          rows={subagents}
+          testID="turn-subagents-trigger"
+          trigger={subagentsTrigger}
+        />
+      );
+    }, [readOnly, context.workspaceId, subagents, resolvedServerId, subagentsTrigger]);
+    const workingLabel = useMemo(
+      () =>
+        context.status === "error" && pendingPermissionItems.length === 0
+          ? t("panda.status.err")
+          : buildWorkingLabel(
+              t,
+              effectiveTurnPresentation,
+              pendingPermissionItems.length > 0,
+              workingTool,
+              subagentsControl ? 0 : workingSubagentCount,
+            ),
+      [
+        t,
+        context.status,
+        effectiveTurnPresentation,
+        pendingPermissionItems.length,
+        workingTool,
+        subagentsControl,
+        workingSubagentCount,
+      ],
+    );
     const turnFooterNode = useMemo(
       () =>
-        isTurnActive || bottomTurnFooterHost ? (
+        isTurnActive ||
+        workingSubagentCount > 0 ||
+        pendingPermissionItems.length > 0 ||
+        context.status === "error" ||
+        bottomTurnFooterHost ? (
           <TurnFooter
-            isRunning={isTurnActive}
-            inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+            isRunning={isTurnActive || workingSubagentCount > 0}
+            workingLabel={workingLabel}
+            subagentsControl={subagentsControl}
+            needsInput={pendingPermissionItems.length > 0}
+            hasError={context.status === "error"}
+            inFlightTurnStartedAt={
+              isTurnActive ? baseRenderModel.turnTiming.runningStartedAt : null
+            }
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
-            onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
+            onForkInFlightTurn={readOnly || !isTurnActive ? undefined : handleForkInFlightTurn}
           />
         ) : null,
       [
@@ -980,6 +1051,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         handleForkInFlightTurn,
         readOnly,
         isTurnActive,
+        context.status,
+        workingLabel,
+        subagentsControl,
+        workingSubagentCount,
+        pendingPermissionItems.length,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
         streamRenderStrategy,

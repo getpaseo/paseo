@@ -235,6 +235,7 @@ export const ar: TranslationResources = {
     },
   },
   agentStream: {
+    turnFinished: "انتهت الجولة",
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
@@ -1514,7 +1515,7 @@ export const ar: TranslationResources = {
       fullStatus: {
         title: "الوضع الكامل",
         modalTitle: "حالة Daemon",
-        hint: "يقوم بتشغيل`paseo daemon status`ويظهر الإخراج",
+        hint: "يقوم بتشغيل`pandaos daemon status`ويظهر الإخراج",
         view: "عرض الحالة",
         copied: "تم نسخ الحالة إلى الحافظة.",
         fetchFailed: "فشل جلب حالة البرنامج الخفي:{{message}}",

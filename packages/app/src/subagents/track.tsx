@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Archive, Unlink } from "@/components/icons/ui-icons";
@@ -32,6 +32,8 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 export interface SubagentsTrackProps {
   serverId: string;
   rows: SubagentRow[];
+  trigger?: ReactNode;
+  testID?: string;
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
@@ -58,6 +60,8 @@ function buildRowPresentation(row: SubagentRow, serverId: string): WorkspaceTabP
 export function SubagentsTrack({
   serverId,
   rows,
+  trigger,
+  testID = "subagents-track-header",
   onOpenSubagent,
   onOpenProviderSubagent,
   onArchiveSubagent,
@@ -79,7 +83,8 @@ export function SubagentsTrack({
 
   return (
     <ComposerTrackPill
-      testID="subagents-track-header"
+      testID={testID}
+      trigger={trigger}
       segments={pill.segments}
       accessibilityLabel={pill.accessibilityLabel}
       panelTitle={t("subagents.title")}

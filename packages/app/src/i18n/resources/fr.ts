@@ -239,6 +239,7 @@ export const fr: TranslationResources = {
     },
   },
   agentStream: {
+    turnFinished: "Tour terminé",
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
@@ -1554,7 +1555,7 @@ export const fr: TranslationResources = {
       fullStatus: {
         title: "Statut complet",
         modalTitle: "StatutDaemon",
-        hint: "Exécute`paseo daemon status`et affiche la sortie",
+        hint: "Exécute`pandaos daemon status`et affiche la sortie",
         view: "Afficher l'état",
         copied: "Statut copié dans le presse-papiers.",
         fetchFailed: "Échec de la récupération de l'état du démon:{{message}}",
