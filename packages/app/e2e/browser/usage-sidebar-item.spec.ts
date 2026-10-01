@@ -5,6 +5,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
 import {
+  expectFooterSeparator,
   leaveSettings,
   openSidebarNavSettings,
   setFooterItemVisible,
@@ -12,6 +13,7 @@ import {
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import {
   claudeAndCodexReports,
+  expectNoUsageItem,
   expectOnUsageScreen,
   expectPinnedUsage,
   leaveUsageScreen,
@@ -246,6 +248,36 @@ test.describe("Usage item", () => {
       await leaveSettings(page);
     });
   });
+});
+
+test("without summary data the footer drops the Usage item and keeps the Usage icon", async ({
+  page,
+}) => {
+  await installUsageReportsFixture(page, {
+    lists: [
+      [
+        {
+          id: "alpha:a",
+          account: {},
+          fetchedAt: new Date().toISOString(),
+          sourceId: "alpha",
+          sourceLabel: "Alpha plan",
+          report: { status: "unavailable", windows: [] },
+        },
+      ],
+    ],
+  });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await page.setViewportSize(WIDE);
+  await gotoAppShell(page);
+  await expect(page.locator('[data-testid="sidebar-usage-icon"]:visible')).toBeVisible({
+    timeout: 30_000,
+  });
+  await expectNoUsageItem(page);
+  await expectFooterSeparator(page, false);
+  await qaScreenshot(page, "desktop-footer-no-summary", { kind: "footer" });
+  await page.locator('[data-testid="sidebar-usage-icon"]:visible').click();
+  await expectOnUsageScreen(page);
 });
 
 test("the Usage options show and hide the sidebar Usage item", async ({ page }) => {

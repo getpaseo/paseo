@@ -1,3 +1,4 @@
+import { discoverOmp, piAuthPath, readHarness, type StoreLookup } from "./stores.js";
 import type { UsageInput } from "../shared/input.js";
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
@@ -75,6 +76,7 @@ type ClaudeLimit = z.infer<typeof ClaudeLimitSchema>;
 const SCOPED_WEEKLY_KIND = "weekly_scoped";
 
 interface ClaudeCredentialRecord {
+  expires?: number;
   oauth: { accessToken: string } & NonNullable<ClaudeCredentials["claudeAiOauth"]>;
 }
 
@@ -332,26 +334,54 @@ export async function readClaudeKeychainCredentials(
   return null;
 }
 
-interface ClaudeCredentialLookup {
-  platform?: NodeJS.Platform;
+interface ClaudeCredentialLookup extends StoreLookup {
   readKeychainCredentials?: () => Promise<unknown | null>;
   claudeHome?: string;
-  accountHome?: string;
 }
 
-/** Shared credential lookup for usage fetches and account identification. */
-export async function resolveClaudeCredentials(
-  _input: UsageInput,
-  lookup: ClaudeCredentialLookup = {},
+function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
+  const home = lookup.home ?? homedir();
+  const env = lookup.env ?? process.env;
+  const claudeHome = lookup.claudeHome ?? env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
+  return join(claudeHome, ".credentials.json");
+}
+
+async function keychainCredentialRecord(
+  lookup: ClaudeCredentialLookup,
 ): Promise<ClaudeCredentialRecord | null> {
-  const claudeHome = lookup.claudeHome ?? process.env["CLAUDE_HOME"] ?? join(homedir(), ".claude");
-  const fileCredentials = await readCredentialFile(join(claudeHome, ".credentials.json"));
-  if (fileCredentials) return fileCredentials;
   if ((lookup.platform ?? process.platform) !== "darwin") return null;
   const parsed = ClaudeCredentialsSchema.safeParse(
     await (lookup.readKeychainCredentials ?? readClaudeKeychainCredentials)(),
   );
   return parsed.success ? toCredentialRecord(parsed.data) : null;
+}
+
+export async function discover(lookup: ClaudeCredentialLookup = {}): Promise<UsageInput[]> {
+  const candidates: UsageInput[] = [
+    { route: { store: "claude", path: claudeCredentialPath(lookup) } },
+  ];
+  if ((lookup.platform ?? process.platform) === "darwin")
+    candidates.push({ route: { store: "keychain" } });
+  candidates.push(
+    { route: { store: "pi", path: piAuthPath(lookup) } },
+    ...discoverOmp(lookup).map((route) => ({ route })),
+  );
+  const present: UsageInput[] = [];
+  for (const input of candidates)
+    if (await resolveClaudeCredentials(input, lookup)) present.push(input);
+  return present;
+}
+
+/** Re-read the selected login; the harness owns token refresh. */
+export async function resolveClaudeCredentials(
+  input: UsageInput,
+  lookup: ClaudeCredentialLookup = {},
+): Promise<ClaudeCredentialRecord | null> {
+  const route = input.route;
+  if (route.store === "claude") return readCredentialFile(route.path);
+  if (route.store === "keychain") return keychainCredentialRecord(lookup);
+  const oauth = await readHarness(route, lookup);
+  return oauth ? { oauth: { accessToken: oauth.access }, expires: oauth.expires } : null;
 }
 
 async function readCredentialFile(path: string): Promise<ClaudeCredentialRecord | null> {
@@ -418,7 +448,11 @@ export async function fetchUsage(
   }
 
   const credentials = await resolveClaudeCredentials(input, credentialLookup);
-  if (!credentials) {
+  if (
+    !credentials ||
+    (credentials.expires !== undefined &&
+      credentials.expires <= (credentialLookup.now ?? Date.now)())
+  ) {
     return unavailableUsage();
   }
 
@@ -464,11 +498,6 @@ export async function fetchUsage(
 }
 
 // The OAuth usage endpoint meters the active organization selected by the token.
-const ClaudeAccountSchema = z.object({
-  accountUuid: z.string().min(1),
-  organizationUuid: z.string().min(1),
-  emailAddress: z.string().optional(),
-});
 type ClaudeIdentity = { key: string; label?: string } | null;
 const PROFILE_TTL_MS = 300_000;
 const PROFILE_CACHE_LIMIT = 128;
@@ -486,19 +515,6 @@ export async function identify(
   now: () => number = Date.now,
   credentialLookup: ClaudeCredentialLookup = {},
 ) {
-  const directory = credentialLookup.accountHome ?? homedir();
-  try {
-    const config = z
-      .object({ oauthAccount: ClaudeAccountSchema })
-      .parse(JSON.parse(await fs.readFile(join(directory, ".claude.json"), "utf8")));
-    const account = config.oauthAccount;
-    return {
-      key: `${account.accountUuid}.${account.organizationUuid}`,
-      ...(account.emailAddress ? { label: account.emailAddress } : {}),
-    };
-  } catch {
-    // Credentials may still be present even when account metadata is absent.
-  }
   const credentials = await resolveClaudeCredentials(input, credentialLookup);
   if (!credentials) return null;
   const token = credentials.oauth.accessToken;

@@ -184,6 +184,8 @@ test.describe("Sidebar footer rows in Appearance settings", () => {
 
   test("owner reorders and hides footer rows; the icon row stays fixed", async ({ page }) => {
     test.setTimeout(120_000);
+    // The Usage item shows only with summary data.
+    await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
     // Keys for the fixed footer icon buttons are ignored.
     await seedSidebarFooterPreferences(page, [
       { key: "help", visible: false },
