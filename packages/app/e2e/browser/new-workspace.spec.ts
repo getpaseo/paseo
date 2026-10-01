@@ -666,7 +666,7 @@ test.describe("New workspace flow", () => {
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
       const rowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
-      await waitForSidebarHydration(page);
+      await expect(page.getByTestId("sidebar-status-group-done")).toBeVisible();
       await expect(page.getByTestId(rowTestId)).toHaveCount(0);
     } finally {
       await tempRepo.cleanup();

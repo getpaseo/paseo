@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { submitMessage } from "../support/helpers/composer";
@@ -298,14 +297,13 @@ test.describe("plugin workspace panels and Command Center", () => {
       await primaryClient.patchDaemonConfig({ pluginsEnabled: true });
       await primaryClient.installDirectoryPlugin(directory);
       await page.setViewportSize(WIDE_VIEWPORT);
-      await gotoAppShell(page);
+      await gotoWorkspace(page, primary.workspaceId);
       await addConnectedHostAndReload(page, {
         serverId: secondaryDaemon.serverId,
         label: "Secondary plugin host",
         port: secondaryDaemon.port,
         primaryLabel: "Primary plugin host",
       });
-      await gotoWorkspace(page, primary.workspaceId);
       await openFilesPanel(page);
       await waitForWorkspaceInSidebar(page, {
         serverId: getServerId(),

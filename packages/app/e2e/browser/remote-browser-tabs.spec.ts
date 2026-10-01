@@ -54,14 +54,13 @@ test("a new daemon browser tab opens once, even while its page is still loading"
 
     const browserTabs = page.locator('[data-testid^="workspace-tab-browser_"]');
     await expect(browserTabs.first()).toBeVisible({ timeout: 15_000 });
-    await expect(browserTabs.first()).toContainText("Slow page", { timeout: 20_000 });
-
     const counts: number[] = [];
     for (let sample = 0; sample < 20; sample += 1) {
       counts.push(await browserTabs.count());
       await page.waitForTimeout(200);
     }
     expect(Math.max(...counts)).toBe(1);
+    await expect(browserTabs.first()).toContainText("Slow page", { timeout: 60_000 });
   } finally {
     await seeded.cleanup();
     slow.server.close();

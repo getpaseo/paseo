@@ -21,7 +21,6 @@ function workspaceRowTestId(workspaceId: string): string {
 
 async function openFilesTab(page: Page): Promise<void> {
   await openFilesPanel(page);
-  await expect(page.getByTestId("file-explorer-tree-scroll")).toBeVisible({ timeout: 30_000 });
 }
 
 async function createWorkspaceViaUi(

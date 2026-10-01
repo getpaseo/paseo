@@ -69,6 +69,9 @@ async function quickDragFirstRowAfterSecond(
   await page.mouse.move(source.x, source.y + 7);
   await expect(trailingScrim).toHaveCount(0);
   await page.mouse.move(target.x, target.y, { steps: 4 });
+  await expect
+    .poll(async () => (await rows.nth(1).boundingBox())?.y ?? targetBox.y)
+    .toBeLessThan(targetBox.y - targetBox.height / 2);
   await page.mouse.up();
 
   await expect.poll(() => rowTestIds(rows)).toEqual([before[1], before[0]]);
