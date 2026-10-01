@@ -38,7 +38,12 @@ export function SendingSection() {
       <SettingsCard>
         <SettingsSelect
           label={t("settings.general.defaultSend.label")}
-          hint={t(`settings.general.defaultSend.descriptions.${settings.sendBehavior}`)}
+          hint={t(
+            settings.commandEnterToSend
+              ? `settings.general.defaultSend.commandEnterDescriptions.${settings.sendBehavior}`
+              : `settings.general.defaultSend.descriptions.${settings.sendBehavior}`,
+            { modifier },
+          )}
           value={settings.sendBehavior}
           options={options}
           onValueChange={change}
