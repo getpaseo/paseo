@@ -2545,6 +2545,15 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
   const record = await storage.get(snapshot.id);
 
   expect(client.createdConfigs[0]?.systemPrompt).toBe("Agent instructions.");
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain(
+    "In every project you work on, do not add explanatory code comments",
+  );
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain(
+    "Remove existing explanatory comments in code you edit.",
+  );
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain(
+    "Preserve required license notices and directives",
+  );
   expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe(
     composeDaemonAppendSystemPrompt(
       `Daemon instructions.\n\n${buildResourcePolicyPrompt("balanced")}`,
