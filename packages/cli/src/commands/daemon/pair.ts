@@ -90,7 +90,6 @@ export async function resolveLocalPairingOffer(options: {
     relayPublicEndpoint: config.relayPublicEndpoint,
     relayUseTls: config.relayUseTls,
     relayPublicUseTls: config.relayPublicUseTls,
-    appBaseUrl: config.appBaseUrl,
     includeQr: true,
   });
 }

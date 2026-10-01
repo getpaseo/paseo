@@ -104,6 +104,8 @@ import type {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
+import type { TeamService } from "../../team/service.js";
+import { isToolAllowedForTeamRole, registerTeamTools, resolveTeamRole } from "../../team/tools.js";
 import { buildTerminalRunMarker, readTerminalRun, terminalRunPollDelayMs } from "./terminal-run.js";
 import type { ResourcePolicyRuntime } from "../../resource-policy.js";
 import { applyPullRequestCurationChange } from "../../workspace-pull-request-curation.js";
@@ -114,6 +116,7 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
+  teamService?: TeamService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">;
@@ -156,6 +159,7 @@ export interface PaseoToolHostDependencies {
    * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
+  callerLabels?: Record<string, string>;
   /**
    * Optional resolver for session-bound speak handlers.
    * Used by hidden voice agents to narrate through daemon-managed TTS.
@@ -626,6 +630,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
 
   const tools = new Map<string, PaseoToolDefinition>();
+  const teamRole = resolveTeamRole(agentManager, callerAgentId, options.callerLabels);
   const registerTool = (
     name: string,
     config: PaseoToolConfig,
@@ -633,6 +638,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
+      return;
+    }
+    if (!isToolAllowedForTeamRole(teamRole, name)) {
       return;
     }
     tools.set(name, {
@@ -2536,7 +2544,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         "Start one configured workspace script through Paseo's managed workspace-script launcher.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID containing the configured script."),
-        scriptName: z.string().min(1).describe("Configured paseo.json script name to start."),
+        scriptName: z.string().min(1).describe("Configured pandaos.json script name to start."),
       },
       outputSchema: {
         script: WorkspaceScriptPayloadSchema,
@@ -2562,7 +2570,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       description: "Stop a running workspace script through its supervised terminal lifecycle.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID containing the running script."),
-        scriptName: z.string().min(1).describe("Configured paseo.json script name to stop."),
+        scriptName: z.string().min(1).describe("Configured pandaos.json script name to stop."),
       },
       outputSchema: {
         script: WorkspaceScriptPayloadSchema,
@@ -3519,6 +3527,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       };
     },
   );
+
+  registerTeamTools(registerTool, {
+    teamService: options.teamService,
+    callerAgentId,
+    teamRole,
+  });
 
   return toCatalog();
 }

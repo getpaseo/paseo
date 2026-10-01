@@ -662,6 +662,8 @@ export const ko: TranslationResources = {
       },
       errors: {
         failedToLoad: "페이지를 불러오지 못했습니다",
+        hostOnly:
+          "이 기기에서 {{url}}에 연결할 수 없습니다. 호스트 머신에서만 실행 중일 수 있습니다.",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
       },
@@ -1332,6 +1334,7 @@ export const ko: TranslationResources = {
       sessions: "기록",
       search: "검색",
       schedules: "일정",
+      teams: "팀",
     },
     worktreeSetup: {
       title: "워크트리 스크립트 설정",
@@ -1735,18 +1738,6 @@ export const ko: TranslationResources = {
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
       settings: "설정",
-      paperclip: "Paperclip으로 설정",
-    },
-  },
-  paperclip: {
-    onboarding: {
-      title: "Paperclip으로 PandaOS 설정",
-      description: "작업 방식을 알려주시면 에이전트 팀을 맞춰 드립니다.",
-      useCase: { label: "PandaOS를 어떻게 사용하나요?", hint: "가장 가까운 항목을 선택하세요." },
-      teamShape: { label: "팀 규모는 어떻게 되나요?", hint: "나중에 변경할 수 있습니다." },
-      teamName: { label: "팀 이름", hint: "선택 사항입니다.", placeholder: "내 팀" },
-      saving: "저장 중…",
-      continue: "설정 저장",
     },
   },
   modelSelector: {
@@ -2061,7 +2052,6 @@ export const ko: TranslationResources = {
       origins: {
         user: "나",
         schedule: "스케줄",
-        paperclip: "Paperclip",
         agent: "다른 에이전트",
         script: "스크립트",
         internal: "내부",
@@ -2246,7 +2236,7 @@ export const ko: TranslationResources = {
         systemOne: "Jev, TypeSafe, 라우팅, 판단, 신뢰도",
         metadata: "제목, 브랜치 이름, 커밋 메시지, 이름 짓기, 생성",
         plugins: "확장 기능, 애드온, 설치, 신뢰할 수 있는 소스",
-        projects: "저장소, 리포지토리, 스크립트, paseo.json, 프로젝트 설정",
+        projects: "저장소, 리포지토리, 스크립트, pandaos.json, 프로젝트 설정",
         workspaces: "세션, 보관, 병합됨, 자동 보관, 정리",
         linkedAccounts: "GitHub, gh, 계정, 로그인, 포지, 풀 리퀘스트, Jira, 계획",
         host: "개요, 데몬, 재시작, 업데이트, 버전, 호스트 제거, 색상, 배지, 위험 구역",
@@ -2989,13 +2979,13 @@ export const ko: TranslationResources = {
         savedToast: "프로젝트가 업데이트되었습니다.",
       },
       readFailures: {
-        invalidTitle: "paseo.json을 파싱할 수 없습니다",
+        invalidTitle: "pandaos.json을 파싱할 수 없습니다",
         invalidDescription: "디스크의 파일을 수정한 후 다시 로드하세요.",
         missingTitle: "이 호스트에는 이 프로젝트가 없습니다",
         missingSingleHost: "선택한 호스트에 이 프로젝트의 기록이 없습니다.",
-        transportTitle: "paseo.json을 불러올 수 없습니다",
+        transportTitle: "pandaos.json을 불러올 수 없습니다",
         transportFallback: "호스트가 응답하지 않았습니다.",
-        failedTitle: "paseo.json을 불러올 수 없습니다",
+        failedTitle: "pandaos.json을 불러올 수 없습니다",
         failedDescription: "다시 로드하여 재시도하세요.",
       },
       worktree: {
@@ -3005,7 +2995,7 @@ export const ko: TranslationResources = {
         docsTooltip: "자세한 내용과 이 명령에 사용할 수 있는 환경 변수는 문서를 참조하세요",
         setup: "설정",
         setupAccessibility: "워크트리 설정 명령",
-        uncommittedTitle: "paseo.json 변경 사항을 커밋하세요",
+        uncommittedTitle: "pandaos.json 변경 사항을 커밋하세요",
         uncommittedDescription: "새 워크트리는 선택한 기본 브랜치의 설정 스크립트를 사용합니다.",
         teardown: "정리",
         teardownAccessibility: "워크트리 정리 명령",
@@ -3049,8 +3039,8 @@ export const ko: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "디스크에서 구성이 변경되었습니다",
-        staleDescription: "저장하기 전에 다시 로드하여 최신 paseo.json을 가져오세요.",
-        failedTitle: "paseo.json을 저장할 수 없습니다",
+        staleDescription: "저장하기 전에 다시 로드하여 최신 pandaos.json을 가져오세요.",
+        failedTitle: "pandaos.json을 저장할 수 없습니다",
         failedDescription: "다시 시도하거나 디스크에서 최신 버전을 다시 로드하세요.",
       },
       actions: {

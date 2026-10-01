@@ -180,7 +180,7 @@ export class VerifySession {
     }
     const current = readPaseoConfigForEdit(workspace.cwd);
     if (!current.ok) {
-      throw new Error("paseo.json is invalid; the recipe was not saved.");
+      throw new Error("pandaos.json is invalid; the recipe was not saved.");
     }
     const config = current.config ?? {};
     const verification = config.verification ?? { recipes: {} };

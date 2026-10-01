@@ -730,27 +730,21 @@ describe("ReplicaCache", () => {
     });
   });
 
-  it("resyncs workspaces cached before handoff sorting existed", async () => {
+  it("drops a checkpoint written by another cache version, so the daemon resends everything", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
-    commitDirectory(
-      writer,
-      SERVER_ID,
-      directory({
-        workspaces: { generation: "g", afterSeq: 7 },
-        agents: { generation: "g", afterSeq: 12 },
-      }),
-    );
+    commitDirectory(writer, SERVER_ID, directory({ workspaces: { generation: "g", afterSeq: 7 } }));
     await writer.flush();
-    const [key, row] = [...storage.rows].find(([, stored]) => stored.kind === "workspace")!;
-    const legacy = JSON.parse(row.payload) as Record<string, unknown>;
-    delete legacy.handoff;
-    storage.rows.set(key, { ...row, payload: JSON.stringify(legacy) });
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+      workspaces: { generation: "g", afterSeq: 7 },
+    });
 
-    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    const [key, row] = [...storage.rows].find(([, stored]) => stored.kind === "checkpoint")!;
+    const older = JSON.parse(row.payload) as Record<string, unknown>;
+    delete older.schema;
+    storage.rows.set(key, { ...row, payload: JSON.stringify(older) });
 
-    expect(restored.workspaces.size).toBe(0);
-    expect(restored.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 12 } });
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toBeUndefined();
   });
 
   it("commits directory rows and their checkpoint in one storage transaction", async () => {

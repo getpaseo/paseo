@@ -1,3 +1,5 @@
+import { limitedProviders } from "../system-one/usage-limits.js";
+import type { ProviderUsage } from "@getpaseo/protocol/messages";
 import { readTranscriptLastReply } from "./transcript-last-reply.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { TurnRouter } from "../system-one/model-routing.js";
@@ -784,6 +786,7 @@ export class AgentManager {
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
+  private usageSource: (() => Promise<{ providers: ProviderUsage[] } | null>) | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
@@ -913,6 +916,10 @@ export class AgentManager {
 
   setPaseoToolsEnabled(enabled: boolean): void {
     this.paseoToolsEnabled = enabled;
+  }
+
+  setUsageSource(source: (() => Promise<{ providers: ProviderUsage[] } | null>) | null): void {
+    this.usageSource = source;
   }
 
   setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
@@ -1397,7 +1404,12 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       options?.env,
-      { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
+      {
+        reason: "create",
+        purpose: "interactive",
+        workspaceId: options.workspaceId ?? null,
+        labels: options.labels,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1522,6 +1534,7 @@ export class AgentManager {
         reason: "resume",
         purpose,
         workspaceId: options?.workspaceId ?? null,
+        labels: record?.labels,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -4927,12 +4940,15 @@ export class AgentManager {
         profile.provider === agent.provider &&
         (profile.model === undefined || profile.model === agent.config.model),
     )?.id;
+    // Profiles the usage data shows at a limit are skipped like ones already tried.
+    const limited = limitedProviders((await this.usageSource?.().catch(() => null))?.providers);
+    const skipped = profiles.filter((profile) => limited.has(profile.provider)).map((p) => p.id);
     const candidate = selectNextInTurnFallback({
       currentProfileId,
       currentProvider: agent.provider,
       currentModel: agent.config.model,
       profiles,
-      attemptedProfileIds: Array.from(attempted),
+      attemptedProfileIds: [...attempted, ...skipped],
     });
     if (!candidate) {
       await this.appendTimelineItem(agent.id, inTurnFallbackExhaustedVisibility());
@@ -5770,6 +5786,9 @@ export class AgentManager {
       reason: PluginSessionOpenRequest["reason"];
       purpose: PluginSessionOpenRequest["purpose"];
       workspaceId?: string | null;
+      // The agent is not registered yet when a session is created or resumed, so its tool
+      // catalog cannot read the labels from the registry.
+      labels?: Record<string, string>;
     },
   ): Promise<AgentLaunchContext> {
     if (this.pluginLifecycle) {
@@ -5814,6 +5833,7 @@ export class AgentManager {
     ) {
       context.paseoTools = await this.paseoToolCatalogFactory({
         callerAgentId: agentId,
+        callerLabels: opening?.labels ?? this.agents.get(agentId)?.labels,
         paseoToolPolicy,
       });
     }

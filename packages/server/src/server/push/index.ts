@@ -1,5 +1,6 @@
 import type pino from "pino";
 
+import { FCM_TOKEN_PREFIX, FcmSender } from "./fcm-sender.js";
 import { PushService, type PushPayload } from "./push-service.js";
 import { PushTokenStore } from "./token-store.js";
 
@@ -24,9 +25,21 @@ export function createPushNotifications(options: {
   const now = options.now ?? Date.now;
   const store = new PushTokenStore(options.logger, options.filePath, now, PUSH_TOKEN_LEASE_MS);
   const service = new PushService(options.logger, (token) => store.revokeToken(token));
+  const fcm = new FcmSender({
+    logger: options.logger,
+    onInvalidToken: (token) => store.revokeToken(token),
+  });
+  // Expo tokens go through the Expo push service; tokens the app took from Firebase go to FCM.
   const deliver =
     options.deliver ??
-    ((tokens: string[], payload: PushPayload) => service.sendPush(tokens, payload));
+    (async (tokens: string[], payload: PushPayload) => {
+      const direct = tokens.filter((token) => token.startsWith(FCM_TOKEN_PREFIX));
+      const expo = tokens.filter((token) => !token.startsWith(FCM_TOKEN_PREFIX));
+      await Promise.all([
+        expo.length > 0 ? service.sendPush(expo, payload) : Promise.resolve(),
+        fcm.send(direct, payload),
+      ]);
+    });
 
   return {
     renew(token) {

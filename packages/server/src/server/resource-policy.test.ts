@@ -15,6 +15,17 @@ describe("resource policy", () => {
     expect(buildResourcePolicyPrompt("deep")).toBe(buildResourcePolicyPrompt("deep"));
   });
 
+  test("observation budgets do not end an already-authorized task", () => {
+    for (const policy of ["economy", "balanced", "deep"] as const) {
+      const prompt = buildResourcePolicyPrompt(policy);
+      expect(prompt).toContain("standalone status-only request");
+      expect(prompt).toContain("not task completion");
+      expect(prompt).toContain("already-authorized task");
+      expect(prompt).toContain("automatic continuation is registered");
+      expect(prompt).not.toContain("Prefer event notifications and return control");
+    }
+  });
+
   test("allows one economy run read and deduplicates a repeated request", () => {
     let now = 0;
     const runtime = new ResourcePolicyRuntime({

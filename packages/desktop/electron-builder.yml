@@ -1,5 +1,5 @@
 npmRebuild: false
-appId: sh.paseo.desktop
+appId: sh.pandaos.desktop
 productName: PandaOS
 executableName: PandaOS
 protocols:
@@ -32,6 +32,14 @@ extraResources:
     to: app-dist
   - from: assets/editor-targets
     to: editor-target-icons
+  - from: ../../LICENSE
+    to: licenses/LICENSE
+  - from: ../../NOTICE
+    to: licenses/NOTICE
+  - from: ../app/assets/fonts
+    to: licenses
+    filter:
+      - "OFL-*.txt"
 publish:
   provider: github
   owner: marushan49

@@ -17,7 +17,11 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
 } from "./string-command-shell.js";
-import { readPaseoConfigJson, resolvePaseoConfigPath } from "./paseo-config-file.js";
+import {
+  readPaseoConfigJson,
+  resolvePaseoConfigFileName,
+  resolvePaseoConfigPath,
+} from "./paseo-config-file.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -270,9 +274,12 @@ export function readPaseoConfig(repoRoot: string): ReadPaseoConfigResult {
 
 export function paseoConfigParseError(failure: { configPath: string; error: unknown }): Error {
   const detail = failure.error instanceof Error ? failure.error.message : String(failure.error);
-  return new Error(`Failed to parse paseo.json at ${failure.configPath}: ${detail}`, {
-    cause: failure.error,
-  });
+  return new Error(
+    `Failed to parse ${basename(failure.configPath)} at ${failure.configPath}: ${detail}`,
+    {
+      cause: failure.error,
+    },
+  );
 }
 
 function readPaseoConfigOrThrow(repoRoot: string): PaseoConfig | null {
@@ -647,7 +654,7 @@ export async function runWorktreeSetupCommands(options: {
   signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  // Read pandaos.json from the worktree (it will have the same content as the source repo)
   const setupCommands = getWorktreeSetupCommands(options.worktreePath);
   if (setupCommands.length === 0) {
     return [];
@@ -810,8 +817,9 @@ export async function seedPaseoConfigFile(options: {
   sourceCwd: string;
   targetCwd: string;
 }): Promise<void> {
-  const sourceConfigPath = join(options.sourceCwd, "paseo.json");
-  const targetConfigPath = join(options.targetCwd, "paseo.json");
+  const fileName = resolvePaseoConfigFileName(options.sourceCwd);
+  const sourceConfigPath = join(options.sourceCwd, fileName);
+  const targetConfigPath = join(options.targetCwd, fileName);
   await copyFile(sourceConfigPath, targetConfigPath, fsConstants.COPYFILE_EXCL).catch((error) => {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "EEXIST" && code !== "ENOENT") throw error;

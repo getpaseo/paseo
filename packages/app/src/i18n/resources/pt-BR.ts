@@ -666,6 +666,8 @@ export const ptBR: TranslationResources = {
       },
       errors: {
         failedToLoad: "Falha ao carregar página",
+        hostOnly:
+          "{{url}} não está acessível neste dispositivo. Provavelmente só roda na máquina host.",
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
       },
@@ -1352,6 +1354,7 @@ export const ptBR: TranslationResources = {
       sessions: "Histórico",
       search: "Buscar",
       schedules: "Agendamentos",
+      teams: "Equipes",
     },
     worktreeSetup: {
       title: "Configurar scripts de worktree",
@@ -1756,18 +1759,6 @@ export const ptBR: TranslationResources = {
     subtitle: "Conecte seu computador para começar",
     actions: {
       settings: "Configurações",
-      paperclip: "Configurar com Paperclip",
-    },
-  },
-  paperclip: {
-    onboarding: {
-      title: "Configure o PandaOS com o Paperclip",
-      description: "Conte como você trabalha para preparar sua equipe de agentes.",
-      useCase: { label: "Para que você usará o PandaOS?", hint: "Escolha a opção mais próxima." },
-      teamShape: { label: "Qual é o tamanho da sua equipe?", hint: "Você pode alterar depois." },
-      teamName: { label: "Nome da equipe", hint: "Rótulo opcional.", placeholder: "Minha equipe" },
-      saving: "Salvando…",
-      continue: "Salvar configuração",
     },
   },
   modelSelector: {
@@ -2084,7 +2075,6 @@ export const ptBR: TranslationResources = {
       origins: {
         user: "Você",
         schedule: "Agendamentos",
-        paperclip: "Paperclip",
         agent: "Outros agentes",
         script: "Scripts",
         internal: "Interno",
@@ -2270,7 +2260,7 @@ export const ptBR: TranslationResources = {
         systemOne: "Jev, TypeSafe, roteamento, decisões, confiança",
         metadata: "títulos, nomes de branch, mensagens de commit, nomenclatura, geração",
         plugins: "extensões, complementos, instalar, fontes confiáveis",
-        projects: "repositórios, repos, scripts, paseo.json, configurações do projeto",
+        projects: "repositórios, repos, scripts, pandaos.json, configurações do projeto",
         workspaces: "sessões, arquivar, mesclado, arquivamento automático, limpeza",
         linkedAccounts: "GitHub, gh, contas, login, forge, pull requests, Jira, planejamento",
         host: "visão geral, daemon, reiniciar, atualizar, versão, remover host, cor, selo, zona de perigo",
@@ -3022,13 +3012,13 @@ export const ptBR: TranslationResources = {
         savedToast: "Projeto atualizado",
       },
       readFailures: {
-        invalidTitle: "Não foi possível analisar paseo.json",
+        invalidTitle: "Não foi possível analisar pandaos.json",
         invalidDescription: "Corrija o arquivo no disco e recarregue.",
         missingTitle: "Este host não tem este projeto",
         missingSingleHost: "O host selecionado não tem registro deste projeto.",
-        transportTitle: "Não foi possível carregar paseo.json",
+        transportTitle: "Não foi possível carregar pandaos.json",
         transportFallback: "O host não respondeu.",
-        failedTitle: "Não foi possível carregar paseo.json",
+        failedTitle: "Não foi possível carregar pandaos.json",
         failedDescription: "Recarregue para tentar novamente.",
       },
       worktree: {
@@ -3039,7 +3029,7 @@ export const ptBR: TranslationResources = {
           "Veja a documentação para mais detalhes e as variáveis de ambiente disponíveis para estes comandos",
         setup: "Configuração",
         setupAccessibility: "Comandos de configuração do worktree",
-        uncommittedTitle: "Faça commit das alterações no paseo.json",
+        uncommittedTitle: "Faça commit das alterações no pandaos.json",
         uncommittedDescription:
           "Novos worktrees usam o script de configuração do branch base selecionado.",
         teardown: "Desmontagem",
@@ -3083,8 +3073,8 @@ export const ptBR: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "Configuração alterada no disco",
-        staleDescription: "Recarregue para buscar o paseo.json mais recente antes de salvar.",
-        failedTitle: "Não foi possível salvar paseo.json",
+        staleDescription: "Recarregue para buscar o pandaos.json mais recente antes de salvar.",
+        failedTitle: "Não foi possível salvar pandaos.json",
         failedDescription: "Tente novamente ou recarregue a versão mais recente do disco.",
       },
       actions: {

@@ -667,6 +667,8 @@ export const es: TranslationResources = {
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
+        hostOnly:
+          "{{url}} no es accesible desde este dispositivo. Probablemente solo funciona en el equipo anfitrión.",
         invalidUrl: "Navegador no válidoURL",
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",
       },
@@ -1362,6 +1364,7 @@ export const es: TranslationResources = {
       sessions: "Historial",
       search: "Buscar",
       schedules: "Horarios",
+      teams: "Equipos",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
@@ -1771,7 +1774,6 @@ export const es: TranslationResources = {
     subtitle: "Conecte su computadora para comenzar",
     actions: {
       settings: "Ajustes",
-      paperclip: "Configurar con Paperclip",
     },
   },
   modelSelector: {
@@ -2088,7 +2090,6 @@ export const es: TranslationResources = {
       origins: {
         user: "Tú",
         schedule: "Programaciones",
-        paperclip: "Paperclip",
         agent: "Otros agentes",
         script: "Scripts",
         internal: "Interno",
@@ -2274,7 +2275,7 @@ export const es: TranslationResources = {
         systemOne: "Jev, TypeSafe, enrutamiento, decisiones, confianza",
         metadata: "títulos, nombres de rama, mensajes de commit, nombres, generación",
         plugins: "extensiones, complementos, instalar, fuentes de confianza",
-        projects: "repositorios, repos, scripts, paseo.json, ajustes del proyecto",
+        projects: "repositorios, repos, scripts, pandaos.json, ajustes del proyecto",
         workspaces: "sesiones, archivar, fusionado, archivado automático, limpieza",
         linkedAccounts:
           "GitHub, gh, cuentas, inicio de sesión, forge, pull requests, Jira, planificación",
@@ -3030,13 +3031,13 @@ export const es: TranslationResources = {
         savedToast: "Proyecto actualizado",
       },
       readFailures: {
-        invalidTitle: "paseo.json no se pudo analizar",
+        invalidTitle: "pandaos.json no se pudo analizar",
         invalidDescription: "Fije el archivo en el disco y luego vuelva a cargarlo.",
         missingTitle: "Este anfitrión no tiene este proyecto",
         missingSingleHost: "El anfitrión seleccionado no tiene registro de este proyecto.",
-        transportTitle: "No se pudo cargar paseo.json",
+        transportTitle: "No se pudo cargar pandaos.json",
         transportFallback: "El anfitrión no respondió.",
-        failedTitle: "No se pudo cargar paseo.json",
+        failedTitle: "No se pudo cargar pandaos.json",
         failedDescription: "Vuelva a cargar para intentarlo de nuevo.",
       },
       worktree: {
@@ -3047,7 +3048,7 @@ export const es: TranslationResources = {
           "Consulte los documentos para obtener más detalles y las variables de entorno disponibles para estos comandos.",
         setup: "Configuración",
         setupAccessibility: "Comandos de configuración del árbol de trabajo",
-        uncommittedTitle: "Confirma los cambios de paseo.json",
+        uncommittedTitle: "Confirma los cambios de pandaos.json",
         uncommittedDescription:
           "Los árboles de trabajo nuevos usan el script de configuración de la rama base que selecciones.",
         teardown: "Demoler",
@@ -3092,8 +3093,8 @@ export const es: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "Configuración cambiada en el disco",
-        staleDescription: "Vuelva a cargar para obtener el último paseo.json antes de guardar.",
-        failedTitle: "No se pudo guardar paseo.json",
+        staleDescription: "Vuelva a cargar para obtener el último pandaos.json antes de guardar.",
+        failedTitle: "No se pudo guardar pandaos.json",
         failedDescription: "Inténtelo de nuevo o vuelva a cargar la última versión desde el disco.",
       },
       actions: {
@@ -3104,27 +3105,6 @@ export const es: TranslationResources = {
         saving: "Guardando...",
         cancel: "Cancelar",
       },
-    },
-  },
-  paperclip: {
-    onboarding: {
-      title: "Welcome to PandaOS",
-      description: "Let's set up your Paperclip workspace in a few quick steps.",
-      useCase: {
-        label: "What's your primary use case?",
-        hint: "This helps us optimize your experience.",
-      },
-      teamShape: {
-        label: "How large is your team?",
-        hint: "We'll configure agent profiles and collaboration features accordingly.",
-      },
-      teamName: {
-        label: "Team name (optional)",
-        hint: "Give your team a memorable name.",
-        placeholder: "My Team",
-      },
-      continue: "Continue",
-      saving: "Saving…",
     },
   },
   leitstand: {

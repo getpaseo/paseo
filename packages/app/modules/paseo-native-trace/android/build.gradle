@@ -1,6 +1,6 @@
 apply plugin: 'com.android.library'
 
-group = 'sh.paseo.trace'
+group = 'sh.pandaos.trace'
 version = '0.1.0'
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
@@ -11,5 +11,5 @@ useExpoPublishing()
 useDefaultAndroidSdkVersions()
 
 android {
-  namespace "sh.paseo.trace"
+  namespace "sh.pandaos.trace"
 }

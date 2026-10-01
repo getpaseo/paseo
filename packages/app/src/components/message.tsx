@@ -1940,15 +1940,14 @@ export const AssistantMessage = memo(function AssistantMessage({
           {children}
         </MarkdownParagraphView>
       ),
-      link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <AssistantMarkdownLink
-          key={node.key}
-          source={getMarkdownLinkSource(node)}
-          style={styles.link}
-        >
-          {colorMarkdownLinkChildren(children, styles.link.color)}
-        </AssistantMarkdownLink>
-      ),
+      link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => {
+        const source = getMarkdownLinkSource(node);
+        return (
+          <AssistantMarkdownLink key={node.key} source={source} style={styles.link}>
+            {colorMarkdownLinkChildren(children, styles.link.color)}
+          </AssistantMarkdownLink>
+        );
+      },
       image: (
         node: ASTNode,
         _children: ReactNode[],

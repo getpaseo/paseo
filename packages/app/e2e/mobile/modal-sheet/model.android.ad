@@ -1,7 +1,7 @@
 # FORM_URL is paseo://new?serverId=<connected-serverId>.
 # Gesture coordinates target a 1080x1920 Android emulator at density 420.
 context platform=android timeout=60000 retries=0
-env APP_ID=sh.paseo.debug
+env APP_ID=sh.pandaos.debug
 
 open "${APP_ID}" "${FORM_URL}"
 wait "id=\"combined-model-selector\"" 20000

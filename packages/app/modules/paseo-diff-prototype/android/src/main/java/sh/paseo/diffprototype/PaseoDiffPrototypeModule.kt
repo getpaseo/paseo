@@ -1,4 +1,4 @@
-package sh.paseo.diffprototype
+package sh.pandaos.diffprototype
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition

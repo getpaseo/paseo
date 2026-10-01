@@ -1,0 +1,28 @@
+PandaOS
+Copyright 2026 Marushan Anpalahan
+
+PandaOS is a modified fork of Paseo (https://github.com/getpaseo/paseo),
+Copyright (c) 2025-present Mohamed Boudra, licensed under the Apache License,
+Version 2.0 (see LICENSE). PandaOS changes the branding, the dashboard, the
+Paperclip integration, provider routing and the desktop packaging; the full
+list of changes is the git history of https://github.com/marushan49/pandaos.
+
+"Paseo" is a name of its original authors. The Apache License does not grant
+trademark rights (section 6); PandaOS is not endorsed by the Paseo authors.
+
+Third-party components keep their own licenses:
+- Fonts Instrument Sans, Instrument Serif and JetBrains Mono: SIL Open Font
+  License 1.1 (licenses/OFL-*.txt).
+- @anthropic-ai/claude-agent-sdk and the Claude Code binary it ships: governed
+  by Anthropic's own terms (https://code.claude.com/docs/en/legal-and-compliance),
+  not by the Apache License.
+- Electron and Chromium: see LICENSE.electron.txt and LICENSES.chromium.html in
+  the application folder.
+- npm dependencies: the license file shipped inside each package.
+
+Team runtime
+------------
+Parts of packages/server/src/server/team/ (board phase model, revisioned work items, run
+bindings, decision outbox, deterministic health findings) are adapted from Mastra
+(https://github.com/mastra-ai/mastra, mastracode/factory), Copyright (c) 2025 Kepler Software,
+Inc., licensed under the Apache License 2.0. Modified for PandaOS.

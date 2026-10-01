@@ -43,7 +43,7 @@ export function readPaseoConfigForProjection(
   }
   logger.warn(
     { configPath: result.configPath, workspaceDirectory, err: result.error },
-    "Failed to parse paseo.json; treating workspace as having no scripts",
+    "Failed to parse pandaos.json; treating workspace as having no scripts",
   );
   return null;
 }

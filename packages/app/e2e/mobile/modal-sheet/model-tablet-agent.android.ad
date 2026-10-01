@@ -1,7 +1,7 @@
 # Idle existing agent in a narrow composer on a wide Android device (AdaptiveModalSheet).
 # AGENT_URL=paseo://h/<serverId>/agent/<agentId>; AGENT_TITLE identifies the loaded route.
 context platform=android timeout=60000 retries=0
-env APP_ID=sh.paseo.debug
+env APP_ID=sh.pandaos.debug
 env PROVIDER_ID=codex
 
 open "${APP_ID}" "${AGENT_URL}"

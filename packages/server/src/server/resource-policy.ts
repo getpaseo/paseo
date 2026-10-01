@@ -42,14 +42,14 @@ export function resolveResourcePolicy(policy: ResourcePolicy | undefined): Resou
 
 const RESOURCE_POLICY_PROMPTS: Record<ResourcePolicy, string> = {
   economy:
-    "Paseo resource policy (economy): perform at most one status read per run; do not poll, watch, retry status reads, or start automated loops and schedules. Prefer event notifications and return control. Keep waiting bounded and do not request xhigh reasoning implicitly.",
+    "Paseo resource policy (economy): for a standalone status-only request, perform at most one status read per run and answer. Avoid redundant reads and tight polling; do not start permanent watchers, automated loops or schedules. Prefer completion events. Keep waiting bounded and do not request xhigh reasoning implicitly.",
   balanced:
-    "Paseo resource policy (balanced): use bounded status checks only when needed, at most four reads per run within 30 seconds. Automated loops and schedules may run, but avoid unchanged repeats, indefinite polling, and implicit xhigh reasoning.",
-  deep: "Paseo resource policy (deep): use up to twelve status reads per run within 120 seconds when they provide useful progress. Automated loops and schedules may run, but keep them bounded, avoid unchanged repeats, and never poll indefinitely or request xhigh reasoning implicitly.",
+    "Paseo resource policy (balanced): for a standalone status-only request, use bounded status checks only when needed, at most four reads per run within 30 seconds. Automated loops and schedules may run, but avoid unchanged repeats, indefinite polling, and implicit xhigh reasoning.",
+  deep: "Paseo resource policy (deep): for a standalone status-only request, use up to twelve status reads per run within 120 seconds when they provide useful progress. Automated loops and schedules may run, but keep them bounded, avoid unchanged repeats, and never poll indefinitely or request xhigh reasoning implicitly.",
 };
 
 export function buildResourcePolicyPrompt(policy: ResourcePolicy): string {
-  return RESOURCE_POLICY_PROMPTS[policy];
+  return `${RESOURCE_POLICY_PROMPTS[policy]}\n\nResource budgets limit redundant observation, not task completion. For an already-authorized task, keep working until the requested outcome is verified or a concrete blocker requires user input. Pending CI, reviews, builds, and delegated work are waiting phases, not completed tasks or reasons to ask the user to continue. Prefer completion events; otherwise use bounded waits and necessary checks after meaningful state changes. Before yielding while work is pending, ensure automatic continuation is registered; a status note alone does not resume the task. Never silently abandon required follow-up.`;
 }
 
 export interface ResourcePolicyStatusReadInput {

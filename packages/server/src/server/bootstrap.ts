@@ -1,3 +1,5 @@
+import { TeamService } from "./team/service.js";
+import { PackRegistry } from "./team/pack.js";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import { isShadowModeEnabled } from "./system-one/scope.js";
 import { ShadowPredictor } from "./system-one/shadow-predictor.js";
@@ -170,9 +172,7 @@ import { EvidenceStore } from "./verify/evidence-store.js";
 import { VerifySession } from "./verify/verify-session.js";
 import { createConfiguredSystemOneDecisionSource } from "./system-one/tools.js";
 import { HandoffClassifier, handoffBackfillCandidates } from "./system-one/handoff-classifier.js";
-
-const HANDOFF_BACKFILL_DELAY_MS = 30_000;
-const HANDOFF_BACKFILL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+import { HandoffPinger } from "./system-one/handoff-ping.js";
 import { DaemonPlaywrightHost } from "./verify/playwright-host.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
@@ -254,6 +254,9 @@ import {
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
+
+const HANDOFF_BACKFILL_DELAY_MS = 30_000;
+const HANDOFF_BACKFILL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
 const MCP_DEBUG_SECRET = "[redacted]";
@@ -1475,6 +1478,34 @@ export async function createPaseoDaemon(
     readAllowScheduledAutomation: () => daemonConfigStore.get().allowScheduledAutomation,
   });
   await scheduleService.start();
+  const teamPacks = new PackRegistry();
+  const loadedPacks = await teamPacks.loadFrom(path.join(config.paseoHome, "packs"));
+  for (const failure of loadedPacks.failed) {
+    logger.warn(failure, "Workflow pack failed to load");
+  }
+  const teamService = new TeamService({
+    storageRoot: config.paseoHome,
+    logger,
+    agentManager,
+    agentStorage,
+    createAgent,
+    packs: teamPacks,
+    getUsage: getProviderUsageForRouting,
+    listFallbackProviders: () =>
+      (daemonConfigStore.get().agentProfiles ?? []).map((profile) => profile.provider),
+    decide: (cwd) =>
+      daemonConfigStore.get().systemOne?.enabled === true &&
+      !isSystemOneExcluded(config.paseoHome, cwd)
+        ? createConfiguredSystemOneDecisionSource(
+            config.paseoHome,
+            daemonConfigStore,
+            () => cwd,
+            "team",
+          )
+        : null,
+    minConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
+  });
+  await teamService.start();
   daemonConfigStore.onFieldChange("resourcePolicy", (value) => {
     if (value === "economy" || value === "balanced" || value === "deep") {
       agentManager.setResourcePolicy(value);
@@ -1532,6 +1563,7 @@ export async function createPaseoDaemon(
       terminalManager,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       scheduleService,
+      teamService,
       providerSnapshotManager,
       daemonConfigStore,
       resourcePolicyRuntime,
@@ -1569,6 +1601,7 @@ export async function createPaseoDaemon(
       paseoHome: config.paseoHome,
       worktreesRoot: config.worktreesRoot,
       callerAgentId: runtime.callerAgentId,
+      callerLabels: runtime.callerLabels,
       enableVoiceTools: runtime.enableVoiceTools,
       voiceOnly: runtime.voiceOnly,
       resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
@@ -1612,6 +1645,15 @@ export async function createPaseoDaemon(
       ),
     logFile: path.join(config.paseoHome, "system-one", "shadow.jsonl"),
   });
+  const handoffPinger = new HandoffPinger({
+    deliver: async ({ agentId, ...notification }) => {
+      await wsServer?.notifyAgentHandoff(agentId, notification);
+    },
+    sendMorningSummary: async (notification) => {
+      await wsServer?.sendPushNotification(notification);
+    },
+    logger,
+  });
   const handoffClassifier = new HandoffClassifier({
     isEnabled: (cwd) =>
       daemonConfigStore.get().systemOne?.enabled === true &&
@@ -1643,6 +1685,19 @@ export async function createPaseoDaemon(
       }));
       if (updated) await emitWorkspaceUpdatesExternal([workspaceId]);
     },
+    onLiveSorted: (workspaceId, handoff) => {
+      void (async () => {
+        const workspace = await workspaceRegistry?.get(workspaceId);
+        const project = workspace ? await projectRegistry.get(workspace.projectId) : null;
+        handoffPinger.notify({
+          serverId,
+          workspaceId,
+          handoff,
+          projectName: project?.displayName ?? null,
+          lastUserMessageAt: agentManager.getAgent(handoff.agentId)?.lastUserMessageAt ?? null,
+        });
+      })().catch((error: unknown) => logger.warn({ err: error }, "handoff ping skipped"));
+    },
     logger,
   });
   agentManager.setStreamObserver((agent, event) => {
@@ -1670,6 +1725,7 @@ export async function createPaseoDaemon(
       if (sorted > 0) logger.info({ sorted }, "handoff backfill sorted open sessions");
     })().catch((error: unknown) => logger.warn({ err: error }, "handoff backfill failed"));
   }, HANDOFF_BACKFILL_DELAY_MS).unref();
+  agentManager.setUsageSource(getProviderUsageForRouting);
   agentManager.setTurnRouter(
     createSystemOneTurnRouter({
       paseoHome: config.paseoHome,
@@ -1689,9 +1745,16 @@ export async function createPaseoDaemon(
     const agentMcpRoute = "/mcp/agents";
 
     const createAgentMcpSession = async (callerAgentId?: string) => {
+      // A resuming session lists its tools before the agent is registered again; the stored
+      // record still carries the labels that decide a team seat's tool set.
+      const callerLabels = callerAgentId
+        ? (agentManager.getAgent(callerAgentId)?.labels ??
+          (await agentStorage.get(callerAgentId))?.labels)
+        : undefined;
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
+          callerLabels,
           paseoToolPolicy: callerAgentId
             ? agentManager.getPaseoToolPolicy(callerAgentId)
             : undefined,
@@ -1972,6 +2035,11 @@ export async function createPaseoDaemon(
               resourcePolicyRuntime,
               browserActivity,
               providerUsageService,
+              teamService,
+            );
+            // Sorted handbacks ping when System One sorts them; a plain finish then stays quiet.
+            wsServer.setHandoffPingsActive(
+              () => daemonConfigStore.get().systemOne?.enabled === true,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

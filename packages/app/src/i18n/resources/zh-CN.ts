@@ -661,6 +661,7 @@ export const zhCN: TranslationResources = {
       },
       errors: {
         failedToLoad: "页面加载失败",
+        hostOnly: "无法从此设备访问 {{url}}。它可能只在主机上运行。",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
       },
@@ -1314,6 +1315,7 @@ export const zhCN: TranslationResources = {
       sessions: "历史",
       search: "搜索",
       schedules: "计划",
+      teams: "团队",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -1704,18 +1706,6 @@ export const zhCN: TranslationResources = {
     subtitle: "连接你的电脑即可开始",
     actions: {
       settings: "设置",
-      paperclip: "使用 Paperclip 设置",
-    },
-  },
-  paperclip: {
-    onboarding: {
-      title: "使用 Paperclip 设置 PandaOS",
-      description: "告诉我们你的工作方式，为代理团队选择合适的配置。",
-      useCase: { label: "你将如何使用 PandaOS？", hint: "选择最接近的选项。" },
-      teamShape: { label: "你的团队规模如何？", hint: "之后可以更改。" },
-      teamName: { label: "团队名称", hint: "可选标签。", placeholder: "我的团队" },
-      saving: "保存中…",
-      continue: "保存设置",
     },
   },
   modelSelector: {
@@ -2026,7 +2016,6 @@ export const zhCN: TranslationResources = {
       origins: {
         user: "你",
         schedule: "计划任务",
-        paperclip: "Paperclip",
         agent: "其他代理",
         script: "脚本",
         internal: "内部",
@@ -2209,7 +2198,7 @@ export const zhCN: TranslationResources = {
         systemOne: "Jev, TypeSafe, 路由, 决策, 置信度",
         metadata: "标题, 分支名, 提交信息, 命名, 生成",
         plugins: "扩展, 附加组件, 安装, 可信来源",
-        projects: "仓库, 脚本, paseo.json, 项目设置",
+        projects: "仓库, 脚本, pandaos.json, 项目设置",
         workspaces: "会话, 归档, 已合并, 自动归档, 清理",
         linkedAccounts: "GitHub, gh, 账号, 登录, 代码托管, 拉取请求, Jira, 规划",
         host: "概览, 守护进程, 重启, 更新, 版本, 移除主机, 颜色, 徽标, 危险区域",
@@ -2938,13 +2927,13 @@ export const zhCN: TranslationResources = {
         savedToast: "Project 已更新",
       },
       readFailures: {
-        invalidTitle: "无法解析 paseo.json",
+        invalidTitle: "无法解析 pandaos.json",
         invalidDescription: "修复磁盘上的文件，然后重新加载。",
         missingTitle: "这个 Host 没有这个 Project",
         missingSingleHost: "所选 Host 没有这个 Project 的记录。",
-        transportTitle: "无法加载 paseo.json",
+        transportTitle: "无法加载 pandaos.json",
         transportFallback: "Host 没有响应。",
-        failedTitle: "无法加载 paseo.json",
+        failedTitle: "无法加载 pandaos.json",
         failedDescription: "重新加载以重试。",
       },
       worktree: {
@@ -2954,7 +2943,7 @@ export const zhCN: TranslationResources = {
         docsTooltip: "查看命令可用的环境变量和更多细节",
         setup: "Setup",
         setupAccessibility: "Worktree setup 命令",
-        uncommittedTitle: "提交 paseo.json 更改",
+        uncommittedTitle: "提交 pandaos.json 更改",
         uncommittedDescription: "新工作树使用所选基础分支中的设置脚本。",
         teardown: "Teardown",
         teardownAccessibility: "Worktree teardown 命令",
@@ -2997,8 +2986,8 @@ export const zhCN: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "磁盘上的配置已变更",
-        staleDescription: "保存前请重新加载最新的 paseo.json。",
-        failedTitle: "无法保存 paseo.json",
+        staleDescription: "保存前请重新加载最新的 pandaos.json。",
+        failedTitle: "无法保存 pandaos.json",
         failedDescription: "重试，或从磁盘重新加载最新版本。",
       },
       actions: {

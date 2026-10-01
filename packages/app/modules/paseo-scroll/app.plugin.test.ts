@@ -7,7 +7,7 @@ describe("Android scroll registration", () => {
     const source = "PackageList(this).packages.apply {\n}";
     const result = configureScrollPackage(source);
     expect(result).toBe(
-      "PackageList(this).packages.apply {\n              add(0, sh.paseo.scroll.PaseoScrollPackage())\n}",
+      "PackageList(this).packages.apply {\n              add(0, sh.pandaos.scroll.PaseoScrollPackage())\n}",
     );
     expect(configureScrollPackage(result)).toBe(result);
   });

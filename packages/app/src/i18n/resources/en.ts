@@ -666,6 +666,8 @@ export const en = {
       },
       errors: {
         failedToLoad: "Failed to load page",
+        hostOnly:
+          "{{url}} is not reachable from this device. It probably runs only on the host machine.",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
       },
@@ -1339,6 +1341,7 @@ export const en = {
       sessions: "History",
       search: "Search",
       schedules: "Schedules",
+      teams: "Teams",
     },
     worktreeSetup: {
       title: "Set up worktree scripts",
@@ -1755,22 +1758,6 @@ export const en = {
     subtitle: "Connect your computer to get started",
     actions: {
       settings: "Settings",
-      paperclip: "Set up with Paperclip",
-    },
-  },
-  paperclip: {
-    onboarding: {
-      title: "Set up PandaOS with Paperclip",
-      description: "Tell us how you work so your agent team starts with the right shape.",
-      useCase: { label: "What will you use PandaOS for?", hint: "Choose the closest fit." },
-      teamShape: { label: "What team shape do you need?", hint: "You can change this later." },
-      teamName: {
-        label: "Team name",
-        hint: "Optional label for this setup.",
-        placeholder: "My agent team",
-      },
-      saving: "Saving…",
-      continue: "Save setup",
     },
   },
   modelSelector: {
@@ -2085,7 +2072,6 @@ export const en = {
       origins: {
         user: "You",
         schedule: "Schedules",
-        paperclip: "Paperclip",
         agent: "Other agents",
         script: "Scripts",
         internal: "Internal",
@@ -2306,7 +2292,7 @@ export const en = {
         systemOne: "Jev, TypeSafe, routing, decisions, confidence",
         metadata: "titles, branch names, commit messages, naming, generation",
         plugins: "extensions, add-ons, install, trusted sources",
-        projects: "repositories, repos, scripts, paseo.json, project settings",
+        projects: "repositories, repos, scripts, pandaos.json, project settings",
         workspaces: "sessions, archive, merged, auto archive, cleanup",
         linkedAccounts: "GitHub, gh, accounts, login, forge, pull requests, Jira, planning",
         host: "overview, daemon, restart, update, version, remove host, color, badge, danger zone",
@@ -3262,13 +3248,13 @@ export const en = {
         savedToast: "Project updated",
       },
       readFailures: {
-        invalidTitle: "paseo.json couldn't be parsed",
+        invalidTitle: "pandaos.json couldn't be parsed",
         invalidDescription: "Fix the file on disk, then reload.",
         missingTitle: "This host doesn't have this project",
         missingSingleHost: "The selected host has no record of this project.",
-        transportTitle: "Couldn't load paseo.json",
+        transportTitle: "Couldn't load pandaos.json",
         transportFallback: "The host didn't respond.",
-        failedTitle: "Couldn't load paseo.json",
+        failedTitle: "Couldn't load pandaos.json",
         failedDescription: "Reload to try again.",
       },
       worktree: {
@@ -3279,7 +3265,7 @@ export const en = {
           "See docs for more details and the environment variables available to these commands",
         setup: "Setup",
         setupAccessibility: "Worktree setup commands",
-        uncommittedTitle: "Commit paseo.json changes",
+        uncommittedTitle: "Commit pandaos.json changes",
         uncommittedDescription:
           "New worktrees use the setup script from the base branch you select.",
         teardown: "Teardown",
@@ -3323,8 +3309,8 @@ export const en = {
       },
       writeFailures: {
         staleTitle: "Config changed on disk",
-        staleDescription: "Reload to fetch the latest paseo.json before saving.",
-        failedTitle: "Couldn't save paseo.json",
+        staleDescription: "Reload to fetch the latest pandaos.json before saving.",
+        failedTitle: "Couldn't save pandaos.json",
         failedDescription: "Try again, or reload the latest version from disk.",
       },
       actions: {

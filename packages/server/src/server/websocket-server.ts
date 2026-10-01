@@ -16,6 +16,7 @@ import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
+import type { TeamService } from "./team/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import { ResourcePolicyRuntime } from "./resource-policy.js";
@@ -75,6 +76,7 @@ import {
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
+  type AgentAttentionNotificationPayload,
 } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -603,6 +605,7 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly teamService: TeamService | undefined;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly browserActivity: BrowserActivityHub | undefined;
@@ -686,6 +689,7 @@ export class VoiceAssistantWebSocketServer {
     resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">,
     browserActivity?: BrowserActivityHub,
     providerUsageService?: ProviderUsageService,
+    teamService?: TeamService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -788,6 +792,7 @@ export class VoiceAssistantWebSocketServer {
     });
 
     this.providerUsageService = resolveProviderUsageService(providerUsageService, this.logger);
+    this.teamService = teamService;
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();
@@ -1506,6 +1511,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceLabelService: this.workspaceLabelService ?? undefined,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
+      teamService: this.teamService,
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
@@ -1851,6 +1857,8 @@ export class VoiceAssistantWebSocketServer {
         systemOneUsage: true,
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
         workspaceDone: true,
+        // COMPAT(teams): added in v0.9.4, remove gate after 2027-04-01.
+        teams: this.teamService !== undefined,
         // COMPAT(agentLastReplies): added in v0.9.3, remove gate after 2027-04-01.
         agentLastReplies: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
@@ -2550,10 +2558,40 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
+  /** Whether sorted handbacks ping instead: then a plain "finished" no longer pushes by itself. */
+  private handoffPingsActive: () => boolean = () => false;
+
+  setHandoffPingsActive(isActive: () => boolean): void {
+    this.handoffPingsActive = isActive;
+  }
+
+  /** A sorted handback that asks the person something: push to phones and notify the app. */
+  async notifyAgentHandoff(
+    agentId: string,
+    notification: AgentAttentionNotificationPayload,
+  ): Promise<void> {
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) return;
+    await this.broadcastAgentAttention({
+      agentId,
+      provider: agent.provider,
+      reason: "finished",
+      notification,
+      forcePush: true,
+    });
+  }
+
+  /** A push outside any agent, such as the morning summary of pings held overnight. */
+  async sendPushNotification(notification: AgentAttentionNotificationPayload): Promise<void> {
+    await this.pushNotificationSender.send(notification);
+  }
+
   private async broadcastAgentAttention(params: {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    notification?: AgentAttentionNotificationPayload;
+    forcePush?: boolean;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
@@ -2582,33 +2620,38 @@ export class VoiceAssistantWebSocketServer {
     );
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
-    const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
-    const notification = buildAgentAttentionNotificationPayload({
-      reason: params.reason,
-      serverId: this.serverId,
-      workspaceId: agent.workspaceId,
-      agentId: params.agentId,
-      assistantMessage,
-      permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
-    });
-
+    const notification =
+      params.notification ??
+      buildAgentAttentionNotificationPayload({
+        reason: params.reason,
+        serverId: this.serverId,
+        workspaceId: agent.workspaceId,
+        agentId: params.agentId,
+        assistantMessage: await this.agentManager.getLastAssistantMessage(params.agentId),
+        permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
+      });
     const plan = computeNotificationPlan({
       allStates,
       focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
+      pushEligible: isAttentionPushEligible(params.reason, this.handoffPingsActive()),
       nowMs,
     });
+    const shouldPush = params.forcePush
+      ? !isFocusedOnAgent(allStates, params.agentId)
+      : plan.shouldPush;
 
-    if (plan.shouldPush) {
+    if (shouldPush) {
       void this.pushNotificationSender.send(notification).catch((err) => {
         this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
       });
     }
 
     for (const { ws } of clientEntries) {
-      const shouldNotify =
-        plan.inAppRecipientIndex !== null &&
-        notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
+      // A handback ping reaches every app that shows notifications, not just the one used last.
+      const shouldNotify = params.forcePush
+        ? notificationEntries.some((entry) => entry.ws === ws)
+        : plan.inAppRecipientIndex !== null &&
+          notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
       const timestamp = new Date().toISOString();
       const connection = this.sessions.get(ws);
       const attentionPayload = {
@@ -3029,4 +3072,18 @@ function extractRequestInfoFromUnknownWsInbound(
   }
 
   return null;
+}
+
+/** While sorted handbacks ping, a plain finished turn stays quiet; errors never push. */
+function isAttentionPushEligible(
+  reason: "finished" | "error" | "permission",
+  handoffPingsActive: boolean,
+): boolean {
+  if (reason === "finished" && handoffPingsActive) return false;
+  return isPushEligibleAttentionReason(reason);
+}
+
+// A ping reaches the phone even while another app window is in use, unless this session is open.
+function isFocusedOnAgent(states: readonly ClientPresenceState[], agentId: string): boolean {
+  return states.some((state) => state.appVisible && state.focusedAgentId === agentId);
 }

@@ -585,13 +585,6 @@ function ownerAgentIdOf(
   return undefined;
 }
 
-function sameLabels(
-  left: Record<string, Record<string, string>>,
-  right: Record<string, Record<string, string>>,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 function sameOwners(left: Record<string, string>, right: Record<string, string>): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -1135,20 +1128,6 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
     },
     sameOwners,
   );
-  const ownerLabels = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => {
-      const agents = state.sessions[props.normalizedServerId]?.agents;
-      const labels: Record<string, Record<string, string>> = {};
-      for (const item of props.tabs) {
-        const agentId = ownerAgentIdOf(item.tab.target, browserOwners);
-        const agent = agentId ? agents?.get(agentId) : undefined;
-        if (agent) labels[agent.id] = agent.labels;
-      }
-      return labels;
-    },
-    sameLabels,
-  );
   const grouping = useMemo(
     () =>
       groupWorkspaceTabs({
@@ -1156,9 +1135,7 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
           const target = item.tab.target;
           const ownerAgentId = ownerAgentIdOf(target, browserOwners);
           const title = presentations.get(item.tab.key)?.label ?? "";
-          const group = ownerAgentId
-            ? agentTabGroup(ownerAgentId, ownerLabels[ownerAgentId], title)
-            : null;
+          const group = ownerAgentId ? agentTabGroup(ownerAgentId, title) : null;
           return {
             key: item.tab.key,
             isActive: item.isActive,
@@ -1168,7 +1145,7 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
         }),
         collapsedGroups: new Set(collapsedGroups),
       }),
-    [browserOwners, collapsedGroups, ownerLabels, presentations, props.tabs],
+    [browserOwners, collapsedGroups, presentations, props.tabs],
   );
   const resolvedTabs = useMemo(() => {
     const itemByKey = new Map(props.tabs.map((item) => [item.tab.key, item]));

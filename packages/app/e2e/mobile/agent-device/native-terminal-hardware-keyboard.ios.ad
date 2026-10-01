@@ -1,5 +1,5 @@
 context platform=ios timeout=90000 retries=0
-env APP_ID=sh.paseo.debug
+env APP_ID=sh.pandaos.debug
 
 open "${APP_ID}"
 wait "id=\"terminal-surface\"" 30000

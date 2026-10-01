@@ -1,6 +1,6 @@
 apply plugin: 'com.android.library'
 
-group = 'sh.paseo.diffprototype'
+group = 'sh.pandaos.diffprototype'
 version = '0.1.0'
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
@@ -12,7 +12,7 @@ useDefaultAndroidSdkVersions()
 def skiaPackage = new File(["node", "--print", "require.resolve('@shopify/react-native-skia/package.json')"].execute(null, projectDir).text.trim()).parentFile
 
 android {
-  namespace "sh.paseo.diffprototype"
+  namespace "sh.pandaos.diffprototype"
   defaultConfig {
     externalNativeBuild {
       cmake {

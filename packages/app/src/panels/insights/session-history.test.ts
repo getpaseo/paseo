@@ -38,7 +38,7 @@ describe("session history", () => {
   it("maps every origin the daemon writes to a group", () => {
     expect(originGroup("user:cli")).toBe("user");
     expect(originGroup("schedule:59e54f02")).toBe("schedule");
-    expect(originGroup("paperclip:Boss")).toBe("paperclip");
+    expect(originGroup("paperclip:Boss")).toBe("agent");
     expect(originGroup("agent:abc")).toBe("agent");
     expect(originGroup("systemd:paseo-origin-test.service")).toBe("script");
     expect(originGroup("process:tsx")).toBe("script");
@@ -54,7 +54,7 @@ describe("session history", () => {
       entry({ agentId: "d", origin: null }),
     ]);
     expect(summaries.map((s) => [s.group, s.sessions, s.deleted, s.tokens, s.costUsd])).toEqual([
-      ["paperclip", 2, 1, 3000, 3],
+      ["agent", 2, 1, 3000, 3],
       ["user", 1, 0, 200, 0.5],
       ["unknown", 1, 0, 0, 0],
     ]);

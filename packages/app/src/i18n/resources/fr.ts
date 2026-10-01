@@ -667,6 +667,8 @@ export const fr: TranslationResources = {
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
+        hostOnly:
+          "{{url}} n'est pas accessible depuis cet appareil. Il ne tourne probablement que sur la machine hôte.",
         invalidUrl: "NavigateurURLinvalide",
         unsupportedProtocol: "Navigateur non pris en charge bloquéURL:{{protocol}}",
       },
@@ -1362,6 +1364,7 @@ export const fr: TranslationResources = {
       sessions: "Historique",
       search: "Rechercher",
       schedules: "Planifications",
+      teams: "Équipes",
     },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
@@ -1775,7 +1778,6 @@ export const fr: TranslationResources = {
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
       settings: "Paramètres",
-      paperclip: "Configurer avec Paperclip",
     },
   },
   modelSelector: {
@@ -2093,7 +2095,6 @@ export const fr: TranslationResources = {
       origins: {
         user: "Vous",
         schedule: "Planifications",
-        paperclip: "Paperclip",
         agent: "Autres agents",
         script: "Scripts",
         internal: "Interne",
@@ -2280,7 +2281,7 @@ export const fr: TranslationResources = {
         systemOne: "Jev, TypeSafe, routage, décisions, confiance",
         metadata: "titres, noms de branche, messages de commit, nommage, génération",
         plugins: "extensions, modules, installer, sources de confiance",
-        projects: "dépôts, repos, scripts, paseo.json, paramètres du projet",
+        projects: "dépôts, repos, scripts, pandaos.json, paramètres du projet",
         workspaces: "sessions, archiver, fusionné, archivage automatique, nettoyage",
         linkedAccounts: "GitHub, gh, comptes, connexion, forge, pull requests, Jira, planification",
         host: "aperçu, daemon, redémarrer, mettre à jour, version, supprimer l'hôte, couleur, badge, zone de danger",
@@ -3037,13 +3038,13 @@ export const fr: TranslationResources = {
         savedToast: "Projet mis à jour",
       },
       readFailures: {
-        invalidTitle: "paseo.json n'a pas pu être analysé",
+        invalidTitle: "pandaos.json n'a pas pu être analysé",
         invalidDescription: "Corrigez le fichier sur le disque, puis rechargez.",
         missingTitle: "Cet hôte n'a pas ce projet",
         missingSingleHost: "L'hôte sélectionné n'a aucune trace de ce projet.",
-        transportTitle: "Impossible de charger paseo.json",
+        transportTitle: "Impossible de charger pandaos.json",
         transportFallback: "L'hôte n'a pas répondu.",
-        failedTitle: "Impossible de charger paseo.json",
+        failedTitle: "Impossible de charger pandaos.json",
         failedDescription: "Rechargez pour réessayer.",
       },
       worktree: {
@@ -3054,7 +3055,7 @@ export const fr: TranslationResources = {
           "Voir la documentation pour plus de détails et les variables d'environnement disponibles pour ces commandes",
         setup: "Installation",
         setupAccessibility: "Commandes de configuration de Worktree",
-        uncommittedTitle: "Validez les modifications de paseo.json",
+        uncommittedTitle: "Validez les modifications de pandaos.json",
         uncommittedDescription:
           "Les nouveaux worktrees utilisent le script de configuration de la branche de base sélectionnée.",
         teardown: "Démolir",
@@ -3100,8 +3101,8 @@ export const fr: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "Configuration modifiée sur le disque",
-        staleDescription: "Rechargez pour récupérer le dernier paseo.json avant de sauvegarder.",
-        failedTitle: "Impossible d'enregistrer paseo.json",
+        staleDescription: "Rechargez pour récupérer le dernier pandaos.json avant de sauvegarder.",
+        failedTitle: "Impossible d'enregistrer pandaos.json",
         failedDescription: "Réessayez ou rechargez la dernière version à partir du disque.",
       },
       actions: {
@@ -3114,7 +3115,6 @@ export const fr: TranslationResources = {
       },
     },
   },
-  paperclip: en.paperclip,
   leitstand: {
     title: "Tableau de bord",
     leave: "Sessions",

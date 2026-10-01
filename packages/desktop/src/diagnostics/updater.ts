@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { app } from "electron";
 import { tailFile } from "./tail-file.js";
 
-const SHIPIT_DIRECTORY_NAME = "sh.paseo.desktop.ShipIt";
+const SHIPIT_DIRECTORY_NAME = "sh.pandaos.desktop.ShipIt";
 const SHIPIT_LOG_TAIL_LINES = 100;
 
 export interface DesktopUpdaterDiagnosticFile {
