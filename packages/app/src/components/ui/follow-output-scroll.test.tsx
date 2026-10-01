@@ -1,41 +1,38 @@
-/**
- * @vitest-environment jsdom
- */
-import React, { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { NativeScrollEvent, ScrollView } from "react-native";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
+  createFollowOutputScrollController,
   createFollowOutputScrollState,
+  MAX_PERSISTED_FOLLOW_OUTPUT_PANELS,
   reduceFollowOutputUserScroll,
   resetFollowOutputScrollPersistence,
   resolveFollowOutputContentSizeAction,
   shouldIgnoreFollowOutputScrollReset,
   shouldStickFollowOutputToBottom,
-  useFollowOutputScroll,
+  type FollowOutputScrollMetrics,
+  type FollowOutputScrollable,
 } from "./follow-output-scroll";
 
 function metrics(
   offsetY: number,
   contentHeight = 800,
   viewportHeight = 400,
-): {
-  offsetY: number;
-  contentHeight: number;
-  viewportHeight: number;
-} {
+): FollowOutputScrollMetrics {
   return { offsetY, contentHeight, viewportHeight };
 }
 
-function scrollEvent(offsetY: number, contentHeight = 800, viewportHeight = 400) {
+function fakeScrollable(): FollowOutputScrollable & {
+  scrollToEnd: Mock<FollowOutputScrollable["scrollToEnd"]>;
+  scrollTo: Mock<FollowOutputScrollable["scrollTo"]>;
+} {
   return {
-    nativeEvent: {
-      contentOffset: { x: 0, y: offsetY },
-      contentSize: { width: 300, height: contentHeight },
-      layoutMeasurement: { width: 300, height: viewportHeight },
-    } satisfies Pick<NativeScrollEvent, "contentOffset" | "contentSize" | "layoutMeasurement">,
+    scrollToEnd: vi.fn<FollowOutputScrollable["scrollToEnd"]>(),
+    scrollTo: vi.fn<FollowOutputScrollable["scrollTo"]>(),
   };
 }
+
+afterEach(() => {
+  resetFollowOutputScrollPersistence();
+});
 
 describe("follow-output scroll", () => {
   it("sticks to new output while the reader stays at the bottom", () => {
@@ -127,6 +124,7 @@ describe("follow-output scroll", () => {
         following: true,
         offsetY: 0,
         lastOffsetY: 400,
+        isLayoutReset: false,
       }),
     ).toBe(true);
     expect(
@@ -134,16 +132,18 @@ describe("follow-output scroll", () => {
         following: true,
         offsetY: 0,
         lastOffsetY: 0,
+        isLayoutReset: false,
       }),
     ).toBe(true);
   });
 
-  it("ignores a layout reset to the start after the reader scrolled up", () => {
+  it("ignores a layout reset to the start right after the reader scrolled up", () => {
     expect(
       shouldIgnoreFollowOutputScrollReset({
         following: false,
         offsetY: 0,
         lastOffsetY: 280,
+        isLayoutReset: true,
       }),
     ).toBe(true);
   });
@@ -154,363 +154,268 @@ describe("follow-output scroll", () => {
         following: false,
         offsetY: 0,
         lastOffsetY: 0,
+        isLayoutReset: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not ignore a detached reader's real scroll to the top once the panel has settled", () => {
+    expect(
+      shouldIgnoreFollowOutputScrollReset({
+        following: false,
+        offsetY: 0,
+        lastOffsetY: 280,
+        isLayoutReset: false,
       }),
     ).toBe(false);
   });
 });
 
-describe("useFollowOutputScroll", () => {
-  let container: HTMLElement;
-  let root: Root;
-
-  beforeEach(() => {
-    vi.stubGlobal("React", React);
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-  });
-
-  afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-    resetFollowOutputScrollPersistence();
-  });
-
+describe("createFollowOutputScrollController", () => {
   it("keeps the latest streaming output in view until the reader scrolls up", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const scrollable = fakeScrollable();
+    const controller = createFollowOutputScrollController(true);
+    controller.attach(scrollable);
+    controller.mount();
 
-    function Probe({ enabled }: { enabled: boolean }) {
-      api = useFollowOutputScroll(enabled);
-      if (api.scrollRef.current?.scrollToEnd !== scrollToEnd) {
-        const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-        Object.assign(api.scrollRef, { current: scrollable });
-      }
-      return null;
-    }
+    controller.onScroll(metrics(400));
+    controller.onContentSizeChange();
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
 
-    act(() => {
-      root.render(<Probe enabled />);
-    });
-    if (!api) {
-      throw new Error("Expected follow-output scroll hook");
-    }
-    const follow = api;
+    scrollable.scrollToEnd.mockClear();
+    controller.onScroll(metrics(280));
+    controller.onContentSizeChange();
+    expect(scrollable.scrollToEnd).not.toHaveBeenCalled();
 
-    act(() => {
-      follow.onScroll(scrollEvent(400));
-      follow.onContentSizeChange();
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-
-    scrollToEnd.mockClear();
-    act(() => {
-      follow.onScroll(scrollEvent(280));
-      follow.onContentSizeChange();
-    });
-    expect(scrollToEnd).not.toHaveBeenCalled();
-
-    act(() => {
-      follow.onScroll(scrollEvent(400));
-      follow.onContentSizeChange();
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    controller.onScroll(metrics(400));
+    controller.onContentSizeChange();
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
   });
 
   it("keeps a glued panel at the end after streaming ends", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const scrollable = fakeScrollable();
+    const controller = createFollowOutputScrollController(true);
+    controller.attach(scrollable);
+    controller.mount();
 
-    function Probe({ enabled }: { enabled: boolean }) {
-      api = useFollowOutputScroll(enabled);
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
+    controller.onScroll(metrics(400));
+    scrollable.scrollToEnd.mockClear();
+    scrollable.scrollTo.mockClear();
 
-    act(() => {
-      root.render(<Probe enabled />);
-    });
-    if (!api) {
-      throw new Error("Expected follow-output scroll hook");
-    }
-    const follow = api;
+    controller.setEnabled(false);
+    controller.mount();
+    expect(scrollable.scrollTo).not.toHaveBeenCalled();
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
 
-    act(() => {
-      follow.onScroll(scrollEvent(400));
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
+    scrollable.scrollToEnd.mockClear();
+    controller.onScroll(metrics(400));
+    controller.onContentSizeChange();
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    expect(scrollable.scrollTo).not.toHaveBeenCalled();
 
-    act(() => {
-      root.render(<Probe enabled={false} />);
-    });
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-
-    scrollToEnd.mockClear();
-    act(() => {
-      follow.onScroll(scrollEvent(400));
-      follow.onContentSizeChange();
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-    expect(scrollTo).not.toHaveBeenCalled();
-
-    scrollToEnd.mockClear();
-    act(() => {
-      follow.onScroll(scrollEvent(0));
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-    expect(scrollTo).not.toHaveBeenCalled();
+    scrollable.scrollToEnd.mockClear();
+    controller.onScroll(metrics(0));
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    expect(scrollable.scrollTo).not.toHaveBeenCalled();
   });
 
   it("does not jump a scrolled-up reader to the start when streaming ends", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const scrollable = fakeScrollable();
+    const controller = createFollowOutputScrollController(true);
+    controller.attach(scrollable);
+    controller.mount();
 
-    function Probe({ enabled }: { enabled: boolean }) {
-      api = useFollowOutputScroll(enabled);
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
+    controller.onScroll(metrics(400));
+    controller.onScroll(metrics(280));
+    scrollable.scrollToEnd.mockClear();
+    scrollable.scrollTo.mockClear();
 
-    act(() => {
-      root.render(<Probe enabled />);
-    });
-    if (!api) {
-      throw new Error("Expected follow-output scroll hook");
-    }
-    const follow = api;
-
-    act(() => {
-      follow.onScroll(scrollEvent(400));
-      follow.onScroll(scrollEvent(280));
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
-
-    act(() => {
-      root.render(<Probe enabled={false} />);
-    });
-    expect(scrollToEnd).not.toHaveBeenCalled();
-    expect(scrollTo).toHaveBeenCalledWith({ y: 280, animated: false });
+    controller.setEnabled(false);
+    controller.mount();
+    expect(scrollable.scrollToEnd).not.toHaveBeenCalled();
+    expect(scrollable.scrollTo).toHaveBeenCalledWith({ y: 280, animated: false });
   });
 
   it("pins a glued panel to the end after it remounts as history", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const first = fakeScrollable();
+    const live = createFollowOutputScrollController(true, "thought-1");
+    live.attach(first);
+    live.mount();
+    live.onScroll(metrics(400));
+    live.unmount();
 
-    function Probe({ enabled }: { enabled: boolean }) {
-      api = useFollowOutputScroll(enabled, "thought-1");
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
+    const second = fakeScrollable();
+    const history = createFollowOutputScrollController(false, "thought-1");
+    history.attach(second);
+    history.mount();
+    expect(second.scrollTo).not.toHaveBeenCalled();
+    expect(second.scrollToEnd).toHaveBeenCalledWith({ animated: false });
 
-    act(() => {
-      root.render(<Probe enabled />);
-    });
-    if (!api) {
-      throw new Error("Expected follow-output scroll hook");
-    }
-
-    act(() => {
-      api?.onScroll(scrollEvent(400));
-    });
-
-    act(() => {
-      root.render(null);
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
-    api = undefined;
-
-    act(() => {
-      root.render(<Probe enabled={false} />);
-    });
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-
-    if (!api) {
-      throw new Error("Expected remounted follow-output scroll hook");
-    }
-    scrollToEnd.mockClear();
-    act(() => {
-      api?.onScroll(scrollEvent(400));
-      api?.onContentSizeChange();
-      api?.onScroll(scrollEvent(0));
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-    expect(scrollTo).not.toHaveBeenCalled();
+    second.scrollToEnd.mockClear();
+    history.onScroll(metrics(400));
+    history.onContentSizeChange();
+    history.onScroll(metrics(0));
+    expect(second.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    expect(second.scrollTo).not.toHaveBeenCalled();
   });
 
   it("puts a glued panel back at the end after remount even if no scroll events fired", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const first = fakeScrollable();
+    const live = createFollowOutputScrollController(true, "thought-2");
+    live.attach(first);
+    live.mount();
+    live.onContentSizeChange();
+    live.unmount();
 
-    function Probe({ enabled }: { enabled: boolean }) {
-      api = useFollowOutputScroll(enabled, "thought-2");
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
-
-    act(() => {
-      root.render(<Probe enabled />);
-    });
-    act(() => {
-      api?.onContentSizeChange();
-    });
-
-    act(() => {
-      root.render(null);
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
-
-    act(() => {
-      root.render(<Probe enabled={false} />);
-    });
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    const second = fakeScrollable();
+    const history = createFollowOutputScrollController(false, "thought-2");
+    history.attach(second);
+    history.mount();
+    expect(second.scrollTo).not.toHaveBeenCalled();
+    expect(second.scrollToEnd).toHaveBeenCalledWith({ animated: false });
   });
 
   it("restores the glued panel when transitioning to history in the same render pass", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const first = fakeScrollable();
+    const live = createFollowOutputScrollController(true, "thought-same-pass");
+    live.attach(first);
+    live.mount();
+    live.onScroll(metrics(400));
+    live.unmount();
 
-    function Probe({ enabled, id }: { enabled: boolean; id: string }) {
-      api = useFollowOutputScroll(enabled, id);
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
+    const second = fakeScrollable();
+    const history = createFollowOutputScrollController(false, "thought-same-pass");
+    history.attach(second);
+    history.mount();
+    expect(second.scrollTo).not.toHaveBeenCalled();
+    expect(second.scrollToEnd).toHaveBeenCalledWith({ animated: false });
 
-    act(() => {
-      root.render(<Probe enabled id="thought-same-pass" key="live" />);
-    });
-    act(() => {
-      api?.onScroll(scrollEvent(400));
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
-
-    act(() => {
-      root.render(<Probe enabled={false} id="thought-same-pass" key="history" />);
-    });
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-
-    scrollToEnd.mockClear();
-    act(() => {
-      api?.onScroll(scrollEvent(400));
-      api?.onContentSizeChange();
-      api?.onScroll(scrollEvent(0));
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-    expect(scrollTo).not.toHaveBeenCalled();
+    second.scrollToEnd.mockClear();
+    history.onScroll(metrics(400));
+    history.onContentSizeChange();
+    history.onScroll(metrics(0));
+    expect(second.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    expect(second.scrollTo).not.toHaveBeenCalled();
   });
 
   it("restores a scrolled-up offset when transitioning to history in the same render pass", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const first = fakeScrollable();
+    const live = createFollowOutputScrollController(true, "thought-scroll-pass");
+    live.attach(first);
+    live.mount();
+    live.onScroll(metrics(400));
+    live.onScroll(metrics(220));
+    live.unmount();
 
-    function Probe({ enabled, id }: { enabled: boolean; id: string }) {
-      api = useFollowOutputScroll(enabled, id);
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
-
-    act(() => {
-      root.render(<Probe enabled id="thought-scroll-pass" key="live" />);
-    });
-    act(() => {
-      api?.onScroll(scrollEvent(400));
-      api?.onScroll(scrollEvent(220));
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
-
-    act(() => {
-      root.render(<Probe enabled={false} id="thought-scroll-pass" key="history" />);
-    });
-    expect(scrollToEnd).not.toHaveBeenCalled();
-    expect(scrollTo).toHaveBeenCalledWith({ y: 220, animated: false });
+    const second = fakeScrollable();
+    const history = createFollowOutputScrollController(false, "thought-scroll-pass");
+    history.attach(second);
+    history.mount();
+    expect(second.scrollToEnd).not.toHaveBeenCalled();
+    expect(second.scrollTo).toHaveBeenCalledWith({ y: 220, animated: false });
   });
 
   it("does not pin a panel that never streamed when it remounts", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const first = fakeScrollable();
+    const live = createFollowOutputScrollController(false, "static-tool");
+    live.attach(first);
+    live.mount();
+    live.unmount();
 
-    function Probe() {
-      api = useFollowOutputScroll(false, "static-tool");
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
-    }
-
-    act(() => {
-      root.render(<Probe />);
-    });
-    act(() => {
-      root.render(null);
-    });
-    scrollToEnd.mockClear();
-    scrollTo.mockClear();
-
-    act(() => {
-      root.render(<Probe />);
-    });
-    expect(scrollToEnd).not.toHaveBeenCalled();
-    expect(scrollTo).not.toHaveBeenCalled();
+    const second = fakeScrollable();
+    const history = createFollowOutputScrollController(false, "static-tool");
+    history.attach(second);
+    history.mount();
+    expect(second.scrollToEnd).not.toHaveBeenCalled();
+    expect(second.scrollTo).not.toHaveBeenCalled();
   });
 
   it("ignores an unexpected 0 scroll reset on a glued overflowing panel after streaming ends", () => {
-    const scrollToEnd = vi.fn();
-    const scrollTo = vi.fn();
-    let api: ReturnType<typeof useFollowOutputScroll> | undefined;
+    const scrollable = fakeScrollable();
+    const controller = createFollowOutputScrollController(true, "thought-reset-test");
+    controller.attach(scrollable);
+    controller.mount();
 
-    function Probe({ enabled }: { enabled: boolean }) {
-      api = useFollowOutputScroll(enabled, "thought-reset-test");
-      const scrollable: Pick<ScrollView, "scrollToEnd" | "scrollTo"> = { scrollToEnd, scrollTo };
-      Object.assign(api.scrollRef, { current: scrollable });
-      return null;
+    controller.onScroll(metrics(400, 800, 400));
+
+    controller.setEnabled(false);
+    controller.mount();
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    scrollable.scrollToEnd.mockClear();
+
+    controller.onScroll(metrics(400, 800, 400));
+    controller.onScroll(metrics(0, 800, 400));
+    expect(scrollable.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    expect(scrollable.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("does not snap a genuinely top-scrolled, detached panel back to its old position", () => {
+    // Regression for a reader who detaches from the bottom and keeps scrolling up to the
+    // real top: the first report of offsetY 0 right after a resize can be a native layout
+    // echo (ignored, reapplies the restore), but once that single echo is consumed, a
+    // further 0 report is the reader's own scroll and must stick.
+    const scrollable = fakeScrollable();
+    const controller = createFollowOutputScrollController(true, "detached-top-scroll");
+    controller.attach(scrollable);
+    controller.mount();
+    controller.onContentSizeChange();
+
+    controller.onScroll(metrics(400));
+    controller.onScroll(metrics(100));
+    expect(scrollable.scrollTo).not.toHaveBeenCalled();
+
+    // New content streams in while detached: this resize arms one "layout reset" window,
+    // and the native engine echoes a stale 0 before settling — that echo gets ignored and
+    // the restore to 100 is reapplied.
+    controller.onContentSizeChange();
+    expect(scrollable.scrollTo).toHaveBeenCalledWith({ y: 100, animated: false });
+    scrollable.scrollTo.mockClear();
+    controller.onScroll(metrics(0));
+    expect(scrollable.scrollTo).toHaveBeenCalledWith({ y: 100, animated: false });
+    scrollable.scrollTo.mockClear();
+    scrollable.scrollToEnd.mockClear();
+
+    // The reader keeps dragging to the real top. This second 0 report is not a layout
+    // reset anymore, so it must be accepted instead of snapped back to 100.
+    controller.onScroll(metrics(0));
+    expect(scrollable.scrollTo).not.toHaveBeenCalled();
+    expect(scrollable.scrollToEnd).not.toHaveBeenCalled();
+
+    // Proves the real position stuck: a later resize restores to the top the reader chose,
+    // not the stale 100 from before.
+    scrollable.scrollTo.mockClear();
+    controller.onContentSizeChange();
+    expect(scrollable.scrollTo).toHaveBeenCalledWith({ y: 0, animated: false });
+  });
+});
+
+describe("follow-output scroll persistence", () => {
+  it("evicts the oldest panel position once the cap is exceeded", () => {
+    const total = MAX_PERSISTED_FOLLOW_OUTPUT_PANELS + 1;
+    for (let i = 0; i < total; i += 1) {
+      const controller = createFollowOutputScrollController(true, `panel-${i}`);
+      controller.attach(fakeScrollable());
+      controller.mount();
+      // Scroll up and detach so the persisted state carries a restorable, non-default offset.
+      controller.onScroll(metrics(400));
+      controller.onScroll(metrics(100));
+      controller.unmount();
     }
 
-    act(() => {
-      root.render(<Probe enabled />);
-    });
-    act(() => {
-      api?.onScroll(scrollEvent(400, 800, 400));
-    });
+    // Evicted: falls back to a fresh, never-streamed state, so mounting it triggers no
+    // reposition at all.
+    const oldestScrollable = fakeScrollable();
+    const oldest = createFollowOutputScrollController(false, "panel-0");
+    oldest.attach(oldestScrollable);
+    oldest.mount();
+    expect(oldestScrollable.scrollTo).not.toHaveBeenCalled();
+    expect(oldestScrollable.scrollToEnd).not.toHaveBeenCalled();
 
-    act(() => {
-      root.render(<Probe enabled={false} />);
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-    scrollToEnd.mockClear();
-
-    act(() => {
-      api?.onScroll(scrollEvent(400, 800, 400));
-    });
-
-    act(() => {
-      api?.onScroll(scrollEvent(0, 800, 400));
-    });
-    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-    expect(scrollTo).not.toHaveBeenCalled();
+    // Still retained: restores to the detached offset that was persisted on unmount.
+    const newestScrollable = fakeScrollable();
+    const newest = createFollowOutputScrollController(false, `panel-${total - 1}`);
+    newest.attach(newestScrollable);
+    newest.mount();
+    expect(newestScrollable.scrollTo).toHaveBeenCalledWith({ y: 100, animated: false });
   });
 });
