@@ -382,6 +382,21 @@ paseo --host "$OFFER_URL" run "fix the failing tests"
 
 You can also set it once via `PASEO_HOST` instead of passing `--host` on every command. An explicit flag overrides the environment variable.
 
+## Team workflows
+
+Track a team started by a boss agent with `team_start`:
+
+```bash
+pandaos team ls
+pandaos team inspect <team-id> --json
+pandaos team events <team-id> --after <commit> --json
+pandaos team message <team-id> "Clarified acceptance criterion"
+```
+
+`inspect` returns work item phases, agent bindings and the current team commit; `--json` also includes event history.
+`events --after` reads once and returns events newer than that commit. Use `--host` to select the
+same daemon as the Teams screen. Team IDs are exact; these commands do not start agents.
+
 ## Multi-agent workflows
 
 The CLI is designed to be used by agents themselves. You can instruct an agent to spawn sub-agents for parallel work:

@@ -92,6 +92,25 @@ If no profile fits, or no profiles are configured, use the provider discovery to
 
 Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look for `fast_mode` and pass `settings: { features: { "fast_mode": true } }` to `create_agent` or `update_agent`.
 
+## Teams and factory workflows
+
+Use `team_start` from a boss session to run the project's workflow pack. Workers report through
+`team_report`; the dispatcher owns agent creation. Read `../pandaos-factory/SKILL.md` for tracked
+factory delivery and evidence rules adapted from Poteto mode.
+
+The CLI reads the same state as the Teams screen:
+
+```bash
+pandaos team ls --json
+pandaos team inspect <team-id> --json
+pandaos team events <team-id> --after <commit> --json
+pandaos team message <team-id> "Clarified acceptance criterion"
+```
+
+`inspect` returns the team commit cursor, work item phases, agent bindings, and event history.
+`events --after` is a single incremental read. These commands do not start another scheduler.
+Use `--host` to target a remote daemon.
+
 ## Schedules and heartbeats
 
 **`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents.

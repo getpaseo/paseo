@@ -2,6 +2,39 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "./cli.js";
 
 describe("canonical CLI surface", () => {
+  it("offers team tracking and messages with JSON and host selection", () => {
+    const team = createCli().commands.find((command) => command.name() === "team");
+    expect(team?.commands.map((command) => command.name())).toEqual([
+      "ls",
+      "inspect",
+      "events",
+      "message",
+    ]);
+    for (const command of team!.commands) {
+      expect(command.helpInformation()).toContain("--json");
+      expect(command.helpInformation()).toContain("--host <host>");
+    }
+  });
+
+  it("accepts zero as a team event cursor", () => {
+    const team = createCli().commands.find((command) => command.name() === "team")!;
+    const events = team.commands.find((command) => command.name() === "events")!;
+    events.parseOptions(["--after", "0"]);
+    expect(events.opts().after).toBe(0);
+  });
+
+  it.each(["-1", "1.5", "1e3", "9007199254740992"])(
+    "rejects invalid team event cursor %s",
+    (cursor) => {
+      const team = createCli().commands.find((command) => command.name() === "team")!;
+      const events = team.commands.find((command) => command.name() === "events")!;
+      events.exitOverride().configureOutput({ writeErr: () => {} });
+      expect(() => events.parseOptions(["--after", cursor])).toThrow(
+        "Commit must be a non-negative safe integer",
+      );
+    },
+  );
+
   it("uses PandaOS as the displayed CLI name", () => {
     const cli = createCli();
     expect(cli.name()).toBe("pandaos");

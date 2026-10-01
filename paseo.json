@@ -81,6 +81,37 @@
             "name": "remote-browser-external-action"
           }
         ]
+      },
+      "factory-team-cli-tracking": {
+        "params": ["teamsUrl"],
+        "steps": [
+          {
+            "url": "{{teamsUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Factory CLI verification",
+            "timeoutMs": 20000
+          },
+          {
+            "action": "wait-text",
+            "text": "CLI evidence acknowledged",
+            "timeoutMs": 10000
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "factory-team-cli-tracking"
+          }
+        ]
       }
     }
   }

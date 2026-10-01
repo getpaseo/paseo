@@ -10,6 +10,7 @@ import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createScriptCommand } from "./commands/script/index.js";
 import { createVerifyCommand } from "./commands/verify/index.js";
+import { createTeamCommand } from "./commands/team/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
 import { createWorktreeCommand } from "./commands/worktree/index.js";
 import { createWorkspaceCommand } from "./commands/workspace/index.js";
@@ -51,7 +52,6 @@ export function createCli(): Command {
     .name("pandaos")
     .description("PandaOS CLI - control your AI coding agents from the command line")
     .version(VERSION, "-v, --version", "output the version number")
-    // Global output options
     .option("-o, --format <format>", "output format: table, json, yaml", "table")
     .option("--json", "output in JSON format (alias for --format json)")
     .option("-q, --quiet", "minimal output (IDs only)")
@@ -59,7 +59,6 @@ export function createCli(): Command {
     .option("--no-color", "disable colored output");
   addDaemonHostOption(program);
 
-  // Primary agent commands (top-level)
   addJsonAndDaemonHostOptions(addLsOptions(program.command("ls"))).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(addRunOptions(program.command("run"))).action(
@@ -116,7 +115,6 @@ export function createCli(): Command {
     withOutput(runArchiveCommand),
   );
 
-  // Top-level local daemon shortcuts
   program.addCommand(onboardCommand());
   program.addCommand(daemonStartCommand());
   program.addCommand(createHooksCommand());
@@ -126,46 +124,34 @@ export function createCli(): Command {
   program.addCommand(daemonReloadCommand());
   program.addCommand(pairCommand());
 
-  // Advanced agent commands (less common operations)
   program.addCommand(createAgentCommand());
 
-  // Daemon commands
   program.addCommand(createDaemonCommand());
   program.addCommand(createHubCommand());
   program.addCommand(createHomeCommand());
 
-  // Chat commands
-
-  // Terminal commands
   program.addCommand(createTerminalCommand());
 
-  // Workspace script commands
   program.addCommand(createScriptCommand());
   program.addCommand(createVerifyCommand());
+  program.addCommand(createTeamCommand());
 
-  // Schedule commands
   program.addCommand(createScheduleCommand());
   program.addCommand(createHeartbeatCommand());
 
-  // Permission commands
   program.addCommand(createPermitCommand());
 
-  // Provider commands
   program.addCommand(createProviderCommand());
   program.addCommand(createPluginCommand());
 
-  // Speech model commands
   program.addCommand(createSpeechCommand());
 
-  // Workspace commands
   program.addCommand(createProjectCommand());
   program.addCommand(createWorkspaceCommand());
   // COMPAT(worktreeCli): legacy command alias added before workspace was the product unit.
   // Added in v0.2.0; remove after 2027-01-17.
   program.addCommand(createWorktreeCommand(), { hidden: true });
 
-  // Stop root parsing at the command so `plugin update --version` belongs to update.
-  // Keep global options available after a command, as they were before positional parsing.
   program.enablePositionalOptions();
   for (const command of program.commands) {
     for (const option of program.options) {
