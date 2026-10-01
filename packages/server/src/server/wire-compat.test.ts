@@ -36,7 +36,6 @@ const LegacyTimelineEntryPayloadSchema = z.object({
       endSeq: z.number().int().nonnegative(),
     }),
   ),
-  // Copied from v0.1.65-beta.3: no reasoning_merge on the wire yet.
   collapsed: z.array(z.enum(["assistant_merge", "tool_lifecycle"])),
 });
 
@@ -620,7 +619,7 @@ test("setup progress is adapted per socket without changing the canonical snapsh
         ...message.payload,
         status: "failed",
         error:
-          "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+          "Workspace setup is blocked pending approval of code from a fork pull request. Update PandaOS to review and run setup.",
       },
     },
   ]);
@@ -633,7 +632,7 @@ test("setup progress is adapted per socket without changing the canonical snapsh
       payload: {
         ...message.payload,
         status: "failed",
-        error: expect.stringContaining("Update Paseo"),
+        error: expect.stringContaining("Update PandaOS"),
         subscriptionId: expect.any(String),
       },
     },

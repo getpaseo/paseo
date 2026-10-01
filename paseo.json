@@ -443,6 +443,42 @@
             "name": "upstream-010-settings"
           }
         ]
+      },
+      "upstream-010-settings-stable": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://localhost:4026/settings/general",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Lines kept in the built-in terminal buffer",
+            "timeoutMs": 30000
+          },
+          {
+            "action": "goal",
+            "goal": "Open the Sidebar settings, then Chat settings, then Terminal settings, then Appearance settings using the navigation buttons. Wait for the theme controls.",
+            "verify": [
+              {
+                "text": "Theme"
+              }
+            ],
+            "maxSteps": 10
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "stable-010-settings"
+          }
+        ]
       }
     }
   }

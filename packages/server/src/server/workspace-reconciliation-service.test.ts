@@ -657,7 +657,6 @@ describe("WorkspaceReconciliationService", () => {
   test("keeps workspaces whose project root is missing with them", async () => {
     const mountParent = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-unmounted-")));
     tempDirs.push(mountParent);
-    // The external volume is not mounted, so nothing under it resolves.
     const projectRoot = path.join(mountParent, "ExternalSSD", "repo");
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
 
@@ -749,6 +748,8 @@ describe("WorkspaceReconciliationService", () => {
       kind: "directory",
       displayName: "orphan",
       title: null,
+      doneAt: null,
+      handoff: null,
       pinnedAt: null,
       forgeConfigDir: null,
       pullRequestCuration: null,
@@ -1020,7 +1021,6 @@ describe("WorkspaceReconciliationService", () => {
       }),
     );
 
-    // Change the remote
     execFileSync("git", ["remote", "add", "origin", "git@github.com:new-owner/new-repo.git"], {
       cwd: dir,
       stdio: "ignore",

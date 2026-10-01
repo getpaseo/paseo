@@ -240,8 +240,6 @@ test.describe("Agent stream UI", () => {
     await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
       timeout: 30_000,
     });
-    // Reasoning rows collapse when the mock starts its next assistant response. Wait past
-    // that transition so their temporary height cannot satisfy the scroll-away setup.
     await awaitAssistantMessage(page, "Now I have a clearer picture.");
     await waitForScrollableChat(page, {
       minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
@@ -259,6 +257,12 @@ test.describe("Agent stream UI", () => {
 
   test("keeps tool calls clickable beside the scroll-to-bottom button", async ({ page }) => {
     test.setTimeout(60_000);
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ toolCallDetailLevel: "detailed", toolCallLayoutRevision: 2 }),
+      );
+    });
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "stream-scroll-button-hit-area-",
       title: "Scroll button hit area",

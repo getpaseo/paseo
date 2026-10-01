@@ -12,13 +12,6 @@ export class StaleRevisionError extends Error {
   }
 }
 
-/**
- * One directory per team: `state.json` (atomic) and `events.jsonl` (append-only).
- *
- * A commit appends its events tagged with the next commit number, fsyncs, then replaces
- * state.json. On load, events newer than state.json's commit are from a commit that never
- * landed and are dropped, so state and log never disagree after a crash.
- */
 export class TeamStore {
   private readonly chains = new Map<string, Promise<unknown>>();
   private readonly cache = new Map<string, TeamState>();
@@ -73,10 +66,6 @@ export class TeamStore {
     await this.write(state.team.id, { ...state, commit: 0 }, events);
   }
 
-  /**
-   * Serialized read-modify-write. `mutate` edits a draft and returns the events of the commit;
-   * throwing aborts the commit with nothing written.
-   */
   commit<T>(
     teamId: string,
     mutate: (
@@ -104,7 +93,7 @@ export class TeamStore {
       const lines = events.map((e) => JSON.stringify({ ...e, commit, at })).join("\n") + "\n";
       const path = join(this.teamDir(teamId), "events.jsonl");
       await appendFile(path, lines);
-      const handle = await open(path, "r");
+      const handle = await open(path, "r+");
       try {
         await handle.sync();
       } finally {

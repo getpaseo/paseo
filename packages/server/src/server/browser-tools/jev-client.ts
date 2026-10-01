@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { isSafeSystemOneEndpoint } from "@getpaseo/protocol/messages";
-
-export const DEFAULT_TYPESAFE_API_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+import {
+  DEFAULT_TYPESAFE_API_ENDPOINT,
+  isSafeSystemOneEndpoint,
+} from "@getpaseo/protocol/system-one-config";
+export { DEFAULT_TYPESAFE_API_ENDPOINT } from "@getpaseo/protocol/system-one-config";
 const DEFAULT_TYPESAFE_MODEL = "jev-latest";
 const DEFAULT_TIMEOUT_MS = 15_000;
 

@@ -190,33 +190,10 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
         backgroundColor: style.backgroundColor,
       };
     };
-    const unionRect = (elements: Element[]): FrameRect | null => {
-      if (elements.length === 0) return null;
-      const rects = elements.map(rectOf);
-      const top = Math.min(...rects.map((rect) => rect.top));
-      const right = Math.max(...rects.map((rect) => rect.right));
-      const bottom = Math.max(...rects.map((rect) => rect.bottom));
-      const left = Math.min(...rects.map((rect) => rect.left));
-      return { top, right, bottom, left, width: right - left, height: bottom - top };
-    };
     const spinnerSnapshot = (
       footer: Element | null | undefined,
       clip: Element | null,
-    ): ElementFrame => {
-      const dots = Array.from(footer?.querySelectorAll("*") ?? []).filter((candidate) =>
-        hasColor(getComputedStyle(candidate).backgroundColor),
-      );
-      if (dots.length === 0) return emptyElement();
-      const opacities = dots.map((dot) => Number(getComputedStyle(dot).opacity));
-      return {
-        mounted: true,
-        visible: dots.some((dot) => isVisible(dot, clip)),
-        painted: dots.some((dot, index) => opacities[index] > 0 && isVisible(dot, clip)),
-        rect: unionRect(dots),
-        opacity: Math.max(...opacities),
-        backgroundColor: getComputedStyle(dots[0]).backgroundColor,
-      };
-    };
+    ): ElementFrame => snapshot(footer?.querySelector('[data-testid="turn-status-panda"]'), clip);
     const findImageAttachment = (row: Element | undefined) =>
       row?.querySelector('[role="button"][aria-label="Open image attachment"]');
     const findAgentTabState = () => {
@@ -809,10 +786,6 @@ async function recordDelayedRunningTransition(
     gate.setAgentStreamSuppressed(false);
   }
 }
-
-// The first prompt of a brand new agent is submitted before the agent exists, so the
-// authoritative timeline arrives after the row is already on screen. That is the only
-// path where hydration can move an already-visible message.
 test("keeps the first prompt of a new agent in place through authoritative hydration", async ({
   page,
 }) => {

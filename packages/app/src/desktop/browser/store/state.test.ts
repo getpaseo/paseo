@@ -53,6 +53,7 @@ describe("createBrowserRecord", () => {
     expect(record).toEqual({
       browserId: "b1",
       remoteBrowserId: null,
+      ownerAgentId: null,
       url: "http://localhost:8081",
       title: "",
       isLoading: false,

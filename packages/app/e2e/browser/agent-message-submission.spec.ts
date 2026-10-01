@@ -199,9 +199,6 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
   });
   return page.getByTestId("user-message").filter({ hasText: prompt }).last();
 }
-
-// Overview mode folds a turn's tool calls into one group row when the turn ends, so single
-// badges can be gone before a poll sees them; the group row below the prompt stays.
 async function hasToolCallGroupBelow(page: Page, anchor: Locator): Promise<boolean> {
   const anchorTop = (await anchor.boundingBox())?.y ?? Number.POSITIVE_INFINITY;
   const groupTops = await page
@@ -300,7 +297,9 @@ async function expectRejectedSubmissionRestored(
     return;
   }
   await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
-  await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  await expect(page.getByRole("progressbar", { name: "Agent running" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /stop agent|canceling agent/i })).toHaveCount(0);
+  await expect(page.getByTestId("turn-working-elapsed")).toHaveCount(0);
 }
 
 async function retryRestoredSubmission(page: Page, prompt: string): Promise<void> {
@@ -351,6 +350,12 @@ async function replaySteeredSleepTurnInBrowser(
   testInfo: { workerIndex: number },
   shape: "claude" | "codex",
 ): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({ toolCallDetailLevel: "detailed", toolCallLayoutRevision: 2 }),
+    );
+  });
   const gate = await installDaemonWebSocketGate(page);
   gate.holdNextShellToolCall("completed");
   await gotoAppShell(page);
@@ -480,8 +485,6 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
   try {
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
-    // Open every chat before holding output. Adding chats replaces the timeline
-    // subscription and retires the IDs stamped on already-buffered frames.
     await visitEvictionWorkspaces(page, evictionAgents);
     await subscriptions.waitForSubscribedAgents(openAgentIds);
     await switchWorkspaceViaSidebar({
@@ -501,12 +504,7 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     const promptRow = await submitMessageWithImage(page, prompt);
     await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
     await gate.waitForHeldAgentStreamEvent("turn_started");
-    // Finish production before navigation so passing cannot depend on late
-    // chunks arriving after the final workspace switch.
     await target.client.waitForFinish(target.agentId, 30_000);
-
-    // Navigate inside the app: a document reload discards the retained deck and
-    // adds startup history fetches, so it cannot prove eviction/resume behavior.
     await visitEvictionWorkspaces(page, evictionAgents);
     await expect(targetDeckEntry).toHaveCount(0);
     await subscriptions.waitForSubscribedAgents(openAgentIds);
@@ -534,8 +532,6 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     await expect(response).toBeVisible();
     await expectRenderedBefore(promptRow, responseStart);
     await expectRenderedBefore(promptRow, response);
-    // Open chats stay subscribed when their workspace view is evicted. Returning
-    // uses that live timeline without another resume check or startup tail fetch.
     expect(rememberTimelineRequestCounts(gate, target.agentId)).toEqual(requestsBeforeReturn);
   } finally {
     gate.setAgentStreamItemSuppressed("user_message", false);
@@ -657,6 +653,12 @@ async function expectStaleCanonicalPagePreservesNewerLiveOutput(
   page: Page,
   testInfo: { workerIndex: number },
 ): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({ toolCallDetailLevel: "detailed", toolCallLayoutRevision: 2 }),
+    );
+  });
   const gate = await installDaemonWebSocketGate(page);
   const agent = await seedMockAgentWorkspace({
     repoPrefix: `submission-stale-canonical-${testInfo.workerIndex}-`,
@@ -1176,7 +1178,6 @@ test.describe("Agent message submission", () => {
     const toasts = await recordPanelToasts(page);
     const pending = await beginDraftCreateSubmission(page, draftCreateScenario);
     await completeDraftCreateSubmission(page, draftCreateScenario, pending);
-    // A chat this client just created is current by construction; it is never out of date.
     await toasts.expectNeverShown("agent-updating-toast");
   });
 

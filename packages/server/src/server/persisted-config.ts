@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { isSafeSystemOneEndpoint } from "@getpaseo/protocol/messages";
+import { isSafeSystemOneEndpoint } from "@getpaseo/protocol/system-one-config";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -22,7 +22,6 @@ export const LogFormatSchema = z.enum(["pretty", "json"]);
 
 const LogConfigSchema = z
   .object({
-    // Legacy global log settings (kept for backwards compatibility).
     level: LogLevelSchema.optional(),
     format: LogFormatSchema.optional(),
 
@@ -230,10 +229,8 @@ export const PersistedConfigSchema = z
   .object({
     $schema: z.string().optional(),
 
-    // v1 schema marker
     version: z.literal(1).optional(),
 
-    // v1 config layout
     daemon: z
       .object({
         listen: z.string().optional(),
@@ -269,9 +266,7 @@ export const PersistedConfigSchema = z
             minimumConfidence: z.number().min(0).max(1).optional(),
             browserGoals: z.boolean().optional(),
             excludedPaths: z.array(z.string().trim().min(1)).optional(),
-            // Log Jev's prediction of every agent's next step against what it really did.
             shadow: z.boolean().optional(),
-            // Per provider, cheapest first; Jev picks a rung for every turn.
             routing: z
               .record(
                 z.string().min(1),
@@ -426,10 +421,6 @@ function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "config" });
 }
 
-// Removed config fields are stripped before parsing so the strict schema does not
-// reject a config written by an older release. The stripped values are discarded,
-// not migrated — there is no back-compat for the removed `providers.openai.voice`
-// block (use `providers.openai.stt` / `providers.openai.tts`).
 function stripRemovedConfigFields(parsed: unknown): unknown {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return parsed;
@@ -498,7 +489,6 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
   return config;
 }
 
-/** Observe the file without initializing a home, identity, or default configuration. */
 export function readPersistedConfig(
   paseoHome: string,
   options: { defaultsIfMissing?: boolean } = {},
@@ -536,7 +526,6 @@ function parseConfigFile(configPath: string, raw: string): PersistedConfig {
   return result.data as PersistedConfig;
 }
 
-/** Editors such as Windows Notepad save UTF-8 with a byte order mark, which JSON.parse rejects. */
 function parseConfigText(raw: string): unknown {
   return JSON.parse(raw.replace(/^\uFEFF/, ""));
 }

@@ -33,6 +33,8 @@ import { ProviderPaseoToolsPolicySchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import { ResourcePolicySchema } from "./resource-policy.js";
+import { DEFAULT_TYPESAFE_API_ENDPOINT, isSafeSystemOneEndpoint } from "./system-one-config.js";
+export { isSafeSystemOneEndpoint } from "./system-one-config.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -148,9 +150,6 @@ export {
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 };
-// ---------------------------------------------------------------------------
-// Mutable daemon config schemas (shared between server store and client)
-// ---------------------------------------------------------------------------
 
 export const DAEMON_PERMISSIONS = [
   "daemon.read",
@@ -203,17 +202,6 @@ const MutableBrowserToolsConfigSchema = z
   })
   .passthrough();
 
-export function isSafeSystemOneEndpoint(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
-    );
-  } catch {
-    return false;
-  }
-}
-
 const SafeSystemOneEndpointSchema = z.string().trim().url().refine(isSafeSystemOneEndpoint, {
   message: "System One endpoint must use HTTP(S) without embedded credentials",
 });
@@ -223,7 +211,7 @@ const MutableSystemOneConfigSchema = z
     enabled: z.boolean().default(false),
     model: z.string().trim().min(1).default("jev-latest"),
     // COMPAT(systemOneEndpoint): added in v0.9, keep optional while older daemons are supported.
-    endpoint: SafeSystemOneEndpointSchema.default("https://api.typesafe.ai/v1/systemone"),
+    endpoint: SafeSystemOneEndpointSchema.default(DEFAULT_TYPESAFE_API_ENDPOINT),
     minimumConfidence: z.number().min(0).max(1).default(0.5),
     // COMPAT(systemOneBrowserGoals): added in v0.9.2, older daemons always let Jev drive browser goals.
     browserGoals: z.boolean().default(true),
@@ -359,8 +347,6 @@ import type {
   JsonValue,
 } from "./agent-types.js";
 
-// WebSocket payloads have already crossed JSON serialization. Keeping this as
-// unknown avoids zod-aot's recursive z.json() object-codegen regression.
 const JsonWireValueSchema = z.unknown() as z.ZodType<JsonValue>;
 
 export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
@@ -702,9 +688,6 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       description: z.string().optional(),
       childSessionId: z.string().optional(),
       log: z.string(),
-      // Compat cruft for clients <= 0.1.65-beta.3 that required this field. Producers still
-      // emit `[]`; nothing reads it. Drop the field (and the `[]` emissions) once those
-      // clients are no longer in the field.
       actions: z
         .array(
           z.object({
@@ -769,8 +752,6 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
     ToolCallCanceledPayloadSchema,
   ]);
 
-// zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
-// the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
@@ -942,7 +923,6 @@ export const AgentSnapshotPayloadSchema = z.object({
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
-  /** The last turn ended asking the person something; cleared by their next message. */
   awaitingReply: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -992,13 +972,9 @@ export type RecentProviderSessionDescriptorPayload = z.infer<
   typeof RecentProviderSessionDescriptorPayloadSchema
 >;
 
-// ============================================================================
-// Session Inbound Messages (Session receives these)
-// ============================================================================
-
 export const VoiceAudioChunkMessageSchema = z.object({
   type: z.literal("voice_audio_chunk"),
-  audio: z.string(), // base64 encoded
+  audio: z.string(),
   format: z.string(),
   isLast: z.boolean(),
 });
@@ -1048,8 +1024,6 @@ export const UpdateAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-// The daemon accepts only image bytes chosen or acquired by the client. It must
-// never fetch a user-provided URL on the host's network.
 export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("automatic") }),
   z.object({ type: z.literal("upload"), data: z.string() }),
@@ -1058,7 +1032,6 @@ export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
 export const ProjectRenameRequestSchema = z.object({
   type: z.literal("project.rename.request"),
   projectId: z.string(),
-  // Null or empty string clears the override and reverts to the derived name.
   customName: z.string().nullable(),
   requestId: z.string(),
 });
@@ -1079,7 +1052,6 @@ export const ProjectRemoveRequestSchema = z.object({
 export const WorkspaceTitleSetRequestSchema = z.object({
   type: z.literal("workspace.title.set.request"),
   workspaceId: z.string(),
-  // Null or empty string clears the title and reverts to the derived name.
   title: z.string().nullable(),
   requestId: z.string(),
 });
@@ -1122,7 +1094,6 @@ export const WorkspaceTopicCreateRequestSchema = z.object({
   type: z.literal("workspace.topic.create.request"),
   title: z.string(),
   description: z.string().nullable().optional(),
-  // Moved into the new topic, leaving any topic they belonged to before.
   workspaceIds: z.array(z.string()),
   requestId: z.string(),
 });
@@ -1130,7 +1101,6 @@ export const WorkspaceTopicCreateRequestSchema = z.object({
 export const WorkspaceTopicAssignRequestSchema = z.object({
   type: z.literal("workspace.topic.assign.request"),
   workspaceId: z.string(),
-  // Null detaches the workspace from its topic.
   topicId: z.string().nullable(),
   requestId: z.string(),
 });
@@ -1138,7 +1108,6 @@ export const WorkspaceTopicAssignRequestSchema = z.object({
 export const WorkspaceTopicUpdateRequestSchema = z.object({
   type: z.literal("workspace.topic.update.request"),
   topicId: z.string(),
-  // Omitted fields stay as they are; a null description clears it.
   title: z.string().optional(),
   description: z.string().nullable().optional(),
   requestId: z.string(),
@@ -1221,11 +1190,6 @@ export const WorkspaceLabelAssignmentSetRequestSchema = z.object({
   label: WorkspaceLabelDefinitionSchema,
   assigned: z.boolean(),
 });
-/**
- * Editing a label is one operation. A name and a colour are two fields of one thing, and two
- * RPCs can land half-applied — leaving the catalog in a state the user never asked for and the
- * UI with nothing true to say. Both fields are optional; omitting one leaves it alone.
- */
 export const WorkspaceLabelUpdateRequestSchema = z.object({
   type: z.literal("workspace.label.update.request"),
   requestId: z.string(),
@@ -1408,8 +1372,8 @@ export const ChangeRequestCheckoutSourceSchema = z.object({
 });
 
 const ImageAttachmentSchema = z.object({
-  data: z.string(), // base64 encoded image
-  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+  data: z.string(),
+  mimeType: z.string(),
 });
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
@@ -1419,15 +1383,11 @@ export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
   agentId: z.string(),
   text: z.string(),
-  messageId: z.string().optional(), // Client-provided ID for deduplication
+  messageId: z.string().optional(),
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
-
-// ============================================================================
-// Agent RPCs (requestId-correlated)
-// ============================================================================
 
 const DirectorySyncRequestSchema = z.object({
   generation: z.string().optional(),
@@ -1492,7 +1452,6 @@ export const FetchWorkspacesRequestMessageSchema = z.object({
     .object({
       query: z.string().optional(),
       projectId: z.string().optional(),
-      // Unused: accepted so older clients still parse, but the server does not filter on it.
       idPrefix: z.string().optional(),
     })
     .optional(),
@@ -1530,8 +1489,6 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
   filter: AgentDirectoryFilterSchema.optional(),
-  // A free-text filter over agent title, workspace name, branch, and project name.
-  // Matching rows follow the requested sort and cursor pagination.
   search: z.string().optional(),
   sort: z
     .array(
@@ -1562,17 +1519,15 @@ export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
 export const FetchAgentRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_request"),
   requestId: z.string(),
-  /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
 });
 
 export const SendAgentMessageRequestSchema = z.object({
   type: z.literal("send_agent_message_request"),
   requestId: z.string(),
-  /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
   text: z.string(),
-  messageId: z.string().optional(), // Client-provided ID for deduplication
+  messageId: z.string().optional(),
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
@@ -1581,7 +1536,6 @@ export const SendAgentMessageRequestSchema = z.object({
 export const WaitForFinishRequestSchema = z.object({
   type: z.literal("wait_for_finish_request"),
   requestId: z.string(),
-  /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
   timeoutMs: z.number().int().positive().optional(),
 });
@@ -1835,22 +1789,18 @@ export const WriteProjectConfigRequestMessageSchema = z.object({
   expectedRevision: PaseoConfigRevisionSchema.nullable(),
 });
 
-// ============================================================================
-// Dictation Streaming (lossless, resumable)
-// ============================================================================
-
 export const DictationStreamStartMessageSchema = z.object({
   type: z.literal("dictation_stream_start"),
   dictationId: z.string(),
-  format: z.string(), // e.g. "audio/pcm;rate=16000;bits=16"
+  format: z.string(),
 });
 
 export const DictationStreamChunkMessageSchema = z.object({
   type: z.literal("dictation_stream_chunk"),
   dictationId: z.string(),
   seq: z.number().int().nonnegative(),
-  audio: z.string(), // base64 encoded chunk
-  format: z.string(), // e.g. "audio/pcm;rate=16000;bits=16"
+  audio: z.string(),
+  format: z.string(),
 });
 
 export const DictationStreamFinishMessageSchema = z.object({
@@ -1901,13 +1851,10 @@ export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTarget
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
-  // Legacy create_agent_request uses a separate initial-message receipt when keyed.
   idempotencyKey: z.string().min(1).max(512).optional(),
   config: AgentSessionConfigSchema,
   env: z.record(z.string(), z.string()).optional(),
   workspaceId: z.string().optional(),
-  // Optional caller context lets managed CLI invocations use the same daemon-owned
-  // workspace and parentage policy as agent-scoped MCP creation.
   callerAgentId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
@@ -1922,7 +1869,6 @@ export const CreateAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-/** Resource IDs are optional on creation; supplied IDs retain their identity on replay. */
 export const AgentCreateRequestSchema = CreateAgentRequestMessageSchema.extend({
   type: z.literal("agent.create.request"),
   agentId: z.uuid().optional(),
@@ -2003,7 +1949,6 @@ export const TeamEventsRequestMessageSchema = z.object({
   type: z.literal("team.events.request"),
   requestId: z.string(),
   teamId: z.string(),
-  /** Only events with a higher commit; omit for the whole log. */
   afterCommit: z.number().int().optional(),
 });
 
@@ -2072,11 +2017,8 @@ export const FetchAgentTimelineRequestMessageSchema = z.object({
   requestId: z.string(),
   direction: z.enum(["tail", "before", "after"]).optional(),
   cursor: AgentTimelineCursorSchema.optional(),
-  // 0 means "all matching rows for this query window".
   limit: z.number().int().nonnegative().optional(),
-  // Default should be projected for app timeline loading.
   projection: z.enum(["projected", "canonical"]).optional(),
-  // Allow the client to merge this bounded page outside its contiguous loaded range.
   mergeWindow: z.boolean().optional(),
 });
 
@@ -2156,11 +2098,6 @@ export const SetAgentModelResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
-/**
- * Moves an existing agent to another provider. `modelId` names a model of the
- * target provider, not the current one; the provider's own mode and thinking
- * selections do not survive the move, so they are not part of the request.
- */
 export const SetAgentProviderRequestMessageSchema = z.object({
   type: z.literal("set_agent_provider_request"),
   agentId: z.string(),
@@ -2199,11 +2136,6 @@ export const SetAgentFeatureResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
-/**
- * Every agent-config value a client can change in one shot. Each field is
- * optional and an omitted field is left alone; `null` on model and thinking
- * clears them, matching the single-field RPCs above.
- */
 export const AgentConfigApplySchema = z.object({
   modelId: z.string().nullable().optional(),
   modeId: z.string().optional(),
@@ -2213,12 +2145,6 @@ export const AgentConfigApplySchema = z.object({
 
 export type AgentConfigApply = z.infer<typeof AgentConfigApplySchema>;
 
-/**
- * Applies a whole config bundle to one agent. The four single-field RPCs above
- * stay for individual control edits. One request prevents client interruption
- * and other mutations from interleaving between bundle steps; provider-level
- * rejection can still leave earlier steps applied.
- */
 export const AgentConfigApplyRequestMessageSchema = z.object({
   type: z.literal("agent.config.apply.request"),
   agentId: z.string(),
@@ -2244,7 +2170,6 @@ export const AgentDetachResponseMessageSchema = z.object({
 
 export const AgentHistoryListRequestMessageSchema = z.object({
   type: z.literal("agent.history.list.request"),
-  /** ISO timestamp; only agents active at or after it. */
   since: z.string().optional(),
   limit: z.number().int().positive().max(2000).optional(),
   includeInternal: z.boolean().optional(),
@@ -2263,7 +2188,6 @@ export const AgentHistoryEntrySchema = z.object({
   agentId: z.string(),
   state: z.enum(["active", "archived", "deleted"]),
   title: z.string().nullable(),
-  /** `paseo.origin` label: user, user:cli, agent:<id>, schedule:<id>, systemd:<unit>, process:<name>, internal, or an integration's value. */
   origin: z.string().nullable(),
   parentAgentId: z.string().nullable(),
   provider: z.string(),
@@ -2443,8 +2367,6 @@ export const WorkspacePullRequestsCurateResponsePayloadSchema = z.object({
   requestId: z.string(),
   workspaceId: z.string(),
   accepted: z.boolean(),
-  // The stored decisions after normalization, which is what the daemon will
-  // merge into every later set for this workspace.
   curation: PullRequestCurationSchema.nullable(),
   error: z.string().nullable(),
 });
@@ -2458,8 +2380,6 @@ export const WorkspaceForgeAccountSetResponsePayloadSchema = z.object({
   requestId: z.string(),
   workspaceId: z.string(),
   accepted: z.boolean(),
-  // The stored value after normalization, which is what later gh calls will
-  // use. Null means the workspace fell back to the machine's default account.
   forgeConfigDir: z.string().nullable(),
   // COMPAT(forgeAccountScope): added in v0.8.1, remove optional after 2027-06-30.
   // Where the value was stored, which is not always what was asked for: an
@@ -2473,7 +2393,6 @@ export const WorkspaceForgeAccountSetResponseSchema = z.object({
   payload: WorkspaceForgeAccountSetResponsePayloadSchema,
 });
 
-/** One login this host can hand to `gh`, named the way its owner thinks of it. */
 export const ForgeAccountSchema = z.object({
   configDir: z.string(),
   username: z.string(),
@@ -2687,8 +2606,8 @@ const CheckoutCommitSchema = z.object({
   shortSha: z.string(),
   subject: z.string(),
   authorName: z.string(),
-  authorDate: z.string(), // ISO 8601
-  isOnRemote: z.boolean(), // false = local-only (unpushed)
+  authorDate: z.string(),
+  isOnRemote: z.boolean(),
   // COMPAT(commitBaseClassification): added in v0.2.0, remove optional after 2027-01-23.
   isOnBase: z.boolean().optional(),
   files: z.array(CheckoutCommitFileSchema),
@@ -2712,20 +2631,10 @@ const GitHubRepoSegmentSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
 
 const CheckoutCheckDetailsRequestPayloadSchema = z.object({
   cwd: z.string(),
-  // GitHub addresses check runs by owner/name. GitLab resolves the project from
-  // cwd and omits these GitHub-only single-segment fields.
   repoOwner: GitHubRepoSegmentSchema.optional(),
   repoName: GitHubRepoSegmentSchema.optional(),
-  // Permanently optional: a check addressed only by workflowRunId (Gitea
-  // Actions runs carry no check-run id) is fetchable. Callers send at least one
-  // of checkRunId/workflowRunId; the gated forge RPC only reaches daemons that
-  // understand this.
   checkRunId: z.number().int().positive().optional(),
   workflowRunId: z.number().int().positive().optional(),
-  // Permanent forge-routing field, optional because only some forges need it:
-  // GitLab routes check details to the MR's head pipeline; Gitea-family adapters
-  // resolve the PR head SHA by number, including after merge/close. GitHub
-  // ignores it.
   changeRequestNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -2782,7 +2691,6 @@ export const CheckoutRenameBranchRequestSchema = z.object({
 export const StashSaveRequestSchema = z.object({
   type: z.literal("stash_save_request"),
   cwd: z.string(),
-  /** Branch name to tag the stash with for later identification. */
   branch: z.string().optional(),
   requestId: z.string(),
 });
@@ -2790,7 +2698,6 @@ export const StashSaveRequestSchema = z.object({
 export const StashPopRequestSchema = z.object({
   type: z.literal("stash_pop_request"),
   cwd: z.string(),
-  /** Zero-based index from stash_list_response. */
   stashIndex: z.number().int().min(0),
   requestId: z.string(),
 });
@@ -2798,7 +2705,6 @@ export const StashPopRequestSchema = z.object({
 export const StashListRequestSchema = z.object({
   type: z.literal("stash_list_request"),
   cwd: z.string(),
-  /** If true, only return paseo-created stashes. Default true. */
   paseoOnly: z.boolean().optional(),
   requestId: z.string(),
 });
@@ -2958,12 +2864,10 @@ export const LegacyOpenInEditorRequestSchema = z.object({
 
 export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
-  // Path used only for workspace lookup/creation. Use the returned workspace.id for all subsequent references.
   cwd: z.string(),
   requestId: z.string(),
 });
 
-// Smallest shorthand repo path is "a/b": owner, slash, repository.
 const MIN_REPOSITORY_PATH_LENGTH = 3;
 
 export const ProjectAddRequestSchema = z.object({
@@ -3012,9 +2916,6 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// Create a new workspace record. Unlike open_project, this never deduplicates by
-// directory: it always produces a fresh workspace. The source discriminates
-// between an existing local directory and a newly created paseo worktree.
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
   workspaceId: z
@@ -3025,27 +2926,21 @@ export const WorkspaceCreateRequestSchema = z.object({
   subscribe: z.boolean().optional(),
   requestId: z.string(),
   idempotencyKey: z.string().min(1).max(512).optional(),
-  // Optional user-set title applied to the created workspace.
   title: z.string().optional(),
-  // Optional prompt context for workspace-level name/branch generation.
   firstAgentContext: FirstAgentContextSchema.optional(),
   source: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("directory"),
-      // Path of the existing checkout/directory to back the workspace.
       path: z.string(),
       projectId: z.string().optional(),
     }),
     z.object({
       kind: z.literal("worktree"),
-      // The project whose repo the worktree is cut from.
       cwd: z.string().optional(),
       projectId: z.string().optional(),
       action: z.enum(["branch-off", "checkout"]).optional(),
-      // Target branch for checkout, or base ref for branch-off.
       refName: z.string().min(1).optional(),
       baseBranch: z.string().optional(),
-      // New branch name for branch-off. The worktree path may use a different slug.
       branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
       // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
@@ -3069,8 +2964,6 @@ export const WorkspaceMarkUnreadRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// Highlighted diff token schema
-// Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
 const HighlightTokenSchema = z.object({
   text: z.string(),
   style: z.string().nullable(),
@@ -3304,10 +3197,6 @@ export const PushUnregisterResponseSchema = z.object({
   }),
 });
 
-// ============================================================================
-// Terminal Messages
-// ============================================================================
-
 export const ListTerminalsRequestSchema = z.object({
   type: z.literal("list_terminals_request"),
   cwd: z.string().optional(),
@@ -3336,10 +3225,6 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
-  // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
-  // it was removed — the pane-focus resize claim sizes the PTY instead). Kept and honored
-  // permanently: released v0.1.107 clients still send it, and programmatic callers may pass an
-  // exact size. Daemons without it start at 80x24 and the first resize corrects that.
   size: z
     .object({
       rows: z.number().int().positive(),
@@ -3517,7 +3402,6 @@ export const HubExecutionControlRequestSchema = z.object({
 
 export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
 
-// These connection event streams have no directory bootstrap or timeline membership.
 export const SessionEventSubscriptionSchema = z.enum([
   "project.update",
   "providers_snapshot_update",
@@ -3821,10 +3705,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
 
-// ============================================================================
-// Session Outbound Messages (Session emits these)
-// ============================================================================
-
 export const ActivityLogPayloadSchema = z.object({
   subscriptionId: z.string().optional(),
   id: z.string(),
@@ -3849,11 +3729,11 @@ export const AssistantChunkMessageSchema = z.object({
 export const AudioOutputMessageSchema = z.object({
   type: z.literal("audio_output"),
   payload: z.object({
-    audio: z.string(), // base64 encoded
+    audio: z.string(),
     format: z.string(),
     id: z.string(),
-    isVoiceMode: z.boolean(), // Mode when audio was generated (for drift protection)
-    groupId: z.string().optional(), // Logical utterance id
+    isVoiceMode: z.boolean(),
+    groupId: z.string().optional(),
     chunkIndex: z.number().int().nonnegative().optional(),
     isLastChunk: z.boolean().optional(),
   }),
@@ -3865,7 +3745,7 @@ export const TranscriptionResultMessageSchema = z.object({
     text: z.string(),
     language: z.string().optional(),
     duration: z.number().optional(),
-    requestId: z.string(), // Echoed back from request for tracking
+    requestId: z.string(),
     avgLogprob: z.number().optional(),
     isLowConfidence: z.boolean().optional(),
     byteLength: z.number().optional(),
@@ -4203,7 +4083,7 @@ export const StatusMessageSchema = z.object({
     .object({
       status: z.string(),
     })
-    .passthrough(), // Allow additional fields
+    .passthrough(),
 });
 
 export const PongMessageSchema = z.object({
@@ -4434,7 +4314,6 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
               url: z.string().nullable(),
               workflow: z.string().optional(),
               duration: z.string().optional(),
-              // Open so future forge-neutral refinements remain parse-compatible.
               traits: z.array(z.string()).optional(),
             }),
           )
@@ -4465,10 +4344,7 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
           additions: z.number().optional(),
           deletions: z.number().optional(),
           checksStatus: z.enum(["none", "pending", "success", "failure"]).optional(),
-          // How this change request entered the set. Kept on the wire so the row can
-          // explain itself and so a later curation step can tell derived from chosen.
           origin: z.enum(["stack", "branch", "current", "manual"]),
-          // Position in the GitHub stack, bottom first. Absent for unstacked entries.
           stackIndex: z.number().optional(),
         }),
       )
@@ -4494,7 +4370,6 @@ export const WorkspaceDescriptorPayloadSchema = z
     // value (customName) and projectCustomName mirrors the raw override so the
     // settings UI can prefill its input and offer a "reset" action.
     projectCustomName: z.string().nullable().optional(),
-    // Identifies the project's stored custom icon; null means automatic.
     // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
     projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
@@ -4551,10 +4426,6 @@ export const WorkspaceDescriptorPayloadSchema = z
     pullRequestCuration: PullRequestCurationSchema.nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
-    // Best-effort workspace status entry timestamp. Old daemons omit the
-    // field; old clients treat missing and null equivalently. The transform
-    // coerces a missing field to `null` so downstream code never has to
-    // handle `undefined`.
     statusEnteredAt: z
       .string()
       .nullish()
@@ -4615,7 +4486,6 @@ export const AgentStreamMessageSchema = z.object({
     agentId: z.string(),
     event: AgentStreamEventPayloadSchema,
     timestamp: z.string(),
-    // Present for timeline events. Maps 1:1 to canonical in-memory timeline rows.
     seq: z.number().int().nonnegative().optional(),
     epoch: z.string().optional(),
   }),
@@ -4654,10 +4524,7 @@ export type AgentSearchMatch = z.infer<typeof AgentSearchMatchSchema>;
 const AgentDirectoryResponseEntrySchema = z.object({
   agent: AgentSnapshotPayloadSchema,
   project: ProjectPlacementPayloadSchema,
-  // Legacy relevance metadata remains accepted from older daemons.
-  // Current history responses use the requested chronological sort.
   searchScore: z.number().optional(),
-  // Legacy server-generated highlights. Current clients highlight displayed text locally.
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
   // COMPAT(directorySync): sequence of this latest directory projection.
   syncSeq: z.number().int().positive().optional(),
@@ -4686,7 +4553,6 @@ export const FetchAgentHistoryResponseMessageSchema = z.object({
     requestId: z.string(),
     entries: z.array(AgentDirectoryResponseEntrySchema),
     pageInfo: AgentDirectoryPageInfoSchema,
-    // Older daemons truncate relevance-ranked searches instead of returning a cursor.
     searchTruncated: z.boolean().optional(),
   }),
 });
@@ -4720,8 +4586,6 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectCustomName: z.string().nullable().optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
-  // Fingerprints the effective icon, including automatic discovery and the
-  // absence of an icon. Clients may persist icon results against this value.
   // COMPAT(projectIconCache): added in v0.2.7, remove optional after 2027-02-12.
   projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
@@ -4770,8 +4634,6 @@ export const WorkspaceUpdateMessageSchema = z.object({
       // it; old clients ignore it and surface the project on their next
       // workspace fetch instead.
       emptyProject: WorkspaceProjectDescriptorPayloadSchema.optional(),
-      // Project removal is represented on the existing workspace update channel
-      // so old clients can still parse the message and ignore the extra field.
       removedProjectId: z.string().optional(),
       generation: z.string().optional(),
       seq: z.number().int().positive().optional(),
@@ -4941,7 +4803,6 @@ export const OpenProjectResponseMessageSchema = z.object({
     requestId: z.string(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
-    // Unknown codes from newer daemons degrade to null; clients fall back to `error`.
     errorCode: z.enum(["directory_not_found"]).nullish().catch(null),
   }),
 });
@@ -4972,8 +4833,6 @@ export const ProjectCreateDirectoryResponseSchema = z.object({
     directoryPath: z.string().nullable(),
     project: WorkspaceProjectDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
-    // Error codes are open-ended on the wire so older clients can still parse
-    // responses after a newer daemon learns another failure reason.
     errorCode: z.string().nullable(),
   }),
 });
@@ -5164,7 +5023,6 @@ export const AgentTimelineSearchResponseMessageSchema = z.object({
       z.object({
         seq: z.number().int().nonnegative(),
         role: z.enum(["user", "assistant"]),
-        // Estimated occurrences in the message; the client verifies against rendered text.
         // COMPAT(timelineSearchCount): added in v0.9.0, remove optional after 2027-09-22.
         count: z.number().int().positive().optional(),
       }),
@@ -5204,8 +5062,6 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   updatedAt: z.string(),
   toolCallId: z.string().nullable(),
   cwd: z.string().nullable().optional(),
-  // Compact provider-owned context for the shared track. Providers choose what belongs here and
-  // format it for display; clients must not parse provider-specific facts out of this string.
   subtitle: z.string().nullable().optional(),
 });
 
@@ -5480,7 +5336,6 @@ const SystemOneUsageBucketSchema = z.object({
   inputTokens: z.number(),
   outputTokens: z.number(),
 });
-// Keyed by purpose (browser, shadow, routing, tool); a record so new purposes stay readable.
 const SystemOneUsageSummarySchema = z.object({
   today: z.record(z.string(), SystemOneUsageBucketSchema),
   last7Days: z.record(z.string(), SystemOneUsageBucketSchema),
@@ -5608,7 +5463,6 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
     .object({
       requestId: z.string(),
       config: MutableDaemonConfigSchema,
-      /** Set when the daemon refused part of the patch, e.g. a rejected System One key. */
       error: z.string().optional(),
     })
     .passthrough(),
@@ -5616,8 +5470,6 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
 
 export const ReadProjectConfigResponseMessageSchema = z.object({
   type: z.literal("read_project_config_response"),
-  // zod-aot 0.2.0 miscompiles boolean discriminators as string options
-  // (`"true"`/`"false"`), so keep this sequential until upstream fixes it.
   payload: z.union([
     z.object({
       requestId: z.string(),
@@ -5638,8 +5490,6 @@ export const ReadProjectConfigResponseMessageSchema = z.object({
 
 export const WriteProjectConfigResponseMessageSchema = z.object({
   type: z.literal("write_project_config_response"),
-  // zod-aot 0.2.0 miscompiles boolean discriminators as string options
-  // (`"true"`/`"false"`), so keep this sequential until upstream fixes it.
   payload: z.union([
     z.object({
       requestId: z.string(),
@@ -5722,12 +5572,6 @@ const CheckoutStatusCommonSchema = z.object({
   cwd: z.string(),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
-  // The full ref currentBranch tracks, as git resolves `<branch>@{upstream}`:
-  // "refs/remotes/origin/main", "refs/remotes/upstream/main" on a fork, or a
-  // "refs/heads/..." ref for a branch tracking a local branch. Null when there is no
-  // upstream. Clients use it verbatim — the remote is not necessarily origin and the
-  // upstream branch name is not necessarily currentBranch, so composing one is wrong.
-  // aheadOfOrigin/behindOfOrigin are measured against exactly this ref.
   upstreamRef: z.string().nullable().optional(),
 });
 
@@ -5825,9 +5669,6 @@ const CheckoutPrGithubStatusObjectSchema = z.object({
 
 const CheckoutPrGithubStatusSchema = CheckoutPrGithubStatusObjectSchema.optional();
 
-// The open facts envelope for forge-specific PR facts. Permanent — non-GitHub
-// forges deliver their native facts through it. The transitional piece is the
-// `github` mirror above, which stays populated for clients predating this
 // envelope; see COMPAT(forgeSpecific) in status-projection.ts for the shim.
 //
 // NOTE: `forgeSpecific.forge` is a FACTS-FAMILY tag, not the workspace brand id.
@@ -5862,14 +5703,9 @@ export const CheckoutPrStatusSchema = z.object({
         status: z.string(),
         url: z.string().nullable(),
         workflow: z.string().optional(),
-        /**
-         * Formatted by the forge adapter: how long a finished check took, or how long a
-         * running one has been going. Raw timestamps stay off the wire.
-         */
         duration: z.string().optional(),
         checkRunId: z.number().optional(),
         workflowRunId: z.number().optional(),
-        // Open so future forge-neutral refinements remain parse-compatible.
         traits: z.array(z.string()).optional(),
       }),
     )
@@ -5883,9 +5719,6 @@ export const CheckoutPrStatusSchema = z.object({
   forgeSpecific: CheckoutPrForgeSpecificSchema,
 });
 
-// Why a forge's PR/MR features are (un)available, so the client can offer the
-// precise next step instead of a generic dead-end. Kept open on the wire so
-// feature consumers can ignore values introduced by newer daemons.
 export type ForgeAuthState =
   | "authenticated"
   | "unauthenticated"
@@ -6087,8 +5920,6 @@ export const CheckoutCommitFileDiffResponseSchema = z.object({
     cwd: z.string(),
     sha: z.string(),
     path: z.string(),
-    // null when the file is absent from the commit or carries no textual diff
-    // (e.g. binary-only changes).
     file: ParsedDiffFileSchema.nullable(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
@@ -6115,7 +5946,6 @@ const CheckoutGithubCheckJobSchema = z.object({
   logTruncated: z.boolean().optional(),
 });
 
-// Statuses stay open strings so future forge values cannot break parsing.
 const CheckoutPipelineJobSchema = z.object({
   id: z.number(),
   name: z.string(),
@@ -6167,7 +5997,6 @@ export const CheckoutGithubCheckDetailsSchema = z.object({
   annotations: z.array(CheckoutGithubCheckAnnotationSchema).optional().default([]),
   failedJobs: z.array(CheckoutGithubCheckJobSchema).optional().default([]),
   truncated: z.boolean().optional().default(false),
-  // No default: server CheckDetails keeps this optional and GitHub leaves it absent.
   pipeline: CheckoutPipelineSchema.nullable().optional(),
 });
 
@@ -6253,19 +6082,8 @@ const PullRequestTimelineCommentItemSchema = z.object({
   body: z.string().optional().default(""),
   createdAt: z.number().optional().default(0),
   url: z.string().optional().default(""),
-  // GitHub review id this inline comment belongs to; lets clients nest review
-  // threads under their parent review. Absent on issue comments and on
-  // timelines from daemons that predate the field.
   reviewId: z.string().optional(),
-  // Forge-neutral discussion/thread id this comment belongs to, independent of a
-  // file position. GitLab maps its discussion id here so general (non-file)
-  // reply chains group into one thread; file-position threads also carry it.
-  // Absent on standalone comments and on timelines from daemons that predate it.
   threadId: z.string().optional(),
-  // Forge-neutral resolution state for a thread that has no file position, e.g. a
-  // GitLab general (non-file) discussion that is resolvable. File-position threads
-  // carry their resolution under `location.isResolved` instead. Absent on ordinary
-  // comments, on forges that expose no thread resolution, and on older timelines.
   threadIsResolved: z.boolean().optional(),
   location: z
     .object({
@@ -6776,7 +6594,6 @@ export const ProviderUsageDetailSchema = z.object({
 
 export const ProviderUsageSchema = z.object({
   providerId: z.string(),
-  /** The built-in provider an account profile extends, for its icon. */
   baseProviderId: z.string().optional(),
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
@@ -6799,8 +6616,6 @@ export const ProviderUsageListResponseMessageSchema = z.object({
   }),
 });
 
-// Team runtime wire shapes. Strings stay open (phase, status, event type, actor type) because
-// workflow packs define them; the app styles known values and falls back for the rest.
 export const TeamActorSchema = z.object({
   type: z.string(),
   id: z.string(),
@@ -6888,10 +6703,6 @@ export const ListCommandsResponseSchema = z.object({
   }),
 });
 
-// ============================================================================
-// Terminal Outbound Messages
-// ============================================================================
-
 const TerminalInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -6932,11 +6743,6 @@ export const TerminalStateSchema = z.object({
   scrollback: z.array(z.array(TerminalCellSchema)),
   cursor: TerminalCursorSchema,
   title: z.string().optional(),
-  // Per-row soft-wrap flags aligned 1:1 with `grid` / `scrollback`. `true` means
-  // the row continued onto the next row (xterm's GRID_LINE_WRAPPED equivalent),
-  // so the client can re-wrap the logical line on resize instead of freezing it
-  // at the snapshot width. Optional: only sent to clients that advertise the
-  // `terminalReflowableSnapshot` capability, so old daemons/clients are unaffected.
   gridWrapped: z.array(z.boolean()).optional(),
   scrollbackWrapped: z.array(z.boolean()).optional(),
 });
@@ -7021,7 +6827,6 @@ export const TerminalStreamExitSchema = z.object({
   payload: z.object({
     subscriptionId: z.string().optional(),
     terminalId: z.string(),
-    // Observation failure; the underlying terminal process may still be running.
     error: z.string().optional(),
   }),
 });
@@ -7623,7 +7428,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
 
-// Type exports for individual message types
 export type ActivityLogMessage = z.infer<typeof ActivityLogMessageSchema>;
 export type AssistantChunkMessage = z.infer<typeof AssistantChunkMessageSchema>;
 export type AudioOutputMessage = z.infer<typeof AudioOutputMessageSchema>;
@@ -7832,10 +7636,8 @@ export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
 export type LoopLogsResponse = z.infer<typeof LoopLogsResponseSchema>;
 export type LoopStopResponse = z.infer<typeof LoopStopResponseSchema>;
 
-// Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 
-// Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
@@ -8091,7 +7893,6 @@ export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSc
 export type PushUnregisterRequest = z.infer<typeof PushUnregisterRequestSchema>;
 export type PushUnregisterResponse = z.infer<typeof PushUnregisterResponseSchema>;
 
-// Terminal message types
 export type ListTerminalsRequest = z.infer<typeof ListTerminalsRequestSchema>;
 export type ListTerminalsResponse = z.infer<typeof ListTerminalsResponseSchema>;
 export type SubscribeTerminalsRequest = z.infer<typeof SubscribeTerminalsRequestSchema>;
@@ -8121,11 +7922,6 @@ export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
 
-// ============================================================================
-// WebSocket Level Messages (wraps session messages)
-// ============================================================================
-
-// WebSocket-only messages (not session messages)
 export const WSPingMessageSchema = z.object({
   type: z.literal("ping"),
 });
@@ -8174,7 +7970,6 @@ export const WSRecordingStateMessageSchema = z.object({
   isRecording: z.boolean(),
 });
 
-// Wrapped session message
 export const WSSessionInboundSchema = z.object({
   type: z.literal("session"),
   message: SessionInboundMessageSchema,
@@ -8191,7 +7986,6 @@ export const WSHelloRejectedMessageSchema = z.object({
   accepts: z.array(z.literal("password")),
 });
 
-// Complete WebSocket message schemas
 export const WSInboundMessageSchema = z.discriminatedUnion("type", [
   WSPingMessageSchema,
   WSHelloMessageSchema,
@@ -8209,25 +8003,13 @@ export type WSInboundMessage = z.infer<typeof WSInboundMessageSchema>;
 export type WSOutboundMessage = z.infer<typeof WSOutboundMessageSchema>;
 export type WSHelloMessage = z.infer<typeof WSHelloMessageSchema>;
 
-// ============================================================================
-// Helper functions for message conversion
-// ============================================================================
-
-/**
- * Extract session message from WebSocket message
- * Returns null if message should be handled at WS level only
- */
 export function extractSessionMessage(wsMsg: WSInboundMessage): SessionInboundMessage | null {
   if (wsMsg.type === "session") {
     return wsMsg.message;
   }
-  // Ping and recording_state are WS-level only
   return null;
 }
 
-/**
- * Wrap session message in WebSocket envelope
- */
 export function wrapSessionMessage(sessionMsg: SessionOutboundMessage): WSOutboundMessage {
   return {
     type: "session",

@@ -41,7 +41,9 @@ describe("PasswordVault", () => {
 
     const raw = readFileSync(filePath, "utf8");
     expect(raw).not.toContain("s3cret");
-    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(raw)).toEqual({
       version: 1,
       entries: {

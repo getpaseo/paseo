@@ -366,8 +366,6 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     resolveRepoRoot: vi.fn(),
     getWorkspaceGitMetadata: vi.fn(),
     resolveForge: vi.fn().mockResolvedValue({ forge: "github", service: github }),
-    // Mirror production: invalidateForge resolves the forge and busts the
-    // adapter's cache. The resolved forge here is github, so delegate to it.
     invalidateForge: vi.fn((cwd: string) => github.invalidate({ cwd })),
     getProjectSlug: vi.fn(),
     ...options.workspaceGitService,
@@ -503,7 +501,11 @@ test("stores a System One API key without echoing or persisting it in daemon con
       config: { systemOneApiKey: "private-sentinel", systemOne: { enabled: true } },
     });
 
-    expect(validateSystemOneApiKey).toHaveBeenCalledWith("private-sentinel", "jev-latest");
+    expect(validateSystemOneApiKey).toHaveBeenCalledWith(
+      "private-sentinel",
+      "jev-latest",
+      undefined,
+    );
     expect(patch).toHaveBeenCalledWith({ systemOne: { enabled: true } });
     expect(setSystemOneCredentialStatus).toHaveBeenCalledWith({
       configured: true,
@@ -1859,7 +1861,6 @@ describe("project config RPC authorization", () => {
     ]);
   });
 
-  // POSIX-only: creates a directory symlink without Windows privileges.
   test.skipIf(isPlatform("win32"))(
     "read_project_config_request accepts a symlink to an active project root",
     async () => {
@@ -3805,8 +3806,6 @@ describe("session checkout pull request auto-merge", () => {
       requestId: "request-pr-auto-merge-method-disabled",
     });
 
-    // The adapter owns the readiness precondition and rejects before any side
-    // effect, so it is invoked but the mutation never completes (no invalidate).
     expect(github.enablePullRequestAutoMerge).toHaveBeenCalled();
     expect(github.invalidate).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
@@ -3865,8 +3864,6 @@ describe("session checkout pull request auto-merge", () => {
       requestId: "request-pr-auto-merge-disable-forbidden",
     });
 
-    // The adapter owns the readiness precondition and rejects before any side
-    // effect, so it is invoked but the mutation never completes (no invalidate).
     expect(github.disablePullRequestAutoMerge).toHaveBeenCalled();
     expect(github.invalidate).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
@@ -5310,10 +5307,6 @@ describe("session pull request timeline handling", () => {
 });
 
 describe("schedule dispatch routing", () => {
-  // Each schedule/* type must reach its domain handler. The injected service stub
-  // is unstubbed, so every handler's own try/catch emits its domain rpc_error code.
-  // handleMessage receives already-parsed messages, so these fixtures only need to
-  // satisfy the TS union here — zod parsing happens upstream at the transport.
   const routingCases: Array<{ msg: SessionInboundMessage; code: string }> = [
     {
       msg: {

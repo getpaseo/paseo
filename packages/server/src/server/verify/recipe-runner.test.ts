@@ -219,7 +219,6 @@ describe.skipIf(!BROWSER_AVAILABLE)("RecipeRunner", () => {
 
     const result = await activityRunner.run({
       workspaceId: WORKSPACE_ID,
-      // A fresh profile: earlier tests leave the shared one signed in, which skips /login.
       browser: { ...testConfig().browser, defaultProfile: "activity-test" },
       verification: {
         recipes: {
@@ -396,6 +395,7 @@ describe.skipIf(!BROWSER_AVAILABLE)("RecipeRunner", () => {
 
   it("fails closed on wrong credentials without exposing secrets", async () => {
     const config = testConfig();
+    config.verification.recipes["verify-report"].profile = "recipe-bad-auth";
     config.browser.credentials["fixture-admin"] = {
       ...config.browser.credentials["fixture-admin"],
       allowedOrigins: [app.url],

@@ -1,8 +1,7 @@
 import { execSync } from "node:child_process";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { waitForTabBar } from "./launcher";
-import { selectWorkspaceInSidebar } from "./sidebar";
+import { gotoWorkspace } from "./launcher";
 import { createTempGitRepo, resolveTempRoot } from "./workspace";
 import {
   connectWorkspaceSetupClient,
@@ -60,7 +59,6 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
         { cwd: repo.path, stdio: "ignore" },
       );
       worktrees.push({ repoPath: repo.path, worktreePath: workspacePath });
-      // Register the parent project so the sidebar lists it before we navigate.
       const added = await client.addProject(repo.path);
       if (!added.project) {
         throw new Error(added.error ?? `Failed to add project ${repo.path}`);
@@ -82,8 +80,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
       repoPath: workspacePath,
       navigateTo: async () => {
         await openHomeWithProject(page, repo.path);
-        await selectWorkspaceInSidebar(page, workspaceId);
-        await waitForTabBar(page);
+        await gotoWorkspace(page, workspaceId);
       },
     };
   };
@@ -102,9 +99,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
             cwd: repoPath,
             stdio: "ignore",
           });
-        } catch {
-          // Best-effort cleanup so the original test failure is preserved.
-        }
+        } catch {}
       }
       for (const repo of repos) {
         await repo.cleanup();

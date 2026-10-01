@@ -315,9 +315,7 @@ describe("paseo daemon bootstrap", () => {
         }),
       ).rejects.toThrow(/disabled/i);
       expect((await client.getDaemonStatus()).relay?.enabled).toBe(true);
-      expect((await client.getDaemonPairingOffer()).url).toContain(
-        "https://after.example.test/#offer=",
-      );
+      expect((await client.getDaemonPairingOffer()).url).toContain("pandaos://pair/#offer=");
     } finally {
       configureGitProcessPolicy(DEFAULT_GIT_PROCESS_POLICY);
       await client?.close().catch(() => undefined);
@@ -803,7 +801,6 @@ export default function contribute(plugin: unknown) {
       try {
         await daemon.start();
         expect(daemon.getListenTarget()).toBeDefined();
-        // Must also stop without throwing
       } finally {
         await daemon.stop();
       }
@@ -881,11 +878,8 @@ export default function contribute(plugin: unknown) {
   });
 
   test("rejects Windows absolute paths that are not named pipes", () => {
-    // A Windows drive path like C:\daemon must NOT be silently parsed as TCP
-    // (split(":") would yield host="C" and port="\\daemon" which is nonsensical).
     expect(() => parseListenString(String.raw`C:\daemon`)).toThrow();
     expect(() => parseListenString(String.raw`D:\Users\foo\.paseo\daemon.sock`)).toThrow();
-    // Single-letter "host" with no valid port is not a valid listen string
     expect(() => parseListenString(String.raw`C:\some\path`)).toThrow();
   });
 
@@ -900,7 +894,6 @@ export default function contribute(plugin: unknown) {
     });
   });
 
-  // POSIX-only: Unix socket listen paths are invalid Windows listen targets.
   test.skipIf(isPlatform("win32"))(
     "generates a relay pairing offer for unix socket listeners",
     async () => {

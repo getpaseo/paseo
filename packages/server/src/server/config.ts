@@ -26,7 +26,7 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 import type { ResourcePolicy } from "@getpaseo/protocol/messages";
-import { DEFAULT_TYPESAFE_API_ENDPOINT } from "./browser-tools/jev-client.js";
+import { DEFAULT_TYPESAFE_API_ENDPOINT } from "@getpaseo/protocol/system-one-config";
 
 export {
   loadPersistedConfig,
@@ -465,11 +465,6 @@ function resolveTrustedProxiesConfig(
   );
 }
 
-// PASEO_LISTEN can be:
-// - host:port (TCP)
-// - /path/to/socket (Unix socket)
-// - unix:///path/to/socket (Unix socket)
-// Default is TCP at 127.0.0.1:6767
 function resolveListenAddress(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -534,11 +529,6 @@ function resolveSystemOneConfig(persisted: ReturnType<typeof loadPersistedConfig
   };
 }
 
-/**
- * Both profile lists stay `undefined` when absent rather than defaulting to an
- * empty array: for terminal profiles that is what selects the built-in
- * defaults, so an empty array has to keep meaning "the user removed them all".
- */
 function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) {
   return {
     terminalProfiles: persisted.daemon?.terminalProfiles,
@@ -736,8 +726,6 @@ function resolveCoreDaemonOverridePaths(
   }
   if (cli?.mcpEnabled !== undefined) paths.push("daemon.mcp.enabled");
   if (cli?.mcpInjectIntoAgents !== undefined) paths.push("daemon.mcp.injectIntoAgents");
-  // Hostname sources append instead of replacing one another, so a launch value
-  // does not prevent a persisted hostname edit from taking effect.
   if (parseTrustedProxiesEnv(env.PASEO_TRUSTED_PROXIES) !== undefined) {
     paths.push("daemon.trustedProxies");
   }

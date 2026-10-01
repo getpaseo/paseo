@@ -302,7 +302,7 @@ describe("DaemonSession", () => {
     }
     expect(message.payload.requestId).toBe("p-2");
     expect(message.payload.relayEnabled).toBe(true);
-    expect(message.payload.url.startsWith("https://app.example.test")).toBe(true);
+    expect(message.payload.url.startsWith("pandaos://pair/#offer=")).toBe(true);
     expect(typeof message.payload.qr).toBe("string");
   });
 

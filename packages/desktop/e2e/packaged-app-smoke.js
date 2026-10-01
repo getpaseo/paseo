@@ -779,7 +779,9 @@ async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
     ],
     label: "Create packaged smoke workspace",
   });
-  await page.getByRole("button", { name: "Sandbox smoke workspace", exact: true }).click();
+  const status = await page.evaluate(() => window.paseoDesktop.invoke("desktop_daemon_status"));
+  const route = `/h/${encodeURIComponent(status.serverId)}/workspace/${encodeURIComponent(workspace.workspaceId)}`;
+  await page.goto(new URL(route, page.url()).href);
   await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspace.workspaceId}`));
   await page.getByRole("button", { name: "Agent", exact: true }).click();
   await page.getByRole("textbox", { name: "Message agent..." }).click();

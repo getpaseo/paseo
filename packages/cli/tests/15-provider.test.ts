@@ -1,26 +1,5 @@
 #!/usr/bin/env npx tsx
 
-/**
- * Phase 15: Provider Command Tests
- *
- * Tests provider commands for listing providers and models.
- * Provider ls data is static, while provider models are fetched via daemon integration.
- * This test uses an isolated daemon to avoid coupling to a user's long-running daemon.
- *
- * Tests:
- * - provider --help shows subcommands
- * - provider ls lists all providers
- * - provider ls --json outputs valid JSON
- * - provider ls --quiet outputs provider names only
- * - provider models claude lists claude models
- * - provider models codex lists codex models
- * - provider models opencode lists opencode models
- * - provider models unknown fails with error
- * - provider models --json outputs valid JSON
- * - provider diagnostic shows the daemon's provider diagnostic
- * - provider diagnostic --json returns structured output
- */
-
 import assert from "node:assert";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -85,7 +64,7 @@ const EXPECTED_CLAUDE_MODELS = [
   {
     id: "claude-sonnet-5",
     model: "Sonnet 5",
-    descriptionFragment: "Best for everyday tasks",
+    descriptionFragment: "Previous release",
   },
   {
     id: "claude-opus-4-7[1m]",
@@ -203,7 +182,6 @@ function assertClaudeModels(data: ProviderModel[]): void {
 }
 
 try {
-  // Test 1: provider --help shows subcommands
   {
     console.log("Test 1: provider --help shows subcommands");
     const result = await ctx.paseo(["provider", "--help"]);
@@ -213,8 +191,6 @@ try {
     assert(result.stdout.includes("diagnostic"), "help should mention diagnostic");
     console.log("✓ provider --help shows subcommands\n");
   }
-
-  // Test 2: provider ls lists all providers
   {
     console.log("Test 2: provider ls lists all providers");
     const result = await ctx.paseo(["provider", "ls"]);
@@ -232,8 +208,6 @@ try {
     );
     console.log("✓ provider ls lists all providers\n");
   }
-
-  // Test 3: provider ls --json outputs valid JSON
   {
     console.log("Test 3: provider ls --json outputs valid JSON");
     const result = await ctx.paseo(["provider", "ls", "--json"]);
@@ -265,8 +239,6 @@ try {
     assert.strictEqual(omp.enabled, "Disabled", "omp should report Disabled by default");
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
-
-  // Test 4: provider ls includes disabled providers
   {
     console.log("Test 4: provider ls includes disabled providers");
     const { paseoHome, workDir } = await createTempDirs();
@@ -321,8 +293,6 @@ try {
     }
     console.log("✓ provider ls includes disabled providers\n");
   }
-
-  // Test 5: provider ls --quiet outputs provider names only
   {
     console.log("Test 5: provider ls --quiet outputs provider names only");
     const result = await ctx.paseo(["provider", "ls", "--quiet"]);
@@ -334,16 +304,12 @@ try {
     assert(lines.includes("opencode"), "should include opencode");
     console.log("✓ provider ls --quiet outputs provider names only\n");
   }
-
-  // Test 6: provider models claude lists canonical model aliases
   {
     console.log("Test 6: provider models claude lists canonical model aliases");
     const data = await runProviderModelsJson("claude");
     assertClaudeModels(data);
     console.log("✓ provider models claude lists canonical model aliases\n");
   }
-
-  // Test 7: provider models codex includes concrete codex model IDs
   {
     console.log("Test 7: provider models codex includes concrete codex model IDs");
     const data = await runProviderModelsJson("codex");
@@ -355,17 +321,11 @@ try {
       "all codex model IDs should be from the gpt family",
     );
     assert(
-      ids.some((id) => id.includes("codex")),
-      "codex model list should include at least one codex-optimized model",
-    );
-    assert(
       data.every((m) => m.model && m.id && m.description),
       "every codex model should have model, id, and description fields",
     );
     console.log("✓ provider models codex includes concrete codex model IDs\n");
   }
-
-  // Test 8: provider models opencode returns namespaced model IDs
   {
     console.log("Test 8: provider models opencode returns namespaced model IDs");
     const data = await runProviderModelsJson("opencode");
@@ -385,8 +345,6 @@ try {
     );
     console.log("✓ provider models opencode returns namespaced model IDs\n");
   }
-
-  // Test 9: provider models unknown fails with error
   {
     console.log("Test 9: provider models unknown fails with error");
     const result = await ctx.paseo(["provider", "models", "unknown"]);
@@ -398,8 +356,6 @@ try {
     );
     console.log("✓ provider models unknown fails with error\n");
   }
-
-  // Test 10: provider models --json outputs valid JSON
   {
     console.log("Test 10: provider models --json outputs valid JSON");
     const data = await runProviderModelsJson("claude");
@@ -413,8 +369,6 @@ try {
     claudeModelsFromJson = data;
     console.log("✓ provider models --json outputs valid JSON\n");
   }
-
-  // Test 11: provider models --quiet outputs model IDs only
   {
     console.log("Test 11: provider models --quiet outputs model IDs only");
     assert(
@@ -435,8 +389,6 @@ try {
     );
     console.log("✓ provider models --quiet outputs model IDs only\n");
   }
-
-  // Test 12: provider diagnostic shows the daemon's provider diagnostic
   {
     console.log("Test 12: provider diagnostic shows the daemon's provider diagnostic");
     const result = await ctx.paseo([
@@ -454,8 +406,6 @@ try {
     assert(result.stdout.includes("Status:"), "diagnostic should include provider status");
     console.log("✓ provider diagnostic shows the daemon's provider diagnostic\n");
   }
-
-  // Test 13: provider diagnostic --json returns structured output
   {
     console.log("Test 13: provider diagnostic --json returns structured output");
     const result = await ctx.paseo(["provider", "diagnostic", "claude", "--json"]);

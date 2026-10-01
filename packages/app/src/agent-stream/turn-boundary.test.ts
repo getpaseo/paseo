@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import { resolveAssistantTurnForkBoundary } from "./turn-boundary";
+import {
+  resolveAssistantTurnForkBoundary,
+  resolveTurnFooterForkHandler,
+  type AssistantTurnForkBoundary,
+} from "./turn-boundary";
 
 function timestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
@@ -112,4 +116,73 @@ describe("resolveAssistantTurnForkBoundary", () => {
       }),
     ).toBeUndefined();
   });
+});
+
+describe("resolveTurnFooterForkHandler", () => {
+  it.each([false, true])("keeps an active turn fork unbounded when hasError is %s", (hasError) => {
+    const targets: string[] = [];
+    const onForkInFlightTurn = (target: "tab" | "workspace") => {
+      targets.push(target);
+    };
+    const fork = resolveTurnFooterForkHandler({
+      hasError,
+      host: null,
+      supportsTimelineCursor: true,
+      onForkInFlightTurn,
+      onForkAssistantTurn: () => {
+        throw new Error("An active turn must use its in-flight fork");
+      },
+    });
+
+    expect(fork).toBe(onForkInFlightTurn);
+    fork?.("tab");
+    expect(targets).toEqual(["tab"]);
+  });
+
+  it("forks a completed error turn from its own terminal cursor", () => {
+    const forks: Array<{ target: string; boundary: AssistantTurnForkBoundary }> = [];
+    const fork = resolveTurnFooterForkHandler({
+      hasError: true,
+      host: {
+        itemId: "assistant-error",
+        items: [
+          {
+            ...assistantMessage("assistant-error", 2),
+            timelineCursor: { epoch: "timeline-1", seq: 42 },
+          },
+        ],
+        startIndex: 0,
+      },
+      supportsTimelineCursor: true,
+      onForkAssistantTurn: (input) => {
+        forks.push(input);
+      },
+    });
+
+    expect(fork).toBeTypeOf("function");
+    fork?.("workspace");
+    expect(forks).toEqual([
+      { target: "workspace", boundary: { boundaryCursor: { epoch: "timeline-1", seq: 42 } } },
+    ]);
+  });
+
+  it.each([true, false])(
+    "does not offer an unbounded completed error fork with cursor support %s",
+    (supportsTimelineCursor) => {
+      expect(
+        resolveTurnFooterForkHandler({
+          hasError: true,
+          host: {
+            itemId: "assistant-error",
+            items: [assistantMessage("assistant-error", 2)],
+            startIndex: 0,
+          },
+          supportsTimelineCursor,
+          onForkAssistantTurn: () => {
+            throw new Error("A completed turn needs a boundary");
+          },
+        }),
+      ).toBeUndefined();
+    },
+  );
 });
