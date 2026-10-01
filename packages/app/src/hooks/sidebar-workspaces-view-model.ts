@@ -13,6 +13,13 @@ import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import {
+  collectAllPanes,
+  collectAllTabs,
+  type WorkspaceLayout,
+} from "@/stores/workspace-layout-actions";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import type { DraftRecord } from "@/stores/draft-store/state";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -74,11 +81,13 @@ export interface SidebarWorkspacePlacementModel {
 
 export interface SidebarWorkspaceSession {
   serverId: string;
+  hasHydratedAgents?: boolean;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 interface SidebarWorkspaceSessionSource {
+  hasHydratedAgents?: boolean;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
@@ -95,6 +104,7 @@ export function selectSidebarWorkspaceSessions(
     }
     selected.push({
       serverId,
+      hasHydratedAgents: session.hasHydratedAgents,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
@@ -116,6 +126,7 @@ export function areSidebarWorkspaceSessionsEqual(
       !leftSession ||
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
+      leftSession.hasHydratedAgents !== rightSession.hasHydratedAgents ||
       leftSession.workspaces !== rightSession.workspaces ||
       leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
     ) {
@@ -123,6 +134,64 @@ export function areSidebarWorkspaceSessionsEqual(
     }
   }
   return true;
+}
+
+export function filterEmptySidebarWorkspaces(input: {
+  model: SidebarWorkspacePlacementModel;
+  sessions: readonly SidebarWorkspaceSession[];
+  layouts: Readonly<Record<string, WorkspaceLayout>>;
+  drafts: Readonly<Record<string, DraftRecord>>;
+  pendingCreateAttempts: Readonly<Record<string, PendingCreateAttempt>>;
+}): SidebarWorkspacePlacementModel {
+  const sessions = new Map(input.sessions.map((session) => [session.serverId, session]));
+  const creating = new Set(
+    Object.values(input.pendingCreateAttempts)
+      .filter((attempt) => attempt.lifecycle === "active" && attempt.workspaceId)
+      .map((attempt) => `${attempt.serverId}:${attempt.workspaceId}`),
+  );
+  const workspaces = input.model.workspaces.filter((placement) => {
+    const session = sessions.get(placement.serverId);
+    // Directory discovery can arrive before chats, so absence is meaningful only after hydration.
+    if (!session?.hasHydratedAgents) return true;
+    if (session.workspaceAgentActivity.has(placement.workspaceId)) return true;
+    if (creating.has(placement.workspaceKey)) return true;
+    const workspace = session.workspaces.get(placement.workspaceId);
+    if (workspace?.scripts.some((script) => script.lifecycle === "running")) return true;
+    const layout = input.layouts[placement.workspaceKey];
+    if (!layout) return false;
+    const visibleTabIds = new Set(collectAllPanes(layout.root).flatMap((pane) => pane.tabIds));
+    return collectAllTabs(layout.root).some(({ tabId, target }) => {
+      if (!visibleTabIds.has(tabId)) return false;
+      if (target.kind === "new_tab") return false;
+      if (target.kind !== "draft") return true;
+      const draft =
+        input.drafts[
+          buildDraftStoreKey({
+            serverId: placement.serverId,
+            agentId: "",
+            draftId: target.draftId,
+          })
+        ];
+      return (
+        draft?.lifecycle === "active" &&
+        (draft.input.text.trim().length > 0 || draft.input.attachments.length > 0)
+      );
+    });
+  });
+  if (workspaces.length === input.model.workspaces.length) return input.model;
+  const visibleKeys = new Set(workspaces.map((workspace) => workspace.workspaceKey));
+  return {
+    ...input.model,
+    workspaces,
+    projects: input.model.projects.map((project) => {
+      const visible = project.workspaces.filter((workspace) =>
+        visibleKeys.has(workspace.workspaceKey),
+      );
+      return visible.length === project.workspaces.length
+        ? project
+        : { ...project, workspaces: visible };
+    }),
+  };
 }
 
 interface EffectiveWorkspaceStatus {

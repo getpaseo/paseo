@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, type ReactElement } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -7,6 +7,7 @@ import {
   MouseSensor,
   TouchSensor,
   type DragEndEvent,
+  type DragStartEvent,
   type DragMoveEvent,
   type Modifier,
   useSensor,
@@ -22,6 +23,8 @@ import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
 import {
+  beginWorkspaceDrag,
+  endWorkspaceDrag,
   clearWorkspaceDropHighlight,
   dragEndPoint,
   findWorkspaceDropTarget,
@@ -220,6 +223,17 @@ export function DraggableList<T>({
     onDragEnd,
     onDragBegin,
   });
+  useEffect(() => {
+    if (activeId === null) return;
+    return endWorkspaceDrag;
+  }, [activeId]);
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      if (onDropOnWorkspace) beginWorkspaceDrag(event.activatorEvent);
+      handlers.onDragStart(event);
+    },
+    [handlers, onDropOnWorkspace],
+  );
   const draggedNodeFor = useCallback(
     (activeKey: string) =>
       document.querySelector(`[data-sortable-id="${window.CSS.escape(activeKey)}"]`),
@@ -239,24 +253,28 @@ export function DraggableList<T>({
   );
   const handleDragCancel = useCallback(() => {
     clearWorkspaceDropHighlight();
+    endWorkspaceDrag();
     handlers.onDragCancel();
   }, [handlers]);
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      clearWorkspaceDropHighlight();
+      const point = dragEndPoint(event.activatorEvent, event.delta);
+      endWorkspaceDrag();
       if (onDropOnWorkspace) {
         const activeKey = String(event.active.id);
         const target = findWorkspaceDropTarget({
-          point: dragEndPoint(event.activatorEvent, event.delta),
+          point,
           ownListId: dropListId ?? null,
           draggedNode: draggedNodeFor(activeKey),
         });
+        clearWorkspaceDropHighlight();
         const item = items.find((candidate, index) => keyExtractor(candidate, index) === activeKey);
         if (target && item !== undefined && onDropOnWorkspace(item, target)) {
           handlers.onDragCancel();
           return;
         }
       }
+      clearWorkspaceDropHighlight();
       handlers.onDragEnd(event);
     },
     [draggedNodeFor, dropListId, handlers, items, keyExtractor, onDropOnWorkspace],
@@ -304,8 +322,8 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={DND_MODIFIERS}
-            onDragStart={handlers.onDragStart}
+            modifiers={onDropOnWorkspace ? undefined : DND_MODIFIERS}
+            onDragStart={handleDragStart}
             onDragMove={handleDragMove}
             onDragCancel={handleDragCancel}
             onDragEnd={handleDragEnd}
@@ -336,8 +354,8 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={DND_MODIFIERS}
-            onDragStart={handlers.onDragStart}
+            modifiers={onDropOnWorkspace ? undefined : DND_MODIFIERS}
+            onDragStart={handleDragStart}
             onDragMove={handleDragMove}
             onDragCancel={handleDragCancel}
             onDragEnd={handleDragEnd}

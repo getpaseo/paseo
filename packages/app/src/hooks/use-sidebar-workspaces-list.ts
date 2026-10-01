@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
 import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
 import { useHostProjects } from "@/projects/host-projects";
@@ -10,6 +12,9 @@ import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   buildSidebarWorkspacePlacementModel,
+  filterEmptySidebarWorkspaces,
+  selectSidebarWorkspaceSessions,
+  areSidebarWorkspaceSessionsEqual,
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
@@ -18,6 +23,7 @@ import {
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
+  type SidebarWorkspacePlacementModel,
 } from "./sidebar-workspaces-view-model";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 
@@ -140,13 +146,47 @@ export function useSidebarWorkspacesList(options?: {
 
   const hostProjects = useHostProjects(directoryServerIds);
 
-  const sidebarModel = useMemo(
+  const structuralModel = useMemo(
     () =>
       buildSidebarWorkspacePlacementModel({
         projects: hostProjects,
       }),
     [hostProjects],
   );
+
+  const sessions = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectSidebarWorkspaceSessions(state.sessions, directoryServerIds),
+    areSidebarWorkspaceSessionsEqual,
+  );
+  const layouts = useWorkspaceLayoutStore((state) => state.layoutByWorkspace);
+  const drafts = useDraftStore((state) => state.drafts);
+  const pendingCreateAttempts = useCreateFlowStore((state) => state.pendingByDraftId);
+  const previousModel = useRef<{
+    structure: SidebarWorkspacePlacementModel;
+    visible: SidebarWorkspacePlacementModel;
+  } | null>(null);
+  const sidebarModel = useMemo(() => {
+    const visible = filterEmptySidebarWorkspaces({
+      model: structuralModel,
+      sessions,
+      layouts,
+      drafts,
+      pendingCreateAttempts,
+    });
+    const previous = previousModel.current;
+    if (
+      previous?.structure === structuralModel &&
+      previous.visible.workspaces.length === visible.workspaces.length &&
+      previous.visible.workspaces.every(
+        (workspace, index) => workspace === visible.workspaces[index],
+      )
+    ) {
+      return previous.visible;
+    }
+    previousModel.current = { structure: structuralModel, visible };
+    return visible;
+  }, [structuralModel, sessions, layouts, drafts, pendingCreateAttempts]);
 
   const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
   const workspacePlacements =

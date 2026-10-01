@@ -3,6 +3,13 @@ import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
 import {
+  createDefaultLayout,
+  createWorkspaceLayoutWithExplorerSidebar,
+  createTabInLayout,
+  FOCUSED_PANE_PLACEMENT,
+  type WorkspaceLayout,
+} from "@/stores/workspace-layout-actions";
+import {
   appendMissingOrderKeys,
   applyStoredOrdering,
   buildSidebarWorkspaceEntries,
@@ -12,10 +19,12 @@ import {
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
+  filterEmptySidebarWorkspaces,
   shouldShowSidebarHostLabels,
   type ProjectStatusSession,
   type SidebarProjectEntry,
   type SidebarWorkspacePlacement,
+  type SidebarWorkspaceSession,
 } from "./sidebar-workspaces-view-model";
 
 function workspaceWithForge(forge: string | undefined, prUrl: string): WorkspaceDescriptor {
@@ -165,6 +174,132 @@ function workspace(input: {
     scripts: [],
   };
 }
+
+describe("filterEmptySidebarWorkspaces", () => {
+  const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+  const model = buildSidebarWorkspacePlacementModel({
+    projects: [project({ projectKey: "proj", workspaceKeys: ["srv:ws-1"] })],
+  });
+  const session: SidebarWorkspaceSession = {
+    serverId: "srv",
+    hasHydratedAgents: true,
+    workspaceAgentActivity: new Map(),
+    workspaces: new Map([[descriptor.id, descriptor]]),
+  };
+  const input = { model, sessions: [session], layouts: {}, drafts: {}, pendingCreateAttempts: {} };
+
+  it("hides an empty PR workspace and its launcher, retaining the project header", () => {
+    const candidates: Record<string, WorkspaceLayout>[] = [
+      {},
+      { "srv:ws-1": createDefaultLayout() },
+      { "srv:ws-1": createWorkspaceLayoutWithExplorerSidebar() },
+    ];
+    for (const layouts of candidates) {
+      const result = filterEmptySidebarWorkspaces({ ...input, layouts });
+      expect(result.workspaces).toEqual([]);
+      expect(result.projects).toHaveLength(1);
+      expect(result.projects[0]?.workspaces).toEqual([]);
+    }
+  });
+
+  it("waits for chat hydration and preserves an existing chat even before its tab opens", () => {
+    expect(
+      filterEmptySidebarWorkspaces({
+        ...input,
+        sessions: [{ ...session, hasHydratedAgents: false }],
+      }),
+    ).toBe(model);
+    expect(
+      filterEmptySidebarWorkspaces({
+        ...input,
+        sessions: [
+          {
+            ...session,
+            workspaceAgentActivity: new Map([
+              [
+                descriptor.id,
+                {
+                  agentId: "chat",
+                  status: "done",
+                  enteredAt: null,
+                },
+              ],
+            ]),
+          },
+        ],
+      }),
+    ).toBe(model);
+  });
+
+  it.each([
+    { kind: "terminal", terminalId: "term" },
+    { kind: "browser", browserId: "browser" },
+    { kind: "agent", agentId: "archived-chat" },
+  ] as const)("keeps a usable $kind tab", (target) => {
+    const opened = createTabInLayout({
+      layout: createDefaultLayout(),
+      target,
+      placement: FOCUSED_PANE_PLACEMENT,
+      explorerSidebarPaneId: null,
+      now: 0,
+      createTabId: () => "tab",
+    });
+    expect(opened).not.toBeNull();
+    expect(
+      filterEmptySidebarWorkspaces({ ...input, layouts: { "srv:ws-1": opened!.layout } }),
+    ).toBe(model);
+  });
+
+  it("keeps an unsent draft, but hides an empty or abandoned draft", () => {
+    const opened = createTabInLayout({
+      layout: createDefaultLayout(),
+      target: { kind: "draft", draftId: "draft" },
+      placement: FOCUSED_PANE_PLACEMENT,
+      explorerSidebarPaneId: null,
+      now: 0,
+      createTabId: () => "draft-tab",
+    })!;
+    const withDraft = { ...input, layouts: { "srv:ws-1": opened.layout } };
+    expect(filterEmptySidebarWorkspaces(withDraft).workspaces).toEqual([]);
+    const record = {
+      input: { text: "Review this", attachments: [] },
+      lifecycle: "active" as const,
+      updatedAt: 0,
+      version: 1,
+    };
+    expect(
+      filterEmptySidebarWorkspaces({ ...withDraft, drafts: { "draft:srv:draft": record } }),
+    ).toBe(model);
+    expect(
+      filterEmptySidebarWorkspaces({
+        ...withDraft,
+        drafts: {
+          "draft:srv:draft": { ...record, lifecycle: "abandoned" },
+        },
+      }).workspaces,
+    ).toEqual([]);
+  });
+
+  it("keeps pending creation until the chat appears", () => {
+    expect(
+      filterEmptySidebarWorkspaces({
+        ...input,
+        pendingCreateAttempts: {
+          draft: {
+            draftId: "draft",
+            serverId: "srv",
+            workspaceId: descriptor.id,
+            agentId: null,
+            clientMessageId: "message",
+            text: "Review",
+            timestamp: 0,
+            lifecycle: "active",
+          },
+        },
+      }),
+    ).toBe(model);
+  });
+});
 
 describe("applyStoredOrdering", () => {
   it("keeps unknown items on the baseline while applying stored order", () => {

@@ -1,5 +1,12 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import {
+  collectAllTabs,
+  findPaneContainingTab,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useSessionStore } from "@/stores/session-store";
 
 export interface MoveWorkspaceSessionsResult {
@@ -23,8 +30,8 @@ export async function moveWorkspaceSessions(input: {
   const agentIds = [...(session?.agents.values() ?? [])]
     .filter((agent) => agent.workspaceId === sourceWorkspaceId && !agent.archivedAt)
     .map((agent) => agent.id);
-  for (const agentId of agentIds) {
-    await client.moveAgentToWorkspace(agentId, targetWorkspaceId);
+  for (const agentId of agentIds.toReversed()) {
+    await moveSessionToWorkspace({ serverId, agentId, targetWorkspaceId, navigate: false });
   }
   const [first] = agentIds;
   navigateToWorkspace({
@@ -40,10 +47,51 @@ export async function moveSessionToWorkspace(input: {
   serverId: string;
   agentId: string;
   targetWorkspaceId: string;
+  navigate?: boolean;
 }): Promise<void> {
   const client = getHostRuntimeStore().getClient(input.serverId);
   if (!client) throw new Error("The host is not connected");
+  const sourceWorkspaceId = useSessionStore
+    .getState()
+    .sessions[input.serverId]?.agents.get(input.agentId)?.workspaceId;
   await client.moveAgentToWorkspace(input.agentId, input.targetWorkspaceId);
+  const store = useWorkspaceLayoutStore.getState();
+  if (sourceWorkspaceId && sourceWorkspaceId !== input.targetWorkspaceId) {
+    const sourceKey = buildWorkspaceTabPersistenceKey({
+      serverId: input.serverId,
+      workspaceId: sourceWorkspaceId,
+    });
+    const sourceLayout = sourceKey ? store.layoutByWorkspace[sourceKey] : null;
+    if (sourceKey && sourceLayout) {
+      store.unpinAgent(sourceKey, input.agentId);
+      store.hideAgent(sourceKey, input.agentId);
+      for (const tab of collectAllTabs(sourceLayout.root)) {
+        if (tab.target.kind === "agent" && tab.target.agentId === input.agentId)
+          store.closeTab(sourceKey, tab.tabId);
+      }
+    }
+  }
+  const workspaceKey = buildWorkspaceTabPersistenceKey({
+    serverId: input.serverId,
+    workspaceId: input.targetWorkspaceId,
+  });
+  if (workspaceKey) {
+    const tabId = store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: input.agentId },
+      intent: "reveal",
+      pin: true,
+    });
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const pane = tabId && layout ? findPaneContainingTab(layout.root, tabId) : null;
+    if (pane && tabId)
+      store.reorderTabsInPane(workspaceKey, pane.id, [
+        tabId,
+        ...pane.tabIds.filter((id) => id !== tabId),
+      ]);
+    useSidebarOrderStore.getState().promoteWorkspace(workspaceKey);
+  }
+  if (input.navigate === false) return;
   navigateToWorkspace({
     serverId: input.serverId,
     workspaceId: input.targetWorkspaceId,

@@ -36,6 +36,8 @@ import Animated, {
 import { useTranslation } from "react-i18next";
 import { useToast } from "@/contexts/toast-context";
 import {
+  beginWorkspaceDrag,
+  endWorkspaceDrag,
   clearWorkspaceDropHighlight,
   dragEndPoint,
   findWorkspaceDropTarget,
@@ -498,6 +500,7 @@ export function SplitContainer({
   );
   const renderRoot = useMemo(() => wrapRootPaneForStableMount(splitRoot.root), [splitRoot.root]);
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    beginWorkspaceDrag(event.activatorEvent);
     const data = asWorkspaceTabDragData(event.active.data.current);
     if (!data) {
       setActiveDragTabId(null);
@@ -508,8 +511,14 @@ export function SplitContainer({
     setActiveDragTabId(data.tabId);
   }, []);
 
+  useEffect(() => {
+    if (activeDragTabId === null) return;
+    return endWorkspaceDrag;
+  }, [activeDragTabId]);
+
   const handleDragCancel = useCallback(() => {
     clearWorkspaceDropHighlight();
+    endWorkspaceDrag();
     setActiveDragTabId(null);
     setDropPreview(null);
     setTabDropPreview(null);
@@ -691,15 +700,15 @@ export function SplitContainer({
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      clearWorkspaceDropHighlight();
       const activeData = asWorkspaceTabDragData(event.active.data.current);
       const overData = asDragOverData(event.over?.data.current);
 
       setActiveDragTabId(null);
-      if (
-        activeData?.kind === "workspace-tab" &&
-        moveTabToSidebarWorkspace(event, activeData.tabId)
-      ) {
+      const movedToSidebar =
+        activeData?.kind === "workspace-tab" && moveTabToSidebarWorkspace(event, activeData.tabId);
+      clearWorkspaceDropHighlight();
+      endWorkspaceDrag();
+      if (movedToSidebar) {
         setDropPreview(null);
         setTabDropPreview(null);
         return;

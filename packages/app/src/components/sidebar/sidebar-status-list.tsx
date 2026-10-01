@@ -84,6 +84,7 @@ import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pi
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { useWorkspaceSessionsDrop } from "@/workspace-move/use-workspace-sessions-drop";
 import { useWorkspaceTopicMenu } from "@/topics/use-workspace-topic-menu";
 
 // Themed icon wrappers
@@ -203,6 +204,7 @@ export function SidebarStatusWorkspaceList({
       supportsPinningByServerId,
     ],
   );
+  const handlePinnedWorkspaceDrop = useWorkspaceSessionsDrop();
   const content = (
     <>
       {pinnedWorkspaces.length > 0 ? (
@@ -212,6 +214,8 @@ export function SidebarStatusWorkspaceList({
             <>
               <DraggableList
                 testID="sidebar-pinned-list"
+                dropListId="pinned-workspaces"
+                onDropOnWorkspace={handlePinnedWorkspaceDrop}
                 data={visiblePinnedWorkspaces}
                 keyExtractor={statusWorkspaceKeyExtractor}
                 renderItem={renderPinnedWorkspace}
@@ -318,6 +322,9 @@ function StatusGroupList({
   );
 }
 
+// Status groups keep their activity order; dragging only moves sessions to another workspace.
+const keepStatusOrder = () => {};
+
 function StatusGroupRows({
   group,
   collapsed,
@@ -346,6 +353,45 @@ function StatusGroupRows({
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(group.rows);
 
+  const handleWorkspaceDrop = useWorkspaceSessionsDrop();
+  const renderWorkspace = useCallback(
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: { item: SidebarWorkspaceEntry } & Partial<
+      DraggableRenderItemInfo<SidebarWorkspaceEntry>
+    >) => (
+      <StatusWorkspaceRow
+        key={workspace.workspaceKey}
+        workspace={workspace}
+        {...buildStatusRowProjectPresentation({
+          workspace,
+          projectIconByProjectViewKey,
+          hostBadgeByServerId,
+        })}
+        shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        onWorkspacePress={onWorkspacePress}
+        drag={drag}
+        isDragging={isActive}
+        dragHandleProps={dragHandleProps}
+      />
+    ),
+    [
+      projectIconByProjectViewKey,
+      hostBadgeByServerId,
+      shortcutIndex,
+      showShortcutBadges,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      onWorkspacePress,
+    ],
+  );
+
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
       <StatusGroupHeader group={group} collapsed={collapsed} />
@@ -354,22 +400,19 @@ function StatusGroupRows({
           style={styles.statusWorkspaceListContainer}
           testID={`sidebar-status-group-rows-${group.key}`}
         >
-          {visibleWorkspaces.map((workspace) => (
-            <StatusWorkspaceRow
-              key={workspace.workspaceKey}
-              workspace={workspace}
-              {...buildStatusRowProjectPresentation({
-                workspace,
-                projectIconByProjectViewKey,
-                hostBadgeByServerId,
-              })}
-              shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
-              showShortcutBadge={showShortcutBadges}
-              canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-              onToggleWorkspacePin={onToggleWorkspacePin}
-              onWorkspacePress={onWorkspacePress}
+          {platformIsWeb ? (
+            <DraggableList
+              data={visibleWorkspaces}
+              keyExtractor={statusWorkspaceKeyExtractor}
+              renderItem={renderWorkspace}
+              onDragEnd={keepStatusOrder}
+              onDropOnWorkspace={handleWorkspaceDrop}
+              scrollEnabled={false}
+              useDragHandle
             />
-          ))}
+          ) : (
+            visibleWorkspaces.map((workspace) => renderWorkspace({ item: workspace }))
+          )}
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}

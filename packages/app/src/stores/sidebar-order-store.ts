@@ -5,6 +5,8 @@ import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 interface SidebarOrderStoreState {
+  workspacePromotedAt: Record<string, number>;
+  promoteWorkspace: (workspaceKey: string) => void;
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
@@ -17,6 +19,7 @@ interface SidebarOrderStoreState {
 }
 
 interface SidebarOrderPersistedState {
+  workspacePromotedAt?: Record<string, number>;
   projectOrder?: string[];
   pinnedWorkspaceOrder?: string[];
   workspaceOrderByProject?: Record<string, string[]>;
@@ -26,6 +29,7 @@ interface SidebarOrderPersistedState {
 
 const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
 const SidebarOrderPersistedStateSchema = z.strictObject({
+  workspacePromotedAt: z.record(z.string(), z.number()).optional(),
   projectOrder: z.array(z.string()).optional(),
   pinnedWorkspaceOrder: z.array(z.string()).optional(),
   workspaceOrderByProject: StringArrayRecordSchema.optional(),
@@ -153,6 +157,34 @@ export function migrateSidebarOrderState(persistedState: unknown): {
 export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
   persist(
     (set, get) => ({
+      workspacePromotedAt: {},
+      promoteWorkspace: (workspaceKey) => {
+        if (!workspaceKey.trim()) return;
+        set((state) => {
+          const workspaceOrderByProject = { ...state.workspaceOrderByProject };
+          const projectKeys: string[] = [];
+          for (const [projectKey, order] of Object.entries(workspaceOrderByProject)) {
+            if (!order.includes(workspaceKey)) continue;
+            projectKeys.push(projectKey);
+            workspaceOrderByProject[projectKey] = [
+              workspaceKey,
+              ...order.filter((key) => key !== workspaceKey),
+            ];
+          }
+          return {
+            workspacePromotedAt: { ...state.workspacePromotedAt, [workspaceKey]: Date.now() },
+            workspaceOrderByProject,
+            projectOrder: [
+              ...projectKeys,
+              ...state.projectOrder.filter((key) => !projectKeys.includes(key)),
+            ],
+            pinnedWorkspaceOrder: [
+              workspaceKey,
+              ...state.pinnedWorkspaceOrder.filter((key) => key !== workspaceKey),
+            ],
+          };
+        });
+      },
       projectOrder: [],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {},
@@ -182,6 +214,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       name: "sidebar-project-workspace-order",
       storage: createValidatedPersistStorage(AsyncStorage, SidebarOrderPersistedStateSchema),
       partialize: (state) => ({
+        workspacePromotedAt: state.workspacePromotedAt,
         projectOrder: state.projectOrder,
         pinnedWorkspaceOrder: state.pinnedWorkspaceOrder,
         workspaceOrderByProject: state.workspaceOrderByProject,

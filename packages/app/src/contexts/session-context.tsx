@@ -51,7 +51,6 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { useBrowserActivityStore } from "@/desktop/browser/activity";
-import { getIsElectron } from "@/constants/platform";
 import { publishBrowserMirror } from "@/desktop/browser/mirror";
 import { useHostFeature } from "@/runtime/host-features";
 
@@ -766,8 +765,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const supportsBrowserActivity = useHostFeature(serverId, "browserActivity");
   const supportsBrowserHandoff = useHostFeature(serverId, "browserHandoff");
-  // Only the desktop app replays daemon tabs in a local browser; phones keep the stream.
-  const wantsBrowserMirror = useHostFeature(serverId, "browserMirror") && getIsElectron();
+  const wantsBrowserMirror = useHostFeature(serverId, "browserMirror");
   useEffect(() => {
     if (!supportsBrowserActivity) return;
     const feed = client.observeEvents([

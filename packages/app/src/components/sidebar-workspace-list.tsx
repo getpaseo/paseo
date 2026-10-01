@@ -85,12 +85,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
-import {
-  encodeWorkspaceDropTarget,
-  flashLandedWorkspace,
-  type WorkspaceDropTarget,
-} from "@/workspace-move/drop-target";
-import { describeMove, moveWorkspaceSessions } from "@/workspace-move/move-sessions";
+import { encodeWorkspaceDropTarget } from "@/workspace-move/drop-target";
+import { useWorkspaceSessionsDrop } from "@/workspace-move/use-workspace-sessions-drop";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
@@ -1571,47 +1567,6 @@ function projectDropTargetProps(project: SidebarProjectEntry): object | null {
   return first ? workspaceDropTargetProps(first.serverId, first.workspaceId) : null;
 }
 
-/** Dragging a workspace onto another project's workspace moves its sessions there. */
-function useWorkspaceSessionsDrop(
-  project: SidebarProjectEntry,
-  toast: ReturnType<typeof useToast>,
-) {
-  const { t } = useTranslation();
-  return useCallback(
-    (item: SidebarWorkspacePlacement, target: WorkspaceDropTarget) => {
-      if (project.workspaces.some((workspace) => workspace.workspaceId === target.workspaceId)) {
-        return false;
-      }
-      if (target.serverId !== item.serverId) {
-        toast.error(t("sidebar.project.toasts.moveAcrossHosts"));
-        return true;
-      }
-      const names = describeMove({
-        serverId: item.serverId,
-        agentId: null,
-        targetWorkspaceId: target.workspaceId,
-      });
-      void moveWorkspaceSessions({
-        serverId: item.serverId,
-        sourceWorkspaceId: item.workspaceId,
-        targetWorkspaceId: target.workspaceId,
-      })
-        .then((result) => {
-          flashLandedWorkspace(target);
-          return toast.show(
-            t("sidebar.project.toasts.sessionsMovedTo", {
-              count: result.moved,
-              workspace: names.workspace,
-            }),
-          );
-        })
-        .catch(() => toast.error(t("sidebar.project.toasts.moveSessionsFailed")));
-      return true;
-    },
-    [project.workspaces, t, toast],
-  );
-}
-
 function ProjectBlock({
   project,
   workspaceEntriesByKey,
@@ -1769,7 +1724,11 @@ function ProjectBlock({
   );
 
   const toast = useToast();
-  const handleDropOnWorkspace = useWorkspaceSessionsDrop(project, toast);
+  const ownWorkspaceIds = useMemo(
+    () => project.workspaces.map((workspace) => workspace.workspaceId),
+    [project.workspaces],
+  );
+  const handleDropOnWorkspace = useWorkspaceSessionsDrop(ownWorkspaceIds);
   const { t } = useTranslation();
   const [isRemovingProject, setIsRemovingProject] = useState(false);
 
@@ -2228,6 +2187,7 @@ function ProjectModeList({
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
+  const handlePinnedWorkspaceDrop = useWorkspaceSessionsDrop();
   const {
     visibleItems: visiblePinnedChats,
     expanded: pinnedChatsExpanded,
@@ -2509,6 +2469,8 @@ function ProjectModeList({
             <>
               <DraggableList
                 testID="sidebar-pinned-list"
+                dropListId="pinned-workspaces"
+                onDropOnWorkspace={handlePinnedWorkspaceDrop}
                 data={visiblePinnedChats}
                 keyExtractor={workspaceKeyExtractor}
                 renderItem={renderPinnedChat}

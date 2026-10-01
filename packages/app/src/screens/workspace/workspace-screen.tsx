@@ -1693,6 +1693,8 @@ function WorkspaceScreenContent({
 
         syncRemoteBrowserTabs({
           tabs: response.result.tabs,
+          mirrorEvents: response.result.mirrorEvents,
+          serverId: normalizedServerId,
           workspaceId: normalizedWorkspaceId,
           workspaceKey: persistenceKey,
         });
@@ -1713,6 +1715,7 @@ function WorkspaceScreenContent({
     isConnected,
     isRouteFocused,
     normalizedWorkspaceId,
+    normalizedServerId,
     openTab,
     persistenceKey,
   ]);

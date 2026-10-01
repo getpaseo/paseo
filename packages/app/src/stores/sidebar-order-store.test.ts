@@ -103,3 +103,25 @@ describe("sidebar order keys that end in whitespace", () => {
     expect(migrated.projectOrder).toEqual(["host-a:one"]);
   });
 });
+
+describe("workspace promotion after moving or unpinning", () => {
+  it("puts the workspace and its project first, preserves siblings, and promotes its pin order", () => {
+    useSidebarOrderStore.setState({
+      projectOrder: ["other", "project"],
+      pinnedWorkspaceOrder: ["srv:other", "srv:moved"],
+      workspaceOrderByProject: { project: ["srv:first", "srv:moved", "srv:last"] },
+      workspacePromotedAt: {},
+    });
+    const before = Date.now();
+    useSidebarOrderStore.getState().promoteWorkspace("srv:moved");
+    const state = useSidebarOrderStore.getState();
+    expect(state.projectOrder).toEqual(["project", "other"]);
+    expect(state.workspaceOrderByProject.project).toEqual(["srv:moved", "srv:first", "srv:last"]);
+    expect(state.pinnedWorkspaceOrder).toEqual(["srv:moved", "srv:other"]);
+    expect(state.workspacePromotedAt["srv:moved"]).toBeGreaterThanOrEqual(before);
+    expect(useSidebarOrderStore.persist.getOptions().partialize?.(state)).toHaveProperty(
+      "workspacePromotedAt",
+      state.workspacePromotedAt,
+    );
+  });
+});

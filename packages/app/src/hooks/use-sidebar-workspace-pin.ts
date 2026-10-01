@@ -1,3 +1,4 @@
+import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
@@ -35,6 +36,9 @@ export function useSidebarWorkspacePinController(): ToggleSidebarWorkspacePin {
         throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       }
       await client.setWorkspacePinned(workspace.workspaceId, pinned);
+    },
+    onSuccess: (_data, { workspace }) => {
+      useSidebarOrderStore.getState().promoteWorkspace(workspace.workspaceKey);
     },
     onError: (error) => {
       toast.error(
