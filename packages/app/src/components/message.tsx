@@ -1,3 +1,4 @@
+import { CodeBlockActionsProvider, PluginCodeBlockActions } from "@/plugins/code-block-actions";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -68,7 +69,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { splitMarkdownBlocks, indexMarkdownFences } from "@/utils/split-markdown-blocks";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
@@ -748,6 +749,10 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  agentId?: string;
+  messageId?: string;
+  fenceOffset?: number;
+  codeActionsPhase?: MarkdownPhase;
   renderFullContent?: boolean;
   occurrenceKey: string;
   message: string;
@@ -1493,6 +1498,10 @@ function MarkdownListView({
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  agentId,
+  messageId,
+  fenceOffset: sourceFenceOffset = 0,
+  codeActionsPhase,
   renderFullContent = false,
   occurrenceKey,
   message,
@@ -1763,14 +1772,20 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <MarkdownFenceBlock
-          key={node.key}
-          code={node.content}
-          info={node.sourceInfo}
-          phase={phase}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.fence}
-        />
+        <View key={node.key}>
+          <MarkdownFenceBlock
+            code={node.content}
+            info={node.sourceInfo}
+            phase={phase}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.fence}
+          />
+          <PluginCodeBlockActions
+            code={node.content}
+            info={node.sourceInfo}
+            localIndex={Number(node.attributes?.["data-fence-index"])}
+          />
+        </View>
       ),
       code_inline: (
         node: ASTNode,
@@ -1959,8 +1974,17 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
+  const actionsPhase: MarkdownPhase =
+    (codeActionsPhase ?? phase) === "complete" && revealedMessage === message
+      ? "complete"
+      : "streaming";
   const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
+    () =>
+      indexMarkdownFences(blocks).map(({ block, fenceOffset }, index) => ({
+        key: `block:${index}`,
+        block,
+        fenceOffset,
+      })),
     [blocks],
   );
 
@@ -1988,22 +2012,30 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
+      {keyedBlocks.map(({ key, block, fenceOffset }, index) => (
         <AssistantMessageBlockContainer
           key={key}
           block={block}
           marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
         >
-          <MemoizedMarkdownBlock
-            text={block}
-            rules={markdownRules}
-            parser={
-              phase === "streaming" && index === keyedBlocks.length - 1
-                ? streamingMarkdownParser
-                : markdownParser
-            }
-            onLinkPress={handleMarkdownLinkPress}
-          />
+          <CodeBlockActionsProvider
+            serverId={serverId}
+            agentId={agentId}
+            messageId={messageId}
+            fenceOffset={sourceFenceOffset + fenceOffset}
+            phase={actionsPhase}
+          >
+            <MemoizedMarkdownBlock
+              text={block}
+              rules={markdownRules}
+              parser={
+                phase === "streaming" && index === keyedBlocks.length - 1
+                  ? streamingMarkdownParser
+                  : markdownParser
+              }
+              onLinkPress={handleMarkdownLinkPress}
+            />
+          </CodeBlockActionsProvider>
         </AssistantMessageBlockContainer>
       ))}
       {fullMessageByteLength !== null ? (

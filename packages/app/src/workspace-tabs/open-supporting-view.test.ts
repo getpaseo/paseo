@@ -1,3 +1,4 @@
+import { openPreferredWorkspaceTarget, resolveDiscoveredTerminalPlacement } from "./open-beside";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
@@ -328,4 +329,85 @@ describe("automatic PR placement", () => {
       )!.tabIds,
     ).toEqual(["files", "pull_request"]);
   });
+});
+
+describe("terminal open preference", () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+  ])("side=%s compact=%s reveals one terminal and preserves its location", (side, compact) => {
+    useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "agent", agentId: "parent" },
+      intent: "reveal",
+    });
+    const input = {
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "terminal" as const, terminalId: "term" },
+      source: "terminals" as const,
+      preferences: { ...DEFAULT_APP_SETTINGS.openInSidePane, terminals: side },
+      isCompact: compact,
+    };
+    const tabId = openPreferredWorkspaceTarget(input);
+    const before = useWorkspaceLayoutStore.getState();
+    const sidePaneId = before.sidePaneIdByWorkspace[WORKSPACE_KEY];
+    const layout = before.layoutByWorkspace[WORKSPACE_KEY];
+    const destination = side && !compact ? sidePaneId : "main";
+    expect(findPaneById(layout.root, destination!)?.tabIds).toContain(tabId);
+    openPreferredWorkspaceTarget({
+      ...input,
+      preferences: { ...input.preferences, terminals: !side },
+    });
+    const after = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+    expect(collectAllTabs(after.root).filter((tab) => tab.target.kind === "terminal")).toHaveLength(
+      1,
+    );
+    expect(findPaneById(after.root, destination!)?.tabIds).toContain(tabId);
+  });
+});
+
+it("places remotely discovered terminals on the side before reveal without stealing focus", () => {
+  const store = useWorkspaceLayoutStore.getState();
+  store.openTab({
+    workspaceKey: WORKSPACE_KEY,
+    target: { kind: "agent", agentId: "parent" },
+    intent: "reveal",
+  });
+  const preferences = { ...DEFAULT_APP_SETTINGS.openInSidePane, terminals: true };
+  const input = {
+    workspaceKey: WORKSPACE_KEY,
+    terminalIds: ["remote"],
+    isCompact: false,
+    preferences,
+    hasPendingCreate: false,
+  };
+  expect(resolveDiscoveredTerminalPlacement({ ...input, hasPendingCreate: true })).toBeUndefined();
+  const terminalPlacement = resolveDiscoveredTerminalPlacement(input);
+  store.reconcileTabs(WORKSPACE_KEY, {
+    agentsHydrated: true,
+    terminalsHydrated: true,
+    activeAgentIds: ["parent"],
+    autoOpenAgentIds: ["parent"],
+    standaloneTerminalIds: ["remote"],
+    terminalPlacement,
+  });
+  const state = useWorkspaceLayoutStore.getState();
+  const layout = state.layoutByWorkspace[WORKSPACE_KEY];
+  expect(layout.focusedPaneId).toBe("main");
+  const sideId = state.sidePaneIdByWorkspace[WORKSPACE_KEY]!;
+  expect(findPaneById(layout.root, sideId)?.tabIds).toContain("terminal_remote");
+  expect(resolveDiscoveredTerminalPlacement(input)).toBeUndefined();
+  openPreferredWorkspaceTarget({
+    workspaceKey: WORKSPACE_KEY,
+    target: { kind: "terminal", terminalId: "remote" },
+    source: "terminals",
+    preferences,
+    isCompact: false,
+  });
+  const revealed = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+  expect(revealed.focusedPaneId).toBe(sideId);
+  expect(
+    collectAllTabs(revealed.root).filter((tab) => tab.target.kind === "terminal"),
+  ).toHaveLength(1);
 });

@@ -2038,7 +2038,16 @@ export const fr: TranslationResources = {
       diagnostics: "Diagnostic",
       about: "À propos",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "Ouvrir un terminal" },
+        },
+      },
+    },
     editor: {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",

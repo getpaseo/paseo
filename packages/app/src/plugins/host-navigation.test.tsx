@@ -7,6 +7,16 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { usePluginHostNavigation } from "./host-navigation";
 
+vi.mock("@/hooks/use-settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/use-settings")>()),
+  useSettings: (select: (value: unknown) => unknown) =>
+    select({ openInSidePane: { terminals: false } }),
+}));
+vi.mock("@/constants/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/constants/layout")>()),
+  useIsCompactFormFactor: () => false,
+  supportsDesktopPaneSplits: () => true,
+}));
 vi.mock("@/utils/navigate-to-agent", () => ({
   navigateToAgent: vi.fn(),
 }));

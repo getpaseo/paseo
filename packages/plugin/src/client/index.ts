@@ -1,5 +1,7 @@
 export type {
   PluginHostProps,
+  PluginCodeBlockActionsProps,
+  PluginCodeBlockActionsContribution,
   PluginSurfaceProps,
   PluginScreenProps,
   PluginPopoverProps,

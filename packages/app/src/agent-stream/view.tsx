@@ -713,6 +713,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
     );
 
+    const streamingMessageIds = useMemo(
+      () =>
+        new Set(
+          (effectiveStreamHead ?? EMPTY_STREAM_HEAD)
+            .filter((item) => item.kind === "assistant_message")
+            .map(getStreamItemMessageId),
+        ),
+      [effectiveStreamHead],
+    );
+
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
         return (
@@ -726,6 +736,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             <ChatFindExpansion messageId={getStreamItemMessageId(item)}>
               {(renderFullContent) => (
                 <AssistantMessage
+                  agentId={agentId}
+                  messageId={getStreamItemMessageId(item)}
+                  fenceOffset={item.fenceOffset ?? 0}
+                  codeActionsPhase={
+                    streamingMessageIds.has(getStreamItemMessageId(item))
+                      ? "streaming"
+                      : layoutItem.phase
+                  }
                   renderFullContent={renderFullContent}
                   occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
                   message={item.text}
@@ -741,7 +759,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        handleInlinePathPress,
+        resolvedServerId,
+        toast,
+        workspaceRoot,
+        streamingMessageIds,
+      ],
     );
 
     const renderThoughtItem = useCallback(

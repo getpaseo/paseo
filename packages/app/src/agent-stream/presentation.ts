@@ -1,7 +1,7 @@
 import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
 import type { TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { splitMarkdownBlocks, indexMarkdownFences } from "@/utils/split-markdown-blocks";
 import {
   prepareToolCallHistory,
   projectToolCallDetailLevel,
@@ -46,6 +46,10 @@ function isReusableBlock(block: AssistantMessageItem, source: AssistantMessageIt
     block.timelineCursor?.epoch === source.timelineCursor?.epoch &&
     block.timelineCursor?.seq === source.timelineCursor?.seq
   );
+}
+
+function nextFenceIndex(block: AssistantMessageItem | undefined): number {
+  return (block?.fenceOffset ?? 0) + (block?.fenceCount ?? 0);
 }
 
 /** Source messages reach plugins before any Markdown splitting or Overview grouping. */
@@ -108,7 +112,10 @@ export function createStreamPresentation() {
     const textBlocks = parsed.length > 0 || prefix.length > 0 ? parsed : [""];
 
     const blocks = [...prefix];
-    for (const [offset, text] of textBlocks.entries()) {
+    const prefixFences = nextFenceIndex(prefix.at(-1));
+    for (const [offset, { block: text, fenceOffset, fenceCount }] of indexMarkdownFences(
+      textBlocks,
+    ).entries()) {
       const index = prefix.length + offset;
       let blockText = text;
       if (offset === textBlocks.length - 1) {
@@ -128,6 +135,8 @@ export function createStreamPresentation() {
         id,
         blockGroupId: item.id,
         blockIndex: index,
+        fenceOffset: prefixFences + fenceOffset,
+        fenceCount,
         text: blockText,
       });
     }

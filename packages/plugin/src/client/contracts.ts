@@ -39,6 +39,12 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
+    /** Reveal an existing terminal using the client's terminal open-location preference. */
+    readonly openTerminal?: (input: {
+      readonly workspaceId: string;
+      readonly terminalId: string;
+      readonly serverId?: string;
+    }) => void;
     readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
@@ -131,6 +137,7 @@ interface PluginClientContextAliases {
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities, PluginClientContextAliases {
+  addCodeBlockActions(contribution: PluginCodeBlockActionsContribution): PluginCleanup;
   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addScreen(contribution: PluginScreenContribution): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution): PluginCleanup;
@@ -304,3 +311,21 @@ export type SettingsState<Schema extends ZodType> = (
   reset(): Promise<boolean>;
   reload(): Promise<void>;
 };
+
+/** Actions below an assistant fenced block; code remains owned by the Markdown renderer. */
+export interface PluginCodeBlockActionsProps extends PluginNavigableHostProps {
+  agentId: string;
+  messageId: string;
+  /** Zero-based index among all fences in this message, including unsupported languages. */
+  blockIndex: number;
+  code: string;
+  language: string;
+  /** Streaming includes text still being revealed. Never execute a streaming block. */
+  phase: "streaming" | "complete";
+}
+
+export interface PluginCodeBlockActionsContribution {
+  id: string;
+  languages: readonly string[];
+  Component: ComponentType<PluginCodeBlockActionsProps>;
+}

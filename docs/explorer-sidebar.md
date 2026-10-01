@@ -81,8 +81,9 @@ new target and never yanks an existing tab out of a user-selected pane.
 ## Routing preferences
 
 Desktop **Settings → Layout → Open location** has independent Main panel or On the side choices for
-Explorer Files, diffs, chat files, files opened from diffs, and subagents. They default to Main
-panel. Mobile ignores them.
+Explorer Files, diffs, chat files, files opened from diffs, subagents, and terminals. They default to Main
+panel. Mobile ignores them. Terminal creation, script terminal opens, and plugin terminal navigation
+share this preference. Explicit pane placement wins; revealing an existing terminal keeps its pane.
 
 Pull requests have a three-way open location: Main panel, On the side, or Explorer sidebar. Explorer
 sidebar is the default. Compact layouts always open pull requests in Explorer regardless of this

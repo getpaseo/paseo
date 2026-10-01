@@ -1963,7 +1963,13 @@ export const zhCN: TranslationResources = {
       diagnostics: "诊断",
       about: "关于",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: { ...en.settings.layout.openInSidePane.sources, terminals: { label: "打开终端" } },
+      },
+    },
     editor: {
       title: "编辑器",
       vimKeybindings: "Vim 键位",

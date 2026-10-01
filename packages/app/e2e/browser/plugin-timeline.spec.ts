@@ -1,5 +1,8 @@
+import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
 import {
+  CODE_ACTIONS_SOURCE,
+  CODE_ACTIONS_TEXT,
   withTimelinePlugin,
   requestPluginTimeline,
   interactWithStreamingCard,
@@ -33,3 +36,44 @@ test("Overview preserves both consecutive tool plugin cards", async ({ page }, i
     await expectBothConsecutiveTools(page);
   });
 });
+
+for (const width of [1100, 390]) {
+  test(`inline code actions retain fence identity through streaming and history at width ${width}`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await withTimelinePlugin(
+      page,
+      info,
+      "assistant",
+      async (agent) => {
+        await requestPluginTimeline(agent);
+        const first = page.getByRole("button", { name: "Run fence 1 clicks 0", exact: true });
+        await expect(first).toBeVisible();
+        await expect(first).toBeDisabled();
+        await agent.client.waitForFinish(agent.agentId, 30_000);
+        await expect(first).toBeEnabled();
+        await expect(
+          page.getByRole("button", { name: "Run fence 2 clicks 0", exact: true }),
+        ).toBeVisible();
+        await expect(page.getByRole("button", { name: "Run fence 0", exact: false })).toHaveCount(
+          0,
+        );
+        await first.click();
+        await expect(page.getByText("Executed echo first-fence", { exact: true })).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: "Run fence 1 clicks 1", exact: true }),
+        ).toBeVisible();
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(
+          page.getByRole("button", { name: "Run fence 1 clicks 0", exact: true }),
+        ).toBeEnabled();
+        await expect(
+          page.getByRole("button", { name: "Run fence 2 clicks 0", exact: true }),
+        ).toBeEnabled();
+        await expect(page.getByText("Executed echo first-fence", { exact: true })).toHaveCount(0);
+      },
+      { clientSource: CODE_ACTIONS_SOURCE, assistantText: CODE_ACTIONS_TEXT },
+    );
+  });
+}

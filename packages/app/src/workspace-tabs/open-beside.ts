@@ -100,6 +100,22 @@ export function openWorkspaceTargetAtLocation(
 ): string | null {
   if (!input.workspaceKey) return null;
   const store = useWorkspaceLayoutStore.getState();
+  const placement = resolveWorkspaceTargetPlacement(input);
+  return store.openTab({
+    workspaceKey: input.workspaceKey,
+    target: input.target,
+    intent: "reveal",
+    placement,
+    parentTabId: input.parentTabId ?? undefined,
+  });
+}
+
+/** Shared placement policy for direct tab opens and route navigation. */
+export function resolveWorkspaceTargetPlacement(
+  input: OpenWorkspaceTargetAtLocationInput,
+): WorkspaceTabPlacement | undefined {
+  if (!input.workspaceKey) return undefined;
+  const store = useWorkspaceLayoutStore.getState();
   const layout = store.layoutByWorkspace[input.workspaceKey];
   const targetAlreadyExists = Boolean(
     layout &&
@@ -115,13 +131,7 @@ export function openWorkspaceTargetAtLocation(
     const parentPane = findPaneContainingTab(layout.root, input.parentTabId);
     placement = parentPane ? { mode: "prefer", paneId: parentPane.id } : undefined;
   }
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement,
-    parentTabId: input.parentTabId ?? undefined,
-  });
+  return placement;
 }
 
 /** Opens a tree selection while reusing an unmodified preview in its destination pane. */
@@ -185,4 +195,27 @@ export function openWorkspaceTargetBeside(input: OpenWorkspaceTargetInput): stri
     placement: paneId ? { mode: "pane", paneId } : undefined,
     parentTabId: input.parentTabId ?? undefined,
   });
+}
+
+/** Discovery may precede a plugin's reveal RPC. Place only unseen terminals, without taking focus. */
+export function resolveDiscoveredTerminalPlacement(input: {
+  workspaceKey: string;
+  terminalIds: readonly string[];
+  isCompact: boolean;
+  preferences: OpenInSidePanePreferences;
+  hasPendingCreate: boolean;
+}): WorkspaceTabPlacement | undefined {
+  if (input.isCompact || !input.preferences.terminals || input.hasPendingCreate) return undefined;
+  const store = useWorkspaceLayoutStore.getState();
+  const layout = store.layoutByWorkspace[input.workspaceKey];
+  const existing = new Set(
+    layout
+      ? collectAllTabs(layout.root).flatMap((tab) =>
+          tab.target.kind === "terminal" ? [tab.target.terminalId] : [],
+        )
+      : [],
+  );
+  if (!input.terminalIds.some((id) => !existing.has(id))) return undefined;
+  const paneId = store.ensureSidePane(input.workspaceKey, { focus: false });
+  return paneId ? { mode: "prefer", paneId } : undefined;
 }

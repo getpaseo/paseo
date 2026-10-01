@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitMarkdownBlocks } from "../split-markdown-blocks";
+import { splitMarkdownBlocks, indexMarkdownFences } from "../split-markdown-blocks";
 
 describe("splitMarkdownBlocks", () => {
   it("returns a single block for a single paragraph", () => {
@@ -124,4 +124,12 @@ describe("splitMarkdownBlocks", () => {
       "Second paragraph",
     ]);
   });
+});
+
+it("assigns global fence offsets across render fragments, including nested and non-runnable blocks", () => {
+  const source =
+    "Intro\n\n```json\n{}\n```\n\n> ```bash\n> echo hello\n> ```\n\n```bash\necho hello\n```";
+  const indexed = indexMarkdownFences(splitMarkdownBlocks(source));
+  expect(indexed.map(({ fenceOffset }) => fenceOffset)).toEqual([0, 0, 1, 2]);
+  expect(indexMarkdownFences(splitMarkdownBlocks(source))).toEqual(indexed);
 });

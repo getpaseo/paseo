@@ -1985,7 +1985,16 @@ export const ar: TranslationResources = {
       diagnostics: "التشخيص",
       about: "عن",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "فتح طرفية" },
+        },
+      },
+    },
     editor: {
       title: "المحرر",
       vimKeybindings: "اختصارات Vim",

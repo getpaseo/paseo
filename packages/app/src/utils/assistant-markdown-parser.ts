@@ -15,5 +15,12 @@ export function createAssistantMarkdownParser({ streaming = false } = {}): Markd
     enableStreamingMarkdown(parser);
   }
 
+  // Tokens carry their local fence ordinal into the AST; React keys are regenerated per parse.
+  parser.core.ruler.push("fence_identity", (state) => {
+    let index = 0;
+    for (const token of state.tokens) {
+      if (token.type === "fence") token.attrSet("data-fence-index", String(index++));
+    }
+  });
   return parser;
 }

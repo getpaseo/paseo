@@ -635,6 +635,15 @@ on several hosts are not coalesced. The selected snapshot submits as a text atta
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
 
+## Assistant code-block actions
+
+Use [code-block actions](../public-docs/plugins/reference.md#assistant-code-block-actions) for controls
+attached to assistant fences. The timeline presentation supplies fence offsets across display rows and the assistant renderer
+passes those offsets through its Markdown fragments;
+AST keys are regenerated while streaming and must not become execution keys. A contribution mounts
+under its own installation and can disappear during virtualization, so mounting cannot own command
+execution or terminal navigation. Ordinary Markdown surfaces do not supply this context.
+
 ## Contribute settings
 
 Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.

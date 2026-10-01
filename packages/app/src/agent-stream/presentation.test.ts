@@ -549,7 +549,14 @@ describe("timeline presentation", () => {
     expect(projectTimelineItems(items)).toEqual(
       items.map((item) =>
         item.kind === "assistant_message"
-          ? { ...item, id: `${item.id}:block:0`, blockGroupId: item.id, blockIndex: 0 }
+          ? {
+              ...item,
+              id: `${item.id}:block:0`,
+              blockGroupId: item.id,
+              blockIndex: 0,
+              fenceOffset: 0,
+              fenceCount: 0,
+            }
           : item,
       ),
     );
@@ -579,4 +586,33 @@ describe("timeline presentation", () => {
     ]);
     expect(projectTimelineItems([source], () => [])).toEqual([]);
   });
+});
+
+it("keeps fence ordinals across display rows, appends, and history hydration", () => {
+  const source =
+    "Intro\n\n```json\n{}\n```\n\n> ```bash\n> echo one\n> ```\n\n```bash\necho two\n```";
+  const harness = streamHarness();
+  harness.send(assistant(source.slice(0, source.indexOf("echo two"))));
+  const live = harness.send(assistant("echo two\n```"));
+  const offsets = rows(live)
+    .filter((item) => item.kind === "assistant_message")
+    .map((item) => [item.blockGroupId, item.fenceOffset, item.fenceCount]);
+  expect(offsets).toEqual([
+    ["message-1", 0, 0],
+    ["message-1", 0, 1],
+    ["message-1", 1, 1],
+    ["message-1", 2, 1],
+  ]);
+  const history = hydrateStreamState([{ event: assistant(source), timestamp: new Date(1000) }]);
+  const completed = createStreamPresentation()({
+    ...presentationOptions,
+    tail: history,
+    head: [],
+    transform: undefined,
+  });
+  expect(
+    rows(completed)
+      .filter((item) => item.kind === "assistant_message")
+      .map((item) => [item.blockGroupId, item.fenceOffset, item.fenceCount]),
+  ).toEqual(offsets);
 });

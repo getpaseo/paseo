@@ -1,3 +1,4 @@
+import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-store";
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
@@ -54,6 +55,7 @@ export function buildWorkspaceTabSnapshot(input: {
   knownTerminalIds: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
   hasActivePendingTerminalCreate: boolean;
+  terminalPlacement?: WorkspaceTabPlacement;
   hasActivePendingDraftCreate: boolean;
 }): WorkspaceTabSnapshot {
   return {
@@ -64,6 +66,7 @@ export function buildWorkspaceTabSnapshot(input: {
     knownTerminalIds: input.knownTerminalIds,
     standaloneTerminalIds: input.standaloneTerminalIds,
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
+    ...(input.terminalPlacement ? { terminalPlacement: input.terminalPlacement } : {}),
     hasActivePendingDraftCreate: input.hasActivePendingDraftCreate,
   };
 }

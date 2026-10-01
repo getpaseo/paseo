@@ -38,6 +38,8 @@ vi.mock("../icons", () => ({
 
 import { pluginRegistry } from "../registry";
 import { PluginTimelineItemView } from "./view";
+import { CodeBlockActionsProvider, PluginCodeBlockActions } from "../code-block-actions";
+vi.mock("../host-navigation", () => ({ usePluginHostNavigation: () => ({}) }));
 
 const bundle = `(function(require) {
   const React = require("react");
@@ -348,4 +350,61 @@ it("a renderer releases its observation on the plugin's client when it crashes, 
     await survivor.release();
     await client.close();
   }
+});
+
+it("isolates code actions by host and preserves code after a plugin crash or unload", async () => {
+  const codeBundle = `(function(require) {
+    const React = require("react");
+    return { default: function(plugin) {
+      plugin.addCodeBlockActions({ id: "run", languages: ["bash"], Component: function(props) {
+        if (props.code === "broken") throw new Error("action failed");
+        return React.createElement("span", null, props.agentId + "/" + props.messageId + "/" + props.blockIndex + "/" + props.phase);
+      } });
+      return function() {};
+    } };
+  })`;
+  pluginRegistry.installCatalog(
+    "host-1",
+    [
+      {
+        id: "actions",
+        requirements: { paseo: `>=${appPackage.version}` },
+        clientBundle: codeBundle,
+      },
+    ],
+    { client: daemonClient },
+  );
+  const container = document.createElement("div");
+  containers.push(container);
+  const root = createRoot(container);
+  roots.push(root);
+  async function render(serverId: string, code: string, phase: "streaming" | "complete") {
+    await act(async () =>
+      root.render(
+        <CodeBlockActionsProvider
+          serverId={serverId}
+          agentId="agent"
+          messageId="historical-message"
+          fenceOffset={3}
+          phase={phase}
+        >
+          <pre>{code}</pre>
+          <PluginCodeBlockActions code={code} info="bash" localIndex={1} />
+        </CodeBlockActionsProvider>,
+      ),
+    );
+  }
+  await render("host-1", "echo historical", "streaming");
+  expect(container.textContent).toBe("echo historicalagent/historical-message/4/streaming");
+  await render("host-1", "echo historical", "complete");
+  expect(container.textContent).toBe("echo historicalagent/historical-message/4/complete");
+  await render("other-host", "echo historical", "complete");
+  expect(container.textContent).toBe("echo historical");
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  await render("host-1", "broken", "complete");
+  expect(container.querySelector("pre")?.textContent).toBe("broken");
+  expect(container.textContent).toContain("Plugin failed: action failed");
+  await act(async () => pluginRegistry.removeHost("host-1"));
+  expect(container.textContent).toBe("broken");
 });

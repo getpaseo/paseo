@@ -10,6 +10,7 @@ describe("plugin host navigation", () => {
       browserAvailable: electron,
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
+      openTerminal: (input) => destinations.push(input),
       openAgent: (input) => destinations.push(input),
       openWorkspace: (input) => destinations.push(input),
       createBrowser: ({ initialUrl }) => {
@@ -87,4 +88,31 @@ describe("plugin host navigation", () => {
     );
     expect(browsers).toEqual([]);
   });
+});
+
+it("reveals existing terminals on the selected or explicit host without creating a process", () => {
+  const opens: unknown[] = [];
+  const navigation = createPluginHostNavigation("local", {
+    browserAvailable: false,
+    openAgent() {},
+    openWorkspace() {},
+    createBrowser: () => {
+      throw new Error("must not create a browser");
+    },
+    resolveWorkspace: ({ serverId, workspaceId }) => (serverId === "missing" ? null : workspaceId),
+    openTerminal: (input) => opens.push(input),
+  });
+  navigation.openTerminal!({ workspaceId: "ws", terminalId: "term" });
+  navigation.openTerminal!({ serverId: "remote", workspaceId: "ws2", terminalId: "term2" });
+  expect(opens).toEqual([
+    { serverId: "local", workspaceId: "ws", terminalId: "term" },
+    { serverId: "remote", workspaceId: "ws2", terminalId: "term2" },
+  ]);
+  expect(() =>
+    navigation.openTerminal!({ serverId: "missing", workspaceId: "ws", terminalId: "term" }),
+  ).toThrow("Workspace is unavailable");
+  expect(() => navigation.openTerminal!({ workspaceId: "ws", terminalId: " " })).toThrow(
+    "terminalId",
+  );
+  expect(opens).toHaveLength(2);
 });

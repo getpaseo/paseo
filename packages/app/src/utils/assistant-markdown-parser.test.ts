@@ -167,3 +167,18 @@ describe("createAssistantMarkdownParser", () => {
     expect(parser.render("[x](javascript:alert(1))")).not.toContain("href");
   });
 });
+
+it("numbers all fences consistently through streaming and completed parses", () => {
+  const source = "```json\n{}\n```\n\n> ```bash\n> echo hello\n> ```\n\n~~~python\nprint(1)\n~~~";
+  for (const streaming of [false, true]) {
+    const parser = createAssistantMarkdownParser({ streaming });
+    for (let render = 0; render < 2; render++) {
+      expect(
+        parser
+          .parse(source, {})
+          .filter((token) => token.type === "fence")
+          .map((token) => token.attrGet("data-fence-index")),
+      ).toEqual(["0", "1", "2"]);
+    }
+  }
+});
