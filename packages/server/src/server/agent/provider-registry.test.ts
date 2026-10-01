@@ -1088,6 +1088,37 @@ describe("model merging", () => {
     expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
   });
 
+  test("profile model context window pins flow into the catalog", async () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          models: [
+            {
+              id: "gateway-model",
+              label: "Gateway Model",
+              contextWindowMaxTokens: 1_000_000,
+            },
+          ],
+        },
+      },
+    });
+
+    const { models } = await registry.codex.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "codex",
+        id: "gateway-model",
+        label: "Gateway Model",
+        contextWindowMaxTokens: 1_000_000,
+      },
+    ]);
+  });
+
   test("profile models exclude runtime models entirely", async () => {
     mockState.runtimeModels.set("codex", [
       {

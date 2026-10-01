@@ -410,6 +410,7 @@ interface ClaudeAgentClientOptions {
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
+  modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -423,6 +424,7 @@ interface ClaudeAgentSessionOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
+  modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1506,6 +1508,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly rewindSdk: ClaudeRewindSdk;
+  private readonly modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1517,6 +1520,7 @@ export class ClaudeAgentClient implements AgentClient {
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
+    this.modelContextWindowMaxTokens = options.modelContextWindowMaxTokens;
   }
 
   resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
@@ -1539,6 +1543,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
+      modelContextWindowMaxTokens: this.modelContextWindowMaxTokens,
     });
   }
 
@@ -1568,6 +1573,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
+      modelContextWindowMaxTokens: this.modelContextWindowMaxTokens,
     });
   }
 
@@ -1902,15 +1908,25 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
   return typeof parentToolUseId === "string" && parentToolUseId.length > 0 ? parentToolUseId : null;
 }
 
+function resolveModelContextWindow(
+  modelId: string | null | undefined,
+  pins?: ReadonlyMap<string, number>,
+): { pinned?: number; inferred?: number } {
+  const pinned = modelId ? pins?.get(modelId) : undefined;
+  return { pinned, inferred: findClaudeModel(modelId)?.contextWindowMaxTokens };
+}
+
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
+  private pinnedContextWindowMaxTokens: number | undefined;
   private streamRequestInputTokens: number | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
 
-  constructor(initialContextWindowMaxTokens?: number) {
-    this.contextWindowMaxTokens = initialContextWindowMaxTokens;
+  constructor(initial?: { pinned?: number; inferred?: number }) {
+    this.pinnedContextWindowMaxTokens = initial?.pinned;
+    this.contextWindowMaxTokens = initial?.pinned ?? initial?.inferred;
   }
 
   beginTurn(): void {
@@ -1919,13 +1935,16 @@ class ClaudeContextUsageState {
     this.compactedContextWindowUsedTokens = undefined;
   }
 
-  setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
-    this.contextWindowMaxTokens = contextWindowMaxTokens;
+  setModelContextWindowMaxTokens(resolved: { pinned?: number; inferred?: number }): void {
+    this.pinnedContextWindowMaxTokens = resolved.pinned;
+    this.contextWindowMaxTokens = resolved.pinned ?? resolved.inferred;
   }
 
   recordModelUsage(modelUsage: unknown): number | undefined {
     const contextWindowMaxTokens = extractContextWindowSize(modelUsage);
-    if (contextWindowMaxTokens !== undefined) {
+    // A host-config pin beats the runtime report: Claude Code assumes a default window for
+    // model IDs it does not know, so for gateway models the pin is the only correct source.
+    if (contextWindowMaxTokens !== undefined && this.pinnedContextWindowMaxTokens === undefined) {
       this.contextWindowMaxTokens = contextWindowMaxTokens;
     }
     return this.contextWindowMaxTokens;
@@ -2113,6 +2132,7 @@ class ClaudeAgentSession implements AgentSession {
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private readonly contextUsage: ClaudeContextUsageState;
+  private readonly modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
@@ -2133,8 +2153,9 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
+    this.modelContextWindowMaxTokens = options.modelContextWindowMaxTokens;
     this.contextUsage = new ClaudeContextUsageState(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      resolveModelContextWindow(this.config.model, this.modelContextWindowMaxTokens),
     );
     const handle = options.handle;
 
@@ -2446,8 +2467,8 @@ class ClaudeAgentSession implements AgentSession {
     if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
       await this.applyFastModeFeature(false, activeQuery);
     }
-    this.contextUsage.setInitialContextWindowMaxTokens(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+    this.contextUsage.setModelContextWindowMaxTokens(
+      resolveModelContextWindow(this.config.model, this.modelContextWindowMaxTokens),
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
