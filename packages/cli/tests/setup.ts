@@ -95,13 +95,13 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
 
 /**
  * Wait for daemon to be ready by testing WebSocket connection
- * Uses `paseo agent ls` which connects via WebSocket
+ * Uses `pandaos agent ls` which connects via WebSocket
  */
 async function probeDaemon(port: number, paseoHome: string): Promise<boolean> {
   try {
     const result = await $({
       env: testEnvironment(paseoHome),
-    })`paseo agent ls --host localhost:${port}`.nothrow();
+    })`pandaos agent ls --host localhost:${port}`.nothrow();
     return result.exitCode === 0;
   } catch {
     return false;
@@ -137,7 +137,7 @@ export async function startDaemon(port: number, paseoHome: string): Promise<Proc
       PASEO_RELAY_ENABLED: "false",
       CI: "true",
     },
-  })`paseo daemon run`.nothrow();
+  })`pandaos daemon run`.nothrow();
   return daemon;
 }
 
@@ -151,7 +151,7 @@ export async function createTestContext(): Promise<TestContext> {
   // Helper to run CLI commands against test daemon
   const paseo = (args: string[]): ProcessPromise => {
     $.verbose = false;
-    return $({ env: testEnvironment(paseoHome) })`paseo --home ${paseoHome} ${args}`.nothrow();
+    return $({ env: testEnvironment(paseoHome) })`pandaos --home ${paseoHome} ${args}`.nothrow();
   };
 
   // Cleanup function

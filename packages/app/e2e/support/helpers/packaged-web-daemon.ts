@@ -57,7 +57,7 @@ export async function startPackagedWebDaemon(input: {
   const port = await availablePort();
   const home = await mkdtemp(path.join(tmpdir(), "paseo-relay-deployment-e2e-"));
   const serverId = `relay-deployment-${Date.now().toString(36)}`;
-  const paseo = path.resolve(__dirname, "../../../../../node_modules/.bin/paseo");
+  const paseo = path.resolve(__dirname, "../../../../../node_modules/.bin/pandaos");
   const env: NodeJS.ProcessEnv = {
     ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
     HOME: home,

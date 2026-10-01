@@ -35,7 +35,7 @@ try {
   // Test 1: agent mode --help shows options
   {
     console.log("Test 1: agent mode --help shows options");
-    const result = await $`npx paseo agent mode --help`.nothrow();
+    const result = await $`npx pandaos agent mode --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "agent mode --help should exit 0");
     assert(result.stdout.includes("--list"), "help should mention --list flag");
     assert(result.stdout.includes("--host"), "help should mention --host option");
@@ -48,7 +48,7 @@ try {
   {
     console.log("Test 2: agent mode requires id argument");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} agent mode`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} agent mode`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail without id");
     const output = result.stdout + result.stderr;
     const hasError =
@@ -64,7 +64,7 @@ try {
   {
     console.log("Test 3: agent mode handles daemon not running");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} agent mode abc123 bypass`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} agent mode abc123 bypass`.nothrow();
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, "should fail when daemon not running");
     const output = result.stdout + result.stderr;
@@ -80,7 +80,7 @@ try {
   {
     console.log("Test 4: agent mode --list flag is accepted");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} agent mode --list abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} agent mode --list abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --list flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -91,7 +91,7 @@ try {
   {
     console.log("Test 5: agent mode with ID and --host flag is accepted");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} agent mode abc123 plan --host localhost:${port}`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} agent mode abc123 plan --host localhost:${port}`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --host flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -101,7 +101,7 @@ try {
   // Test 6: agent shows mode in subcommands
   {
     console.log("Test 6: agent --help shows mode subcommand");
-    const result = await $`npx paseo agent --help`.nothrow();
+    const result = await $`npx pandaos agent --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "agent --help should exit 0");
     assert(result.stdout.includes("mode"), "help should mention mode subcommand");
     console.log("✓ agent --help shows mode subcommand\n");
@@ -111,7 +111,7 @@ try {
   {
     console.log("Test 7: -q (quiet) flag is accepted with agent mode");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} -q agent mode abc123 bypass`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} -q agent mode abc123 bypass`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -122,7 +122,7 @@ try {
   {
     console.log("Test 8: agent mode requires mode argument when not using --list");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} agent mode abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} agent mode abc123`.nothrow();
     // Should fail because mode is required unless --list is specified
     assert.notStrictEqual(result.exitCode, 0, "should fail without mode argument");
     const output = result.stdout + result.stderr;

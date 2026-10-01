@@ -161,10 +161,10 @@ export function buildAgentLsFetchOptions(
 
 /**
  * Agent ls command semantics:
- * - `paseo agent ls`    → active non-archived agents
- * - `paseo agent ls -g` → global non-archived agents
- * - `paseo agent ls -a` → active agents, including archived
- * - `paseo agent ls -ag` → global agents, including archived
+ * - `pandaos agent ls`    → active non-archived agents
+ * - `pandaos agent ls -g` → global non-archived agents
+ * - `pandaos agent ls -a` → active agents, including archived
+ * - `pandaos agent ls -ag` → global agents, including archived
  */
 export async function runLsCommand(
   options: AgentLsOptions,

@@ -45,7 +45,7 @@ async function executeSendKeysCommand(
       throw {
         code: "TERMINAL_NOT_FOUND",
         message: `No terminal found matching: ${terminalId}`,
-        details: "Use `paseo terminal ls --all` to list available terminals.",
+        details: "Use `pandaos terminal ls --all` to list available terminals.",
       };
     }
 

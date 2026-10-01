@@ -17,7 +17,7 @@ function read(sources: OriginSources, path: string): string {
 }
 
 /**
- * Who invoked `paseo run`, for the `paseo.origin` label: a systemd unit, a terminal, or the parent
+ * Who invoked `pandaos run`, for the `paseo.origin` label: a systemd unit, a terminal, or the parent
  * script. Undefined inside an agent, where the daemon records the calling agent instead.
  */
 export function detectRunOrigin(sources: OriginSources = defaultSources()): string | undefined {

@@ -11,9 +11,9 @@ import { githubRepositoryFromRemote } from "./init.js";
 describe("Hub init planning", () => {
   it("prints direct resumable commands for declined login continuations", () => {
     expect(hubLoginResumeCommand("connect", "https://hub.test")).toBe(
-      "paseo hub connect https://hub.test",
+      "pandaos hub connect https://hub.test",
     );
-    expect(hubLoginResumeCommand("init", "https://hub.test")).toBe("paseo hub init");
+    expect(hubLoginResumeCommand("init", "https://hub.test")).toBe("pandaos hub init");
   });
   it("reuses a connected daemon, waits for reconnect, and rejects a different Hub", () => {
     const status = {

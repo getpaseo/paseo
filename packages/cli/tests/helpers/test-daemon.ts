@@ -166,7 +166,7 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
 }
 
 /**
- * Wait for daemon to be ready by running `paseo agent ls`
+ * Wait for daemon to be ready by running `pandaos agent ls`
  * This connects via WebSocket and ensures the daemon is responsive
  */
 async function probeDaemonReady(
@@ -396,7 +396,7 @@ export async function runPaseoCli(
       if (proc.pid) {
         signalProcessTree(proc.pid, "SIGKILL");
       }
-      reject(new Error(`CLI command timed out after ${timeout}ms: paseo ${args.join(" ")}`));
+      reject(new Error(`CLI command timed out after ${timeout}ms: pandaos ${args.join(" ")}`));
     }, timeout);
 
     proc.on("exit", (code) => {

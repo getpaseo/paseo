@@ -3,8 +3,7 @@
   "version": "0.9.1",
   "description": "PandaOS CLI - control your AI coding agents from the command line",
   "bin": {
-    "pandaos": "bin/paseo",
-    "paseo": "bin/paseo"
+    "pandaos": "bin/pandaos"
   },
   "files": [
     "bin",

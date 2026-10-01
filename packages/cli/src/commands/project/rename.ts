@@ -31,7 +31,7 @@ export function resolveProjectName(input: { name?: string; reset?: boolean }): s
     throw {
       code: "MISSING_NAME",
       message: "Project name cannot be empty",
-      details: "Usage: paseo project rename <project-id> <name> | --reset",
+      details: "Usage: pandaos project rename <project-id> <name> | --reset",
     } satisfies CommandError;
   }
   return name;

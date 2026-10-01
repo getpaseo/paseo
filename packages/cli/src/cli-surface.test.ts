@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { createCli } from "./cli.js";
 
 describe("canonical CLI surface", () => {
@@ -6,6 +7,11 @@ describe("canonical CLI surface", () => {
     const cli = createCli();
     expect(cli.name()).toBe("pandaos");
     expect(cli.description()).toContain("PandaOS");
+  });
+
+  it("installs pandaos as the only CLI command", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(pkg.bin).toEqual({ pandaos: "bin/pandaos" });
   });
 
   it("offers daemon host selection as a global option", () => {

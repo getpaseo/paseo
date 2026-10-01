@@ -48,7 +48,7 @@ export async function runDaemonReloadCommand(
     return {
       type: "single",
       data: {
-        restartCommand: `paseo daemon restart ${options.daemonTarget.kind === "instance" ? `--home ${JSON.stringify(options.daemonTarget.home)}` : `--host ${JSON.stringify(describeDaemonTarget(options.daemonTarget))}`}`,
+        restartCommand: `pandaos daemon restart ${options.daemonTarget.kind === "instance" ? `--home ${JSON.stringify(options.daemonTarget.home)}` : `--host ${JSON.stringify(describeDaemonTarget(options.daemonTarget))}`}`,
         appliedPaths: payload.appliedPaths,
         restartRequiredPaths: payload.restartRequiredPaths,
         overrideControlledPaths: payload.overrideControlledPaths,

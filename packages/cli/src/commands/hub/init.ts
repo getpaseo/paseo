@@ -172,7 +172,7 @@ export async function runHubGuidedSetup(
     });
     log.success("Deployed");
   } else {
-    reportMessage(environment, "Skipped deployment. Run `paseo hub deploy` when ready.");
+    reportMessage(environment, "Skipped deployment. Run `pandaos hub deploy` when ready.");
   }
 
   const triggersUrl = new URL("/triggers", origin).toString();
@@ -220,7 +220,7 @@ export async function continueHubGuidedSetup(
     if (!grantExecution) {
       reportMessage(
         environment,
-        "Daemon connected with no permissions.\n\nEnable Hub automations later:\n  paseo hub permissions grant hub.execute",
+        "Daemon connected with no permissions.\n\nEnable Hub automations later:\n  pandaos hub permissions grant hub.execute",
       );
     }
   } else {
@@ -292,7 +292,7 @@ async function ensureDaemonConnection(
     if (permissions.includes("hub.execute") && !status.permissions.includes("hub.execute")) {
       throw new HubCommandError(
         "HUB_DAEMON_EXECUTION_NOT_ALLOWED",
-        "This daemon is connected to Hub but cannot run Hub automations. Run `paseo hub permissions grant hub.execute`, then run Hub init again.",
+        "This daemon is connected to Hub but cannot run Hub automations. Run `pandaos hub permissions grant hub.execute`, then run Hub init again.",
       );
     }
     return connection.daemonId;
@@ -364,7 +364,7 @@ async function waitForDaemonReady(
         if (Date.now() >= deadline) {
           throw new HubCommandError(
             "HUB_DAEMON_CONNECTION_TIMEOUT",
-            "The daemon did not connect within 60 seconds. Check `paseo hub status`, then run Hub init again.",
+            "The daemon did not connect within 60 seconds. Check `pandaos hub status`, then run Hub init again.",
           );
         }
         reporter.progress(`Daemon is ${resolution.state}`);
@@ -383,7 +383,7 @@ async function resolveStarterTriggerConnections(
   const connections = availableStarterTriggerConnections(resources, repository);
   if (connections.length === 0) {
     throw new HubInitCancelledError(
-      "No Hub app connection is ready for this trigger.\nConnect GitHub, Slack, or Discord in Hub → Apps, then run `paseo hub init` again.",
+      "No Hub app connection is ready for this trigger.\nConnect GitHub, Slack, or Discord in Hub → Apps, then run `pandaos hub init` again.",
     );
   }
   return connections;
@@ -393,7 +393,7 @@ function reportStarterTriggerConnections(
   environment: HubGuidedSetupEnvironment,
   connections: readonly HubStarterTriggerConnection[],
 ): void {
-  const details = `${connections.map(({ label }) => label).join("\n")}\n\nOnly configured connections are shown. To add another, open Hub → Apps, then run \`paseo hub init\` again.`;
+  const details = `${connections.map(({ label }) => label).join("\n")}\n\nOnly configured connections are shown. To add another, open Hub → Apps, then run \`pandaos hub init\` again.`;
   if (environment.prompts === undefined) {
     note(details, "Hub app connections ready for this trigger");
     return;
@@ -418,7 +418,7 @@ async function chooseStarterTriggerConnection(
   if (connection === undefined) {
     throw new HubCommandError(
       "HUB_PROVIDER_CONNECTION_INVALID",
-      "The selected Hub app connection is no longer available. Run paseo hub init again.",
+      "The selected Hub app connection is no longer available. Run pandaos hub init again.",
     );
   }
   return connection;
@@ -436,7 +436,7 @@ async function chooseStarterAgentRuntime(
   if (runtime?.mode === undefined) {
     throw new HubCommandError(
       "HUB_AGENT_RUNTIME_SELECTION_INVALID",
-      "The selected starter agent runtime is no longer available. Run paseo hub init again.",
+      "The selected starter agent runtime is no longer available. Run pandaos hub init again.",
     );
   }
   return { ...runtime, mode: runtime.mode };
@@ -457,19 +457,19 @@ async function waitForStarterAgentProviders(
           if (providers.length > 0) return providers;
           throw new HubCommandError(
             "HUB_AGENT_RUNTIME_REQUIRED",
-            "No agent runtime with an execution mode is available from this daemon. Configure one, then run paseo hub init again.",
+            "No agent runtime with an execution mode is available from this daemon. Configure one, then run pandaos hub init again.",
           );
         }
         if (state.kind === "unavailable") {
           throw new HubCommandError(
             "HUB_AGENT_RUNTIME_REQUIRED",
-            "No usable agent runtime is available from this daemon. Configure an enabled provider with a selectable model, then run paseo hub init again.",
+            "No usable agent runtime is available from this daemon. Configure an enabled provider with a selectable model, then run pandaos hub init again.",
           );
         }
         if (Date.now() >= deadline) {
           throw new HubCommandError(
             "HUB_AGENT_RUNTIME_TIMEOUT",
-            "Agent runtime discovery did not finish within 60 seconds. Check the daemon's provider configuration, then run paseo hub init again.",
+            "Agent runtime discovery did not finish within 60 seconds. Check the daemon's provider configuration, then run pandaos hub init again.",
           );
         }
         reporter.progress("Waiting for agent runtime discovery");
@@ -535,7 +535,7 @@ async function chooseStarterAgentMode(
 function invalidStarterAgentSelection(): HubCommandError {
   return new HubCommandError(
     "HUB_AGENT_RUNTIME_SELECTION_INVALID",
-    "The selected starter agent runtime is no longer available. Run paseo hub init again.",
+    "The selected starter agent runtime is no longer available. Run pandaos hub init again.",
   );
 }
 
@@ -765,7 +765,7 @@ function requireInteractiveTerminal(
   environment: Omit<HubGuidedSetupEnvironment, "daemonTarget">,
 ): void {
   if (!(environment.isInteractive?.() ?? (process.stdin.isTTY && process.stdout.isTTY))) {
-    throw new HubCommandError("HUB_INIT_INTERACTIVE_REQUIRED", "paseo hub init requires a TTY.");
+    throw new HubCommandError("HUB_INIT_INTERACTIVE_REQUIRED", "pandaos hub init requires a TTY.");
   }
 }
 

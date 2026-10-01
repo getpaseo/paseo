@@ -36,7 +36,7 @@ try {
   // Test 1: inspect --help shows options
   {
     console.log("Test 1: inspect --help shows options");
-    const result = await $`npx paseo inspect --help`.nothrow();
+    const result = await $`npx pandaos inspect --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "inspect --help should exit 0");
     assert(result.stdout.includes("--host"), "help should mention --host option");
     assert(result.stdout.includes("<id>"), "help should mention id argument");
@@ -49,7 +49,7 @@ try {
   {
     console.log("Test 2: inspect requires id argument");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} inspect`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} inspect`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail without id");
     const output = result.stdout + result.stderr;
     // Commander should complain about missing argument
@@ -65,7 +65,7 @@ try {
   {
     console.log("Test 3: inspect handles daemon not running");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} inspect abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} inspect abc123`.nothrow();
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, "should fail when daemon not running");
     const output = result.stdout + result.stderr;
@@ -81,7 +81,7 @@ try {
   {
     console.log("Test 4: inspect --host flag is accepted");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo inspect --host localhost:${port} abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos inspect --host localhost:${port} abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --host flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -92,7 +92,7 @@ try {
   {
     console.log("Test 5: -q (quiet) flag is accepted with inspect");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} -q inspect abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} -q inspect abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -103,7 +103,7 @@ try {
   {
     console.log("Test 6: --json flag is accepted with inspect");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} inspect abc123 --json`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} inspect abc123 --json`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --json flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -114,26 +114,26 @@ try {
   {
     console.log("Test 7: --format yaml flag is accepted with inspect");
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} --format yaml inspect abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx pandaos --host localhost:${port} --format yaml inspect abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --format yaml flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
     console.log("--format yaml flag is accepted with inspect\n");
   }
 
-  // Test 8: paseo --help shows inspect command
+  // Test 8: pandaos --help shows inspect command
   {
-    console.log("Test 8: paseo --help shows inspect command");
-    const result = await $`npx paseo --help`.nothrow();
-    assert.strictEqual(result.exitCode, 0, "paseo --help should exit 0");
+    console.log("Test 8: pandaos --help shows inspect command");
+    const result = await $`npx pandaos --help`.nothrow();
+    assert.strictEqual(result.exitCode, 0, "pandaos --help should exit 0");
     assert(result.stdout.includes("inspect"), "help should mention inspect command");
-    console.log("paseo --help shows inspect command\n");
+    console.log("pandaos --help shows inspect command\n");
   }
 
   // Test 9: inspect command description is helpful
   {
     console.log("Test 9: inspect command description is helpful");
-    const result = await $`npx paseo inspect --help`.nothrow();
+    const result = await $`npx pandaos inspect --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "inspect --help should exit 0");
     const hasDescription =
       result.stdout.toLowerCase().includes("detail") ||
@@ -146,7 +146,7 @@ try {
   // Test 10: ID prefix syntax is mentioned in help
   {
     console.log("Test 10: inspect command mentions ID");
-    const result = await $`npx paseo inspect --help`.nothrow();
+    const result = await $`npx pandaos inspect --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "inspect --help should exit 0");
     const hasIdMention =
       result.stdout.toLowerCase().includes("id") || result.stdout.toLowerCase().includes("prefix");

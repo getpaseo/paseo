@@ -358,7 +358,7 @@ the daemon-global Git process limits in `$PANDAOS_HOME/config.json`:
 }
 ```
 
-Reload the daemon with `paseo reload`. Environment-variable overrides still require a restart because
+Reload the daemon with `pandaos reload`. Environment-variable overrides still require a restart because
 the launch environment remains authoritative. Lower values reduce machine pressure but make Git-backed workspace state and
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
@@ -467,14 +467,14 @@ The daemon can optionally serve the browser web client from the same HTTP server
 Enable it in persistent configuration:
 
 ```bash
-paseo daemon config set features.webUi.enabled true
-paseo daemon start
+pandaos daemon config set features.webUi.enabled true
+pandaos daemon start
 ```
 
 Or set the environment variable:
 
 ```bash
-PASEO_WEB_UI_ENABLED=true paseo daemon run
+PASEO_WEB_UI_ENABLED=true pandaos daemon run
 ```
 
 Or persist it in `config.json`:
@@ -563,9 +563,9 @@ install.
 
 ## CLI reference
 
-Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/index.ts`). The script wraps the CLI with `scripts/dev-home.sh`, so it automatically uses this checkout's `.dev/paseo-home` and dev daemon endpoint unless you pass an explicit override. The globally installed `paseo` binary on macOS is a symlink into the installed Paseo desktop app, not this checkout — use it to drive the desktop's built-in daemon, but use `npm run cli` when you want to talk to the CLI you are editing.
+Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/index.ts`). The script wraps the CLI with `scripts/dev-home.sh`, so it automatically uses this checkout's `.dev/paseo-home` and dev daemon endpoint unless you pass an explicit override. The globally installed `pandaos` binary on macOS is a symlink into the installed PandaOS desktop app, not this checkout — use it to drive the desktop's built-in daemon, but use `npm run cli` when you want to talk to the CLI you are editing.
 
-Canonical automation uses `paseo project create/ls/rename/delete`, `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases. `paseo verify ls/run` drives the verify recipes a workspace declares under `verification.recipes` in its `paseo.json`; the daemon refuses both unless `daemon.browserTools.enabled` is set, because a recipe drives a real browser.
+Canonical automation uses `pandaos project create/ls/rename/delete`, `pandaos workspace create/ls/rename/archive`, `pandaos heartbeat create/update/delete`, and the full `pandaos schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `pandaos run --new-workspace local|worktree` composes workspace creation with agent creation. The old `pandaos worktree` and `pandaos run --worktree` forms are hidden compatibility aliases. `pandaos verify ls/run` drives the verify recipes a workspace declares under `verification.recipes` in its `paseo.json`; the daemon refuses both unless `daemon.browserTools.enabled` is set, because a recipe drives a real browser.
 
 ```bash
 npm run cli -- ls -a -g              # List all agents globally
@@ -591,7 +591,7 @@ In an SSH URI, the URL port is the SSH server port. The remote daemon defaults t
 
 Desktop integrations can focus an existing agent without creating one or
 sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run
-`paseo agent open <agent-id>`. The CLI reads the local daemon's server ID by
+`pandaos agent open <agent-id>`. The CLI reads the local daemon's server ID by
 default; pass `--server <server-id>` when targeting another server.
 
 ## Agent state

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { render } from "../../output/render.js";
 import { daemonReloadSchema, type DaemonReloadResult } from "./reload.js";
 
-const restartCommand = 'paseo daemon restart --home "/selected home"';
+const restartCommand = 'pandaos daemon restart --home "/selected home"';
 
 function result(data: DaemonReloadResult) {
   return { type: "single" as const, data, schema: daemonReloadSchema };

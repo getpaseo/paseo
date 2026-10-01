@@ -44,7 +44,7 @@ function parseImportProvider(provider: string | undefined): string {
     throw {
       code: "MISSING_PROVIDER",
       message: "Provider is required",
-      details: "Usage: paseo import --provider <provider> <id>",
+      details: "Usage: pandaos import --provider <provider> <id>",
     } satisfies CommandError;
   }
 
@@ -104,7 +104,7 @@ export async function runImportCommand(
     throw {
       code: "MISSING_SESSION_ID",
       message: "Session ID is required",
-      details: "Usage: paseo import --provider <provider> <id>",
+      details: "Usage: pandaos import --provider <provider> <id>",
     } satisfies CommandError;
   }
 

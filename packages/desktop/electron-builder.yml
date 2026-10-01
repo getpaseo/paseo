@@ -46,8 +46,8 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/pandaos
+      to: bin/pandaos
     - from: assets/icon.png
       to: icon.png
   target:
@@ -60,8 +60,8 @@ linux:
   maintainer: "PandaOS maintainers"
   vendor: "PandaOS"
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/pandaos
+      to: bin/pandaos
   target:
     - AppImage
     - deb
@@ -77,15 +77,15 @@ appImage:
   # Keep the AppImage filename stable across versions (no ${version}) so
   # electron-updater overwrites the file in place instead of renaming it to a new
   # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and
-  # dangles the ~/.local/bin/paseo CLI symlink, which points at $APPIMAGE. The
+  # dangles the ~/.local/bin/pandaos CLI symlink, which points at $APPIMAGE. The
   # version stays discoverable via the release tag and the in-app version.
   artifactName: "PandaOS-${arch}.${ext}"
 win:
   artifactName: "PandaOS-Setup-${version}-${arch}.${ext}"
   icon: assets/icon.ico
   extraResources:
-    - from: bin/paseo.cmd
-      to: bin/paseo.cmd
+    - from: bin/pandaos.cmd
+      to: bin/pandaos.cmd
   target:
     - target: nsis
       arch:

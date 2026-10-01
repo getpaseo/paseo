@@ -45,31 +45,37 @@ try {
     onboard.stdout.includes("CLI quick reference"),
     "onboard output should include CLI quick reference",
   );
-  assert(onboard.stdout.includes("paseo --help"), "onboard output should include --help shortcut");
-  assert(onboard.stdout.includes("paseo ls"), "onboard output should include ls shortcut");
   assert(
-    onboard.stdout.includes(`paseo run --home ${JSON.stringify(paseoHome)} "your prompt"`),
+    onboard.stdout.includes("pandaos --help"),
+    "onboard output should include --help shortcut",
+  );
+  assert(onboard.stdout.includes("pandaos ls"), "onboard output should include ls shortcut");
+  assert(
+    onboard.stdout.includes(`pandaos run --home ${JSON.stringify(paseoHome)} "your prompt"`),
     "onboard output should include a run shortcut for the selected home",
   );
-  assert(onboard.stdout.includes("paseo status"), "onboard output should include status shortcut");
+  assert(
+    onboard.stdout.includes("pandaos status"),
+    "onboard output should include status shortcut",
+  );
   assert(
     onboard.stdout.includes(join(paseoHome, "daemon.log")),
     "onboard output should include daemon log path",
   );
 
   const status =
-    await $`PASEO_HOME=${paseoHome} npx paseo daemon status --home ${paseoHome}`.nothrow();
+    await $`PASEO_HOME=${paseoHome} npx pandaos daemon status --home ${paseoHome}`.nothrow();
   assert.strictEqual(status.exitCode, 0, `daemon status should succeed: ${status.stderr}`);
   assert(status.stdout.includes("running"), "daemon should be running when onboarding exits");
   console.log("✓ onboarding keeps relay disabled and waits for daemon readiness\n");
 
   console.log("Test 2: --no-relay suppresses pairing for an already-running daemon");
   const enableRelay =
-    await $`PASEO_HOME=${paseoHome} npx paseo daemon pair --home ${paseoHome} --relay`.nothrow();
+    await $`PASEO_HOME=${paseoHome} npx pandaos daemon pair --home ${paseoHome} --relay`.nothrow();
   assert.strictEqual(enableRelay.exitCode, 0, `relay enable should succeed: ${enableRelay.stderr}`);
   assert(enableRelay.stdout.includes("#offer="), "relay enable should produce a pairing offer");
 
-  const noRelayOnboard = await $`PASEO_HOME=${paseoHome} npx paseo --no-relay`.nothrow();
+  const noRelayOnboard = await $`PASEO_HOME=${paseoHome} npx pandaos --no-relay`.nothrow();
   assert.strictEqual(
     noRelayOnboard.exitCode,
     0,
@@ -107,7 +113,7 @@ try {
   );
   console.log("✓ non-interactive run persisted voice disabled choices\n");
 } finally {
-  await $`PASEO_HOME=${paseoHome} npx paseo daemon stop --home ${paseoHome} --force`.nothrow();
+  await $`PASEO_HOME=${paseoHome} npx pandaos daemon stop --home ${paseoHome} --force`.nothrow();
   await rm(paseoHome, { recursive: true, force: true });
 }
 

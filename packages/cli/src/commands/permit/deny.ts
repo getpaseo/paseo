@@ -28,7 +28,7 @@ export async function runDenyCommand(
     const error: CommandError = {
       code: "MISSING_ARGUMENT",
       message: "Request ID is required unless --all is specified",
-      details: "Usage: paseo permit deny <agent> <req_id> or paseo permit deny <agent> --all",
+      details: "Usage: pandaos permit deny <agent> <req_id> or pandaos permit deny <agent> --all",
     };
     throw error;
   }
@@ -42,7 +42,7 @@ export async function runDenyCommand(
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
         message: `Agent not found: ${agentIdOrPrefix}`,
-        details: 'Use "paseo ls" to list available agents',
+        details: 'Use "pandaos ls" to list available agents',
       };
       throw error;
     }

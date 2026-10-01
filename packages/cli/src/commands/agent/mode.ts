@@ -40,7 +40,7 @@ export interface AgentModeOptions extends CommandOptions {
 const missingModeError = (): CommandError => ({
   code: "MISSING_ARGUMENT",
   message: "Mode argument required unless --list is specified",
-  details: "Usage: paseo agent mode <id> <mode> | paseo agent mode --list <id>",
+  details: "Usage: pandaos agent mode <id> <mode> | pandaos agent mode --list <id>",
 });
 
 // This command returns two different data shapes (set result vs mode list).
@@ -70,7 +70,7 @@ export async function runModeCommand(
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
         message: `No agent found matching: ${id}`,
-        details: "Use `paseo ls` to list available agents",
+        details: "Use `pandaos ls` to list available agents",
       };
       throw error;
     }
@@ -120,7 +120,7 @@ export async function runModeCommand(
       const error: CommandError = {
         code: "DAEMON_NOT_RUNNING",
         message: `Cannot connect to daemon at ${host}: ${message}`,
-        details: "Start the daemon with: paseo daemon start",
+        details: "Start the daemon with: pandaos daemon start",
       };
       throw error;
     }

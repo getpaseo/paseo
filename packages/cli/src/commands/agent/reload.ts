@@ -43,7 +43,7 @@ export async function runReloadCommand(
     const error: CommandError = {
       code: "MISSING_AGENT_ID",
       message: "Agent ID is required",
-      details: "Usage: paseo agent reload <id-or-name>",
+      details: "Usage: pandaos agent reload <id-or-name>",
     };
     throw error;
   }
@@ -58,7 +58,7 @@ export async function runReloadCommand(
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
+        details: 'Use "pandaos ls" to list available agents',
       };
       throw error;
     }

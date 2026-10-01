@@ -96,8 +96,8 @@ function buildWaitResult(args: {
 
   if (state.status === "timeout") {
     const timeoutMessage = timeoutLabel
-      ? `Agent did not finish within ${timeoutLabel}. Run \`paseo wait ${resolvedAgentId}\` again to keep waiting.`
-      : `Agent wait timed out. Run \`paseo wait ${resolvedAgentId}\` again to keep waiting.`;
+      ? `Agent did not finish within ${timeoutLabel}. Run \`pandaos wait ${resolvedAgentId}\` again to keep waiting.`
+      : `Agent wait timed out. Run \`pandaos wait ${resolvedAgentId}\` again to keep waiting.`;
     return {
       agentId: resolvedAgentId,
       status: "timeout",
@@ -147,7 +147,7 @@ export async function runWaitCommand(
     throw {
       code: "MISSING_AGENT_ID",
       message: "Agent ID is required",
-      details: "Usage: paseo agent wait <id>",
+      details: "Usage: pandaos agent wait <id>",
     } satisfies CommandError;
   }
 

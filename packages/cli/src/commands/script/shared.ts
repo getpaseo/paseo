@@ -31,7 +31,7 @@ export async function connectWorkspaceScriptClient(target: DaemonTarget): Promis
     throw {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${daemonHost}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: pandaos daemon start",
     } satisfies CommandError;
   }
 }

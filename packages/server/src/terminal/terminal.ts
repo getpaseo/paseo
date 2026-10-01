@@ -16,7 +16,7 @@ import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
-const PASEO_CLI_BIN_ENTRY = "@getpaseo/cli/bin/paseo";
+const PASEO_CLI_BIN_ENTRY = "@getpaseo/cli/bin/pandaos";
 let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
@@ -460,7 +460,7 @@ function resolvePaseoCliShim(binDir: string): string | null {
 }
 
 function paseoCliShimNames(): string[] {
-  return process.platform === "win32" ? ["paseo.cmd", "paseo.exe", "paseo"] : ["paseo"];
+  return process.platform === "win32" ? ["pandaos.cmd", "pandaos.exe", "pandaos"] : ["pandaos"];
 }
 
 function resolveZshShellIntegrationRuntimeDir(): string {

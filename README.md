@@ -15,7 +15,7 @@
 
 <p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents, with a testing engine and Jev decisions built in.</p>
 
-PandaOS is a fork of [Paseo](https://github.com/getpaseo/paseo). The repository, the `paseo` CLI and the `@getpaseo/*` packages keep their upstream names so merging upstream stays cheap. It tracks upstream releases (currently 0.9.1) and adds features that make agents cheaper to run and faster to verify. Everything upstream does still works the same way; the additions below are on top.
+PandaOS is a fork of [Paseo](https://github.com/getpaseo/paseo). The CLI command is `pandaos`. Internal `@getpaseo/*` package names stay unchanged so merging upstream stays cheap. It tracks upstream releases (currently 0.9.1) and adds features that make agents cheaper to run and faster to verify. Everything upstream does still works the same way; the additions below are on top.
 
 ## What PandaOS adds
 
@@ -56,7 +56,7 @@ git clone https://github.com/marushan49/pandaos.git
 cd pandaos
 npm ci
 npm run build:server
-packages/cli/bin/paseo daemon run
+packages/cli/bin/pandaos daemon run
 ```
 
 You need at least one agent CLI installed and signed in: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot](https://github.com/features/copilot/cli/), [OpenCode](https://github.com/anomalyco/opencode), or [Pi](https://pi.dev). To connect from your phone, open **Settings → your host → Pair Device**.
@@ -65,7 +65,7 @@ Upstream's [docs](https://paseo.sh/docs), [connectivity guide](https://paseo.sh/
 
 ## Plugins
 
-Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`. Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon machine and inside connected clients; install only code you trust.
+Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted TypeScript plugins. Install from npm, Git, or a local directory with `pandaos plugin install <source>`. Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon machine and inside connected clients; install only code you trust.
 
 ## Staying current with upstream
 
@@ -81,15 +81,15 @@ git merge v<version>
 Everything you can do in the app, you can do from the terminal.
 
 ```bash
-paseo run --provider claude/opus-4.6 "implement user authentication"
-paseo run --provider codex/gpt-5.5 --worktree feature-x "implement feature X"
+pandaos run --provider claude/opus-4.6 "implement user authentication"
+pandaos run --provider codex/gpt-5.5 --worktree feature-x "implement feature X"
 
-paseo ls                           # list running agents
-paseo attach abc123                # stream live output
-paseo send abc123 "also add tests" # follow-up task
+pandaos ls                           # list running agents
+pandaos attach abc123                # stream live output
+pandaos send abc123 "also add tests" # follow-up task
 
 # run on a remote daemon; --cwd is a path on that host
-paseo run --host workstation.local:6767 --cwd /workspace "run the full test suite"
+pandaos run --host workstation.local:6767 --cwd /workspace "run the full test suite"
 ```
 
 See the [full CLI reference](https://paseo.sh/docs/cli) for more.
@@ -138,7 +138,7 @@ Quick monorepo package map:
 
 - `packages/server`: PandaOS daemon (agent process orchestration, WebSocket API, MCP server)
 - `packages/app`: Expo client (iOS, Android, web)
-- `packages/cli`: `paseo` CLI for daemon and agent workflows
+- `packages/cli`: `pandaos` CLI for daemon and agent workflows
 - `packages/desktop`: Electron desktop app
 - `packages/relay`: Relay transport and encryption used by the daemon and clients
 - `packages/website`: Marketing site and documentation (`paseo.sh`)

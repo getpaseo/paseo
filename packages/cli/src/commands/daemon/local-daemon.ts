@@ -103,7 +103,7 @@ export function rejectRemovedLaunchFlags(command: Command): Command {
       if (command.getOptionValueSource(name) !== "cli") continue;
       throw {
         code: "REMOVED_LAUNCH_OPTION",
-        message: `${flag.split(" ")[0]} was removed. ${configPath ? `Use paseo daemon config set ${configPath} <value> --home <path>, then start or restart.` : "Use paseo daemon run --home <path> for foreground deployment."} Deployment environment overrides belong to paseo daemon run.`,
+        message: `${flag.split(" ")[0]} was removed. ${configPath ? `Use pandaos daemon config set ${configPath} <value> --home <path>, then start or restart.` : "Use pandaos daemon run --home <path> for foreground deployment."} Deployment environment overrides belong to pandaos daemon run.`,
       };
     }
   });

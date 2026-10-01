@@ -10,11 +10,11 @@ Paseo is a remote daemon that manages coding agents, terminals. Control it throu
 Manage the daemon's project registry through the CLI:
 
 ```bash
-paseo project create [path]
-paseo project ls
-paseo project rename <project-id> <name>
-paseo project rename <project-id> --reset
-paseo project delete <project-id>
+pandaos project create [path]
+pandaos project ls
+pandaos project rename <project-id> <name>
+pandaos project rename <project-id> --reset
+pandaos project delete <project-id>
 ```
 
 For a local daemon, `project create` defaults to the current directory and resolves relative paths on the CLI machine. With `--host` or `PASEO_HOST`, always provide a path; the target daemon interprets it on its own machine. Deleting a project archives its active workspaces and removes the project from Paseo without deleting the project directory.
@@ -44,9 +44,9 @@ Configured `paseo.json` scripts use the same supervised lifecycle from tools and
 The matching CLI surface accepts either an explicit workspace ID or resolves the current directory:
 
 ```bash
-paseo script ls [--cwd <path> | --workspace <workspace-id>]
-paseo script start <name> [--cwd <path> | --workspace <workspace-id>]
-paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
+pandaos script ls [--cwd <path> | --workspace <workspace-id>]
+pandaos script start <name> [--cwd <path> | --workspace <workspace-id>]
+pandaos script stop <name> [--cwd <path> | --workspace <workspace-id>]
 ```
 
 ## Agents
@@ -115,17 +115,17 @@ Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. Th
 The CLI and tools use the same ownership semantics even where their syntax differs:
 
 ```bash
-paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base origin/main
-paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
-paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
-paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
-paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
-paseo send <agent-id> "<follow-up>"
-paseo ls
-paseo schedule create --cron "*/15 * * * *" "ping main build"
-paseo heartbeat create --cron "*/15 * * * *" "check the build"
+pandaos workspace create --isolation worktree --mode branch-off --new-branch fix-x --base origin/main
+pandaos workspace create --isolation worktree --mode checkout-branch --branch existing-work
+pandaos workspace create --isolation worktree --mode checkout-pr --pr-number 42
+pandaos run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
+pandaos run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
+pandaos send <agent-id> "<follow-up>"
+pandaos ls
+pandaos schedule create --cron "*/15 * * * *" "ping main build"
+pandaos heartbeat create --cron "*/15 * * * *" "check the build"
 ```
 
-Discover with `paseo --help` and `paseo <cmd> --help`.
+Discover with `pandaos --help` and `paseo <cmd> --help`.
 
 For product questions, setup, logs, version problems, or troubleshooting, use the **paseo-help** skill.

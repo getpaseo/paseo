@@ -141,7 +141,7 @@ buildNpmPackage rec {
       --set PASEO_NODE_ENV production
 
     # Create wrapper for the CLI
-    makeWrapper ${nodejs}/bin/node $out/bin/paseo \
+    makeWrapper ${nodejs}/bin/node $out/bin/pandaos \
       --add-flags "$out/lib/paseo/packages/cli/dist/index.js" \
       --set NODE_PATH "$out/lib/paseo/node_modules"
 
@@ -152,7 +152,7 @@ buildNpmPackage rec {
     description = "Self-hosted daemon for Claude Code, Codex, and OpenCode";
     homepage = "https://github.com/getpaseo/paseo";
     license = lib.licenses.agpl3Plus;
-    mainProgram = "paseo";
+    mainProgram = "pandaos";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }
