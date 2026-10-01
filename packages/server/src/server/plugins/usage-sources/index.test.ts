@@ -191,3 +191,89 @@ test("legacy listing distinguishes labeled accounts and preserves unlabeled name
     (await registry.listLegacyUsage()).providers.map((provider) => provider.displayName),
   ).toEqual(["claude (work)", "claude (personal)", "claude"]);
 });
+
+test("duplicate logins follow discovery order and fall back on unavailable, error and throws", async () => {
+  for (const failure of ["unavailable", "error", "throw"]) {
+    const registry = new UsageSourceRegistry();
+    const calls: number[] = [];
+    registry.register(
+      source({
+        id: "codex",
+        discover: async () => [0, 1, 2],
+        identify: async (input) => {
+          if (input === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+          return { key: "same" };
+        },
+        fetch: async (input) => {
+          calls.push(Number(input));
+          if (input === 0) {
+            if (failure === "throw") throw new Error("revoked");
+            return { status: failure, windows: [] };
+          }
+          return {
+            status: "available",
+            windows: [{ id: "session", label: "Session", usedPct: 42 }],
+          };
+        },
+      }),
+    );
+    const reports = await registry.listReports();
+    expect(reports).toHaveLength(1);
+    expect(reports[0]?.report.status).toBe("available");
+    expect(calls).toEqual([0, 1]);
+  }
+});
+
+test("targeted refresh skips a login that changed accounts and preserves fallback", async () => {
+  let firstAccount = "original";
+  const fetched: unknown[] = [];
+  const registry = new UsageSourceRegistry();
+  registry.register(
+    source({
+      id: "source",
+      discover: async () => [0, 1],
+      identify: async (input) => ({ key: input === 0 ? firstAccount : "original" }),
+      fetch: async (input) => {
+        fetched.push(input);
+        return { status: "available", windows: [] };
+      },
+    }),
+  );
+  await registry.listReports();
+  firstAccount = "different";
+  const reports = await registry.listReports({
+    reportIds: ["source:original"],
+    forceRefresh: true,
+  });
+  expect(reports[0]?.id).toBe("source:original");
+  expect(reports[0]?.report.status).toBe("available");
+  expect(fetched).toEqual([0, 1]);
+});
+
+test("discovery identifies a source's logins concurrently and keeps their order", async () => {
+  const registry = new UsageSourceRegistry();
+  const fetched: unknown[] = [];
+  let release!: () => void;
+  const allStarted = new Promise<void>((resolve) => (release = resolve));
+  let started = 0;
+  registry.register(
+    source({
+      id: "claude",
+      discover: async () => [0, 1, 2],
+      // Each identification waits until all three started; serial identification never finishes.
+      identify: async (input) => {
+        if (++started === 3) release();
+        await allStarted;
+        if (input === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+        return { key: "same" };
+      },
+      fetch: async (input) => {
+        fetched.push(input);
+        return { status: "unavailable", windows: [] };
+      },
+    }),
+  );
+  const reports = await registry.listReports();
+  expect(reports.map((entry) => entry.id)).toEqual(["claude:same"]);
+  expect(fetched).toEqual([0, 1, 2]);
+});

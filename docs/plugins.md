@@ -93,6 +93,15 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
+Desktop packaging ships the entire built-in plugin directory as an external resource,
+including declarations. The external esbuild compiler cannot read Electron's `app.asar`
+filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.
+Built-ins can import only host modules (`@getpaseo/plugin/*`, `zod`) and Node built-ins:
+outside the archive, nothing resolves an npm dependency, and the dist build test cannot catch
+one because it resolves through the repository's `node_modules`.
+The packaged-app smoke check requires every listed built-in to start without relying on
+account credentials.
+
 Built-ins run in process and remain active independently of `pluginsEnabled`. They are
 absent from the installed plugin list and source configuration; their client bundles
 appear in the plugin catalog. Editing one in development requires a daemon restart.
@@ -464,7 +473,7 @@ SVG or URL.
 
 ## Usage sources
 
-Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. `input` is a Zod schema checked inside the plugin process before `fetch(input)` runs. `discover()` returns the inputs for accounts found on the host; an empty list omits the source from host usage. `fetch()` returns a report with a stable `account.key` so the daemon can deduplicate accounts and cache by source and input. A failed input or fetch becomes an error report for that source. `icon` uses the same sanitized SVG file rules as provider icons.
+Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery and credential-store reads; the daemon owns account grouping, ordered login fallback, and the fetch cache. Keep discovery independent of agent sessions and provider names: a harness can use a subscription through a proxy or renamed provider. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same sanitized SVG file rules as provider icons.
 
 The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients. See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the author contract and minimum version.
 

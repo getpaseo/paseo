@@ -137,7 +137,7 @@ function visible(page: Page, testID: string): Locator {
   return page.locator(`[data-testid="${testID}"]:visible`).first();
 }
 
-/** The sidebar footer's Usage item: pinned windows, or a plain "Usage" row without any. */
+/** The sidebar footer's Usage item: each summary window with data. */
 export function usageItem(page: Page): Locator {
   return visible(page, "sidebar-usage");
 }
@@ -157,10 +157,10 @@ export async function expectPinnedUsage(page: Page, windows: string[]): Promise<
   await expect(pinned).toHaveText(windows);
 }
 
-/** Without pinned windows the Usage item is a plain row that reads "Usage". */
-export async function expectNoPinnedUsage(page: Page): Promise<void> {
-  await expect(page.locator('[data-testid="sidebar-usage-pinned-window"]:visible')).toHaveCount(0);
-  await expect(usageItem(page)).toHaveText("Usage");
+/** Without a summary window with data the footer has no Usage item, only the Usage icon. */
+export async function expectNoUsageItem(page: Page): Promise<void> {
+  await expect(page.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);
+  await expect(page.locator('[data-testid="sidebar-usage-icon"]:visible')).toBeVisible();
 }
 
 /** A window row, which is itself the pin toggle: "Claude", "Session". */
