@@ -308,6 +308,25 @@ export class AgentStorage {
     });
   }
 
+  async retainSubmittedMessageImages(
+    agentId: string,
+    messageIds: ReadonlySet<string>,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const entries = existing.submittedMessageImages ?? [];
+      return {
+        ...existing,
+        submittedMessageImages: entries.filter(
+          (entry) =>
+            messageIds.has(entry.clientMessageId) ||
+            (entry.providerMessageId !== undefined && messageIds.has(entry.providerMessageId)),
+        ),
+      };
+    });
+  }
+
   async setTitle(agentId: string, title: string): Promise<void> {
     await this.load();
     await this.waitForPendingWrite(agentId);

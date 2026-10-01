@@ -358,6 +358,36 @@ describe("AgentStorage", () => {
     ]);
   });
 
+  test("prunes image references by either message identity and keeps snapshot writes from restoring them", async () => {
+    const agentId = "agent-rewound-images";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    for (const clientMessageId of ["keep-client", "keep-provider", "remove"]) {
+      await storage.setSubmittedMessageImages(agentId, {
+        clientMessageId,
+        providerMessageId: `provider-${clientMessageId}`,
+        images: [
+          { id: clientMessageId, mimeType: "image/png", source: `/images/${clientMessageId}.png` },
+        ],
+      });
+    }
+    await storage.retainSubmittedMessageImages(
+      agentId,
+      new Set(["keep-client", "provider-keep-provider"]),
+    );
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const reloaded = new AgentStorage(storagePath, logger);
+    const record = await reloaded.get(agentId);
+    expect(record?.submittedMessageImages?.map((entry) => entry.clientMessageId)).toEqual([
+      "keep-client",
+      "keep-provider",
+    ]);
+    await storage.retainSubmittedMessageImages(agentId, new Set());
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    expect(
+      (await new AgentStorage(storagePath, logger).get(agentId))?.submittedMessageImages,
+    ).toEqual([]);
+  });
+
   test("setTitle throws when the agent record does not exist", async () => {
     await expect(storage.setTitle("missing-agent", "Impossible")).rejects.toThrow(
       "Agent missing-agent not found",

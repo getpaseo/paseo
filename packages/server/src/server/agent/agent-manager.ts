@@ -2,7 +2,7 @@ import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -725,6 +725,12 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
     }
   }
   return patch;
+}
+
+function anonymousUserImageKey(item: Extract<AgentTimelineItem, { type: "user_message" }>): string {
+  // Internal storage identity only; it must not become a provider rewind anchor.
+  const identity = JSON.stringify([item.text, item.images?.map((image) => image.id)]);
+  return `anonymous-images:${createHash("sha256").update(identity).digest("hex")}`;
 }
 
 function collectReferencedConversationImageIds(records: readonly StoredAgentRecord[]): Set<string> {
@@ -3216,6 +3222,7 @@ export class AgentManager {
           broadcast: true,
           broadcastTimeline: false,
         });
+        await this.pruneRewoundMessageImages(agentId);
         this.dispatch({
           type: "timeline_replacement",
           agentId,
@@ -4084,7 +4091,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      event.item = await this.recoverHistoryImages(agent.id, event.item);
+      event.item = await this.recoverProviderImages(agent.id, event.item);
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -4155,7 +4162,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      event.item = await this.recoverHistoryImages(agent.id, event.item);
+      event.item = await this.recoverProviderImages(agent.id, event.item);
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -4467,6 +4474,8 @@ export class AgentManager {
       flags.shouldNotifyWaiters = false;
       return;
     }
+
+    event.item = await this.recoverProviderImages(agent.id, event.item);
 
     if (
       event.item.type === "user_message" &&
@@ -4887,11 +4896,12 @@ export class AgentManager {
     if (item.type !== "user_message") return item;
     const images =
       this.findSubmittedMessageImages(agentId, item.clientMessageId).images ??
-      this.findSubmittedMessageImages(agentId, item.messageId).images;
+      this.findSubmittedMessageImages(agentId, item.messageId).images ??
+      this.findSubmittedMessageImages(agentId, anonymousUserImageKey(item)).images;
     return images ? { ...item, images } : item;
   }
 
-  private async recoverHistoryImages(
+  private async recoverProviderImages(
     agentId: string,
     item: AgentTimelineItem,
   ): Promise<AgentTimelineItem> {
@@ -4900,18 +4910,19 @@ export class AgentManager {
     const store = this.conversationImageStore;
     if (restored.type !== "user_message" || !restored.images?.length || !registry || !store)
       return restored;
-    const messageId = restored.clientMessageId ?? restored.messageId;
-    if (!messageId || !(await registry.get(agentId))) return restored;
+    const messageId =
+      restored.clientMessageId ?? restored.messageId ?? anonymousUserImageKey(restored);
+    if (!(await registry.get(agentId))) return restored;
     return await this.runConversationImageOperation(async () => {
       const images: AgentTimelineImage[] = [];
       for (const image of restored.images ?? []) {
         try {
           images.push(await store.importImage(image));
         } catch (error) {
-          // A missing historical attachment must not prevent the rest of the chat from loading.
+          // A missing attachment must not prevent the rest of the chat from loading.
           this.logger.warn(
             { err: error, agentId, imageId: image.id },
-            "Failed to recover historical user image",
+            "Failed to recover provider user image",
           );
           images.push(image);
         }
@@ -4925,6 +4936,34 @@ export class AgentManager {
       await registry.setSubmittedMessageImages(agentId, entry);
       this.indexSubmittedMessageImages(agentId, entry);
       return { ...restored, images };
+    });
+  }
+
+  private async pruneRewoundMessageImages(agentId: string): Promise<void> {
+    const registry = this.registry;
+    const store = this.conversationImageStore;
+    if (!registry || !store) return;
+    await this.runConversationImageOperation(async () => {
+      const messageIds = new Set<string>();
+      const anonymousImageIds = new Set<string>();
+      for (const { item } of this.timelineStore.getRows(agentId)) {
+        if (item.type !== "user_message") continue;
+        if (item.messageId) messageIds.add(item.messageId);
+        if (item.clientMessageId) messageIds.add(item.clientMessageId);
+        if (!item.messageId && !item.clientMessageId) {
+          for (const image of item.images ?? []) anonymousImageIds.add(image.id);
+        }
+      }
+      const entries = (await registry.get(agentId))?.submittedMessageImages ?? [];
+      for (const entry of entries) {
+        const retainedAnonymousImages =
+          entry.clientMessageId.startsWith("anonymous-images:") &&
+          entry.images.every((image) => anonymousImageIds.has(image.id));
+        if (retainedAnonymousImages) messageIds.add(entry.clientMessageId);
+      }
+      await registry.retainSubmittedMessageImages(agentId, messageIds);
+      await this.loadSubmittedMessageImages(agentId);
+      await store.garbageCollect(collectReferencedConversationImageIds(await registry.list()));
     });
   }
 
