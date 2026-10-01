@@ -1414,6 +1414,8 @@ export async function createPaseoDaemon(
       // MCP operations do not belong to one WebSocket session, so lifecycle
       // status updates fan out to every connected client.
       emit: (message) => wsServer?.broadcast(wrapSessionMessage(message)),
+      emitWorkspaceUpdateToAllSessions: (workspaceId) =>
+        emitWorkspaceUpdatesExternal([workspaceId]),
       spawnWorkspaceScript,
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),

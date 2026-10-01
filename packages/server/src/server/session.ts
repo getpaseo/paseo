@@ -450,6 +450,7 @@ export interface SessionOptions {
   getTransportBufferedAmount?: (source?: object) => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  onWorkspaceScriptsChanged?: (workspaceId: string) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
@@ -810,6 +811,7 @@ export class Session {
       getTransportBufferedAmount,
       onLifecycleIntent,
       onWorkspaceRecovered,
+      onWorkspaceScriptsChanged,
       logger,
       downloadTokenStore,
       pushNotifications,
@@ -1150,6 +1152,7 @@ export class Session {
       emit: (message) => this.emit(message),
       spawnWorkspaceScript,
       wantsStatusUpdates: () => this.wantsEvent("script_status_update"),
+      emitWorkspaceUpdateToAllSessions: onWorkspaceScriptsChanged,
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(this.paseoHome).worktrees?.servicePorts,

@@ -1465,6 +1465,13 @@ export class VoiceAssistantWebSocketServer {
           ),
         );
       },
+      onWorkspaceScriptsChanged: async (workspaceId) => {
+        await Promise.all(
+          this.listSessions().map((activeSession) =>
+            activeSession.emitWorkspaceUpdatesForExternalWorkspaceIds([workspaceId]),
+          ),
+        );
+      },
       downloadTokenStore: this.downloadTokenStore,
       pushNotifications: this.pushNotifications,
       paseoHome: this.paseoHome,
