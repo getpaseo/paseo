@@ -22,7 +22,10 @@ import {
   togglePin,
   usageItem,
   usageSheet,
+  installTallUsageSource,
 } from "../support/helpers/usage-sidebar-item";
+import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 const WIDE = { width: 1440, height: 900 };
 const COMPACT = { width: 390, height: 844 };
@@ -52,6 +55,32 @@ async function footerClip(page: Page) {
 }
 
 test.describe("Usage item", () => {
+  test("long usage reports stay in an 80% sheet and scroll to the final window", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const source = await installTallUsageSource();
+    try {
+      await page.setViewportSize(COMPACT);
+      await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+      await gotoAppShell(page);
+      await openCompactSidebar(page);
+      await expect(usageItem(page)).toBeInViewport();
+      await usageItem(page).click();
+      const content = page.getByTestId("sidebar-usage-sheet-content");
+      await expect(content.getByText("Window 20", { exact: true })).toHaveCount(1);
+      await waitForSettledPosition(content);
+      const bounds = (await content.boundingBox())!;
+      expect(bounds.y).toBeGreaterThanOrEqual(COMPACT.height * 0.2);
+      await expect(content.getByText("Window 20", { exact: true })).not.toBeInViewport();
+      await content.getByText("Window 20", { exact: true }).scrollIntoViewIfNeeded();
+      await expect(content.getByText("Window 20", { exact: true })).toBeInViewport();
+      await content.getByText("Window 1", { exact: true }).scrollIntoViewIfNeeded();
+      await expect(content.getByText("Window 1", { exact: true })).toBeInViewport();
+    } finally {
+      await source.cleanup();
+    }
+  });
   test("pinned windows show in the sidebar, follow the used/remaining toggle and persist", async ({
     page,
   }) => {

@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { ChevronLeft } from "lucide-react-native";
@@ -344,6 +344,7 @@ function MenuSheetSurface({
   testID,
   keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
+  const { height: windowHeight } = useWindowDimensions();
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
   const safeAreaInsets = useSafeAreaInsets();
@@ -392,6 +393,7 @@ function MenuSheetSurface({
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.
       enableDynamicSizing
+      maxDynamicContentSize={windowHeight * 0.8}
       onChange={handleSheetChange}
       onDismiss={handleSheetDismiss}
       backdropOpacity={0.45}

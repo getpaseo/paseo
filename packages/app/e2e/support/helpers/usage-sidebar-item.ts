@@ -1,7 +1,59 @@
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import { pluginRequirements } from "./plugin-fixture";
+
+/** Real usage-source plugin; its long report exercises the sheet's scrolling boundary. */
+export async function installTallUsageSource() {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-tall-usage-"));
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const cleanup = async () => {
+    try {
+      await client.removePlugin("tall-usage");
+      await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false });
+    } finally {
+      await client.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  };
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "tall-usage",
+        requirements: pluginRequirements,
+      }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+import { z } from "zod";
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: "tall-usage", label: "Scrolling account", input: z.object({}),
+    discover: async () => [{}],
+    identify: async () => ({ key: "scrolling-account" }),
+    fetch: async () => ({ status: "available", windows: Array.from({ length: 20 }, (_, i) => ({
+      id: String(i), label: "Window " + (i + 1), usedPct: 25,
+    })) }),
+  });
+  return () => {};
+}
+`,
+    );
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installPluginSource({ source: directory });
+    return { cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
 
 const PLUGINS_DIR = path.resolve(__dirname, "../../../../../plugins");
 
