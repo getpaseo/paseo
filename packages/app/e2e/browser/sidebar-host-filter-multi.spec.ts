@@ -1,3 +1,4 @@
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -8,7 +9,7 @@ import {
   selectAllHostsFilter,
   toggleHostFilter,
 } from "../support/helpers/hosts";
-import { seedWorkspace } from "../support/helpers/seed-client";
+
 import { getServerId } from "../support/helpers/server-id";
 
 const SECONDARY_HOST_ID = "host-filter-secondary";
@@ -24,7 +25,6 @@ test.describe("Sidebar host filter (multi-select)", () => {
     );
 
     try {
-      // A second (offline) host is enough to surface the host filter without a second daemon.
       await gotoAppShell(page);
       await addOfflineHostAndReload(page, { serverId: SECONDARY_HOST_ID, label: "Secondary Host" });
       await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
@@ -33,20 +33,15 @@ test.describe("Sidebar host filter (multi-select)", () => {
       await expectHostFilterRow(page, serverId);
       await expectHostFilterRow(page, SECONDARY_HOST_ID);
 
-      // Pin the primary host — its workspace stays visible.
       await toggleHostFilter(page, serverId);
       await expect(workspaceRow).toBeVisible();
 
-      // Add the secondary host without clearing the primary. Under single-select this would replace
-      // the primary and hide the workspace; multi-select keeps both pinned, so it stays visible.
       await toggleHostFilter(page, SECONDARY_HOST_ID);
       await expect(workspaceRow).toBeVisible();
 
-      // Drop the primary host — only the (empty) secondary host remains pinned, so the workspace hides.
       await toggleHostFilter(page, serverId);
       await expect(workspaceRow).toHaveCount(0, { timeout: 10_000 });
 
-      // Back to all hosts — the workspace returns.
       await selectAllHostsFilter(page);
       await expect(workspaceRow).toBeVisible({ timeout: 10_000 });
     } finally {

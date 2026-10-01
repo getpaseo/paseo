@@ -1,9 +1,10 @@
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { type SeededWorkspace } from "../support/helpers/seed-client";
 import {
   closeSidebarDisplayPreferences,
   openMobileAgentSidebar,
@@ -107,6 +108,7 @@ async function openDesktopWorkspaceList(page: Page) {
   const row = workspaceRow(page);
   await expect(row).toBeVisible();
   await page.mouse.move(0, 0);
+  await toggleTrailing(page, "Diff stats");
   await expect(row.getByText("+12.3k", { exact: true })).toBeVisible();
   return titleWidth(row);
 }

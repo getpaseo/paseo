@@ -1,7 +1,8 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { waitForWorkspaceInReplicaCache } from "../support/helpers/replica-cache-storage";
-import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import type { SeededWorkspace } from "../support/helpers/seed-client";
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import {
   expectWorkspaceAbsentFromSidebar,
   selectWorkspaceInSidebar,

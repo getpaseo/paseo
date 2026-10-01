@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { seedWorkspace, type SeedDaemonClient } from "./seed-client";
+import { seedWorkspace, type SeedDaemonClient, type SeededWorkspace } from "./seed-client";
 import { getServerId } from "./server-id";
 import { buildHostAgentDetailRoute } from "../../../src/utils/host-routes";
 
@@ -23,11 +23,38 @@ export interface MockAgentOptions {
   featureValues?: Record<string, unknown>;
 }
 
-/**
- * Seeds a temp git repo, opens it as a project, and creates a ready mock-provider
- * agent in it via the daemon. Returns the agent id plus a cleanup that closes the
- * client and removes the repo. Pair with {@link openAgentRoute} to drive the UI.
- */
+export async function ensureWorkspaceHasContent(
+  client: Pick<SeedDaemonClient, "createAgent">,
+  workspaceId: string,
+  cwd: string,
+): Promise<void> {
+  await client.createAgent({
+    provider: "mock",
+    cwd,
+    workspaceId,
+    title: "Sidebar fixture agent",
+    modeId: "load-test",
+    model: "e2e-fast-stream",
+  });
+}
+
+export async function seedVisibleWorkspace(
+  options: Parameters<typeof seedWorkspace>[0],
+): Promise<SeededWorkspace> {
+  const workspace = await seedWorkspace(options);
+  try {
+    await ensureWorkspaceHasContent(
+      workspace.client,
+      workspace.workspaceId,
+      workspace.workspaceDirectory,
+    );
+    return workspace;
+  } catch (error) {
+    await workspace.cleanup();
+    throw error;
+  }
+}
+
 export async function seedMockAgentWorkspace(
   options: MockAgentOptions,
 ): Promise<MockAgentWorkspace> {
@@ -86,7 +113,6 @@ export function buildAgentRoute(
   return buildHostAgentDetailRoute(serverId, agentId, workspaceId);
 }
 
-/** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */
 export async function openAgentRoute(
   page: Page,
   input: { workspaceId: string; agentId: string },

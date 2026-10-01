@@ -26,11 +26,8 @@ import {
   seedTerminalProfiles,
   type TerminalProfile,
 } from "../support/helpers/new-workspace-launch";
-import { gotoAppShell } from "../support/helpers/app";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
-
-// ─── Shared state ──────────────────────────────────────────────────────────
 
 let workspace: SeededWorkspace;
 let secondWorkspaceId: string | null = null;
@@ -68,10 +65,6 @@ test.afterAll(async () => {
   await workspace?.cleanup();
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Tab Creation Tests
-// ═══════════════════════════════════════════════════════════════════════════
-
 test.describe("Tab creation", () => {
   test("Cmd+T keeps creating a New tab after workspace switches", async ({ page }) => {
     if (!secondWorkspaceId) {
@@ -83,17 +76,20 @@ test.describe("Tab creation", () => {
       const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`).first();
       await expect(row).toBeVisible({ timeout: 30_000 });
       await row.click();
-      // The shortcut must follow the route, so prove the route actually moved first.
       await expect(page).toHaveURL(new RegExp(`workspace/${workspaceId}(\\b|/|$)`), {
         timeout: 15_000,
       });
       await waitForTabBar(page);
     };
 
-    await gotoAppShell(page);
+    const sequence = [workspace.workspaceId, secondWorkspaceId];
+    for (const workspaceId of sequence) {
+      await gotoWorkspace(page, workspaceId);
+      await clickNewTerminal(page);
+      await expectTerminalSurfaceVisible(page);
+    }
     await waitForSidebarHydration(page);
 
-    const sequence = [workspace.workspaceId, secondWorkspaceId];
     for (let i = 0; i < 8; i++) {
       await switchWorkspaceRow(sequence[i % sequence.length]);
       await pressNewTabShortcut(page);
@@ -258,10 +254,6 @@ test.describe("Tab creation", () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// No-Flash Transition Tests
-// ═══════════════════════════════════════════════════════════════════════════
-
 test.describe("Tab transitions (no flash)", () => {
   test("New agent tab transition has no blank intermediate tab state", async ({
     page,
@@ -274,18 +266,14 @@ test.describe("Tab transitions (no flash)", () => {
       page.getByTestId("workspace-new-tab-panel").filter({ visible: true }),
     ).toBeVisible();
 
-    // Sample the single New → Agent replacement, not the separate action that
-    // creates the New tab in the first place.
     const snapshots = await sampleTabsDuringTransition(page, async () => {
       await page.getByTestId("workspace-new-tab-agent").filter({ visible: true }).first().click();
     });
 
-    // Every snapshot should have at least one tab — no blank/zero-tab frames
     for (const snapshot of snapshots) {
       expect(snapshot.length).toBeGreaterThanOrEqual(1);
     }
 
-    // Replacement is atomic: the set of identities changes once, while its size stays fixed.
     const counts = snapshots.map((snapshot) => snapshot.length);
     const initialCount = counts[0] ?? 0;
 
@@ -305,9 +293,6 @@ test.describe("Tab transitions (no flash)", () => {
       20_000,
     );
 
-    // Terminal surface should appear within a reasonable budget.
-    // Note: terminal creation involves a server round-trip, so we allow more time
-    // than a pure in-memory transition, but it should still be well under 5 seconds.
     expect(elapsed).toBeLessThan(5_000);
   });
 
@@ -321,9 +306,6 @@ test.describe("Tab transitions (no flash)", () => {
       10_000,
     );
 
-    // Draft creation is fully in-memory — should be fast
-    // We use a generous budget here because CI can be slow, but the key assertion
-    // is that no blank/flash frame appears (tested above).
     expect(elapsed).toBeLessThan(3_000);
   });
 });

@@ -1,5 +1,4 @@
 import { test, expect, type Page } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import {
   assertNewWorkspaceSidebarAndHeader,
@@ -16,11 +15,6 @@ import { openFilesPanel } from "../support/helpers/workspace-tabs";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Model B reshape: a workspace is the unit, its isolation (local checkout or
-// worktree) is a CHOICE at creation, and creation NEVER dedupes by
-// directory. These specs drive the real creation UI (workspace-create-* test
-// IDs) to prove a single directory can back any number of workspaces.
-
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
 }
@@ -34,8 +28,6 @@ async function createWorkspaceViaUi(
   page: Page,
   input: {
     project: { projectKey: string; projectDisplayName: string };
-    // null when the project has no git checkout: there is no Isolation control to
-    // touch, the isolation is implicitly local.
     isolation: "local" | "worktree" | null;
     previousWorkspaceId: string;
     client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
@@ -48,7 +40,7 @@ async function createWorkspaceViaUi(
   }
   await submitNewWorkspaceEmpty(page);
 
-  return assertNewWorkspaceSidebarAndHeader(page, {
+  const workspace = await assertNewWorkspaceSidebarAndHeader(page, {
     serverId: getServerId(),
     client: input.client,
     previousWorkspaceId: input.previousWorkspaceId,
@@ -56,6 +48,8 @@ async function createWorkspaceViaUi(
     assertSidebarRow: false,
     assertHeader: false,
   });
+  await openFilesTab(page);
+  return workspace;
 }
 
 test.describe("Workspace multiplicity creation flow", () => {
@@ -84,7 +78,8 @@ test.describe("Workspace multiplicity creation flow", () => {
         projectDisplayName: seeded.projectDisplayName,
       };
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, seeded.workspaceId);
+      await openFilesTab(page);
       await waitForSidebarHydration(page);
       await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({
         timeout: 30_000,
@@ -97,24 +92,19 @@ test.describe("Workspace multiplicity creation flow", () => {
         client,
       });
 
-      // A second workspace was minted on the SAME checkout — creation did not
-      // dedupe the directory away.
       expect(second.workspaceId).not.toBe(seeded.workspaceId);
       expect(second.workspaceDirectory).toBe(seeded.workspaceDirectory);
 
-      // Both rows live under the same project and are distinct.
       const firstRow = page.getByTestId(workspaceRowTestId(seeded.workspaceId));
       const secondRow = page.getByTestId(workspaceRowTestId(second.workspaceId));
       await expect(firstRow).toBeVisible({ timeout: 30_000 });
       await expect(secondRow).toBeVisible({ timeout: 30_000 });
       await expect(secondRow).toContainText(second.workspaceName);
 
-      // Selecting the second workspace shows the shared checkout's files.
       await gotoWorkspace(page, second.workspaceId);
       await openFilesTab(page);
       await expectExplorerEntryVisible(page, "README.md");
 
-      // Selecting the first workspace shows the SAME shared directory data.
       await gotoWorkspace(page, seeded.workspaceId);
       await openFilesTab(page);
       await expectExplorerEntryVisible(page, "README.md");
@@ -136,7 +126,8 @@ test.describe("Workspace multiplicity creation flow", () => {
         projectDisplayName: seeded.projectDisplayName,
       };
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, seeded.workspaceId);
+      await openFilesTab(page);
       await waitForSidebarHydration(page);
       await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({
         timeout: 30_000,
@@ -149,14 +140,11 @@ test.describe("Workspace multiplicity creation flow", () => {
         client,
       });
 
-      // The worktree row appears, pointing at a directory distinct from the
-      // local checkout.
       const worktreeRow = page.getByTestId(workspaceRowTestId(worktree.workspaceId));
       await expect(worktreeRow).toBeVisible({ timeout: 30_000 });
       expect(worktree.workspaceId).not.toBe(seeded.workspaceId);
       expect(worktree.workspaceDirectory).not.toBe(seeded.workspaceDirectory);
 
-      // The daemon descriptor confirms the worktree kind (○ row).
       const descriptor = (await client.fetchWorkspaces()).entries.find(
         (entry) => entry.id === worktree.workspaceId,
       );
@@ -182,10 +170,9 @@ test.describe("Workspace multiplicity creation flow", () => {
         projectDisplayName: seeded.projectDisplayName,
       };
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, seeded.workspaceId);
+      await openFilesTab(page);
       await waitForSidebarHydration(page);
-      // Model B: a non-git project is an expandable parent like any other, with
-      // its single workspace already rendered as its own row underneath.
       await expect(
         page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(seeded.projectKey)}`),
       ).toBeVisible({ timeout: 30_000 });
@@ -195,7 +182,6 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const second = await createWorkspaceViaUi(page, {
         project,
-        // Non-git project: no Isolation control, isolation is implicitly local.
         isolation: null,
         previousWorkspaceId: seeded.workspaceId,
         client,
@@ -204,8 +190,6 @@ test.describe("Workspace multiplicity creation flow", () => {
       expect(second.workspaceId).not.toBe(seeded.workspaceId);
       expect(second.workspaceDirectory).toBe(seeded.workspaceDirectory);
 
-      // Both the original and the new workspace render as distinct rows under
-      // the same expandable parent.
       await expect(
         page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(seeded.projectKey)}`),
       ).toBeVisible({ timeout: 30_000 });

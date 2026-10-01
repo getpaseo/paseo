@@ -5,6 +5,7 @@ import path from "node:path";
 import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { submitMessage } from "../support/helpers/composer";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
@@ -303,6 +304,8 @@ test.describe("plugin workspace panels and Command Center", () => {
         port: secondaryDaemon.port,
         primaryLabel: "Primary plugin host",
       });
+      await gotoWorkspace(page, primary.workspaceId);
+      await clickNewTerminal(page);
       await waitForWorkspaceInSidebar(page, {
         serverId: getServerId(),
         workspaceId: primary.workspaceId,
@@ -459,12 +462,8 @@ test.describe("plugin workspace panels and Command Center", () => {
 
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
-        // Pressing removed the pill from that page only. The reloaded page evaluates
-        // the plugin again, and its agents snapshot contributes the pill afresh.
         await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
         await openCompactSidebar(page);
-        // The sidebar's Search row dismisses the compact sidebar on its way to the
-        // command center, so nothing has to close it after the command runs.
         await runCommand(page, "Open plugin agent");
         await expectMobileAgentSidebarHidden(page);
         await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();

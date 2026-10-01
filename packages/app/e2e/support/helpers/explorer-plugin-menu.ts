@@ -35,7 +35,6 @@ export default function contribute(client) {
 
 async function openExplorerMenu(page: Page) {
   const explorer = await ensureExplorerSidebar(page);
-  // The rail's empty background has no accessible role; tab menus are separate.
   await explorer.getByTestId("explorer-sidebar-tab-rail").click({
     button: "right",
     position: { x: 20, y: 2 },
@@ -108,6 +107,7 @@ export async function openWorkspacePanelFromExplorerMenu(
     "Changes",
     "Files",
     "Evidence",
+    "Insights",
     "Other review",
     "Other review summary",
     "Review",

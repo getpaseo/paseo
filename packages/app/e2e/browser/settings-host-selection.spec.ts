@@ -7,7 +7,7 @@ import {
   clickSettingsBackToWorkspace,
   openSettingsHostSection,
 } from "../support/helpers/settings";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
 
 test.describe("Settings host selection", () => {
@@ -15,14 +15,13 @@ test.describe("Settings host selection", () => {
 
   test("entering Settings from a remote workspace selects that remote host", async ({ page }) => {
     const remoteDaemon = await startIsolatedHostDaemon("settings-host-selection-remote");
-    const remoteWorkspace = await seedWorkspace({
+    const remoteWorkspace = await seedMockAgentWorkspace({
       port: remoteDaemon.port,
       repoPrefix: "settings-host-selection-remote-workspace-",
       title: "Remote workspace",
     });
 
     try {
-      // The default local profile remains in the registry, but its daemon is offline.
       await page.routeWebSocket(wsRoutePatternForPort(getE2EDaemonPort()), async (ws) => {
         await ws.close({ code: 1008, reason: "The local daemon is disconnected." });
       });

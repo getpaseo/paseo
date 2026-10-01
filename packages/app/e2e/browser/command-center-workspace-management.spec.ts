@@ -1,13 +1,9 @@
 import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
+import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-
-// These actions used to be reachable only from the sidebar workspace ⋯ menu, the workspace header
-// menu, or an unlisted keybind. Rename was the worst of them: its dialog lived inside the sidebar
-// row, so it vanished whenever that row was unmounted — a collapsed section, or focus mode.
 
 function workspaceRow(page: Page, workspaceId: string): Locator {
   return page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
@@ -19,14 +15,12 @@ function action(panel: Locator, title: string): Locator {
 }
 
 async function openWorkspace(page: Page, workspaceId: string): Promise<void> {
-  const row = workspaceRow(page, workspaceId);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.click();
+  await gotoWorkspace(page, workspaceId);
+  await clickNewTerminal(page);
+  await expect(workspaceRow(page, workspaceId)).toBeVisible({ timeout: 30_000 });
   await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
 }
 
-// Collapsing the project section unmounts every workspace row under it, which is exactly the state
-// that used to make the sidebar-owned rename dialog unreachable.
 async function collapseProjectSection(page: Page, project: SeededWorkspace): Promise<void> {
   const header = page
     .locator('[data-testid^="sidebar-project-row-"]')
@@ -36,9 +30,6 @@ async function collapseProjectSection(page: Page, project: SeededWorkspace): Pro
   await expect(workspaceRow(page, project.workspaceId)).toHaveCount(0, { timeout: 10_000 });
 }
 
-// The shared helper clicks the sidebar's search button, which is inside the Workspaces section
-// header — absent on /settings and once every workspace has moved to Pinned. Cmd-K is the
-// surface under test anyway, and it works from every route.
 async function openCommandCenter(page: Page): Promise<Locator> {
   await page.keyboard.press("ControlOrMeta+K");
   const panel = page.getByTestId("command-center-panel");
@@ -112,14 +103,11 @@ test.describe("Command center workspace management", () => {
     const workspace = await seedWorkspace({ repoPrefix: "cc-rename-" });
 
     try {
-      await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
       await collapseProjectSection(page, workspace);
 
       await runCommand(page, "rename", "Rename workspace");
 
-      // Focused, not merely visible. A modal that mounts behind the closing palette, or loses the
-      // focus race with its focus-restore, still renders — you just cannot type into it.
       const input = page.getByTestId("workspace-rename-modal-global-input");
       await expect(input).toBeFocused({ timeout: 15_000 });
       await expect(input).toHaveValue(workspace.workspaceName);
@@ -129,7 +117,6 @@ test.describe("Command center workspace management", () => {
       await page.getByTestId("workspace-rename-modal-global-submit").click();
       await expect(input).toHaveCount(0, { timeout: 15_000 });
 
-      // Re-expand the section to read the row back.
       const header = page
         .locator('[data-testid^="sidebar-project-row-"]')
         .filter({ hasText: workspace.projectDisplayName });
@@ -146,12 +133,10 @@ test.describe("Command center workspace management", () => {
     const workspace = await seedWorkspace({ repoPrefix: "cc-copy-path-" });
 
     try {
-      await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
 
       await runCommand(page, "copy path", "Copy workspace path");
 
-      // toast.copied wraps its label: "Copied {{label}}" with label "Path copied".
       await expect(page.getByText("Copied Path copied", { exact: true })).toBeVisible({
         timeout: 15_000,
       });
@@ -164,7 +149,6 @@ test.describe("Command center workspace management", () => {
     const workspace = await seedWorkspace({ repoPrefix: "cc-pin-" });
 
     try {
-      await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
 
       await runCommand(page, "pin", "Pin to top");
@@ -179,18 +163,12 @@ test.describe("Command center workspace management", () => {
     }
   });
 
-  // Regression guard for the registration split. Toggle Explorer sidebar and Toggle focus mode are
-  // handled only by workspace-screen.tsx behind `enabled: isRouteFocused && ...`, so listing them
-  // off a workspace route would give the user two entries that close the palette and do nothing.
-  // Toggle left sidebar calls the panel store directly and works everywhere, so it stays listed.
   test("lists only the globally-handled toggle off a workspace route", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "cc-toggle-scope-" });
 
     try {
-      await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
 
-      // All three are listed while a workspace route owns the handlers.
       const workspacePanel = await openCommandCenter(page);
       await workspacePanel.getByTestId("command-center-input").fill("toggle");
       await expect(action(workspacePanel, "Toggle left sidebar")).toBeVisible({ timeout: 15_000 });
@@ -223,13 +201,11 @@ test.describe("Command center workspace management", () => {
         assigned: true,
       });
 
-      await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
 
       const panel = await openCommandCenter(page);
       await panel.getByTestId("command-center-input").fill("urgent");
       await panel.getByTestId("command-center-workspace-label-Urgent").click();
-      // Unassigning the only label drops the field entirely rather than leaving an empty array.
       await expect.poll(() => readWorkspaceLabels(workspace)).toEqual(undefined);
 
       const reopened = await openCommandCenter(page);
@@ -252,7 +228,6 @@ test.describe("Command center workspace management", () => {
         assigned: true,
       });
 
-      await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
 
       const panel = await openCommandCenter(page);

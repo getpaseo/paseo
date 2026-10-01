@@ -19,7 +19,7 @@ import {
   type IsolatedHostDaemon,
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
-import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { seedMockAgentWorkspace, type MockAgentWorkspace } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
@@ -33,23 +33,20 @@ interface TwoHostSidebar {
   secondaryWorkspaceId: string;
 }
 
-// The host badge only appears once the visible sidebar spans more than one host, and that count
-// runs over visible projects — so an offline host with no workspaces will not raise it. Two real
-// daemons, each with a seeded workspace, is the minimum shape that exercises the feature.
 const test = base.extend<{ twoHostSidebar: TwoHostSidebar }>({
   twoHostSidebar: async ({ page }, provide) => {
     const secondaryHost: IsolatedHostDaemon = await startIsolatedHostDaemon(
       "host-appearance-secondary",
     );
-    let primary: SeededWorkspace | null = null;
-    let secondary: SeededWorkspace | null = null;
+    let primary: MockAgentWorkspace | null = null;
+    let secondary: MockAgentWorkspace | null = null;
 
     try {
-      primary = await seedWorkspace({
+      primary = await seedMockAgentWorkspace({
         repoPrefix: "host-appearance-primary-",
         title: "Primary workspace",
       });
-      secondary = await seedWorkspace({
+      secondary = await seedMockAgentWorkspace({
         repoPrefix: "host-appearance-secondary-",
         title: "Secondary workspace",
         port: secondaryHost.port,

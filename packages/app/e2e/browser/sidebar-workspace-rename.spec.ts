@@ -1,6 +1,7 @@
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { seedWorkspace } from "../support/helpers/seed-client";
+
 import { getServerId } from "../support/helpers/server-id";
 
 function workspaceRowTestId(workspaceId: string): string {
@@ -30,9 +31,6 @@ async function openRenameModal(page: Page, workspaceId: string) {
   return input;
 }
 
-// In Model B the workspace title is its identity: renaming sets a custom title
-// layered over the derived branch/directory name, and reconciliation never
-// touches it. The sidebar row shows the title verbatim — no branch mutation.
 test.describe("Sidebar workspace rename", () => {
   test("renaming via kebab sets a custom title that survives reload", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-" });
@@ -53,16 +51,12 @@ test.describe("Sidebar workspace rename", () => {
       await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
 
       await expect(input).toHaveCount(0, { timeout: 15_000 });
-      // The title is shown exactly as typed — not slugified into a branch name.
+
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         customTitle,
         { timeout: 15_000 },
       );
 
-      // The custom title is backing metadata on the workspace: a full reload
-      // re-resolves the descriptor from persistence and must not lose it. This
-      // exercises the same descriptor resolution reconciliation re-runs against,
-      // so a reconcile pass cannot overwrite the user's title either.
       await page.reload();
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         customTitle,

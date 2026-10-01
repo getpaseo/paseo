@@ -479,6 +479,116 @@
             "name": "stable-010-settings"
           }
         ]
+      },
+      "upstream-010-production-settings": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://127.0.0.1:4126/settings/general",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Lines kept in the built-in terminal buffer",
+            "timeoutMs": 30000
+          },
+          {
+            "action": "goal",
+            "goal": "Open Sidebar settings, then Chat, then Terminal, then Appearance. Verify each pane loads, and finish on Appearance with Theme visible.",
+            "verify": [
+              {
+                "text": "Theme"
+              }
+            ],
+            "maxSteps": 14
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "pandaos-010-production-settings"
+          }
+        ]
+      },
+      "upstream-010-production-about": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://127.0.0.1:4126/settings/about",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "0.10.0",
+            "timeoutMs": 15000
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "pandaos-010-about"
+          }
+        ]
+      },
+      "upstream-010-main-preserved-session": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://127.0.0.1:4126/h/srv_RtppvtlARpFR/workspace/wks_6bf3685673763690?open=agent%3Aefe57cdd-55c2-4850-b9d2-3a0309bdfd0a",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Kanns tdu upstream merge",
+            "timeoutMs": 30000
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "upstream-010-main-preserved-session"
+          }
+        ]
+      },
+      "upstream-010-theme-selection-persists": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://127.0.0.1:4126/settings/appearance",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Pack theme 40",
+            "timeoutMs": 30000
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "upstream-010-theme40-reloaded"
+          }
+        ]
       }
     }
   }

@@ -8,9 +8,11 @@ import {
   expectNoTerminalTabs,
   clickFirstTerminalTab,
   expectFirstTerminalTabContains,
+  openFilesPanel,
 } from "../support/helpers/workspace-tabs";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
+import { selectWorkspaceInSidebar } from "../support/helpers/sidebar";
 import { openFileExplorer, expectExplorerEntryVisible } from "../support/helpers/file-explorer";
 import {
   expectTerminalSurfaceVisible,
@@ -20,8 +22,7 @@ import {
   connectWorkspaceSetupClient,
   createWorkspaceThroughDaemon,
   expectSetupPanel,
-  openHomeWithProject,
-  navigateToWorkspaceViaSidebar,
+  navigateToWorkspace,
   leaveWorkspaceViaHistory,
   openWorkspaceScriptsMenu,
   startWorkspaceScriptFromMenu,
@@ -61,8 +62,7 @@ test.describe("Workspace setup streaming", () => {
         cwd: repo.path,
         worktreeSlug: `setup-open-${Date.now()}`,
       });
-      await openHomeWithProject(page, repo.path);
-      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await navigateToWorkspace(page, workspace.id);
 
       await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
@@ -87,7 +87,6 @@ test.describe("Workspace setup streaming", () => {
     try {
       await seedProjectForWorkspaceSetup(client, repo.path);
 
-      // The setup client owns progress before creating the workspace.
       const completed = waitForWorkspaceSetupProgress(
         client,
         (payload) =>
@@ -99,8 +98,7 @@ test.describe("Workspace setup streaming", () => {
       });
       await completed;
 
-      await openHomeWithProject(page, repo.path);
-      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await navigateToWorkspace(page, workspace.id);
 
       await expectSetupTabNotSeeded(page, workspace.id);
       await expectSetupPanel(page);
@@ -188,14 +186,14 @@ test.describe("Workspace setup streaming", () => {
       expect(failedPayload.detail.log).toContain("setup failed");
       expect(failedPayload.error).toMatch(/failed/i);
 
-      await openHomeWithProject(page, repo.path);
-      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await navigateToWorkspace(page, workspace.id);
       await waitForWorkspaceTabsVisible(page);
       await expectFailedSetupTabSeededInMainPane(page, workspace.id);
 
+      await openFilesPanel(page);
       await closeSetupTab(page, workspace.id);
       await leaveWorkspaceViaHistory(page);
-      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await selectWorkspaceInSidebar(page, workspace.id);
       await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
       await client.close();
@@ -252,7 +250,6 @@ test.describe("Workspace setup streaming", () => {
     try {
       await seedProjectForWorkspaceSetup(client, repo.path);
 
-      // Wait for setup completion via daemon (setup snapshots are per-session)
       const completed = waitForWorkspaceSetupProgress(
         client,
         (payload) =>
@@ -264,8 +261,7 @@ test.describe("Workspace setup streaming", () => {
       });
       await completed;
 
-      await openHomeWithProject(page, repo.path);
-      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await navigateToWorkspace(page, workspace.id);
 
       await waitForWorkspaceTabsVisible(page);
       await expectNoTerminalTabs(page);

@@ -6,9 +6,8 @@ import { openWhatsNew, release, serveChangelog } from "../support/helpers/change
 const GITHUB_ISSUE_DESTINATION =
   /^https:\/\/github\.com\/(?:marushan49\/pandaos\/issues\/new(?:\/choose)?(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fmarushan49%2Fpandaos%2Fissues%2Fnew$)/;
 const CHANGELOG_DESTINATION = /^https:\/\/paseo\.sh\/changelog(?:[/?#]|$)/;
-// The name and the version are separate cells of a key/value row, so they meet with no space
-// between them in the row's text content.
-const APP_VERSION = /^Paseo\s*v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+const APP_VERSION = /^PandaOS\s*v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 async function openHelpMenu(page: Page): Promise<void> {
   await page.getByTestId("sidebar-help").click();
@@ -68,8 +67,6 @@ test("opens troubleshooting and support destinations", async ({ page }) => {
 });
 
 test("renders the changelog in the app and links the website", async ({ page }) => {
-  // A callout, a section name the app has never seen, and a fenced sample whose
-  // contents look like a release heading.
   await serveChangelog(page, [
     "# Changelog",
     "",

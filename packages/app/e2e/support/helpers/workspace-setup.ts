@@ -4,9 +4,8 @@ import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/inte
 import { parseHostWorkspaceRouteFromPathname } from "../../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
-import { getServerId } from "./server-id";
 import { withProjectOwnership } from "./project-ownership";
-import { switchWorkspaceViaSidebar } from "./workspace-ui";
+import { gotoWorkspace } from "./launcher";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type WorkspaceSetupDaemonClient = Pick<
@@ -36,7 +35,6 @@ export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemo
   const client = await connectDaemonClient<WorkspaceSetupDaemonClient>({
     clientIdPrefix: "workspace-setup",
   });
-  // Establish demand before a caller can launch setup. Client close releases it.
   try {
     await client.observeEvents(["workspace_setup_progress"]).ready;
   } catch (error) {
@@ -144,10 +142,6 @@ export async function createChatAgentFromWorkspaceSetup(
   await messageInput.press("Enter");
 }
 
-/**
- * @deprecated The new workspace screen no longer has a standalone terminal button.
- * Use the daemon API to create a workspace, then open a terminal from the launcher.
- */
 export async function createStandaloneTerminalFromWorkspaceSetup(page: Page): Promise<void> {
   await workspaceSetupDialog(page)
     .getByRole("button", { name: /^Terminal Create the workspace/i })
@@ -174,14 +168,10 @@ export async function waitForWorkspaceSetupDialogToClose(
 }
 
 export async function expectSetupPanel(page: Page): Promise<void> {
-  // If the setup panel is already visible (auto-opened), we're done.
   const panel = page.getByTestId("workspace-setup-panel");
   if (await panel.isVisible().catch(() => false)) {
     return;
   }
-  // Otherwise open it manually via workspace header actions menu.
-  // Use the specific testID to avoid matching the sidebar kebab which shares
-  // the same "Workspace actions" accessibility label.
   const actionsButton = page.getByTestId("workspace-header-menu-trigger");
   await expect(actionsButton).toBeVisible({ timeout: 10_000 });
   await actionsButton.click();
@@ -273,15 +263,8 @@ export async function fetchWorkspaceById(
   return workspace;
 }
 
-export async function navigateToWorkspaceViaSidebar(
-  page: Page,
-  workspaceId: string,
-): Promise<void> {
-  await switchWorkspaceViaSidebar({
-    page,
-    serverId: getServerId(),
-    workspaceId,
-  });
+export async function navigateToWorkspace(page: Page, workspaceId: string): Promise<void> {
+  await gotoWorkspace(page, workspaceId);
 }
 
 export async function leaveWorkspaceViaHistory(page: Page): Promise<void> {

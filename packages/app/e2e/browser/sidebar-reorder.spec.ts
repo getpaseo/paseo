@@ -1,9 +1,13 @@
+import {
+  ensureWorkspaceHasContent,
+  seedVisibleWorkspace as seedWorkspace,
+} from "../support/helpers/mock-agent";
 import type { Locator } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { getServerId } from "../support/helpers/server-id";
-import { seedWorkspace } from "../support/helpers/seed-client";
+
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 async function rowTestIds(rows: Locator) {
@@ -75,6 +79,11 @@ test("projects, workspaces, and pinned chats reorder with an immediate mouse dra
     if (!secondWorkspace.workspace) {
       throw new Error(secondWorkspace.error ?? "Failed to seed a second workspace");
     }
+    await ensureWorkspaceHasContent(
+      firstProject.client,
+      secondWorkspace.workspace.id,
+      secondWorkspace.workspace.workspaceDirectory,
+    );
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);

@@ -254,7 +254,7 @@ async function expectPluginSourceDocsOpen(page: Page): Promise<void> {
   const docsPage = await docsPagePromise;
   try {
     expect(new URL(request.url()).pathname).toBe("/docs/plugins/reference");
-    // The deployed site can redirect while the matching website change is still in this PR.
+
     await docsPage.waitForURL(
       (url) => url.origin === "https://paseo.sh" && url.hash === "#plugin-sources",
       { waitUntil: "commit" },
@@ -368,6 +368,7 @@ for (const viewport of [
 }
 
 async function openNpmPluginSettings(page: Page, width: number) {
+  await page.emulateMedia({ colorScheme: "light" });
   if (width < 600) await openCompactPluginSettings(page);
   else await openPluginSettings(page);
 }
@@ -382,8 +383,8 @@ async function expectSourceHierarchy(page: Page, description: string, source: st
     Number.parseFloat(getComputedStyle(element).fontSize),
   );
   expect(sourceSize).toBeLessThan(descriptionSize);
-  await expect(sourceText).toHaveCSS("color", "rgb(161, 161, 170)");
-  await expect(descriptionText).toHaveCSS("color", "rgb(113, 113, 122)");
+  await expect(sourceText).toHaveCSS("color", "rgb(150, 145, 127)");
+  await expect(descriptionText).toHaveCSS("color", "rgb(106, 102, 92)");
 }
 
 async function installLocalPluginWithStatusExamples(

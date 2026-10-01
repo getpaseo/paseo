@@ -31,8 +31,6 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
   return maybeEnvelope.message as Record<string, unknown>;
 }
 
-// --- Navigation ---
-
 export async function openProjects(page: Page): Promise<void> {
   await gotoAppShell(page);
   await openSettings(page);
@@ -66,8 +64,6 @@ export async function expectProjectSettingsHistoryRoundTrip(
   await expectProjectTitle(page, projectName);
 }
 
-// --- Form interactions ---
-
 export async function editWorktreeSetup(page: Page, setupCommands: string[]): Promise<void> {
   await page
     .getByRole("textbox", { name: "Worktree setup commands" })
@@ -79,18 +75,12 @@ export async function clickSaveProjectSettings(page: Page): Promise<void> {
 }
 
 export async function clickRetryProjectSettingsSave(page: Page): Promise<void> {
-  // action-0 is always "Try again"; action-1 is always "Reload".
-  // The write-failed callout renders these two buttons in a fixed order.
   await page.getByTestId("write-failed-callout-action-0").click();
 }
 
 export async function clickReloadProjectSettings(page: Page): Promise<void> {
-  // Scope to the active error callout so the locator is unambiguous.
-  // At most one error callout renders at a time.
   await page.locator('[data-testid$="-callout"]').getByRole("button", { name: "Reload" }).click();
 }
-
-// --- Project edit sheet (name + icon) ---
 
 export async function openProjectEditSheet(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Edit project", exact: true }).click();
@@ -135,7 +125,6 @@ export async function expectProjectEditSaved(page: Page): Promise<void> {
   await expect(page.getByTestId("app-toast-message")).toHaveText("Project updated");
 }
 
-// The sheet keeps the user's input on a failed save so the value stays editable.
 export async function expectProjectEditFailed(page: Page, detail: string): Promise<void> {
   await expect(page.getByText(detail, { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
@@ -144,8 +133,6 @@ export async function expectProjectEditFailed(page: Page, detail: string): Promi
 export async function expectProjectTitle(page: Page, projectName: string): Promise<void> {
   await expect(page.getByRole("main").getByText(projectName, { exact: true })).toBeVisible();
 }
-
-// --- Error-state assertions ---
 
 type ErrorKind = "stale" | "invalid" | "write_failed" | "transport" | "read_failed";
 
@@ -179,19 +166,17 @@ export async function expectSaveButtonDisabled(page: Page): Promise<void> {
 }
 
 export async function expectUncommittedSetupWarning(page: Page): Promise<void> {
-  const warning = page.getByRole("alert").filter({ hasText: "Commit paseo.json changes" });
-  await expect(warning).toContainText("Commit paseo.json changes");
+  const warning = page.getByRole("alert").filter({ hasText: "Commit pandaos.json changes" });
+  await expect(warning).toContainText("Commit pandaos.json changes");
   await expect(warning).toContainText(
     "New worktrees use the setup script from the base branch you select.",
   );
 }
 
 export async function expectNoUncommittedSetupWarning(page: Page): Promise<void> {
-  const warning = page.getByRole("alert").filter({ hasText: "Commit paseo.json changes" });
+  const warning = page.getByRole("alert").filter({ hasText: "Commit pandaos.json changes" });
   await expect(warning).toHaveCount(0);
 }
-
-// --- Form-state assertions ---
 
 export async function expectProjectSettingsFormVisible(page: Page): Promise<void> {
   await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).toBeVisible({
@@ -212,10 +197,6 @@ export async function expectProjectHostContextHidden(page: Page): Promise<void> 
   await expect(page.getByTestId("host-picker")).not.toBeVisible();
 }
 
-// --- Script-list assertions and interactions ---
-
-// Counts only row Views, not kebab-trigger elements (which share the "script-row-"
-// prefix but contain "-menu-").
 export async function expectScriptRowCount(page: Page, count: number): Promise<void> {
   await expect(
     page
@@ -234,15 +215,11 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
     .locator('[data-testid^="script-row-"]:not([data-testid*="-menu-"])')
     .filter({ hasText: scriptName })
     .first();
-  // DropdownMenuTrigger renders as a Pressable (no role="button"); derive its testID
-  // from the row's testID to avoid scoped locator unreliability.
   const id = (await row.getAttribute("data-testid"))!.replace("script-row-", "");
   await page.getByTestId(`script-row-menu-${id}`).click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("menuitem", { name: "Remove" }).click();
 }
-
-// --- File manipulation ---
 
 export async function corruptPaseoConfig(repoPath: string): Promise<void> {
   await writeFile(path.join(repoPath, "paseo.json"), "{not valid json}");
@@ -268,8 +245,6 @@ export function commitPaseoConfig(repoPath: string): void {
   execFileSync("git", ["commit", "-m", "Update project config"], { cwd: repoPath });
 }
 
-// The daemon writes atomically via a temp file + rename, so blocking writes requires
-// removing write permission from the *directory*, not just the file.
 export async function blockPaseoConfigWrites(repoPath: string): Promise<void> {
   await chmod(repoPath, 0o555);
 }
@@ -278,12 +253,6 @@ export async function unblockPaseoConfigWrites(repoPath: string): Promise<void> 
   await chmod(repoPath, 0o755);
 }
 
-// --- WebSocket helpers ---
-
-// Proxies all daemon WS traffic transparently, but rejects paseo.json reads
-// until the test explicitly allows recovery. Closing the transport leaves the
-// client-side RPC pending across reconnects, so this injects the same correlated
-// rpc_error shape the daemon emits for failed async session requests.
 export async function installReadTransportFailure(
   page: Page,
 ): Promise<{ allowRecovery: () => void }> {
@@ -316,17 +285,13 @@ export async function installReadTransportFailure(
       }
       try {
         server.send(message);
-      } catch {
-        // server socket already closed
-      }
+      } catch {}
     });
 
     server.onMessage((message) => {
       try {
         ws.send(message);
-      } catch {
-        // client socket already closed
-      }
+      } catch {}
     });
   });
 
@@ -337,9 +302,6 @@ export async function installReadTransportFailure(
   };
 }
 
-// Installs a transparent WS proxy that can later drop all active daemon connections
-// and block new ones. Code 1001 (Going Away) without reason triggers "error" state
-// in DaemonClient due to describeTransportClose returning a non-empty string.
 export async function installDaemonConnectionGate(
   page: Page,
 ): Promise<{ drop: () => Promise<void> }> {

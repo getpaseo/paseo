@@ -24,7 +24,7 @@ import {
   seedParentWithCrossWorkspaceSubagent,
 } from "../support/helpers/subagents";
 import { expectWorkspaceHeader, waitForSidebarHydration } from "../support/helpers/workspace-ui";
-import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
+import { getVisibleWorkspaceAgentTabIds, openFilesPanel } from "../support/helpers/workspace-tabs";
 
 type NewWorkspaceDaemonClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 type WorkspaceIndicator = "attention" | "done" | "failed" | "loading" | "needs_input" | "running";
@@ -340,6 +340,8 @@ test.describe("Workspace model regressions", () => {
         15_000,
       );
 
+      await gotoWorkspace(page, secondWorkspaceId);
+      await openFilesPanel(page);
       await gotoWorkspace(page, seeded.workspaceId);
       await waitForSidebarHydration(page);
 
@@ -364,7 +366,9 @@ test.describe("Workspace model regressions", () => {
         client,
         previousWorkspaceId: seeded.workspaceId,
         projectDisplayName: seeded.projectDisplayName,
+        assertSidebarRow: false,
       });
+      await openFilesPanel(page);
       const createdRowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
 
       await expect
@@ -456,6 +460,8 @@ test.describe("Workspace model regressions", () => {
       const parked = await seeded.client.waitForFinish(agent.id, 15_000);
       expect(parked.status).toBe("permission");
 
+      await gotoWorkspace(page, secondWorkspaceId);
+      await openFilesPanel(page);
       await gotoWorkspace(page, seeded.workspaceId);
       await waitForSidebarHydration(page);
 
@@ -480,7 +486,9 @@ test.describe("Workspace model regressions", () => {
         client,
         previousWorkspaceId: seeded.workspaceId,
         projectDisplayName: seeded.projectDisplayName,
+        assertSidebarRow: false,
       });
+      await openFilesPanel(page);
       const createdRowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
 
       await expect

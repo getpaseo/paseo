@@ -1,5 +1,5 @@
 import { expect, test } from "../support/fixtures";
-import { clickNewChat } from "../support/helpers/launcher";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
 import {
@@ -29,14 +29,8 @@ import {
   delayBrowserAgentCreatedStatus,
   openNewWorkspaceComposer,
 } from "../support/helpers/new-workspace";
-import { gotoAppShell } from "../support/helpers/app";
-import {
-  waitForSidebarHydration,
-  switchWorkspaceViaSidebar,
-} from "../support/helpers/workspace-ui";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-fixtures";
-import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
 
@@ -128,8 +122,6 @@ test.describe("Composer attachments", () => {
     try {
       await clickNewChat(page);
       await expectComposerVisible(page);
-      // Choose from the repository list. Newly created repositories are not
-      // necessarily available in GitHub's separate text-search index yet.
       await selectGithubOption(page, "", `issue:${ghRepo.issues[0].number}`);
       await expectGithubAttachmentPill(page, ghRepo.issues[0]);
       await selectGithubOption(page, "", `change_request:${ghRepo.prs[0].number}`);
@@ -141,13 +133,7 @@ test.describe("Composer attachments", () => {
     }
   });
 
-  test.fixme("workspace-review pill suppresses on X-click and reappears after send", async () => {
-    // The review attachment is created via InlineReviewEditor in surface.tsx (addComment action).
-    // Automating this requires: a workspace with staged changes, navigating to the diff panel,
-    // hovering the gutter "+" button, typing a comment, and submitting. A dedicated
-    // helpers/review.ts with addInlineReviewComment(page, filePath, lineNumber, comment) is
-    // needed before this can be exercised end-to-end.
-  });
+  test.fixme("workspace-review pill suppresses on X-click and reappears after send", async () => {});
 
   test("attaches, previews, and removes an image before dropping a file", async ({
     page,
@@ -185,13 +171,7 @@ test.describe("Composer attachments", () => {
     const workspace = await seedWorkspace({ repoPrefix: "attach-drop-new-workspace-" });
 
     try {
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId: getServerId(),
-        workspaceId: workspace.workspaceId,
-      });
+      await gotoWorkspace(page, workspace.workspaceId);
 
       await openNewWorkspaceComposer(page, {
         projectKey: workspace.projectKey,
@@ -270,19 +250,11 @@ test.describe("Composer attachments", () => {
 
   test("composer is locked while new workspace agent is being created", async ({ page }) => {
     test.setTimeout(120_000);
-    const serverId = getServerId();
-
     const agentCreatedDelay = await delayBrowserAgentCreatedStatus(page);
     const workspace = await seedWorkspace({ repoPrefix: "attach-lock-" });
 
     try {
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId,
-        workspaceId: workspace.workspaceId,
-      });
+      await gotoWorkspace(page, workspace.workspaceId);
 
       await openNewWorkspaceComposer(page, {
         projectKey: workspace.projectKey,

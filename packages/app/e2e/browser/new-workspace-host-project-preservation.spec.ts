@@ -51,6 +51,14 @@ async function createProject(
   if (!created.workspace) {
     throw new Error(created.error ?? `Failed to create project ${input.projectName}`);
   }
+  await client.createAgent({
+    provider: "mock",
+    cwd: input.projectPath,
+    workspaceId: created.workspace.id,
+    title: input.workspaceName,
+    modeId: "load-test",
+    model: "e2e-fast-stream",
+  });
 
   await client.renameProject(created.workspace.projectId, input.projectName);
   const listed = await client.listProjects();

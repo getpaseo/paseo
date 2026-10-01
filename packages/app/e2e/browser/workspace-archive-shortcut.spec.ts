@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import {
   expectWorkspaceAbsentFromSidebar,
   selectWorkspaceInSidebar,

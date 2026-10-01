@@ -9,14 +9,18 @@ import {
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
 } from "../support/helpers/sidebar";
-import { seedWorkspace } from "../support/helpers/seed-client";
+
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { escapeRegex } from "../support/helpers/regex";
 import { openFilesPanel } from "../support/helpers/workspace-tabs";
-import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  ensureWorkspaceHasContent,
+  seedMockAgentWorkspace,
+  seedVisibleWorkspace as seedWorkspace,
+} from "../support/helpers/mock-agent";
 
 const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
 
@@ -98,6 +102,11 @@ async function withPaseoOwnedWorktree(
     if (!created.workspace) {
       throw new Error(created.error ?? "Failed to create Paseo-owned worktree");
     }
+    await ensureWorkspaceHasContent(
+      project.client,
+      created.workspace.id,
+      created.workspace.workspaceDirectory,
+    );
     expect(path.basename(created.workspace.workspaceDirectory)).toBe(worktreeSlug);
 
     await run({
@@ -149,7 +158,6 @@ async function simulateDamagedLegacyDirectoryCache(
   page: Page,
   workspaceIdToRemove: string,
 ): Promise<void> {
-  // Stop the app before altering storage so no pending app write can repair the fixture.
   const fixtureUrl = new URL("/__directory_cache_fixture", page.url()).href;
   await page.route(fixtureUrl, (route) =>
     route.fulfill({ contentType: "text/html", body: "<html><body>Cache fixture</body></html>" }),
@@ -182,7 +190,7 @@ async function simulateDamagedLegacyDirectoryCache(
               return;
             }
             const stored = JSON.parse(checkpoint.payload);
-            // Accept either writer so this fixture also reproduces on the unfixed client.
+
             const cursors = stored.version === 1 ? stored.cursors : stored;
             if (!cursors.workspaces?.generation) {
               transaction.abort();
@@ -236,6 +244,11 @@ async function createPinnedSiblingWorkspace(
     title: "Pinned sibling",
   });
   if (!sibling.workspace) throw new Error(sibling.error ?? "Sibling workspace was not created");
+  await ensureWorkspaceHasContent(
+    project.client,
+    sibling.workspace.id,
+    sibling.workspace.workspaceDirectory,
+  );
   await project.client.setWorkspacePinned(sibling.workspace.id, true);
   return sibling.workspace.id;
 }
@@ -498,6 +511,11 @@ test.describe("Half-screen desktop layout", () => {
         if (!created.workspace) {
           throw new Error(created.error ?? "Failed to fill the retained sidebar");
         }
+        await ensureWorkspaceHasContent(
+          workspace.client,
+          created.workspace.id,
+          created.workspace.workspaceDirectory,
+        );
         lastWorkspaceId = created.workspace.id;
       }
 

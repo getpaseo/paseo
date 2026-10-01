@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
+import { gotoWorkspace } from "../support/helpers/launcher";
+import { openFilesPanel } from "../support/helpers/workspace-tabs";
 import {
   archiveWorkspaceFromDaemon,
   connectNewWorkspaceDaemonClient,
@@ -62,7 +63,10 @@ test.describe("Workspace archive with worktree backing", () => {
     expect(sibling.workspaceKind).toBe("worktree");
     expect(sibling.workspaceDirectory).toBe(first.workspaceDirectory);
 
-    await gotoAppShell(page);
+    for (const workspaceId of [first.workspaceId, sibling.id]) {
+      await gotoWorkspace(page, workspaceId);
+      await openFilesPanel(page);
+    }
     await waitForSidebarHydration(page);
     await waitForWorkspaceInSidebar(page, { serverId, workspaceId: first.workspaceId });
     await waitForWorkspaceInSidebar(page, { serverId, workspaceId: sibling.id });

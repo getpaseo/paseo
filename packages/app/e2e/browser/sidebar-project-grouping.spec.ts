@@ -22,6 +22,7 @@ import {
 import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { createTempGitRepo } from "../support/helpers/workspace";
+import { ensureWorkspaceHasContent } from "../support/helpers/mock-agent";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -63,6 +64,11 @@ async function createProject(
   if (!created.workspace) {
     throw new Error(created.error ?? `Failed to create project on ${input.serverId}`);
   }
+  await ensureWorkspaceHasContent(
+    client,
+    created.workspace.id,
+    created.workspace.workspaceDirectory,
+  );
   if (input.projectName) {
     await client.renameProject(created.workspace.projectId, input.projectName);
   }

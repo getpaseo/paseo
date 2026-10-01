@@ -18,12 +18,12 @@ test.describe("Sidebar items in Appearance settings", () => {
     await gotoAppShell(page);
 
     await test.step("the sidebar starts in the default order", async () => {
-      await expectSidebarOrder(page, ["new-workspace", "history", "search", "schedules"]);
+      await expectSidebarOrder(page, ["new-workspace", "history", "search", "schedules", "teams"]);
     });
 
     await test.step("the Sidebar section lists every item in the same order", async () => {
       await openSidebarNavSettings(page);
-      // The section explains itself through the header's info tooltip, not a paragraph.
+
       await expect(page.getByTestId("sidebar-nav-section-info")).toHaveAccessibleName(
         "About Sidebar",
       );
@@ -32,14 +32,14 @@ test.describe("Sidebar items in Appearance settings", () => {
         "history",
         "search",
         "schedules",
+        "teams",
       ]);
       await expectSidebarNavSettingsRow(page, {
         key: "history",
         label: "History",
         visible: true,
       });
-      // Items with a keyboard shortcut badge it next to their name. Chords render
-      // with Ctrl off macOS, which is what the browser project runs on.
+
       await expect(
         page.getByTestId("sidebar-nav-item-new-workspace").getByText("Ctrl+N", { exact: true }),
       ).toBeVisible();
@@ -52,6 +52,7 @@ test.describe("Sidebar items in Appearance settings", () => {
         "history",
         "schedules",
         "search",
+        "teams",
       ]);
       await moveSidebarNavItemUp(page, "schedules");
       await expectSidebarNavSettingsOrder(page, [
@@ -59,10 +60,11 @@ test.describe("Sidebar items in Appearance settings", () => {
         "schedules",
         "history",
         "search",
+        "teams",
       ]);
 
       await leaveSettings(page);
-      await expectSidebarOrder(page, ["new-workspace", "schedules", "history", "search"]);
+      await expectSidebarOrder(page, ["new-workspace", "schedules", "history", "search", "teams"]);
     });
 
     await test.step("turning History off removes it from the sidebar", async () => {
@@ -73,17 +75,18 @@ test.describe("Sidebar items in Appearance settings", () => {
         { key: "schedules", visible: true },
         { key: "history", visible: false },
         { key: "search", visible: true },
+        { key: "teams", visible: true },
       ]);
 
       await leaveSettings(page);
       await expectSidebarItemHidden(page, "history");
-      await expectSidebarOrder(page, ["new-workspace", "schedules", "search"]);
+      await expectSidebarOrder(page, ["new-workspace", "schedules", "search", "teams"]);
     });
 
     await test.step("the sidebar keeps that shape across a reload", async () => {
       await page.reload();
       await expectSidebarItemHidden(page, "history");
-      await expectSidebarOrder(page, ["new-workspace", "schedules", "search"]);
+      await expectSidebarOrder(page, ["new-workspace", "schedules", "search", "teams"]);
     });
   });
 
@@ -93,10 +96,10 @@ test.describe("Sidebar items in Appearance settings", () => {
       { key: "history", visible: false },
       { key: "search", visible: false },
       { key: "schedules", visible: false },
+      { key: "teams", visible: false },
     ]);
     await gotoAppShell(page);
 
-    // The sidebar itself still renders; only its top-level nav items are gone.
     await expect(page.locator('[data-testid="sidebar-settings"]:visible')).toBeVisible({
       timeout: 30_000,
     });
@@ -104,5 +107,6 @@ test.describe("Sidebar items in Appearance settings", () => {
     await expectSidebarItemHidden(page, "history");
     await expectSidebarItemHidden(page, "search");
     await expectSidebarItemHidden(page, "schedules");
+    await expectSidebarItemHidden(page, "teams");
   });
 });

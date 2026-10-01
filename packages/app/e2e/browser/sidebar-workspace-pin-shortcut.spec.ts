@@ -1,3 +1,4 @@
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -5,13 +6,10 @@ import {
   expectNewWorkspaceProjectSelected,
   openNewWorkspaceComposer,
 } from "../support/helpers/new-workspace";
-import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 
-// The pin shortcut used to be registered by the sidebar row itself, so it silently did nothing
-// whenever the row was unmounted — a collapsed project section being the common case. It now
-// lives in a single always-mounted handler keyed on the active route selection.
 const PIN_SHORTCUT = "ControlOrMeta+Shift+P";
 
 function workspaceRow(page: Page, workspaceId: string) {
@@ -22,7 +20,6 @@ function pinnedSection(page: Page) {
   return page.getByTestId("sidebar-pinned-section");
 }
 
-// Opens the workspace so it becomes the active route selection, which is what the shortcut acts on.
 async function openWorkspace(page: Page, workspaceId: string) {
   const row = workspaceRow(page, workspaceId);
   await expect(row).toBeVisible({ timeout: 30_000 });
@@ -30,9 +27,6 @@ async function openWorkspace(page: Page, workspaceId: string) {
   await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
 }
 
-// The project key is host-scoped and not exposed by the seed helper, so the header is addressed by
-// its display name, scoped to project rows so a workspace row can never match. Pressing the header
-// toggles the section, which unmounts every workspace row under it.
 async function collapseProjectSection(page: Page, project: SeededWorkspace): Promise<void> {
   const header = page
     .locator('[data-testid^="sidebar-project-row-"]')
@@ -48,8 +42,6 @@ async function switchToStatusGrouping(page: Page): Promise<void> {
   await expect(page.getByTestId("sidebar-status-list-scroll")).toBeVisible({ timeout: 10_000 });
 }
 
-// Status mode buckets workspaces by state rather than project, so the group holding this workspace
-// is discovered from the rows container it sits in rather than assumed.
 async function collapseStatusGroupContaining(page: Page, workspaceId: string): Promise<void> {
   const rows = page
     .locator('[data-testid^="sidebar-status-group-rows-"]')
@@ -82,14 +74,9 @@ function readSessionMessage(
 const PIN_REJECTION_MESSAGE = "Pin rejected by test.";
 
 interface PinRpcGate {
-  /** Pin requests the client has sent so far. */
   sentCount(): number;
 }
 
-// Proxies everything so the app boots against the real daemon, counting pin RPCs and optionally
-// rejecting the first `rejectFirst` of them. The count asserts how many pins one keypress actually
-// dispatched, which the rendered pin state cannot show — a toggle that fired twice lands back
-// where it started.
 async function installPinRpcGate(
   page: Page,
   options: { rejectFirst?: number } = {},
@@ -265,8 +252,6 @@ test.describe("Pin workspace shortcut", () => {
       await expect(pinnedSection(page)).toHaveCount(0);
       await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
 
-      // The failure must leave the action usable: the in-flight guard has to release the key so a
-      // retry is not swallowed. Without that release the workspace is unpinnable for the session.
       await page.keyboard.press(PIN_SHORTCUT);
 
       await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });

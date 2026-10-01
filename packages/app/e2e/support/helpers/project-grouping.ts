@@ -3,6 +3,8 @@ import { gotoAppShell } from "./app";
 import { addConnectedHostsAndReload, waitForConnectedHost } from "./hosts";
 import { openProjectSettings } from "./project-settings";
 import { selectSettingsHost } from "./settings";
+import { waitForTabBar } from "./launcher";
+import { openFilesPanel } from "./workspace-tabs";
 import { waitForSidebarHydration } from "./workspace-ui";
 import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 
@@ -71,7 +73,7 @@ export async function beginWorkspaceFromProject(page: Page, projectName: string)
   const group = projectGroup(page, projectName);
   await expect(group).toBeVisible({ timeout: PROJECT_VISIBILITY_TIMEOUT });
   await group.hover();
-  await group.getByLabel(`Create a new workspace for ${projectName}`).click();
+  await group.locator('[data-testid^="sidebar-project-new-worktree-"]').click();
   await expect(page.getByRole("button", { name: "Workspace project", exact: true })).toContainText(
     projectName,
     { timeout: PROJECT_VISIBILITY_TIMEOUT },
@@ -86,6 +88,9 @@ export async function selectWorkspaceHost(page: Page, hostName: string): Promise
 
 export async function createWorkspaceWithoutAgent(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
+  await waitForTabBar(page);
+  await openFilesPanel(page);
 }
 
 export async function expectProjectWorkspaceCountForHost(

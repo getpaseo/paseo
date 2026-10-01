@@ -24,7 +24,7 @@ import {
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { killProcessTree, spawnTsx } from "../support/helpers/spawn-node";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
-import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
+import { getVisibleWorkspaceAgentTabIds, openFilesPanel } from "../support/helpers/workspace-tabs";
 
 const LEGACY_AGENT_ID = "10000000-0000-4000-8000-000000000001";
 const SERVER_ID = `srv_restart_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -426,6 +426,8 @@ test.describe("Workspace model restart regressions", () => {
           status: "running",
         });
 
+      await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceB));
+      await openFilesPanel(page);
       await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceA));
       await waitForSidebarHydration(page);
       await expectWorkspaceRowDoesNotShowIndicator(page, {
@@ -462,6 +464,7 @@ test.describe("Workspace model restart regressions", () => {
       if (!createdWorkspaceId) {
         throw new Error(`Expected browser to navigate to created workspace, got ${page.url()}`);
       }
+      await openFilesPanel(page);
 
       await expect
         .poll(() =>
@@ -476,8 +479,6 @@ test.describe("Workspace model restart regressions", () => {
           [createdWorkspaceId]: "done",
         });
 
-      // The restarted provider session may settle while the browser creates the sibling. Its
-      // initial running status is asserted above; this phase verifies that ownership never moves.
       const workspaceStatuses = await fetchWorkspaceStatuses(client, [seeded.workspaceA]);
       expect(["running", "done"]).toContain(workspaceStatuses[seeded.workspaceA]);
 

@@ -120,16 +120,14 @@ describe("TeamService", () => {
 
     let state = (await svc.status(teamId)).state;
     expect(itemByKey(state, "A").phase).toBe("implement");
-    expect(itemByKey(state, "B").phase).toBe("ready"); // conflict with A waits
+    expect(itemByKey(state, "B").phase).toBe("ready");
 
     const devA = host.agentFor("developer", "A", state);
     const createdBeforeRestart = host.created.length;
 
-    // Daemon restart while the developer is running: nothing lost, nothing started twice.
     svc.stop();
     svc = makeService(root, host);
     await svc.start();
-    // Reloading the session emits "idle"; that must not count as the worker ending its turn.
     await svc.onTurnEnded(teamId, devA.id, false);
     await svc.dispatchAll();
     expect(host.created.length).toBe(createdBeforeRestart);
@@ -146,9 +144,8 @@ describe("TeamService", () => {
     await svc.dispatchAll();
     state = (await svc.status(teamId)).state;
     const testerA = host.agentFor("tester", "A", state);
-    expect(testerA.cwd).toBe(devA.cwd); // tester works in the developer's worktree
+    expect(testerA.cwd).toBe(devA.cwd);
 
-    // Red test goes back to the same developer session.
     await svc.report(testerA.id, { outcome: "fail", summary: "A breaks on empty input" });
     await svc.dispatchAll();
     state = (await svc.status(teamId)).state;
@@ -156,7 +153,6 @@ describe("TeamService", () => {
     expect(host.prompts.at(-1)!.agentId).toBe(devA.id);
     expect(host.prompts.at(-1)!.prompt).toContain("A breaks on empty input");
 
-    // The tester's old report is stale now and must not move the item.
     await expect(svc.report(testerA.id, { outcome: "pass", summary: "late" })).rejects.toThrow(
       /older state/,
     );
@@ -179,7 +175,7 @@ describe("TeamService", () => {
 
     state = (await svc.status(teamId)).state;
     expect(itemByKey(state, "A").phase).toBe("done");
-    expect(itemByKey(state, "B").phase).toBe("implement"); // freed by A finishing
+    expect(itemByKey(state, "B").phase).toBe("implement");
 
     const devB = host.agentFor("developer", "B", state);
     await svc.report(devB.id, { outcome: "done", summary: "B" });
@@ -223,6 +219,7 @@ describe("TeamService", () => {
     const svc = makeService(root, host);
     await svc.start();
     const state = await svc.startTeam({ bossAgentId: "boss", title: "Versioned", objective: "x" });
+    await svc.dispatchAll();
     svc.stop();
     const packs = new PackRegistry();
     const pack = packs.get("software-basic")!;

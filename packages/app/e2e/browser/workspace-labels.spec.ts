@@ -1,7 +1,7 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
@@ -85,13 +85,6 @@ async function size(locator: import("@playwright/test").Locator) {
   return { width, height };
 }
 
-/**
- * Waits until an element stops moving.
- *
- * The flyout scales in and the sidebar behind it re-lays out as the filter changes, so a rail
- * measured mid-animation is not a rail — and a measurement built from two `boundingBox()` calls
- * would take its two halves from two different frames.
- */
 async function settled(locator: import("@playwright/test").Locator) {
   let previous = "";
   await expect
@@ -122,10 +115,6 @@ async function openWorkspaceLabels(page: import("@playwright/test").Page, worksp
   await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
 }
 
-/**
- * Creating is its own page: the list is replaced by a name field and the swatches, and one row
- * commits. Picking a colour must not create anything on its own.
- */
 async function createLabel(
   page: import("@playwright/test").Page,
   input: { workspaceId: string; name: string; color: string },
@@ -161,7 +150,6 @@ test.describe("Workspace labels", () => {
 
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await page.getByTestId("sidebar-display-label-filter").click();
-      // Clear only exists once something is filtered, so the row has to be selected first.
       await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
       await page.getByTestId("sidebar-label-filter-option-Unused").click();
 
@@ -169,8 +157,6 @@ test.describe("Workspace labels", () => {
       await expect(page.getByTestId("sidebar-project-empty-state")).toBeHidden();
       await expect(page.getByTestId("sidebar-display-preferences-menu")).toBeVisible();
 
-      // Emptying the sidebar swaps the list's body and nothing above it, so the page the filter
-      // was set on is still up over the empty state and clearing it is one press away.
       await expect(page.getByTestId("sidebar-label-filter-clear")).toBeVisible();
       await page.getByTestId("sidebar-label-filter-clear").click();
       await expect(
@@ -206,7 +192,6 @@ test.describe("Workspace labels", () => {
         await labelRow(page, "Frontend").click();
         await expectAssigned(page, "Urgent", true);
         await expectAssigned(page, "Frontend", true);
-        // Four toggles in, the page it started on is still the page it is on.
         await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
         await page.keyboard.press("Escape");
 
@@ -237,11 +222,8 @@ test.describe("Workspace labels", () => {
         const urgent = page.getByTestId("sidebar-label-filter-option-Urgent");
         const frontend = page.getByTestId("sidebar-label-filter-option-Frontend");
         const unlabelledLabel = page.getByTestId("sidebar-label-filter-option-unlabelled");
-        // A row is one control, so the only thing on it that could move is the check the engine
-        // draws — measured before anything is filtered, and again once a row carries one.
         const atRest = await size(urgent);
 
-        // One press in, one press out, and the row is the whole target either way.
         await urgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "true");
         await expect(labelledRow).toBeVisible();
@@ -254,17 +236,14 @@ test.describe("Workspace labels", () => {
         await expect(unlabelledRow).toBeVisible();
         expect(await size(urgent)).toEqual(atRest);
 
-        // Unlabelled is a first-class filter option.
         await unlabelledLabel.click();
         await expect(labelledRow).toBeHidden();
         await expect(unlabelledRow).toBeVisible();
 
-        // Selection is deliberately OR-only: labels and Unlabelled together include both rows.
         await urgent.click();
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeVisible();
 
-        // Clear restores the complete sidebar without leaving the filter page.
         await page.getByTestId("sidebar-label-filter-clear").click();
         await expect(page.getByTestId("sidebar-filter-empty-state")).toBeHidden();
         await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
@@ -288,18 +267,13 @@ test.describe("Workspace labels", () => {
         await page.getByTestId("workspace-label-manager-search").fill("");
         await expect(page.getByTestId("workspace-label-manager-label-Frontend")).toBeVisible();
 
-        // A row is a label, not a button that swaps the surface — the pencil opens the edit, and
-        // it is only reachable once the row is hovered, the way it is only visible then.
         await page.getByTestId("workspace-label-manager-label-Urgent").hover();
         await page.getByTestId("workspace-label-manager-edit-Urgent").click();
-        // Phase 1's swatch names a colour by itself; the old "{{color}} label color" string is
-        // no longer rendered anywhere.
         await expect(page.getByRole("radio", { name: "Red" })).toBeChecked();
         await expect(page.getByRole("radio", { name: "Sky" })).not.toBeChecked();
 
         await page.getByTestId("workspace-label-manager-name").fill("Priority");
         await page.getByRole("radio", { name: "Amber" }).click();
-        // Picking a colour picks a colour: nothing has left for the host yet.
         await expect(page.getByTestId("workspace-label-manager-save")).toBeVisible();
 
         mutationFailure.failNextUpdate();
@@ -307,7 +281,6 @@ test.describe("Workspace labels", () => {
         await expect(page.getByTestId("workspace-label-manager-error")).toContainText(
           "Injected label mutation failure.",
         );
-        // Nothing half-applied: the view is still open on the draft exactly as typed.
         await expect(page.getByTestId("workspace-label-manager-name")).toHaveValue("Priority");
         await expect(page.getByRole("radio", { name: "Amber" })).toBeChecked();
 
@@ -365,7 +338,6 @@ test.describe("Workspace labels", () => {
         await expectAssigned(page, "Touch", false);
         await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
 
-        // The pushed page replaces the list rather than unfolding under it.
         await page.getByTestId("workspace-label-picker-create").tap();
         await expect(page.getByTestId("workspace-label-picker-create-name")).toBeVisible();
         await expect(labelRow(page, "Touch")).toBeHidden();

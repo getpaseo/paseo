@@ -1,7 +1,8 @@
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { seedWorkspace } from "../support/helpers/seed-client";
+
 import { getServerId } from "../support/helpers/server-id";
 import {
   closeSidebarDisplayPreferences,
@@ -16,7 +17,6 @@ test.describe("Sidebar project filter", () => {
   test.describe.configure({ timeout: 180_000 });
 
   test("pins the sidebar to one project across both grouping modes", async ({ page }) => {
-    // Two temp repos means two projects, which is also what makes the `Project ›` row appear.
     const alpha = await seedWorkspace({ repoPrefix: "project-filter-alpha-", title: "Alpha work" });
     const beta = await seedWorkspace({ repoPrefix: "project-filter-beta-", title: "Beta work" });
     const serverId = getServerId();
@@ -37,21 +37,16 @@ test.describe("Sidebar project filter", () => {
       await expect(alphaRow).toBeVisible();
       await expect(betaRow).toHaveCount(0, { timeout: 10_000 });
 
-      // The indicator reads the filter as it is applied, so it must be on here.
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await expect(filterTrigger).toBeVisible();
       await expect(filterTrigger.getByTestId("menu-sub-indicator")).toBeVisible();
       await closeSidebarDisplayPreferences(page);
 
-      // Status grouping builds its rows from the workspace entries rather than the projects
-      // array, so a filter applied in only one of the two places passes every check above and
-      // silently fails right here.
       await selectSidebarStatusGrouping(page);
       await closeSidebarDisplayPreferences(page);
       await expect(alphaRow).toBeVisible({ timeout: 15_000 });
       await expect(betaRow).toHaveCount(0);
 
-      // The filter is view state and survives a cold load.
       await page.reload();
       await expect(alphaRow).toBeVisible({ timeout: 30_000 });
       await expect(betaRow).toHaveCount(0);
@@ -70,10 +65,6 @@ test.describe("Sidebar project filter", () => {
   test("keeps the display menu reachable when the pinned section swallows the filtered project", async ({
     page,
   }) => {
-    // Pinning hoists a chat out of its project, and a project whose chats are ALL hoisted is
-    // dropped from the project list entirely. Filter to that project and the list body has no
-    // project rows left — so the header, which carries the only route back to the filter page,
-    // has to survive on the strength of the filter alone.
     const alpha = await seedWorkspace({
       repoPrefix: "project-filter-pinned-",
       title: "Pinned work",
@@ -93,7 +84,6 @@ test.describe("Sidebar project filter", () => {
       await pinWorkspaceFromSidebar(page, alpha.workspaceId);
       await expect(alphaRow).toBeVisible();
 
-      // The way out of the filter is still on screen.
       await expect(page.getByTestId("sidebar-display-preferences-menu")).toBeVisible();
       await openSidebarProjectFilter(page);
       await selectAllProjectsFilter(page);

@@ -3,6 +3,7 @@ import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import {
   archiveWorkspaceFromDaemon,
   archiveLocalWorkspaceFromDaemon,
@@ -307,6 +308,10 @@ test.describe("New workspace flow", () => {
       const secondWorkspace = await openProjectViaDaemon(client, secondRepo.path);
       localWorkspaceIds.add(firstWorkspace.workspaceId);
       localWorkspaceIds.add(secondWorkspace.workspaceId);
+      for (const workspaceId of [firstWorkspace.workspaceId, secondWorkspace.workspaceId]) {
+        await gotoWorkspace(page, workspaceId);
+        await clickNewTerminal(page);
+      }
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -363,6 +368,10 @@ test.describe("New workspace flow", () => {
       });
       localWorkspaceIds.add(rootWorkspace.workspaceId);
       createdWorktreeDirectories.add(worktreeWorkspace.workspaceDirectory);
+      for (const workspaceId of [rootWorkspace.workspaceId, worktreeWorkspace.workspaceId]) {
+        await gotoWorkspace(page, workspaceId);
+        await clickNewTerminal(page);
+      }
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -439,14 +448,8 @@ test.describe("New workspace flow", () => {
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, openedProject.workspaceId);
       await waitForSidebarHydration(page);
-
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId,
-        workspaceId: openedProject.workspaceId,
-      });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
         subtitle: openedProject.projectDisplayName,
@@ -492,9 +495,6 @@ test.describe("New workspace flow", () => {
       const agentTabs = activeWorkspaceDeckEntry.locator('[data-testid^="workspace-tab-agent_"]');
       await expect(agentTabs).toHaveCount(1, { timeout: 30_000 });
 
-      // Workspace setup may auto-open a setup tab that steals focus,
-      // hiding the agent panel (display:none removes it from the
-      // accessibility tree). Click the agent tab to ensure it's active.
       await agentTabs.first().click();
 
       const composer = page.getByRole("textbox", { name: "Message agent..." });
@@ -514,14 +514,8 @@ test.describe("New workspace flow", () => {
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, openedProject.workspaceId);
       await waitForSidebarHydration(page);
-
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId,
-        workspaceId: openedProject.workspaceId,
-      });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
         subtitle: openedProject.projectDisplayName,
@@ -594,14 +588,8 @@ test.describe("New workspace flow", () => {
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, openedProject.workspaceId);
       await waitForSidebarHydration(page);
-
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId,
-        workspaceId: openedProject.workspaceId,
-      });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
         subtitle: openedProject.projectDisplayName,
@@ -636,7 +624,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("new workspace without an initial agent appears in the Done status group", async ({
+  test("new workspace without an initial agent stays hidden in the status sidebar", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -647,21 +635,14 @@ test.describe("New workspace flow", () => {
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, openedProject.workspaceId);
       await waitForSidebarHydration(page);
-
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId,
-        workspaceId: openedProject.workspaceId,
-      });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
         subtitle: openedProject.projectDisplayName,
       });
 
       await switchSidebarToStatusGrouping(page);
-      await startTrackingSidebarStatusGroups(page);
 
       await openGlobalNewWorkspaceComposer(page);
       await expectNewWorkspaceProjectSelected(page, openedProject.projectDisplayName);
@@ -672,24 +653,13 @@ test.describe("New workspace flow", () => {
         client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
+        assertSidebarRow: false,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
       const rowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
-      await expectWorkspaceStatusGroupEvents({
-        page,
-        rowTestId,
-        includes: "done",
-        excludes: "running",
-        excludesIndicator: "workspace-status-indicator-loading",
-      });
-      await expectWorkspaceStatusGroupEvents({
-        page,
-        rowTestId,
-        includes: "done",
-        excludes: "running",
-        excludesIndicator: "workspace-status-indicator-running",
-      });
+      await waitForSidebarHydration(page);
+      await expect(page.getByTestId(rowTestId)).toHaveCount(0);
     } finally {
       await tempRepo.cleanup();
     }
@@ -706,14 +676,8 @@ test.describe("New workspace flow", () => {
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
-      await gotoAppShell(page);
+      await gotoWorkspace(page, openedProject.workspaceId);
       await waitForSidebarHydration(page);
-
-      await switchWorkspaceViaSidebar({
-        page,
-        serverId,
-        workspaceId: openedProject.workspaceId,
-      });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
         subtitle: openedProject.projectDisplayName,
@@ -738,6 +702,7 @@ test.describe("New workspace flow", () => {
         client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
+        assertSidebarRow: false,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
@@ -754,9 +719,6 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  // The starting ref the daemon actually cuts from is the thing that broke: the picker said
-  // one ref and the worktree was created from another. Every assertion here reads the
-  // created worktree's commits or its recorded base, never the trigger text alone.
   test.describe("default starting ref", () => {
     async function openWorktreeComposerForRepo(
       page: import("@playwright/test").Page,
@@ -785,6 +747,7 @@ test.describe("New workspace flow", () => {
         client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
+        assertSidebarRow: false,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
       return {
@@ -859,9 +822,6 @@ test.describe("New workspace flow", () => {
         const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
 
         await openStartingRefPicker(page);
-        // Branch suggestions only know about origin, so the upstream the fork actually
-        // tracks gets its own row rather than silently sharing origin's. Two rows reading
-        // "main" is the ambiguity this whole change exists to remove.
         await expectStartingRefRows(page, [
           "main (upstream), upstream branch",
           "main, origin branch",
@@ -879,7 +839,6 @@ test.describe("New workspace flow", () => {
 
         expect(created.branchInfo.hasAncestor(upstreamHead)).toBe(true);
         expect(upstreamHead).not.toBe(originHead);
-        // The name is what the UI shows; the ref is what resolves back to this commit.
         expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
           baseRefName: "main",
           baseRef: "refs/remotes/upstream/main",

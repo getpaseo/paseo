@@ -5,7 +5,8 @@ import {
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
 } from "../support/helpers/new-workspace";
-import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import type { SeededWorkspace } from "../support/helpers/seed-client";
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
 import { LAST_WORKSPACE_SELECTION_STORAGE_KEY } from "@/stores/last-workspace-selection";
@@ -20,11 +21,6 @@ const OFFLINE_SERVER_IDS = [
   "srv_e2e_preselect_offline_2",
   "srv_e2e_preselect_offline_3",
 ];
-
-// New Workspace preselection is a form-context decision, not startup routing.
-// Entry points from a workspace should carry the current project context, and a
-// plain /new must not let a stale remembered offline host steal the initial host
-// when there is exactly one online saved host.
 
 async function pressNewWorkspaceShortcut(page: import("@playwright/test").Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";

@@ -4,12 +4,12 @@ import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
-/** Persisted nav key -> the testID the app shell renders that item with. */
 const SHELL_ROW_TEST_IDS = {
   "new-workspace": "sidebar-global-new-workspace",
   history: "sidebar-sessions",
   search: "sidebar-search",
   schedules: "sidebar-schedules",
+  teams: "sidebar-teams",
 } as const;
 
 export type SidebarNavKey = keyof typeof SHELL_ROW_TEST_IDS;
@@ -20,8 +20,6 @@ export interface SidebarNavPreference {
 }
 
 function shellRow(page: Page, key: SidebarNavKey): Locator {
-  // `:visible` rather than a plain testID: the shell keeps a compact copy of the
-  // sidebar mounted, so the pinned row is the first visible match.
   return page.locator(`[data-testid="${SHELL_ROW_TEST_IDS[key]}"]:visible`).first();
 }
 
@@ -35,6 +33,7 @@ function itemLabel(key: SidebarNavKey): string {
     history: "History",
     search: "Search",
     schedules: "Schedules",
+    teams: "Teams",
   }[key];
 }
 

@@ -357,6 +357,15 @@ test.describe("Schedules project target", () => {
       .getByTestId(`schedule-project-option-${projectEquivalenceViewKey(workspace.projectKey)}`)
       .click();
     await selectModelByLabel(page, "Ten second stream");
+    await expect(page.getByTestId("schedule-reuse-session-switch")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await page.getByTestId("schedule-reuse-session-switch").click();
+    await expect(page.getByTestId("schedule-reuse-session-switch")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
     await expect(
       page.getByText("Off keeps each run's workspace in the sidebar for inspection."),
     ).toHaveCount(0);

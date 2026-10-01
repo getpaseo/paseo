@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "../fixtures";
 import { readFile } from "node:fs/promises";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { gotoAppShell } from "./app";
+import { clickNewTerminal, gotoWorkspace } from "./launcher";
 import { scrollTimelineToOldestLoadedEdge } from "./timeline-pagination";
 import {
   archiveLocalWorkspaceFromDaemon,
@@ -67,7 +67,8 @@ export async function verifyDelayedWorkspaceCreation(
     const project = await openProjectViaDaemon(client, repo.path);
     localWorkspaceId = project.workspaceId;
     const knownIds = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
-    await gotoAppShell(page);
+    await gotoWorkspace(page, project.workspaceId);
+    await clickNewTerminal(page);
     await waitForSidebarHydration(page);
     await switchWorkspaceViaSidebar({ page, serverId, workspaceId: project.workspaceId });
 
@@ -98,7 +99,6 @@ export async function verifyDelayedWorkspaceCreation(
         const url = new URL(page.url());
         newDraftRoute = url.pathname + url.search;
       }
-      // Recording pacing only; the response is held deterministically above.
       if (process.env.E2E_RECORD_VIDEO === "1") {
         await page.mouse.move(1100, 80);
         await page.waitForTimeout(1500);
@@ -116,7 +116,6 @@ export async function verifyDelayedWorkspaceCreation(
       await expect
         .poll(() => countWorkspaceTerminals(client, created.id))
         .toBe(launch === "terminal" ? 1 : 0);
-      // A negative navigation assertion needs an observation window after completion.
       await page.waitForTimeout(5000);
       const expectedRoute =
         destination === "new-draft"
@@ -161,7 +160,8 @@ export async function verifyDelayedWorkspaceCreation(
     });
 
     await test.step("Visit the new workspace and return without submitting a second draft", async () => {
-      await switchWorkspaceViaSidebar({ page, serverId, workspaceId: created.id });
+      if (launch === "empty") await gotoWorkspace(page, created.id);
+      else await switchWorkspaceViaSidebar({ page, serverId, workspaceId: created.id });
       if (launch === "chat") {
         await scrollTimelineToOldestLoadedEdge(page);
         await expect(page.getByText(PROMPT, { exact: true }).first()).toBeVisible();
@@ -170,7 +170,8 @@ export async function verifyDelayedWorkspaceCreation(
         await expectTerminalOutputContains(page, `captured: ${PROMPT}`);
       }
       await switchWorkspaceViaSidebar({ page, serverId, workspaceId: project.workspaceId });
-      await switchWorkspaceViaSidebar({ page, serverId, workspaceId: created.id });
+      if (launch === "empty") await gotoWorkspace(page, created.id);
+      else await switchWorkspaceViaSidebar({ page, serverId, workspaceId: created.id });
       await expect
         .poll(() => countWorkspaceAgents(client, created.id))
         .toBe(launch === "chat" ? 1 : 0);

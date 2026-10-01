@@ -11,6 +11,7 @@ import {
   loadSessionMessageReaders,
 } from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
+import { ensureWorkspaceHasContent } from "./mock-agent";
 import {
   waitForSidebarHydration,
   switchWorkspaceViaSidebar,
@@ -20,7 +21,6 @@ import { getServerId } from "./server-id";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
 
-/** Capture the submitted agent options; optionally stop provisioning for wire-only assertions. */
 export async function captureWorkspaceAgentRequest(page: Page, options: { block: boolean }) {
   const frames = await loadSessionMessageReaders();
   type AgentIntent = NonNullable<WorkspaceCreateRequest["agent"]>;
@@ -46,8 +46,6 @@ export async function captureWorkspaceAgentRequest(page: Page, options: { block:
 export async function pressSubmitBeforeTheNextRender(page: Page, name: string): Promise<void> {
   const create = page.getByRole("button", { name, exact: true });
   await expect(create).toBeEnabled();
-  // Dispatch the queued clicks in one JS task, before pending state can paint.
-  // Exercise DOM events rather than calling the app's submit handler directly.
   await create.evaluate((button) => {
     for (let click = 0; click < 3; click++) {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -103,7 +101,6 @@ export async function retryNextAgentCreation(page: Page) {
         for (let attempt = 1; attempt <= 3; attempt++) {
           const requestId = attempt === 1 ? request.requestId : `${request.requestId}-${attempt}`;
           retryIds.add(requestId);
-          // Keep the app's operation key and payload; only RPC correlation changes.
           server.send(JSON.stringify({ type: "session", message: { ...request, requestId } }));
         }
         return;
@@ -165,7 +162,6 @@ export async function createCreationScenario(page: Page) {
       await pressSubmitBeforeTheNextRender(page, button);
     },
     async expectPromptVisible(prompt?: string) {
-      // Inactive agent tabs retain their timeline DOM beside the visible draft.
       const rows = page.getByTestId("user-message").filter({ visible: true });
       await expect(prompt ? rows.filter({ hasText: prompt }) : rows.first()).toBeVisible();
     },
@@ -228,6 +224,7 @@ export async function createCreationScenario(page: Page) {
           source: { kind: "directory", path: project.repoPath },
         });
         if (!result.workspace) throw new Error(result.error ?? "Failed to seed eviction workspace");
+        await ensureWorkspaceHasContent(project.client, result.workspace.id, project.repoPath);
         await switchWorkspaceViaSidebar({
           page,
           serverId: getServerId(),

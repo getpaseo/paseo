@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Dialog, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
+import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import {
   archiveWorkspaceFromDaemon,
   connectNewWorkspaceDaemonClient,
@@ -26,10 +26,6 @@ async function seedRiskyWorktree(
   client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>,
   worktreeDirectory: string,
 ): Promise<void> {
-  // The daemon only reports unpushed commits when the branch has a configured
-  // upstream (aheadOfOrigin is computed against `branch.<name>.merge`). Push the
-  // worktree branch at its current head first so it tracks origin with 0 ahead,
-  // then add the local commit below that becomes the single unpushed commit.
   const branch = execSync("git rev-parse --abbrev-ref HEAD", {
     cwd: worktreeDirectory,
     stdio: "pipe",
@@ -61,10 +57,6 @@ async function seedRiskyWorktree(
   }
 }
 
-// The archive confirmation is a synchronous web `window.confirm()`. The click that
-// opens it does not resolve until the dialog is answered, so the handler must
-// accept/dismiss inline — awaiting the dialog only *after* the click deadlocks, as
-// the click waits for an answer that is gated behind that same click.
 async function clickArchiveAndAnswerWarning(
   page: Page,
   workspaceId: string,
@@ -117,7 +109,8 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
 
     await seedRiskyWorktree(client, worktree.workspaceDirectory);
 
-    await gotoAppShell(page);
+    await gotoWorkspace(page, worktree.workspaceId);
+    await clickNewTerminal(page);
     await waitForSidebarHydration(page);
     await waitForWorkspaceInSidebar(page, { serverId, workspaceId: worktree.workspaceId });
 

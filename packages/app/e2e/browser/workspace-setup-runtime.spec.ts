@@ -7,8 +7,7 @@ import {
   connectWorkspaceSetupClient,
   createWorkspaceThroughDaemon,
   findWorktreeWorkspaceForProject,
-  navigateToWorkspaceViaSidebar,
-  openHomeWithProject,
+  navigateToWorkspace,
   seedProjectForWorkspaceSetup,
 } from "../support/helpers/workspace-setup";
 
@@ -33,8 +32,7 @@ test.describe("Workspace setup runtime authority", () => {
       expect(wsInfo.workspaceDirectory).not.toBe(repo.path);
       expect(existsSync(wsInfo.workspaceDirectory)).toBe(true);
 
-      await openHomeWithProject(page, repo.path);
-      await navigateToWorkspaceViaSidebar(page, workspaceId);
+      await navigateToWorkspace(page, workspaceId);
       await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
     } finally {
       await client.close();
@@ -51,8 +49,6 @@ test.describe("Workspace setup runtime authority", () => {
     try {
       await seedProjectForWorkspaceSetup(client, repo.path);
 
-      // Create workspace via daemon API since the new workspace screen
-      // no longer has a standalone terminal button
       const worktreeSlug = `setup-terminal-${Date.now()}`;
       const result = await client.createPaseoWorktree({
         cwd: repo.path,
@@ -64,16 +60,11 @@ test.describe("Workspace setup runtime authority", () => {
       const workspaceDir = result.workspace.workspaceDirectory;
       const workspaceId = result.workspace.id;
 
-      // Navigate to the worktree workspace via sidebar click (direct URL
-      // navigation for freshly created worktree workspaces can race with
-      // Expo Router hydration, so we use the sidebar which is authoritative).
-      await openHomeWithProject(page, repo.path);
-      await navigateToWorkspaceViaSidebar(page, workspaceId);
+      await navigateToWorkspace(page, workspaceId);
 
       await clickNewTerminal(page);
       await expectTerminalSurfaceVisible(page);
 
-      // Verify terminal is listed under the worktree directory, not the original repo
       await expect
         .poll(async () => (await client.listTerminals(workspaceDir)).terminals.length > 0, {
           timeout: 30_000,

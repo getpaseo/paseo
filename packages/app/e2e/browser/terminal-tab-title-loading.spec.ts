@@ -2,10 +2,10 @@ import { test, expect, type Page } from "../support/fixtures";
 import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { renameModalInput, renameModalSubmit } from "../support/helpers/rename";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { seedVisibleWorkspace } from "../support/helpers/mock-agent";
 import { selectWorkspaceInSidebar } from "../support/helpers/sidebar";
 
 function terminalTab(page: Page, terminalId: string) {
-  // Terminal tab chips have no tab role; their persistent identity survives title loading.
   return page.getByTestId(`workspace-tab-terminal_${terminalId}`).filter({ visible: true }).first();
 }
 
@@ -29,7 +29,6 @@ async function createNamedTerminal(page: Page, workspace: SeededWorkspace, title
 }
 
 async function recordRestoredTabText(page: Page, terminalId: string) {
-  // Install before the next document loads: a final-state assertion would miss the flash.
   await page.addInitScript((id) => {
     const samples: string[] = [];
     Object.assign(window, { terminalTitleSamples: samples });
@@ -57,7 +56,7 @@ async function expectRestoredTitle(page: Page, terminalId: string, title: string
 
 test("restored terminal titles do not flash a default name while loading", async ({ page }) => {
   const workspace = await seedWorkspace({ repoPrefix: "terminal-title-loading-", git: false });
-  const other = await seedWorkspace({ repoPrefix: "terminal-title-other-", git: false });
+  const other = await seedVisibleWorkspace({ repoPrefix: "terminal-title-other-", git: false });
   try {
     const title = "My named terminal";
     const terminalId = await createNamedTerminal(page, workspace, title);

@@ -1,7 +1,8 @@
+import { seedVisibleWorkspace as seedWorkspace } from "../support/helpers/mock-agent";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
-import { seedWorkspace } from "../support/helpers/seed-client";
+
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 

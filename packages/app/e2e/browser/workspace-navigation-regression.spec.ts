@@ -15,6 +15,7 @@ import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedVisibleWorkspace } from "../support/helpers/mock-agent";
 import {
   getVisibleWorkspaceAgentTabIds,
   expectOnlyWorkspaceAgentTabsVisible,
@@ -185,8 +186,6 @@ test.describe("Workspace navigation regression", () => {
       });
       await waitForWorkspaceTabsVisible(page);
       await expectWorkspaceTabVisible(page, agent.id);
-      // The reconnect toast belongs to the visible agent panel, which mounts
-      // after the tab strip. Drop the connection only after that panel is ready.
       await expectComposerVisible(page);
 
       await daemonGate.drop();
@@ -296,8 +295,8 @@ test.describe("Workspace navigation regression", () => {
   test("cold workspace URL keeps sidebar workspace navigation functional", async ({ page }) => {
     const serverId = getServerId();
 
-    const firstWorkspace = await seedWorkspace({ repoPrefix: "workspace-cold-url-a-" });
-    const secondWorkspace = await seedWorkspace({ repoPrefix: "workspace-cold-url-b-" });
+    const firstWorkspace = await seedVisibleWorkspace({ repoPrefix: "workspace-cold-url-a-" });
+    const secondWorkspace = await seedVisibleWorkspace({ repoPrefix: "workspace-cold-url-b-" });
 
     try {
       await page.goto(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId));

@@ -16,11 +16,6 @@ import { createTempGitRepo } from "../support/helpers/workspace";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Regression for "the local / worktree selection in the new workspace is not
-// remembered." The isolation choice persists in the create-form preferences
-// (FormPreferences.isolation), so it must survive the create→reopen remount:
-// creating a worktree workspace navigates away from /new and unmounts it, and
-// reopening New Workspace has to still show "New worktree".
 test.describe("New workspace isolation memory", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
@@ -57,7 +52,6 @@ test.describe("New workspace isolation memory", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
 
-      // First visit: the screen opens on Local, switch it to New worktree and create.
       await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
@@ -84,10 +78,10 @@ test.describe("New workspace isolation memory", () => {
         client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
+        assertSidebarRow: false,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
-      // Second visit (fresh mount of /new): the worktree choice must stick.
       await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,

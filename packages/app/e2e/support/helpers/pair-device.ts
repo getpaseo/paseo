@@ -90,7 +90,7 @@ export async function expectRelayConsent(page: Page): Promise<void> {
   const modal = page.getByTestId("host-page-pair-device-card");
   await expect(modal.getByText("Enable relay?", { exact: true })).toBeVisible();
   await expect(modal.getByText(/end-to-end encrypted/)).toBeVisible();
-  await expect(modal.getByRole("link", { name: "Read how Paseo relay works" })).toBeVisible();
+  await expect(modal.getByRole("link", { name: "Read how PandaOS relay works" })).toBeVisible();
   await expect(modal.getByText(/TCP, Tailscale, or another VPN/)).toBeVisible();
   await expect(modal.getByRole("img", { name: "Pairing QR code" })).toHaveCount(0);
   await expect(modal.getByRole("textbox", { name: "Pairing link" })).toHaveCount(0);
@@ -175,7 +175,7 @@ export async function openPairDeviceFromHome(page: Page): Promise<void> {
 export async function expectRelayUpdateRequired(page: Page): Promise<void> {
   const modal = page.getByTestId("host-page-pair-device-card");
   await expect(
-    modal.getByText("Update the host to enable relay from Paseo Desktop."),
+    modal.getByText("Update the host to enable relay from PandaOS Desktop."),
   ).toBeVisible();
   await expect(modal.getByRole("button", { name: "Enable relay", exact: true })).toHaveCount(0);
   await expect(modal.getByRole("textbox", { name: "Pairing link" })).toHaveCount(0);
@@ -207,7 +207,7 @@ export async function switchPairDeviceToHost(page: Page, serverId: string): Prom
 }
 
 export async function openRelaySecurityDocs(page: Page): Promise<void> {
-  await page.getByRole("link", { name: "Read how Paseo relay works" }).click();
+  await page.getByRole("link", { name: "Read how PandaOS relay works" }).click();
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("@paseo:e2e-opened-url")))
     .toBe("https://paseo.sh/docs/security");

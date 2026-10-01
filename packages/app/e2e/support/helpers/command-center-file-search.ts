@@ -143,13 +143,21 @@ export async function startCommandCenterLayoutObservation(page: Page): Promise<v
       try {
         const performanceObserver = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            observation.layoutShift += (entry as PerformanceEntry & { value?: number }).value ?? 0;
+            const shift = entry as PerformanceEntry & {
+              value?: number;
+              sources?: Array<{ node?: Node }>;
+            };
+            const panel = document.querySelector(selectors.panel);
+            if (
+              panel &&
+              shift.sources?.some((source) => source.node && panel.contains(source.node))
+            ) {
+              observation.layoutShift += shift.value ?? 0;
+            }
           }
         });
         performanceObserver.observe({ type: "layout-shift", buffered: false });
-      } catch {
-        // LayoutShift is diagnostic-only on engines that do not expose it.
-      }
+      } catch {}
     }
   }, SURFACE_SELECTORS);
 }
