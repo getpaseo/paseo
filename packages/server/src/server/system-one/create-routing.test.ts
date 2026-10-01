@@ -6,11 +6,19 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { SystemOneCredentialStore } from "./credential-store.js";
 import { createSystemOneCreateRouter } from "./create-routing.js";
 import type { ProviderUsage } from "../messages.js";
+import * as usageLog from "./usage-log.js";
 
 const homes: string[] = [];
+const usageWrites = vi.spyOn(usageLog, "recordSystemOneUsage");
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals();
+  await Promise.all(
+    usageWrites.mock.results
+      .filter((result) => result.type === "return")
+      .map((result) => result.value),
+  );
+  usageWrites.mockClear();
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
