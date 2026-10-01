@@ -15,6 +15,7 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import type { ConversationImageStore } from "./conversation-image-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -5802,6 +5803,94 @@ test("getAgent does not expose committed history internals once manager owns the
     limit: 0,
   });
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
+});
+
+test("canonical user messages retain durable submitted image references", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-images-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const imageStore: ConversationImageStore = {
+    async persist(images) {
+      return images.map((image) => ({
+        id: "persisted-image",
+        mimeType: image.mimeType,
+        source: join(workdir, "conversation-images", "persisted-image.png"),
+        byteSize: Buffer.from(image.data, "base64").byteLength,
+      }));
+    },
+    async garbageCollect() {},
+  };
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    conversationImageStore: imageStore,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000141",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.persistSubmittedPromptImages(
+    snapshot.id,
+    [
+      { type: "text", text: "Inspect this" },
+      { type: "image", data: Buffer.from("png").toString("base64"), mimeType: "image/png" },
+    ],
+    "client-message-1",
+  );
+  await manager.appendTimelineItem(snapshot.id, {
+    type: "user_message",
+    text: "Inspect this",
+    clientMessageId: "client-message-1",
+  });
+
+  expect(manager.getTimeline(snapshot.id)).toEqual([
+    {
+      type: "user_message",
+      text: "Inspect this",
+      clientMessageId: "client-message-1",
+      images: [
+        {
+          id: "persisted-image",
+          mimeType: "image/png",
+          source: join(workdir, "conversation-images", "persisted-image.png"),
+          byteSize: 3,
+        },
+      ],
+    },
+  ]);
+  expect((await storage.get(snapshot.id))?.submittedMessageImages).toEqual([
+    {
+      clientMessageId: "client-message-1",
+      images: expect.any(Array),
+    },
+  ]);
+
+  await storage.setSubmittedMessageProviderId(
+    snapshot.id,
+    "client-message-1",
+    "provider-message-1",
+  );
+  const restoredManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    conversationImageStore: imageStore,
+    logger,
+  });
+  await restoredManager.createAgent({ provider: "codex", cwd: workdir }, snapshot.id, {
+    workspaceId: undefined,
+  });
+  await restoredManager.appendTimelineItem(snapshot.id, {
+    type: "user_message",
+    text: "Inspect this",
+    messageId: "provider-message-1",
+  });
+
+  expect(restoredManager.getTimeline(snapshot.id)[0]).toMatchObject({
+    type: "user_message",
+    messageId: "provider-message-1",
+    images: [{ id: "persisted-image", source: expect.stringContaining("conversation-images") }],
+  });
 });
 
 test("streams coalesced assistant chunks and retains the projected message", async () => {

@@ -47,6 +47,7 @@ import {
   type AgentSessionConfig,
   type SteerResult,
   type AgentStreamEvent,
+  type AgentTimelineImage,
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
@@ -55,7 +56,12 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
-import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import type {
+  StoredAgentRecord,
+  AgentStorage,
+  StoredSubmittedMessageImages,
+} from "./agent-storage.js";
+import type { ConversationImageStore } from "./conversation-image-store.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -117,6 +123,15 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .flatMap((block) => (block.type === "text" && !("mimeType" in block) ? [block.text] : []))
     .join("\n")
     .trim();
+}
+
+function submittedPromptImages(
+  prompt: AgentPromptInput,
+): Array<{ data: string; mimeType: string }> {
+  if (typeof prompt === "string") return [];
+  return prompt.flatMap((block) =>
+    block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : [],
+  );
 }
 
 export class AgentManagerShuttingDownError extends Error {
@@ -317,6 +332,7 @@ export interface AgentManagerOptions {
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
   registry?: AgentStorage;
+  conversationImageStore?: ConversationImageStore;
   onAgentAttention?: AgentAttentionCallback;
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   durableTimelineStore?: AgentTimelineStore;
@@ -711,6 +727,18 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+function collectReferencedConversationImageIds(records: readonly StoredAgentRecord[]): Set<string> {
+  const referencedIds = new Set<string>();
+  for (const record of records) {
+    for (const entry of record.submittedMessageImages ?? []) {
+      for (const image of entry.images) {
+        referencedIds.add(image.id);
+      }
+    }
+  }
+  return referencedIds;
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
@@ -727,6 +755,12 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
+  private readonly conversationImageStore?: ConversationImageStore;
+  private readonly submittedMessageImages = new Map<
+    string,
+    Map<string, StoredSubmittedMessageImages>
+  >();
+  private conversationImageOperationTail: Promise<void> = Promise.resolve();
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -754,13 +788,14 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
-    this.idFactory = options?.idFactory ?? (() => randomUUID());
-    this.registry = options?.registry;
-    this.durableTimelineStore = options?.durableTimelineStore;
-    this.onAgentAttention = options?.onAgentAttention;
-    this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
-    this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
-    this.mcpAuthToken = options?.mcpAuthToken ?? null;
+    this.idFactory = options.idFactory ?? (() => randomUUID());
+    this.registry = options.registry;
+    this.conversationImageStore = options.conversationImageStore;
+    this.durableTimelineStore = options.durableTimelineStore;
+    this.onAgentAttention = options.onAgentAttention;
+    this.onWorkspaceStateMayHaveChanged = options.onWorkspaceStateMayHaveChanged;
+    this.mcpBaseUrl = options.mcpBaseUrl ?? null;
+    this.mcpAuthToken = options.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
@@ -2339,6 +2374,25 @@ export class AgentManager {
     };
   }
 
+  async persistSubmittedPromptImages(
+    agentId: string,
+    prompt: AgentPromptInput,
+    clientMessageId: string | undefined,
+  ): Promise<void> {
+    const images = submittedPromptImages(prompt);
+    if (!clientMessageId || images.length === 0) return;
+    const registry = this.registry;
+    const imageStore = this.conversationImageStore;
+    if (!registry || !imageStore) return;
+
+    await this.runConversationImageOperation(async () => {
+      const persistedImages = await imageStore.persist(images);
+      const entry: StoredSubmittedMessageImages = { clientMessageId, images: persistedImages };
+      await registry.setSubmittedMessageImages(agentId, entry);
+      this.indexSubmittedMessageImages(agentId, entry);
+    });
+  }
+
   /**
    * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
    * and without canceling any active turn. Returns true when the session
@@ -3191,6 +3245,15 @@ export class AgentManager {
   async deleteAgentState(agentId: string): Promise<void> {
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
+    const registry = this.registry;
+    const imageStore = this.conversationImageStore;
+    if (registry && imageStore) {
+      await this.runConversationImageOperation(async () => {
+        const records = await registry.list();
+        const referencedIds = collectReferencedConversationImageIds(records);
+        await imageStore.garbageCollect(referencedIds);
+      });
+    }
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
@@ -3467,6 +3530,7 @@ export class AgentManager {
         config,
         options?.initialTitle ?? null,
       );
+      await this.loadSubmittedMessageImages(resolvedAgentId);
 
       const now = new Date();
       const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
@@ -3722,6 +3786,7 @@ export class AgentManager {
 
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
+    this.submittedMessageImages.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
@@ -4683,6 +4748,7 @@ export class AgentManager {
       text: submittedPromptText(prompt),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
+      ...this.findSubmittedMessageImages(agent.id, clientMessageId),
     };
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
   }
@@ -4705,6 +4771,7 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
+      this.linkSubmittedMessageProviderId(agent.id, clientMessageId, messageId);
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
         agent.id,
         clientMessageId,
@@ -4778,10 +4845,77 @@ export class AgentManager {
       turnId?: string;
     },
   ): AgentTimelineRow {
+    item = this.restoreSubmittedMessageImages(agentId, item);
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
+  }
+
+  private async loadSubmittedMessageImages(agentId: string): Promise<void> {
+    const entries = (await this.registry?.get(agentId))?.submittedMessageImages ?? [];
+    const byMessageId = new Map<string, StoredSubmittedMessageImages>();
+    for (const entry of entries) {
+      byMessageId.set(entry.clientMessageId, entry);
+      if (entry.providerMessageId) byMessageId.set(entry.providerMessageId, entry);
+    }
+    this.submittedMessageImages.set(agentId, byMessageId);
+  }
+
+  private indexSubmittedMessageImages(agentId: string, entry: StoredSubmittedMessageImages): void {
+    const byMessageId = this.submittedMessageImages.get(agentId) ?? new Map();
+    byMessageId.set(entry.clientMessageId, entry);
+    if (entry.providerMessageId) byMessageId.set(entry.providerMessageId, entry);
+    this.submittedMessageImages.set(agentId, byMessageId);
+  }
+
+  private findSubmittedMessageImages(
+    agentId: string,
+    messageId: string | undefined,
+  ): { images?: AgentTimelineImage[] } {
+    if (!messageId) return {};
+    const images = this.submittedMessageImages.get(agentId)?.get(messageId)?.images;
+    return images?.length ? { images } : {};
+  }
+
+  private restoreSubmittedMessageImages(
+    agentId: string,
+    item: AgentTimelineItem,
+  ): AgentTimelineItem {
+    if (item.type !== "user_message" || item.images?.length) return item;
+    const images =
+      this.findSubmittedMessageImages(agentId, item.clientMessageId).images ??
+      this.findSubmittedMessageImages(agentId, item.messageId).images;
+    return images ? { ...item, images } : item;
+  }
+
+  private linkSubmittedMessageProviderId(
+    agentId: string,
+    clientMessageId: string,
+    providerMessageId: string,
+  ): void {
+    const entry = this.submittedMessageImages.get(agentId)?.get(clientMessageId);
+    if (!entry || entry.providerMessageId === providerMessageId) return;
+    const enriched = { ...entry, providerMessageId };
+    this.indexSubmittedMessageImages(agentId, enriched);
+    const task = this.registry
+      ?.setSubmittedMessageProviderId(agentId, clientMessageId, providerMessageId)
+      .catch((error) => {
+        this.logger.error(
+          { err: error, agentId, clientMessageId, providerMessageId },
+          "Failed to persist submitted message image identity",
+        );
+      });
+    if (task) this.trackBackgroundTask(task);
+  }
+
+  private runConversationImageOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.conversationImageOperationTail.then(operation, operation);
+    this.conversationImageOperationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private emitState(agent: ManagedAgent, options?: { persist?: boolean }): void {

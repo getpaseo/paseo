@@ -661,12 +661,21 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
 
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
+export const AgentTimelineImageSchema = z.object({
+  id: z.string(),
+  mimeType: z.string(),
+  source: z.string(),
+  fileName: z.string().optional(),
+  byteSize: z.number().nonnegative().optional(),
+});
+
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    images: z.array(AgentTimelineImageSchema).optional(),
   }),
   z.object({
     type: z.literal("assistant_message"),

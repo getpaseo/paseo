@@ -53,6 +53,8 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── conversation-images/
+│   └── {sha256}.{extension}              # Content-addressed user image bytes
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -104,6 +106,12 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                                                                                                                                                                                                                                                                                                                                          |
 | `internal`           | `boolean?`                               | Whether this is a system-internal agent                                                                                                                                                                                                                                                                                                                                             |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
+
+The optional `submittedMessageImages` field maps client/provider message IDs to durable user-image
+references. It restores images when provider history is projected after restart. Image bytes live in
+`conversation-images/`, not in agent JSON or timeline wire payloads. The filename hash deduplicates
+identical bytes. Deleting an agent runs reference-aware cleanup across the remaining agent records,
+so a shared image survives until its last reference is gone.
 
 ### Nested: SerializableConfig
 

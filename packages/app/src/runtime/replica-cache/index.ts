@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AgentStatusSchema,
+  AgentTimelineImageSchema,
   AgentTimelineItemPayloadSchema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
@@ -95,6 +96,18 @@ const TimelineItemBaseShape = {
   timestamp: IsoDateSchema,
 };
 
+const StoredLocalImageSchema = z.strictObject({
+  id: z.string(),
+  mimeType: z.string(),
+  storageType: z.enum(["web-indexeddb", "desktop-file", "native-file"]),
+  storageKey: z.string(),
+  fileName: z.string().nullable().optional(),
+  byteSize: z.number().nullable().optional(),
+  createdAt: z.number(),
+});
+
+const StoredUserMessageImageSchema = z.union([StoredLocalImageSchema, AgentTimelineImageSchema]);
+
 const TodoEntrySchema = z.strictObject({
   text: z.string(),
   completed: z.boolean(),
@@ -118,6 +131,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
     text: z.string(),
+    images: z.array(StoredUserMessageImageSchema).optional(),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -442,6 +456,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
+        ...(item.images?.length ? { images: item.images } : {}),
       };
     case "assistant_message":
       return {
@@ -532,6 +547,7 @@ function deserializeBuiltinTimelineItem(
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
+        ...(item.images?.length ? { images: item.images } : {}),
       };
     case "assistant_message":
       return {
@@ -740,7 +756,7 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
 function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   switch (item.kind) {
     case "user_message":
-      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
+      return (item.attachments?.length ?? 0) === 0;
     case "tool_call":
       return item.payload.source === "agent";
     default:

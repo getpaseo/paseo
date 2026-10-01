@@ -319,6 +319,42 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("round-trips durable user image references without dropping timeline coverage", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const userMessage: StreamItem = {
+      kind: "user_message",
+      id: "message-with-image",
+      messageId: "message-with-image",
+      text: "Inspect this",
+      images: [
+        {
+          id: "persisted-image",
+          mimeType: "image/png",
+          source: "/paseo/conversation-images/persisted-image.png",
+          byteSize: 42,
+        },
+      ],
+      timestamp: new Date("2026-07-18T08:02:00.000Z"),
+      timelineCursor: { epoch: "epoch-1", seq: 12 },
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [userMessage],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: true,
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual({
+      agentId: "agent-1",
+      items: [userMessage],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: true,
+    });
+  });
+
   it("preserves pending timeline updates across directory baseline replacement", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

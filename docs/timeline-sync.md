@@ -205,11 +205,13 @@ Every path that sends a message to an agent — composer send, dictation accept-
 send-now, and the host runtime's automatic queue drain — goes through
 `dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
 product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
-footer, and permanently drops attachments because the daemon does not echo them back.
+footer. Non-image composer attachments are local presentation and are not echoed by the daemon.
 
-A submitted prompt is one `UserMessageItem` row. That row is the authoritative local presentation:
-its stable identity, text, timestamp, images, and attachments do not change when the provider
-acknowledges it. Submission lifecycle is a separate record keyed by agent, not another row shape.
+A submitted prompt is one `UserMessageItem` row. Its stable identity, timestamp, and local
+attachments survive canonical acknowledgement. The daemon persists user image bytes and includes
+small image references in canonical `user_message` rows, so provider-history replay restores images
+after a daemon or app restart without putting base64 data on the timeline wire. Submission lifecycle
+is a separate record keyed by agent, not another row shape.
 The transaction registry records two independent settlement facts: canonical acknowledgement and RPC
 settlement. Canonical acknowledgement retires optimistic activity immediately. When both facts are
 known, whichever arrives second deletes the record. A canonical acknowledgement that arrives first

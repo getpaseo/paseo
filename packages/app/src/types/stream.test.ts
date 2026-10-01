@@ -1503,6 +1503,38 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(message.timestamp.getTime(), submittedTimestamp.getTime());
   });
 
+  it("renders durable canonical images after history reload, including image-only prompts", () => {
+    const images = [
+      {
+        id: "persisted-image",
+        mimeType: "image/png",
+        source: "/paseo/conversation-images/persisted-image.png",
+        byteSize: 42,
+      },
+    ];
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "provider-message-1",
+        images,
+      },
+    };
+
+    expect(reduceStreamUpdate([], event, new Date("2025-01-01T11:10:01Z"))).toEqual([
+      {
+        kind: "user_message",
+        id: "provider-message-1",
+        messageId: "provider-message-1",
+        text: "",
+        timestamp: new Date("2025-01-01T11:10:01Z"),
+        images,
+      },
+    ]);
+  });
+
   it("keeps canonical assistant/user/assistant order during replay", () => {
     const state: StreamItem[] = [
       {
