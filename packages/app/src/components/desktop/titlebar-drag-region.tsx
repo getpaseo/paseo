@@ -11,7 +11,7 @@ import { isNative } from "@/constants/platform";
  *
  * VS Code's drag region is a static DOM element — no z-index, no pointer-events,
  * no state, no event listeners. Interactive elements get no-drag from their own
- * CSS (global backstop in index.html). The drag region never re-renders.
+ * CSS (scoped rule in index.html). The drag region never re-renders.
  *
  * The resizer is Windows/Linux only (titlebarpart.css:249 scopes to .windows/.linux).
  * On macOS, Electron handles edge resize natively.
@@ -53,8 +53,10 @@ export function TitlebarDragRegion() {
 
   return (
     <>
-      {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64) */}
-      <div style={DRAG_OVERLAY_STYLE} />
+      {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64).
+          data-titlebar-drag-region marks the overlay's parent as a no-drag scope
+          for the backstop rule in public/index.html. */}
+      <div style={DRAG_OVERLAY_STYLE} data-titlebar-drag-region="" />
       {/* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */}
       <div style={TOP_RESIZER_STYLE} />
     </>

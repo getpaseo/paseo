@@ -43,6 +43,7 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 
+const DRAG_SURFACE_DATASET = { titlebarDragSurface: "true" };
 const TAB_GAP = 4;
 const TAB_DROP_INDICATOR_WIDTH = 4;
 
@@ -335,6 +336,7 @@ export function ExplorerSidebarTabRail({
     <ContextMenu>
       <ContextMenuTrigger
         contextOnly
+        dataSet={DRAG_SURFACE_DATASET}
         style={[styles.track, titlebarDragSurfaceStyle as never]}
         testID="explorer-sidebar-tab-rail"
       >
