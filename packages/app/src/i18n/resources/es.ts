@@ -2239,6 +2239,12 @@ export const es: TranslationResources = {
           title: "Encabezado",
           description:
             "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+          layout: {
+            title: "Diseño",
+            hint: "Compacto muestra el primer elemento en una fila y el resto como iconos",
+            list: "Lista",
+            compact: "Compacto",
+          },
         },
         footer: {
           title: "Pie",

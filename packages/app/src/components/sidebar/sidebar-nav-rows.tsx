@@ -1,9 +1,13 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, type ComponentType } from "react";
+import { useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
-import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import { SidebarHeaderRow, type SidebarRowIcon } from "@/components/sidebar/sidebar-header-row";
+import { iconButtonChromeGlyphSize } from "@/components/ui/icon-button-chrome";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -12,62 +16,211 @@ import {
   builtinSidebarNavLabelKey,
   builtinSidebarNavShortcutAction,
   type BuiltinSidebarNavId,
+  type SidebarNavItem,
 } from "@/sidebar-nav/model";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import type { Theme } from "@/styles/theme";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
   buildNewWorkspaceRoute,
   buildSchedulesRoute,
   buildSessionsRoute,
 } from "@/utils/host-routes";
 
-interface SidebarNavRowProps {
-  onBeforeNavigate?: () => void;
-}
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-interface SidebarNavRowsProps extends SidebarNavRowProps {
+interface SidebarNavRowsProps {
+  onBeforeNavigate?: () => void;
   /** Style for the group wrapper, which the sidebar owns. */
   style?: StyleProp<ViewStyle>;
+  /**
+   * Distance from the sidebar's right edge to the left edge of chrome it draws over the first
+   * row, such as the mobile close button. The compact row's icons stop one icon gap before it.
+   */
+  trailingInset?: number;
 }
+
+/** What a builtin header item does, independent of whether it renders as a row or an icon. */
+interface SidebarNavAction {
+  icon: SidebarRowIcon;
+  label: string;
+  onPress: () => void;
+  isActive: boolean;
+  testID: string;
+  shortcutKeys: ShortcutKey[][] | null;
+}
+
+type BuiltinNavItem = Extract<SidebarNavItem<"header">, { kind: "builtin" }>;
+type PluginNavItem = Extract<SidebarNavItem<"header">, { kind: "plugin" }>;
 
 /**
  * Top-level sidebar navigation, ordered and filtered by the user's
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden.
+ *
+ * The compact layout puts the first visible builtin on one row and the other builtins beside it
+ * as icon buttons. Plugin items keep their own rows below it.
  */
-export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps) {
+export function SidebarNavRows({ style, onBeforeNavigate, trailingInset }: SidebarNavRowsProps) {
   const { items } = useSidebarNavItems("header");
+  const { settings } = useAppSettings();
+  const actions = useBuiltinSidebarNavActions(onBeforeNavigate);
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const groupRef = useRef<View | null>(null);
 
   if (visibleItems.length === 0) return null;
 
+  const renderPluginItem = (item: PluginNavItem) => (
+    <PluginSidebarItem
+      key={item.key}
+      group={item.group}
+      section="header"
+      fallbackAnchorRef={groupRef}
+      onBeforeNavigate={onBeforeNavigate}
+    />
+  );
+
+  if (settings.sidebarHeaderLayout === "compact") {
+    const lead = visibleItems.find(isBuiltinNavItem);
+    const rest = visibleItems.filter(isBuiltinNavItem).filter((item) => item !== lead);
+    return (
+      <View ref={groupRef} collapsable={false} style={style}>
+        {lead ? (
+          <CompactSidebarNavRow
+            lead={actions[lead.id]}
+            rest={rest.map((item) => actions[item.id])}
+            trailingInset={trailingInset}
+          />
+        ) : null}
+        {visibleItems.filter(isPluginNavItem).map(renderPluginItem)}
+      </View>
+    );
+  }
+
   return (
     <View ref={groupRef} collapsable={false} style={style}>
-      {visibleItems.map((item) => {
-        if (item.kind === "plugin") {
-          return (
-            <PluginSidebarItem
-              key={item.key}
-              group={item.group}
-              section="header"
-              fallbackAnchorRef={groupRef}
-              onBeforeNavigate={onBeforeNavigate}
-            />
-          );
-        }
-        const Row = BUILTIN_ROWS[item.id];
-        return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
-      })}
+      {visibleItems.map((item) =>
+        item.kind === "plugin" ? (
+          renderPluginItem(item)
+        ) : (
+          <SidebarNavActionRow key={item.key} action={actions[item.id]} />
+        ),
+      )}
     </View>
   );
 }
 
-const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
-  onBeforeNavigate,
-}: SidebarNavRowProps) {
+function isBuiltinNavItem(item: SidebarNavItem<"header">): item is BuiltinNavItem {
+  return item.kind === "builtin";
+}
+
+function isPluginNavItem(item: SidebarNavItem<"header">): item is PluginNavItem {
+  return item.kind === "plugin";
+}
+
+function CompactSidebarNavRow({
+  lead,
+  rest,
+  trailingInset,
+}: {
+  lead: SidebarNavAction;
+  rest: readonly SidebarNavAction[];
+  trailingInset: number | undefined;
+}) {
+  const actionsStyle = useMemo(
+    () => [styles.compactActions, trailingInset ? styles.compactActionsInset(trailingInset) : null],
+    [trailingInset],
+  );
+  const trailing = useMemo(
+    () =>
+      rest.length === 0 ? undefined : (
+        <View style={actionsStyle}>
+          {rest.map((action) => (
+            <SidebarNavIconButton key={action.testID} action={action} />
+          ))}
+        </View>
+      ),
+    [actionsStyle, rest],
+  );
+  return <SidebarNavActionRow action={lead} trailing={trailing} />;
+}
+
+function SidebarNavActionRow({
+  action,
+  trailing,
+}: {
+  action: SidebarNavAction;
+  trailing?: ReactNode;
+}) {
+  return (
+    <SidebarHeaderRow
+      icon={action.icon}
+      label={action.label}
+      onPress={action.onPress}
+      isActive={action.isActive}
+      testID={action.testID}
+      variant="compact"
+      shortcutKeys={action.shortcutKeys}
+      trailing={trailing}
+    />
+  );
+}
+
+function SidebarNavIconButton({ action }: { action: SidebarNavAction }) {
+  const ThemedIcon = useMemo(() => withUnistyles(action.icon), [action.icon]);
+  return (
+    <HeaderToggleButton
+      testID={action.testID}
+      onPress={action.onPress}
+      tooltipLabel={action.label}
+      tooltipKeys={action.shortcutKeys?.[0] ?? []}
+      tooltipSide="bottom"
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={action.label}
+      accessibilityState={action.isActive ? SELECTED_STATE : undefined}
+    >
+      {({ hovered }) => (
+        <ThemedIcon
+          size={iconButtonChromeGlyphSize("large")}
+          uniProps={
+            hovered || action.isActive ? foregroundColorMapping : foregroundMutedColorMapping
+          }
+        />
+      )}
+    </HeaderToggleButton>
+  );
+}
+
+const SELECTED_STATE = { selected: true } as const;
+
+function useBuiltinSidebarNavActions(
+  onBeforeNavigate: (() => void) | undefined,
+): Record<BuiltinSidebarNavId, SidebarNavAction> {
+  const newWorkspace = useNewWorkspaceAction(onBeforeNavigate);
+  const history = useRouteAction(onBeforeNavigate, {
+    id: "history",
+    icon: History,
+    route: buildSessionsRoute,
+    activePath: "/sessions",
+    testID: "sidebar-sessions",
+  });
+  const search = useSearchAction(onBeforeNavigate);
+  const schedules = useRouteAction(onBeforeNavigate, {
+    id: "schedules",
+    icon: CalendarClock,
+    route: buildSchedulesRoute,
+    activePath: "/schedules",
+    testID: "sidebar-schedules",
+  });
+  return { "new-workspace": newWorkspace, history, search, schedules };
+}
+
+function useNewWorkspaceAction(onBeforeNavigate: (() => void) | undefined): SidebarNavAction {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("new-workspace"));
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
@@ -83,7 +236,7 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
     (supportsWorkspaceMultiplicity || canCreateWorktreeForProjectKind(activeWorkspace.projectKind)),
   );
 
-  const handlePress = useCallback(() => {
+  const onPress = useCallback(() => {
     onBeforeNavigate?.();
     router.push(
       activeWorkspaceServerId
@@ -100,82 +253,71 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
     );
   }, [activeWorkspace, activeWorkspaceServerId, canUseActiveWorkspaceContext, onBeforeNavigate]);
 
-  return (
-    <SidebarHeaderRow
-      icon={Plus}
-      label={t(builtinSidebarNavLabelKey("new-workspace"))}
-      onPress={handlePress}
-      testID="sidebar-global-new-workspace"
-      variant="compact"
-      shortcutKeys={shortcutKeys}
-    />
-  );
-});
-
-function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
-  const { t } = useTranslation();
-  const pathname = usePathname();
-  const handlePress = useCallback(() => {
-    onBeforeNavigate?.();
-    router.push(buildSessionsRoute());
-  }, [onBeforeNavigate]);
-
-  return (
-    <SidebarHeaderRow
-      icon={History}
-      label={t(builtinSidebarNavLabelKey("history"))}
-      onPress={handlePress}
-      isActive={pathname.includes("/sessions")}
-      testID="sidebar-sessions"
-      variant="compact"
-    />
-  );
+  return {
+    icon: Plus,
+    label: t(builtinSidebarNavLabelKey("new-workspace")),
+    onPress,
+    isActive: false,
+    testID: "sidebar-global-new-workspace",
+    shortcutKeys,
+  };
 }
 
-function SidebarSearchRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function useSearchAction(onBeforeNavigate: (() => void) | undefined): SidebarNavAction {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("search"));
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
-  const handlePress = useCallback(() => {
+  const onPress = useCallback(() => {
     onBeforeNavigate?.();
     setCommandCenterOpen(true);
   }, [onBeforeNavigate, setCommandCenterOpen]);
 
-  return (
-    <SidebarHeaderRow
-      icon={Search}
-      label={t(builtinSidebarNavLabelKey("search"))}
-      onPress={handlePress}
-      testID="sidebar-search"
-      variant="compact"
-      shortcutKeys={shortcutKeys}
-    />
-  );
+  return {
+    icon: Search,
+    label: t(builtinSidebarNavLabelKey("search")),
+    onPress,
+    isActive: false,
+    testID: "sidebar-search",
+    shortcutKeys,
+  };
 }
 
-function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function useRouteAction(
+  onBeforeNavigate: (() => void) | undefined,
+  options: {
+    id: "history" | "schedules";
+    icon: SidebarRowIcon;
+    route: () => Parameters<typeof router.push>[0];
+    activePath: string;
+    testID: string;
+  },
+): SidebarNavAction {
   const { t } = useTranslation();
   const pathname = usePathname();
-  const handlePress = useCallback(() => {
+  const { route } = options;
+  const onPress = useCallback(() => {
     onBeforeNavigate?.();
-    router.push(buildSchedulesRoute());
-  }, [onBeforeNavigate]);
+    router.push(route());
+  }, [onBeforeNavigate, route]);
 
-  return (
-    <SidebarHeaderRow
-      icon={CalendarClock}
-      label={t(builtinSidebarNavLabelKey("schedules"))}
-      onPress={handlePress}
-      isActive={pathname.includes("/schedules")}
-      testID="sidebar-schedules"
-      variant="compact"
-    />
-  );
+  return {
+    icon: options.icon,
+    label: t(builtinSidebarNavLabelKey(options.id)),
+    onPress,
+    isActive: pathname.includes(options.activePath),
+    testID: options.testID,
+    shortcutKeys: null,
+  };
 }
 
-const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps>> = {
-  "new-workspace": SidebarNewWorkspaceRow,
-  history: SidebarHistoryRow,
-  search: SidebarSearchRow,
-  schedules: SidebarSchedulesRow,
-};
+const styles = StyleSheet.create((theme) => ({
+  compactActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  // The header group and the row's trailing slot each pad spacing[2] on the right.
+  compactActionsInset: (inset: number) => ({
+    marginRight: inset + theme.spacing[1] - theme.spacing[2] * 2,
+  }),
+}));

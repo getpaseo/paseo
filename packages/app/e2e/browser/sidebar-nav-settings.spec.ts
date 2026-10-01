@@ -9,6 +9,12 @@ import {
 import { gotoAppShell } from "../support/helpers/app";
 import { SHOWCASE_PLUGIN_ID, installSidebarPlugins } from "../support/helpers/plugin-sidebar-items";
 import {
+  clickSidebarNavItem,
+  expectCompactSidebarHeader,
+  expectSidebarNavIconsAlignedWithClose,
+  expectStoredSidebarHeaderLayout,
+  hoverSidebarNavIcon,
+  setSidebarHeaderLayout,
   expectFooterIconRow,
   expectFooterSeparator,
   hoverFooterAddProject,
@@ -76,6 +82,59 @@ test("fixed footer line keeps its five icons, Help and Settings at the end", asy
 });
 
 test.describe("Sidebar items in Appearance settings", () => {
+  test("owner switches the sidebar header to the compact layout", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await gotoAppShell(page);
+
+    await test.step("Search moves to the front and the layout switches to compact", async () => {
+      await openSidebarNavSettings(page);
+      await expect(page.getByTestId("sidebar-header-layout-list")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await moveSidebarNavItemUp(page, "search");
+      await moveSidebarNavItemUp(page, "search");
+      await setSidebarHeaderLayout(page, "compact");
+      await expectStoredSidebarHeaderLayout(page, "compact");
+      await page.mouse.move(1200, 800);
+      await footerScreenshot(page, "sidebar-header-settings");
+      await leaveSettings(page);
+    });
+
+    await test.step("Search keeps its row and the other items become icons beside it", async () => {
+      await expectCompactSidebarHeader(page, "search", ["new-workspace", "history", "schedules"]);
+      await page.mouse.move(1200, 800);
+      await footerScreenshot(page, "sidebar-header-compact");
+    });
+
+    await test.step("the compact layout holds on a phone-sized sidebar", async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openCompactSidebar(page);
+      await expectCompactSidebarHeader(page, "search", ["new-workspace", "history", "schedules"]);
+      await expectSidebarNavIconsAlignedWithClose(page, ["new-workspace", "history", "schedules"]);
+      await footerScreenshot(page, "sidebar-header-compact-mobile");
+      await page.setViewportSize({ width: 1440, height: 900 });
+    });
+
+    await test.step("an icon names itself on hover and navigates on press", async () => {
+      const tooltip = await hoverSidebarNavIcon(page, "history");
+      await expect(tooltip.getByText("History", { exact: true })).toBeVisible();
+      await footerScreenshot(page, "sidebar-header-compact-tooltip");
+      await clickSidebarNavItem(page, "history");
+      await expect(page).toHaveURL(/\/sessions/);
+    });
+
+    await test.step("the list layout restores one labelled row per item", async () => {
+      await openSidebarNavSettings(page);
+      await setSidebarHeaderLayout(page, "list");
+      await expectStoredSidebarHeaderLayout(page, "list");
+      await leaveSettings(page);
+      await expectSidebarOrder(page, ["search", "new-workspace", "history", "schedules"]);
+      await page.mouse.move(1200, 800);
+      await footerScreenshot(page, "sidebar-header-list");
+    });
+  });
+
   test("owner reorders and hides top-level sidebar items", async ({ page }) => {
     await gotoAppShell(page);
 

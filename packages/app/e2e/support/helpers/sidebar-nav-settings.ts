@@ -125,6 +125,98 @@ export async function expectSidebarItemHidden(page: Page, key: SidebarNavKey): P
   await expect(page.locator(`[data-testid="${SHELL_ROW_TEST_IDS[key]}"]:visible`)).toHaveCount(0);
 }
 
+export type SidebarHeaderLayout = "list" | "compact";
+
+export async function setSidebarHeaderLayout(
+  page: Page,
+  layout: SidebarHeaderLayout,
+): Promise<void> {
+  const option = page.getByTestId(`sidebar-header-layout-${layout}`);
+  await option.click();
+  await expect(option).toHaveAttribute("aria-selected", "true");
+}
+
+export async function expectStoredSidebarHeaderLayout(
+  page: Page,
+  expected: SidebarHeaderLayout,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate((key) => {
+        const raw = localStorage.getItem(key);
+        return raw ? (JSON.parse(raw).sidebarHeaderLayout ?? null) : null;
+      }, APP_SETTINGS_KEY),
+    )
+    .toBe(expected);
+}
+
+/**
+ * The lead item keeps its labelled row; the others sit on that same row as unlabelled icons.
+ */
+export async function expectCompactSidebarHeader(
+  page: Page,
+  lead: SidebarNavKey,
+  icons: SidebarNavKey[],
+): Promise<void> {
+  const leadRow = shellRow(page, lead);
+  await expect(leadRow.getByText(itemLabel(lead), { exact: true })).toBeVisible();
+  const leadTop = await rowTop(leadRow);
+  const leadBox = await leadRow.boundingBox();
+  expect(leadTop).not.toBeNull();
+  for (const key of icons) {
+    const icon = shellRow(page, key);
+    await expect(icon).toBeVisible();
+    await expect(icon).toHaveAccessibleName(itemLabel(key));
+    await expect(icon.getByText(itemLabel(key), { exact: true })).toHaveCount(0);
+    const box = await icon.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box || !leadBox) continue;
+    // Same row: the icon's vertical center sits inside the lead row's band.
+    const center = box.y + box.height / 2;
+    expect(center).toBeGreaterThan(leadBox.y);
+    expect(center).toBeLessThan(leadBox.y + leadBox.height);
+    expect(box.x).toBeGreaterThan(leadBox.x);
+  }
+}
+
+/**
+ * Every icon ends before the mobile close button the sidebar draws over the first row and sits
+ * on its center line. The sidebar slides in, so boxes are read once the close button stops moving.
+ */
+export async function expectSidebarNavIconsAlignedWithClose(
+  page: Page,
+  icons: SidebarNavKey[],
+): Promise<void> {
+  const close = page.locator('[data-testid="sidebar-close"]:visible').first();
+  await expect
+    .poll(async () => {
+      const before = (await close.boundingBox())?.x;
+      await page.waitForTimeout(100);
+      return before !== undefined && before === (await close.boundingBox())?.x;
+    })
+    .toBe(true);
+  const closeBox = await close.boundingBox();
+  expect(closeBox).not.toBeNull();
+  if (!closeBox) return;
+  for (const key of icons) {
+    const box = await shellRow(page, key).boundingBox();
+    expect(box, `${key} icon`).not.toBeNull();
+    if (!box) continue;
+    expect(box.x + box.width, `${key} icon right edge`).toBeLessThanOrEqual(closeBox.x);
+    const offset = box.y + box.height / 2 - (closeBox.y + closeBox.height / 2);
+    expect(Math.abs(offset), `${key} icon center vs close button center`).toBeLessThanOrEqual(1);
+  }
+}
+
+export async function hoverSidebarNavIcon(page: Page, key: SidebarNavKey): Promise<Locator> {
+  await shellRow(page, key).hover();
+  return page.getByTestId(`${SHELL_ROW_TEST_IDS[key]}-tooltip`);
+}
+
+export async function clickSidebarNavItem(page: Page, key: SidebarNavKey): Promise<void> {
+  await shellRow(page, key).click();
+}
+
 export async function expectStoredSidebarNav(
   page: Page,
   expected: SidebarNavPreference[],
