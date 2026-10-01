@@ -146,7 +146,7 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
   });
 
   await test.step("the host-wide sheet is newest first and fits its provider filter", async () => {
-    await flow.openGlobally();
+    await flow.openFromNewWorkspace();
     await flow.expectScope("Sessions on", false);
     await flow.expectRows({
       first: [scenario.importSessionId, "fixture-worktree", "fixture-unrelated"],
