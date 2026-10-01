@@ -5,13 +5,6 @@ import {
   type LeitstandSchedule,
   type LeitstandSession,
 } from "./session-model";
-
-/**
- * Why something needs you, most urgent kind first. The inbox is derived from live session,
- * change-request and schedule data on every render; nothing here is stored, so an item leaves
- * the moment its reason does. Looking at a session is never a reason to leave: a question or a
- * handed-back turn stays until the person replies or marks the session done.
- */
 export type InboxKind =
   | "permission"
   | "question"
@@ -32,10 +25,6 @@ const KIND_RANK: Record<InboxKind, number> = {
 };
 
 interface InboxItemBase {
-  /**
-   * Identity of this reason: session (or schedule) + kind + what makes the reason this one. A
-   * snooze is stored against it, so a new question or another failing run surfaces again.
-   */
   id: string;
   serverId: string;
   projectName: string | null;
@@ -76,22 +65,16 @@ export interface MergeReadyInboxItem extends SessionInboxItemBase {
   kind: "merge_ready";
   pullRequest: LeitstandPullRequest;
 }
-
-/** An agent handed the turn back and nobody replied or marked the session done. */
 export interface FinishedInboxItem extends SessionInboxItemBase {
   kind: "finished";
-  /** The agent that spoke last; its reply is the row's context and where a reply goes. */
   agentId: string | null;
-  /** The daemon's sorting of this handback (question, action, aborted, unsure), when current. */
   handoffKind: string | null;
-  /** The agent's own sentence of what it needs, when the daemon picked one. */
   need: string | null;
 }
 
 export interface ScheduleErrorInboxItem extends InboxItemBase {
   kind: "schedule_error";
   scheduleId: string;
-  /** Workspace the failed run worked in, when the daemon reports it. */
   workspaceId: string | null;
   error: string | null;
 }
@@ -114,9 +97,6 @@ function isOpen(pr: LeitstandPullRequest): boolean {
   return pr.state === "open";
 }
 
-// ponytail: sessions handed back longer ago than this stay on the board's "waiting" column but
-// leave the inbox, so years of untouched workspaces do not bury today's; a per-session
-// "seen" marker on the daemon would replace the window if that ever reads wrong.
 export const WAITING_INBOX_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 function isHandedBackRecently(session: LeitstandSession, nowMs: number): boolean {
@@ -125,7 +105,6 @@ function isHandedBackRecently(session: LeitstandSession, nowMs: number): boolean
   return nowMs - session.handedBackAt.getTime() <= WAITING_INBOX_WINDOW_MS;
 }
 
-// The daemon sorts a turn a moment after it ends; an older sorting belongs to an earlier turn.
 const HANDOFF_CLOCK_SLACK_MS = 2 * 60 * 1000;
 
 function latestAgent(
@@ -141,8 +120,6 @@ function latestAgent(
 function latestAgentId(session: LeitstandSession): string | null {
   return latestAgent(session.agents)?.id ?? null;
 }
-
-/** The handoff sorting that belongs to the turn the person sees now, if the daemon has one. */
 function currentHandoff(session: LeitstandSession): LeitstandSession["handoff"] {
   const handoff = session.handoff;
   const speaker = latestAgent(session.agents);
@@ -152,10 +129,9 @@ function currentHandoff(session: LeitstandSession): LeitstandSession["handoff"] 
     : null;
 }
 
-/** Paperclip workers and schedules talk to Boss or to nobody; only the rest waits on the person. */
 function withPersonFacingAgents(session: LeitstandSession): LeitstandSession | null {
   const people = session.agents.filter((agent) => agent.personFacing);
-  if (session.agents.length > 0 && people.length === 0) return null;
+  if (people.length === 0) return null;
   if (people.length === session.agents.length) return session;
   const speaker = latestAgent(people);
   return {
@@ -250,7 +226,6 @@ function sessionItems(input: LeitstandSession, nowMs: number): SessionInboxItem[
     });
   }
 
-  // In a stack only the lowest open layer can merge; the ones above wait on it.
   const [lowestOpen] = open;
   if (lowestOpen && !lowestOpen.isDraft && lowestOpen.checksStatus === "success") {
     items.push({
@@ -284,7 +259,6 @@ function scheduleItem(entry: LeitstandSchedule): ScheduleErrorInboxItem | null {
 function compareItems(left: InboxItem, right: InboxItem): number {
   const rank = KIND_RANK[left.kind] - KIND_RANK[right.kind];
   if (rank !== 0) return rank;
-  // Within a kind, whoever has waited longest comes first.
   const leftTime = left.since?.getTime() ?? Infinity;
   const rightTime = right.since?.getTime() ?? Infinity;
   if (leftTime !== rightTime) return leftTime - rightTime;
@@ -293,9 +267,7 @@ function compareItems(left: InboxItem, right: InboxItem): number {
 
 export interface LeitstandInbox {
   items: InboxItem[];
-  /** Hidden by an active snooze; they come back on their own. */
   snoozedCount: number;
-  /** When the next snooze runs out, so the caller knows when to look again. Null if none. */
   nextWakeAt: number | null;
 }
 
@@ -331,16 +303,12 @@ export type SnoozeOption = "hour" | "evening" | "morning";
 
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 8;
-
-/** The next time the local clock reads `hour`:00 strictly after `now`. */
 function nextLocalHour(now: Date, hour: number): Date {
   const next = new Date(now);
   next.setHours(hour, 0, 0, 0);
   if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
   return next;
 }
-
-/** "Tonight" only makes sense before the evening has started. */
 export function availableSnoozeOptions(now: Date): SnoozeOption[] {
   return now.getHours() < EVENING_HOUR ? ["hour", "evening", "morning"] : ["hour", "morning"];
 }
@@ -364,8 +332,6 @@ const ERROR_KINDS: ReadonlySet<InboxKind> = new Set([
   "checks_failed",
 ]);
 const ASK_KINDS: ReadonlySet<InboxKind> = new Set(["permission", "question", "merge_ready"]);
-
-/** Startled by errors, paw up while a decision waits on you, chewing while agents work. */
 export function deriveLeitstandMood(input: {
   items: readonly InboxItem[];
   runningAgentCount: number;
@@ -373,6 +339,5 @@ export function deriveLeitstandMood(input: {
   if (input.items.some((item) => ERROR_KINDS.has(item.kind))) return "err";
   if (input.items.some((item) => ASK_KINDS.has(item.kind))) return "ask";
   if (input.runningAgentCount > 0) return "run";
-  // Sleeping means nothing needs you, so an unread result keeps the paw up.
   return input.items.length > 0 ? "ask" : "sleep";
 }

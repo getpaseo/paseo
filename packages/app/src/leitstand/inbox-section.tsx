@@ -53,8 +53,6 @@ const HANDOFF_LABEL_KEY: Record<string, string> = {
   action: "leitstand.inbox.kinds.handoffAction",
   aborted: "leitstand.inbox.kinds.handoffAborted",
 };
-
-/** A sorted handback names what it wants; an unsorted one stays "Your turn". */
 function kindLabelKey(item: InboxItem): string {
   if (item.kind === "finished" && item.handoffKind) {
     return HANDOFF_LABEL_KEY[item.handoffKind] ?? KIND_LABEL_KEY.finished;
@@ -204,7 +202,6 @@ function InboxRow({
   );
 }
 
-// Row actions are secondary, not outline: the outline border is the inbox surface's own colour.
 function InboxActions({
   item,
   size,
@@ -259,10 +256,8 @@ function InboxActions({
   }
 }
 
-/** The agent that asked or failed opens directly; otherwise the workspace picks its attention tab. */
 function sessionTarget(item: SessionInboxItem): WorkspaceTabTarget | undefined {
-  if (item.kind === "permission") return { kind: "agent", agentId: item.agentId };
-  if (item.kind === "agent_error" && item.agentId) return { kind: "agent", agentId: item.agentId };
+  if ("agentId" in item && item.agentId) return { kind: "agent", agentId: item.agentId };
   return undefined;
 }
 
@@ -382,7 +377,6 @@ function SnoozeMenu({
   );
 }
 
-// Rendered while the menu is open, so the offered times follow the clock at that moment.
 function SnoozeOptions({
   itemId,
   snooze,
@@ -540,7 +534,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
-  // What the agent needs reads first, so it carries the body colour rather than the muted one.
   need: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
@@ -583,7 +576,6 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-// A function, not a table: styles must be read at render time (docs/unistyles.md).
 function kindStyle(kind: InboxKind) {
   switch (kind) {
     case "permission":

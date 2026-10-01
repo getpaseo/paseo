@@ -13,6 +13,13 @@ import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import {
+  collectAllPanes,
+  collectAllTabs,
+  type WorkspaceLayout,
+} from "@/stores/workspace-layout-actions";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import type { DraftRecord } from "@/stores/draft-store/state";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -39,17 +46,13 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
-  // Raw user-set title (null when the name is derived from branch/directory).
-  // Prefills the rename input and signals whether a reset is available.
   title: string | null;
   pinnedAt?: string | null;
   labels?: string[];
-  // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
-  /** Absent against a daemon that predates the field; the row then keeps its single-PR shape. */
   relatedPullRequests?: readonly RelatedPullRequest[];
   archiveHasUncommittedChanges: boolean | null;
   archiveUnpushedCommitCount: number | null;
@@ -74,11 +77,13 @@ export interface SidebarWorkspacePlacementModel {
 
 export interface SidebarWorkspaceSession {
   serverId: string;
+  hasHydratedAgents?: boolean;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 interface SidebarWorkspaceSessionSource {
+  hasHydratedAgents?: boolean;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
@@ -95,6 +100,7 @@ export function selectSidebarWorkspaceSessions(
     }
     selected.push({
       serverId,
+      hasHydratedAgents: session.hasHydratedAgents,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
@@ -116,6 +122,7 @@ export function areSidebarWorkspaceSessionsEqual(
       !leftSession ||
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
+      leftSession.hasHydratedAgents !== rightSession.hasHydratedAgents ||
       leftSession.workspaces !== rightSession.workspaces ||
       leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
     ) {
@@ -123,6 +130,67 @@ export function areSidebarWorkspaceSessionsEqual(
     }
   }
   return true;
+}
+
+export function filterEmptySidebarWorkspaces(input: {
+  model: SidebarWorkspacePlacementModel;
+  hasHydratedLayouts: boolean;
+  hasHydratedDrafts: boolean;
+  sessions: readonly SidebarWorkspaceSession[];
+  layouts: Readonly<Record<string, WorkspaceLayout>>;
+  drafts: Readonly<Record<string, DraftRecord>>;
+  pendingCreateAttempts: Readonly<Record<string, PendingCreateAttempt>>;
+}): SidebarWorkspacePlacementModel {
+  if (!input.hasHydratedLayouts || !input.hasHydratedDrafts) return input.model;
+  const sessions = new Map(input.sessions.map((session) => [session.serverId, session]));
+  const creating = new Set(
+    Object.values(input.pendingCreateAttempts)
+      .filter((attempt) => attempt.lifecycle === "active" && attempt.workspaceId)
+      .map((attempt) => `${attempt.serverId}:${attempt.workspaceId}`),
+  );
+  const workspaces = input.model.workspaces.filter((placement) => {
+    const session = sessions.get(placement.serverId);
+    if (!session?.hasHydratedAgents) return true;
+    if (session.workspaceAgentActivity.has(placement.workspaceId)) return true;
+    if (creating.has(placement.workspaceKey)) return true;
+    const workspace = session.workspaces.get(placement.workspaceId);
+    if (workspace?.scripts.some((script) => script.lifecycle === "running")) return true;
+    const layout = input.layouts[placement.workspaceKey];
+    if (!layout) return false;
+    const visibleTabIds = new Set(collectAllPanes(layout.root).flatMap((pane) => pane.tabIds));
+    return collectAllTabs(layout.root).some(({ tabId, target }) => {
+      if (!visibleTabIds.has(tabId) && (target.kind === "files" || target.kind === "changes_tree"))
+        return false;
+      if (target.kind === "new_tab") return false;
+      if (target.kind !== "draft") return true;
+      const draft =
+        input.drafts[
+          buildDraftStoreKey({
+            serverId: placement.serverId,
+            agentId: "",
+            draftId: target.draftId,
+          })
+        ];
+      return (
+        draft?.lifecycle === "active" &&
+        (draft.input.text.trim().length > 0 || draft.input.attachments.length > 0)
+      );
+    });
+  });
+  if (workspaces.length === input.model.workspaces.length) return input.model;
+  const visibleKeys = new Set(workspaces.map((workspace) => workspace.workspaceKey));
+  return {
+    ...input.model,
+    workspaces,
+    projects: input.model.projects.map((project) => {
+      const visible = project.workspaces.filter((workspace) =>
+        visibleKeys.has(workspace.workspaceKey),
+      );
+      return visible.length === project.workspaces.length
+        ? project
+        : { ...project, workspaces: visible };
+    }),
+  };
 }
 
 interface EffectiveWorkspaceStatus {
@@ -152,7 +220,6 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
-  /** Another workspace works in the same directory, so the directory's diff is not this one's. */
   sharesDirectory?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
@@ -241,16 +308,6 @@ export interface ProjectStatusSession {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
-
-/**
- * Most urgent status among a project's workspaces. Backs the status dot on a collapsed
- * project row, which otherwise hides every workspace-level signal it contains.
- *
- * Workspaces the session hasn't hydrated yet are skipped rather than counted as done —
- * an unknown workspace shouldn't drag the aggregate anywhere. Reuses the same
- * activity-index + effective-status pipeline as per-workspace rows (one pass over the
- * session's agents per server, not per workspace) rather than re-deriving it.
- */
 export function deriveProjectStatusBucket(input: {
   workspaces: readonly SidebarWorkspacePlacement[];
   sessions: Record<string, ProjectStatusSession | undefined>;
@@ -482,10 +539,6 @@ export function buildSidebarProjectsFromHostProjects(input: {
   }));
 }
 
-// Host labels disambiguate which machine a workspace lives on; they only earn their
-// space once the visible sidebar spans more than one host. Counting distinct hosts
-// across the visible projects (not all connected hosts) keeps labels off when a host
-// filter pins the view to a single host.
 export function shouldShowSidebarHostLabels(projects: SidebarProjectEntry[]): boolean {
   const serverIds = new Set<string>();
   for (const project of projects) {
