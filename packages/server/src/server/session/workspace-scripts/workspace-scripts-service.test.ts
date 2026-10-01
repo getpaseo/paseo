@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pino } from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import type { SessionOutboundMessage, StartWorkspaceScriptRequest } from "../../messages.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "../../service-proxy.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
@@ -78,7 +78,7 @@ interface BuildOptions {
   spawnThrows?: string;
   gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
   automationError?: Error;
-  wantsStatusUpdates?: boolean;
+  wantsStatusUpdates?: () => boolean;
   emitWorkspaceUpdateToAllSessions?: (workspaceId: string) => Promise<void>;
 }
 
@@ -110,8 +110,7 @@ function buildService(options: BuildOptions = {}) {
     resolveScriptHealth: null,
     logger,
     emit: (message) => emitted.push(message),
-    wantsStatusUpdates:
-      options.wantsStatusUpdates === undefined ? undefined : () => options.wantsStatusUpdates!,
+    wantsStatusUpdates: options.wantsStatusUpdates,
     emitWorkspaceUpdateToAllSessions: options.emitWorkspaceUpdateToAllSessions,
     async spawnWorkspaceScript(spawnOptions): Promise<WorktreeScriptResult> {
       spawnCalls.push(spawnOptions);
@@ -233,7 +232,7 @@ describe("lifecycle fan-out to other sessions", () => {
   test("fans the workspace descriptor out even when this session declines script_status_update", async () => {
     const fannedOut: string[] = [];
     const { service, emitted } = buildService({
-      wantsStatusUpdates: false,
+      wantsStatusUpdates: () => false,
       emitWorkspaceUpdateToAllSessions: async (workspaceId) => {
         fannedOut.push(workspaceId);
       },
@@ -254,14 +253,14 @@ describe("lifecycle fan-out to other sessions", () => {
     });
 
     await service.start(request);
-    await vi.waitFor(() => expect(fannedOut).toEqual(["ws-1"]));
+    await expect.poll(() => fannedOut).toEqual(["ws-1"]);
 
     // Simulate a natural exit after start() resolves.
     spawnCalls[0]?.onLifecycleChanged?.();
-    await vi.waitFor(() => expect(fannedOut).toEqual(["ws-1", "ws-1"]));
+    await expect.poll(() => fannedOut).toEqual(["ws-1", "ws-1"]);
     const statusUpdateCount = () =>
       emitted.filter((message) => message.type === "script_status_update").length;
-    await vi.waitFor(() => expect(statusUpdateCount()).toBe(3));
+    await expect.poll(statusUpdateCount).toBe(3);
   });
 
   test("requester status does not wait for peer delivery", async () => {
@@ -272,11 +271,9 @@ describe("lifecycle fan-out to other sessions", () => {
 
     const statusUpdate = service.emitStatusUpdate("ws-1", "/tmp/repo");
     try {
-      await vi.waitFor(() =>
-        expect(emitted).toEqual([
-          { type: "script_status_update", payload: { workspaceId: "ws-1", scripts: [] } },
-        ]),
-      );
+      await expect
+        .poll(() => emitted)
+        .toEqual([{ type: "script_status_update", payload: { workspaceId: "ws-1", scripts: [] } }]);
     } finally {
       peerDelivery.resolve();
       await statusUpdate;
