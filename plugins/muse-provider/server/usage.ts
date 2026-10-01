@@ -78,6 +78,8 @@ export class Usage {
               windowFromUsedPct({
                 id: "five_hour",
                 label: `${usage.window.windowDurationMins / 60} hours`,
+                shortLabel: `${usage.window.windowDurationMins / 60}h`,
+                summary: true,
                 utilizationPct: usage.window.usedPercent,
                 resetsAt: new Date(usage.window.resetsAtMs).toISOString(),
                 tone: toneFromUsedPct(usage.window.usedPercent),
@@ -85,6 +87,8 @@ export class Usage {
               windowFromUsedPct({
                 id: "weekly",
                 label: "Weekly",
+                shortLabel: "wk",
+                summary: true,
                 utilizationPct: usage.weekly.usedPercent,
                 resetsAt: new Date(usage.weekly.resetsAtMs).toISOString(),
                 tone: toneFromUsedPct(usage.weekly.usedPercent),

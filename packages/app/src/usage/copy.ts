@@ -3,6 +3,7 @@
 export const usageCopy = {
   title: "Usage",
   planUsage: "Plan usage",
+  options: "Usage options",
   refresh: "Refresh",
   refreshing: "Refreshing...",
   refreshFailed: "Unable to refresh usage",
@@ -16,6 +17,8 @@ export const usageCopy = {
   clientUnavailable: "Host connection is not ready",
   retry: "Try again",
   pin: "Pin",
+  displayAs: "Show",
   displayUsed: "Used",
   displayRemaining: "Remaining",
+  showInSidebar: "Show in sidebar",
 } as const;

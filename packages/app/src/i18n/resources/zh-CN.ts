@@ -26,6 +26,7 @@ export const zhCN: TranslationResources = {
     total: "{{total}} 个匹配项",
   },
   common: {
+    bottomSheetBackdrop: "底部面板背景",
     back: "返回",
     loading: "加载中...",
     actions: {

@@ -37,7 +37,7 @@ Superset requires a Superset account and GitHub sign-in when opening the app. It
 
 Superset supports many CLI-based coding agents and lets you add custom terminal agents.
 
-Paseo runs Claude Code, Codex, OpenCode, Pi, and Muse Code through native structured harnesses, plus 30+ agents through its ACP catalog and any custom CLI agent. See [all supported providers](/agents).
+Paseo runs Claude Code, Codex, OpenCode, Pi, Antigravity, and Muse Code through native structured harnesses, plus 30+ agents through its ACP catalog and any custom CLI agent. See [all supported providers](/agents).
 
 ## Application plugins
 

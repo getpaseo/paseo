@@ -27,6 +27,7 @@ export const ptBR: TranslationResources = {
     total: "{{total}} correspondências",
   },
   common: {
+    bottomSheetBackdrop: "Fundo do painel inferior",
     back: "Voltar",
     loading: "Carregando...",
     actions: {

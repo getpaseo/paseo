@@ -1,21 +1,12 @@
-import { RotateCw } from "lucide-react-native";
 import { View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { HostFilter } from "@/components/hosts/host-filter";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useMemo, type ReactElement } from "react";
-import { usageCopy } from "./copy";
 import type { UsageDisplay } from "./display";
-import { UsageDisplayToggle } from "./display-toggle";
+import { UsageOptionsMenu } from "./options-menu";
 import type { UsageHost } from "./model";
 import { useHostUsage } from "./queries";
 import type { UsageView } from "./types";
-
-const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 /** The hosts to choose between, and which one is shown. */
 export interface UsageHostSelection {
@@ -26,8 +17,7 @@ export interface UsageHostSelection {
 
 /**
  * The controls on the right of every usage title row: the host filter when there is more than one
- * host, the used/remaining toggle and Refresh. A host that cannot report usage keeps only the
- * host filter.
+ * host, and the options menu. A host that cannot report usage keeps only the host filter.
  */
 export function UsageControls({
   view,
@@ -41,8 +31,6 @@ export function UsageControls({
   hostSelection?: UsageHostSelection;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
-  const compact = useIsCompactFormFactor();
-  const iconSize = paneContentToolbarIconSize(compact);
   return (
     <View style={styles.controls}>
       {hostSelection && hostSelection.hosts.length > 1 ? (
@@ -56,23 +44,7 @@ export function UsageControls({
         />
       ) : null}
       {view.kind === "unavailable" ? null : (
-        <>
-          <UsageDisplayToggle display={display} />
-          {/* The Changes panel's refresh: an icon, with the label in its tooltip. */}
-          <ToolbarButton
-            label={busy ? usageCopy.refreshing : usageCopy.refresh}
-            compact={compact}
-            disabled={busy}
-            onPress={onRefresh}
-            testID="usage-refresh-all"
-          >
-            {busy ? (
-              <ThemedLoadingSpinner size={iconSize} uniProps={extraMutedIconColorMapping} />
-            ) : (
-              <ThemedRotateCw size={iconSize} uniProps={extraMutedIconColorMapping} />
-            )}
-          </ToolbarButton>
-        </>
+        <UsageOptionsMenu display={display} busy={busy} onRefresh={onRefresh} />
       )}
     </View>
   );
