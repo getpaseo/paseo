@@ -10,7 +10,10 @@ export interface BrowserTunnelEvent {
 
 export class BrowserTunnelHost {
   private readonly listeners = new Map<string, { server: Server; port: Promise<number> }>();
-  private readonly sockets = new Map<string, { socket: Socket; tunnelId: string }>();
+  private readonly sockets = new Map<
+    string,
+    { socket: Socket; tunnelId: string; resume: () => void }
+  >();
 
   constructor(private readonly emit: (event: BrowserTunnelEvent) => void) {}
 
@@ -22,11 +25,23 @@ export class BrowserTunnelHost {
     const server = createServer((socket) => {
       socket.pause();
       const connectionId = randomUUID();
-      this.sockets.set(connectionId, { socket, tunnelId });
-      socket.on("data", (data) => {
-        socket.pause();
+      let waiting = true;
+      const pump = () => {
+        if (waiting || !socket.readableLength) return;
+        const data: Buffer | null = socket.read(Math.min(32768, socket.readableLength));
+        if (!data) return;
+        waiting = true;
         this.emit({ tunnelId, connectionId, kind: "data", dataBase64: data.toString("base64") });
+      };
+      this.sockets.set(connectionId, {
+        socket,
+        tunnelId,
+        resume: () => {
+          waiting = false;
+          pump();
+        },
       });
+      socket.on("readable", pump);
       socket.on("error", () => socket.destroy());
       socket.once("close", () => {
         this.sockets.delete(connectionId);
@@ -76,7 +91,7 @@ export class BrowserTunnelHost {
   }
 
   resume(connectionId: string): void {
-    this.sockets.get(connectionId)?.socket.resume();
+    this.sockets.get(connectionId)?.resume();
   }
 
   close(connectionId: string): void {

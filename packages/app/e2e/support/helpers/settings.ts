@@ -22,10 +22,10 @@ const SECTION_LABELS = {
   general: "General",
   chat: "Chat",
   appearance: "Appearance",
+  layout: "Open location",
   sidebar: "Sidebar",
   editor: "Editor",
   terminal: "Terminal",
-  browser: "Browser",
   shortcuts: "Shortcuts",
   integrations: "Integrations",
   permissions: "Permissions",
@@ -59,8 +59,6 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
 }
 
 export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
-  // Host sections are now flat top-level rows under the Host group. Navigate by
-  // clicking the Connections section row; the picker only matters when >1 host.
   await page.getByTestId("settings-host-section-connections").click();
   await expectHostSettingsUrl(page, serverId);
   await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
@@ -80,8 +78,6 @@ export async function expectSettingsHeader(page: Page, title: string): Promise<v
 }
 
 export async function openAddHostFlow(page: Page): Promise<void> {
-  // "Add host" is now an item inside the host picker (a Combobox); open the
-  // picker first, then pick it. The picker renders whenever a host exists.
   await page.getByTestId("settings-host-picker").click();
   await page.getByTestId("settings-add-host").click();
   await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
@@ -311,10 +307,7 @@ export async function expectHostLabelEditMode(page: Page, expectedLabel: string)
 export async function expectHostConnectionsCard(page: Page, port: string): Promise<void> {
   const card = page.getByTestId("host-page-connections-card");
   await expect(card).toBeVisible();
-  // "Connections" appears three times on this page: the sidebar section row, the
-  // detail header title, and the SettingsSection heading above the card. Match
-  // the first to keep the heading assertion without tripping Playwright strict
-  // mode.
+
   await expect(page.getByText("Connections", { exact: true }).first()).toBeVisible();
   await expect(
     card.getByText(new RegExp(`TCP \\((localhost|127\\.0\\.0\\.1):${port}\\)`)),
@@ -347,8 +340,6 @@ export async function openHostSection(
 }
 
 export async function expectHostActionCards(page: Page, serverId: string): Promise<void> {
-  // Restart + remove cards live on the Host section; providers moved to its
-  // own Providers section (asserted via expectHostProvidersCard).
   await openSettingsHostSection(page, serverId, "host");
   await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
   await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
@@ -403,13 +394,11 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   const sidebar = page.getByTestId("settings-sidebar");
   await expect(sidebar).toBeVisible();
 
-  // App group rows remain top-level.
   await expect(sidebar.getByRole("button", { name: "General", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "Diagnostics", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "Daemon", exact: true })).toHaveCount(0);
 
-  // Host group rows are now flat top-level sections (no drill-in).
   await expect(sidebar.getByTestId("settings-host-section-connections")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-projects")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-agents")).toBeVisible();
@@ -418,7 +407,6 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   await expect(sidebar.getByTestId("settings-host-section-usage")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-host")).toBeVisible();
 
-  // The old per-host entry rows are replaced by the host picker.
   await expect(sidebar.locator('[data-testid^="settings-host-entry-"]')).toHaveCount(0);
 }
 
@@ -430,10 +418,6 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   const sidebar = page.getByTestId("settings-sidebar");
   await expect(sidebar).toBeVisible({ timeout: 15_000 });
 
-  // Single-host fixture: the picker is a non-interactive chip (no dropdown to
-  // open) that surfaces the local host by its label. The per-row connection
-  // endpoint only appears on dropdown rows in the multi-host case, which this
-  // fixture does not exercise.
   const picker = sidebar.getByTestId("settings-host-picker");
   await expect(picker).toBeVisible();
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();

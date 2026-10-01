@@ -41,7 +41,17 @@ describe("settings pages", () => {
       SETTINGS_GROUPS.map((group) => [group.id, pageIdsInGroup(group.id)]),
     );
     expect(byGroup).toEqual({
-      you: ["general", "appearance", "layout", "editor", "shortcuts", "notifications"],
+      you: [
+        "general",
+        "appearance",
+        "layout",
+        "sidebar",
+        "chat",
+        "terminal",
+        "editor",
+        "shortcuts",
+        "notifications",
+      ],
       agents: ["providers", "usage", "agents", "system-one", "metadata", "plugins"],
       work: ["projects", "workspaces", "linked-accounts"],
       host: [
@@ -64,7 +74,15 @@ describe("settings pages", () => {
       isWeb: false,
       hasHost: false,
     }).map((page) => page.id);
-    expect(mobileWithoutHost).toEqual(["general", "appearance", "diagnostics", "about"]);
+    expect(mobileWithoutHost).toEqual([
+      "general",
+      "appearance",
+      "sidebar",
+      "chat",
+      "terminal",
+      "diagnostics",
+      "about",
+    ]);
 
     const browser = resolveVisibleSettingsPages({
       isDesktopApp: false,

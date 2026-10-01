@@ -28,7 +28,6 @@ import { OpenLocationSection as LayoutSection } from "@/screens/settings/open-lo
 import { ChatSection } from "@/screens/settings/chat/chat-section";
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
 import { SidebarNavSection } from "@/screens/settings/sidebar/sidebar-nav-section";
-import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import {
   useAppSettings,
   useSettings,
@@ -1072,9 +1071,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       sidebar: <SidebarNavSection />,
       chat: <ChatSection />,
       terminal: <TerminalSection />,
-      browser: isDesktopApp ? <BrowserDataSection /> : null,
     }),
-    [isDesktopApp],
+    [],
   );
   let content: ReactNode;
   if (view.kind === "section" && view.section === "layout") {

@@ -193,12 +193,8 @@ export interface UiIconProps {
   accessibilityLabel?: string;
 }
 
-// A forwardRef object like Lucide's, not a bare function: callers tell icon components from
-// render callbacks by `typeof` and arity (see ButtonIcon).
 export type LucideIcon = ForwardRefExoticComponent<UiIconProps>;
 
-// Lucide call sites pass a stroke width around 2 and fill for solid dots; Phosphor expresses
-// both as a weight.
 function weightFor(props: UiIconProps): IconWeight {
   if (props.fill && props.fill !== "none" && props.fill !== "transparent") return "fill";
   return Number(props.strokeWidth ?? 2) >= 2.5 ? "bold" : "regular";
@@ -210,10 +206,11 @@ function uiIcon(Icon: ComponentType<IconProps>, name: string): LucideIcon {
       strokeWidth: _strokeWidth,
       fill: _fill,
       absoluteStrokeWidth: _absolute,
+      uniProps: _uniProps,
       opacity,
       style,
       ...rest
-    } = props;
+    } = props as UiIconProps & { uniProps?: unknown };
     return (
       <Icon
         {...rest}

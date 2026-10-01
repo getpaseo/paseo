@@ -11,10 +11,11 @@ import {
   buildSettingsRoute,
   isSettingsSectionSlug,
   type SettingsSectionSlug,
+  type HostSectionSlug,
 } from "@/utils/host-routes";
 
 // COMPAT(settingsDaemonRedirect): added 2026-07-08, remove after 2027-01-08.
-function SettingsDaemonRedirect() {
+function SettingsHostRedirect({ section }: { section: HostSectionSlug }) {
   const hosts = useHosts();
   const localDaemon = useLocalDaemonServerIdState();
   const bootstrapState = useHostRuntimeBootstrapState();
@@ -28,7 +29,7 @@ function SettingsDaemonRedirect() {
     localDaemon.serverId !== null &&
     hosts.some((host) => host.serverId === localDaemon.serverId)
   ) {
-    return <Redirect href={buildSettingsHostSectionRoute(localDaemon.serverId, "host")} />;
+    return <Redirect href={buildSettingsHostSectionRoute(localDaemon.serverId, section)} />;
   }
 
   return <Redirect href={buildSettingsRoute()} />;
@@ -42,10 +43,10 @@ export default function SettingsSectionRoute() {
   const view = useMemo(() => ({ kind: "section" as const, section }), [section]);
 
   // COMPAT(settingsDaemonRedirect): added 2026-07-08, remove after 2027-01-08.
-  if (rawSection === "daemon") {
+  if (rawSection === "daemon" || rawSection === "browser") {
     return (
       <HostRouteBootstrapBoundary>
-        <SettingsDaemonRedirect />
+        <SettingsHostRedirect section={rawSection === "browser" ? "browser" : "host"} />
       </HostRouteBootstrapBoundary>
     );
   }

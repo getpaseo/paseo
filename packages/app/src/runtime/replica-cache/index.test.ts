@@ -35,7 +35,6 @@ class MemoryStorage implements ReplicaRowStore {
   persistentWriteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
   onRead: (() => void) | null = null;
-  /** Throws once a read goes past this count, so a non-terminating read loop fails the test. */
   readLimit: number | null = null;
 
   private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
@@ -775,8 +774,8 @@ describe("ReplicaCache", () => {
     });
 
     const [key, row] = [...storage.rows].find(([, stored]) => stored.kind === "checkpoint")!;
-    const older = JSON.parse(row.payload) as Record<string, unknown>;
-    delete older.schema;
+    const older = JSON.parse(row.payload) as { cursors: Record<string, unknown> };
+    delete older.cursors.schema;
     storage.rows.set(key, { ...row, payload: JSON.stringify(older) });
 
     expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toBeUndefined();

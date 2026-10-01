@@ -49,7 +49,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     sectionKeys: [
       "settings.general.defaultSend.label",
       "settings.general.language.label",
-      "settings.general.serviceUrls.label",
       "settings.general.terminalScrollback.label",
     ],
     hintsKey: "settings.search.hints.general",
@@ -75,7 +74,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     scope: "app",
     id: "layout",
     group: "you",
-    labelKey: "settings.sections.layout",
+    labelKey: "settings.layout.openInSidePane.title",
     sectionKeys: ["settings.layout.openInSidePane.title"],
     hintsKey: "settings.search.hints.layout",
     availability: "desktop",

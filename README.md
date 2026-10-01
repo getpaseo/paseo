@@ -15,7 +15,7 @@
 
 <p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents, with a testing engine and Jev decisions built in.</p>
 
-PandaOS is a fork of [Paseo](https://github.com/getpaseo/paseo). The CLI command is `pandaos`. Internal `@getpaseo/*` package names stay unchanged so merging upstream stays cheap. It tracks upstream releases (currently 0.9.1) and adds features that make agents cheaper to run and faster to verify. Everything upstream does still works the same way; the additions below are on top.
+PandaOS is a fork of [Paseo](https://github.com/getpaseo/paseo). The CLI command is `pandaos`. Internal `@getpaseo/*` package names stay unchanged so merging upstream stays cheap. It tracks upstream releases (currently 0.10.0) and adds features that make agents cheaper to run and faster to verify. Everything upstream does still works the same way; the additions below are on top.
 
 ## What PandaOS adds
 
@@ -69,10 +69,10 @@ Add themes, workspace panels, commands, settings screens, and coding-agent provi
 
 ## Staying current with upstream
 
-Upstream releases are merged into `main` as they ship. Remote `origin` points at `getpaseo/paseo` and is fetch-only; `marushan49` is the fork:
+Upstream releases are merged into `main` as they ship. Remote `upstream` points at `getpaseo/paseo` and is fetch-only; `origin` points at `marushan49/pandaos`:
 
 ```bash
-git fetch origin --tags
+git fetch upstream --tags
 git merge v<version>
 ```
 

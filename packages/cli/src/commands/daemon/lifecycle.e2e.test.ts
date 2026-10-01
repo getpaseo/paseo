@@ -64,9 +64,7 @@ async function fixture() {
       try {
         const lock = JSON.parse(await readFile(path.join(home, "paseo.pid"), "utf8"));
         owned.set(home, lock);
-      } catch {
-        /* No acquired launch. */
-      }
+      } catch {}
     }
     return { code, stdout, stderr, json: () => JSON.parse(stdout) };
   }
@@ -107,9 +105,7 @@ async function fixture() {
         if (lock.pid === captured.pid && lock.startedAt === captured.startedAt) {
           await run(["daemon", "stop", "--home", home, "--force", "--timeout", "2"]);
         }
-      } catch {
-        /* Already exited. */
-      }
+      } catch {}
     }
     await rm(root, { recursive: true, force: true });
   }
@@ -140,9 +136,9 @@ test("managed two-home restart retains its supervisor and never routes ordinary 
     const beforeA = await f.liveStatus(a);
     const beforeB = await f.liveStatus(b, poisoned);
     if (process.platform !== "win32") {
-      for (const home of [a, b, path.join(f.root, ".pandaos")])
-        expect((await stat(home)).mode & 0o777).toBe(0o700);
+      for (const home of [a, b]) expect((await stat(home)).mode & 0o777).toBe(0o700);
       expect(existsSync(path.join(f.root, ".paseo"))).toBe(false);
+      expect(existsSync(path.join(f.root, ".pandaos"))).toBe(false);
     }
 
     const repoB = path.join(f.root, "project-b");

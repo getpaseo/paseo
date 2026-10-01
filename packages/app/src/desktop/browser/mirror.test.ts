@@ -1,5 +1,50 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { resolveBrowserUrl, originalBrowserUrl } from "./tunnel";
+
+const tunnelFixture = vi.hoisted(() => {
+  interface State {
+    browsersById: Record<string, { browserId: string; remoteBrowserId: string | null }>;
+  }
+  return {
+    notify: (_state: State, _previous: State) => {},
+    socketEvent: (_event: {
+      tunnelId: string;
+      connectionId: string;
+      kind: "open" | "data" | "close";
+    }) => {},
+    start: vi.fn(async () => 4500 + tunnelFixture.start.mock.calls.length),
+    stop: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+  };
+});
+
+vi.mock("./store", () => ({
+  useBrowserStore: {
+    subscribe: (notify: typeof tunnelFixture.notify) => {
+      tunnelFixture.notify = notify;
+    },
+  },
+}));
+vi.mock("./tunnel-host", () => ({
+  tunnelHost: {
+    start: tunnelFixture.start,
+    stop: tunnelFixture.stop,
+    close: tunnelFixture.close,
+    resume: tunnelFixture.resume,
+    onSocket: async (listener: typeof tunnelFixture.socketEvent) => {
+      tunnelFixture.socketEvent = listener;
+      return () => {};
+    },
+  },
+}));
+vi.mock("@/stores/session-store", () => ({
+  useSessionStore: {
+    getState: () => ({ sessions: { host: { serverInfo: { features: { browserTunnel: true } } } } }),
+  },
+}));
 import {
   mirrorReplaySource,
   replayMirrorAction,
@@ -8,6 +53,44 @@ import {
   MIRROR_ORIGIN,
   mirrorReplayReadySource,
 } from "./mirror";
+
+it("isolates local tunnels by browser and releases only the closed tab", async () => {
+  const release = vi.fn(async () => {});
+  const client = {
+    observeBrowserTunnel: () => ({
+      ready: Promise.resolve({ subscriptionId: "owner" }),
+      release,
+      subscribe: () => () => {},
+    }),
+    operateBrowserTunnel: async () => {},
+  } as unknown as DaemonClient;
+  const input = {
+    client,
+    serverId: "host",
+    workspaceId: "workspace",
+    browserId: "first",
+    url: "http://localhost:8000/form?q=stable#result",
+  };
+  const first = await resolveBrowserUrl(input);
+  const second = await resolveBrowserUrl({ ...input, browserId: "second" });
+  expect(first).not.toBe(second);
+  expect(await resolveBrowserUrl(input)).toBe(first);
+  expect(originalBrowserUrl(first)).toBe(input.url);
+  tunnelFixture.socketEvent({ tunnelId: "website-1", connectionId: "connection-1", kind: "open" });
+  const secondRecord = { browserId: "second", remoteBrowserId: null };
+  tunnelFixture.notify(
+    { browsersById: { second: secondRecord } },
+    {
+      browsersById: { first: { browserId: "first", remoteBrowserId: null }, second: secondRecord },
+    },
+  );
+  expect(tunnelFixture.stop).toHaveBeenCalledWith("website-1");
+  tunnelFixture.socketEvent({ tunnelId: "website-1", connectionId: "connection-1", kind: "close" });
+  expect(release).toHaveBeenCalledOnce();
+  expect(originalBrowserUrl(first)).toBe(first);
+  expect(await resolveBrowserUrl({ ...input, browserId: "second" })).toBe(second);
+  expect(await resolveBrowserUrl(input)).not.toBe(first);
+});
 
 describe("replayMirrorAction", () => {
   it("fills and submits the local form the daemon filled", () => {
@@ -21,7 +104,7 @@ describe("replayMirrorAction", () => {
       replayMirrorAction({ kind: "fill", target: { selector: "#email" }, value: "me@x.de" }),
     ).toBe(true);
     expect((document.getElementById("email") as HTMLInputElement).value).toBe("me@x.de");
-    // A password arrives without its value; the field only gets focus.
+
     expect(replayMirrorAction({ kind: "fill", target: { selector: "#pw" } })).toBe(true);
     expect((document.getElementById("pw") as HTMLInputElement).value).toBe("");
     expect(document.activeElement?.id).toBe("pw");

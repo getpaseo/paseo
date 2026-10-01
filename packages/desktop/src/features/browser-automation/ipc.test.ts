@@ -28,6 +28,24 @@ test("browser tunnel transports real socket bytes, owns connections and closes i
     const response = once(socket, "data");
     await host.write(connection.connectionId, Buffer.from("response").toString("base64"));
     expect((await response)[0].toString()).toBe("response");
+    const upload = Buffer.alloc(128 * 1024, 65);
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      const receive = (event: { connectionId: string; dataBase64: string }) => {
+        if (event.connectionId !== connection.connectionId) return;
+        const chunk = Buffer.from(event.dataBase64, "base64");
+        expect(chunk.length).toBeLessThanOrEqual(32768);
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).length === upload.length) {
+          events.off("data", receive);
+          resolve();
+        } else setImmediate(() => host.resume(connection.connectionId));
+      };
+      events.on("data", receive);
+      socket.write(upload);
+      host.resume(connection.connectionId);
+    });
+    expect(Buffer.concat(chunks)).toEqual(upload);
     const closed = once(events, "close");
     await host.stop("website-1");
     expect((await closed)[0].connectionId).toBe(connection.connectionId);
