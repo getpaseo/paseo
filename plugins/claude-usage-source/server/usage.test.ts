@@ -3,8 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchUsage } from "./usage.js";
-import { inputSchema } from "../shared/input.js";
+import { inputSchema, type UsageInput } from "../shared/input.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
+
+function credentialInput(directory: string): UsageInput {
+  return { route: { store: "claude", path: join(directory, ".credentials.json") } };
+}
 
 function writeClaudeCredentials(
   dir: string,
@@ -63,7 +67,7 @@ describe("claude usage source", () => {
     originalEnv = { ...process.env };
     process.env["HOME"] = homeDir;
     process.env["USERPROFILE"] = homeDir;
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     for (const key of [
       "APPDATA",
       "COPILOT_TOKEN",
@@ -100,7 +104,9 @@ describe("claude usage source", () => {
   ) {
     return {
       listUsage: async () => {
-        const report = await fetchUsage({}, (url, init) => fetchApi(url, init));
+        const report = await fetchUsage(credentialInput(claudeHome), (url, init) =>
+          fetchApi(url, init),
+        );
         return {
           providers: [
             {
@@ -230,9 +236,9 @@ describe("usage bars escalate as they fill", () => {
 
   function claudeAt(utilization: number) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     return fetchUsage(
-      {},
+      credentialInput(claudeHome),
       mockFetch(
         new Map([
           [
@@ -286,11 +292,11 @@ describe("Claude usage source scoped weekly limits", () => {
 
   function claudeProvider(body: unknown) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     const fetchApi = mockFetch(
       new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]]),
     );
-    return { provider: { fetchUsage: () => fetchUsage({}, fetchApi) } };
+    return { provider: { fetchUsage: () => fetchUsage(credentialInput(claudeHome), fetchApi) } };
   }
 
   it("renders a scoped weekly limit as its own window", async () => {
@@ -467,9 +473,9 @@ describe("Claude usage source scoped limit reconciliation", () => {
 
   async function windowsFor(body: Record<string, unknown>) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     const usage = await fetchUsage(
-      {},
+      credentialInput(claudeHome),
       mockFetch(new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]])),
     );
     return usage.windows;
@@ -633,7 +639,7 @@ describe("Claude usage source scoped limit reconciliation", () => {
   });
 });
 
-it("identify reads account and organization from the selected Claude config", async () => {
+it("identify uses the credential token profile instead of stale Claude config", async () => {
   const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { identify } = await import("./usage.js");
   const directory = await mkdtemp(join(tmpdir(), "claude-identity-"));
@@ -648,9 +654,21 @@ it("identify reads account and organization from the selected Claude config", as
         },
       }),
     );
-    expect(await identify({}, undefined, undefined, { accountHome: directory })).toEqual({
-      key: "account-uuid.org-uuid",
-      label: "test@example.com",
+    writeClaudeCredentials(directory, "fixture-local-account");
+    expect(
+      await identify(
+        credentialInput(directory),
+        async () =>
+          jsonResponse({
+            account: { uuid: "token-account", email: "token@example.test" },
+            organization: { uuid: "token-org" },
+          }),
+        Date.now,
+        { home: directory, claudeHome: directory },
+      ),
+    ).toEqual({
+      key: "token-account.token-org",
+      label: "token@example.test",
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -670,18 +688,23 @@ it("Claude credentials without account metadata use a cached OAuth profile ident
       { status: 200 },
     );
   };
-  expect(await identify({}, fetchProfile, Date.now, tokenLookup("fixture-claude-token"))).toEqual({
+  const lookup = tokenLookup("fixture-claude-token");
+  expect(
+    await identify(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup),
+  ).toEqual({
     key: "account-uuid.org-uuid",
     label: "test@example.com",
   });
-  expect(await identify({}, fetchProfile, Date.now, tokenLookup("fixture-claude-token"))).toEqual({
+  expect(
+    await identify(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup),
+  ).toEqual({
     key: "account-uuid.org-uuid",
     label: "test@example.com",
   });
   expect(calls).toBe(1);
 });
 
-it("identifies the same default credentials that fetch uses when oauthAccount is absent", async () => {
+it("identifies the same credential route that fetch uses when oauthAccount is absent", async () => {
   const { identify } = await import("./usage.js");
   const directory = mkdtempSync(join(tmpdir(), "claude-credential-identity-"));
   try {
@@ -689,7 +712,7 @@ it("identifies the same default credentials that fetch uses when oauthAccount is
     writeFileSync(join(directory, ".claude.json"), JSON.stringify({}));
     let usageRequested = false;
     await fetchUsage(
-      {},
+      credentialInput(directory),
       async () => {
         usageRequested = true;
         return new Response(null, { status: 401 });
@@ -699,7 +722,7 @@ it("identifies the same default credentials that fetch uses when oauthAccount is
     expect(usageRequested).toBe(true);
     let profileRequested = false;
     const account = await identify(
-      {},
+      credentialInput(directory),
       async () => {
         profileRequested = true;
         return jsonResponse({
@@ -708,7 +731,7 @@ it("identifies the same default credentials that fetch uses when oauthAccount is
         });
       },
       Date.now,
-      { claudeHome: directory, accountHome: directory },
+      { claudeHome: directory, home: directory },
     );
     expect(profileRequested).toBe(true);
     expect(account).toEqual({ key: "account-uuid.org-uuid", label: "owner@example.test" });
@@ -725,8 +748,8 @@ it("expires cached token profiles after five minutes", async () => {
     calls++;
     return jsonResponse({ account: { uuid: "account-uuid" }, organization: { uuid: "org-uuid" } });
   };
-  const input = {};
   const lookup = tokenLookup("ttl-fixture-token");
+  const input = credentialInput(lookup.claudeHome);
   await identify(input, fetchProfile, () => now, lookup);
   await identify(input, fetchProfile, () => now, lookup);
   expect(calls).toBe(1);
@@ -735,21 +758,21 @@ it("expires cached token profiles after five minutes", async () => {
   expect(calls).toBe(2);
 });
 
-it("identify and fetch share the macOS keychain credential fallback", async () => {
+it("identify and fetch share the explicit macOS keychain route", async () => {
   const { identify } = await import("./usage.js");
   const directory = mkdtempSync(join(tmpdir(), "claude-keychain-identity-"));
   try {
     const lookup = {
       platform: "darwin" as const,
       claudeHome: directory,
-      accountHome: directory,
+      home: directory,
       readKeychainCredentials: async () => ({
         claudeAiOauth: { accessToken: "keychain-fixture-token" },
       }),
     };
     let usageRequested = false;
     await fetchUsage(
-      {},
+      { route: { store: "keychain" } },
       async () => {
         usageRequested = true;
         return new Response(null, { status: 401 });
@@ -758,7 +781,7 @@ it("identify and fetch share the macOS keychain credential fallback", async () =
     );
     expect(usageRequested).toBe(true);
     const account = await identify(
-      {},
+      { route: { store: "keychain" } },
       async () =>
         jsonResponse({
           account: { uuid: "keychain-account" },
@@ -773,15 +796,15 @@ it("identify and fetch share the macOS keychain credential fallback", async () =
   }
 });
 
-it("identify and fetch share the default Claude home credentials", async () => {
+it("identify and fetch share the explicit Claude credential route", async () => {
   const { identify } = await import("./usage.js");
   const directory = mkdtempSync(join(tmpdir(), "claude-home-identity-"));
   try {
     writeClaudeCredentials(directory, "home-fixture-token");
-    const lookup = { claudeHome: directory, accountHome: directory };
+    const lookup = { claudeHome: directory, home: directory };
     let usageRequested = false;
     await fetchUsage(
-      {},
+      credentialInput(directory),
       async () => {
         usageRequested = true;
         return new Response(null, { status: 401 });
@@ -790,7 +813,7 @@ it("identify and fetch share the default Claude home credentials", async () => {
     );
     expect(usageRequested).toBe(true);
     const identity = await identify(
-      {},
+      credentialInput(directory),
       async () =>
         jsonResponse({
           account: { uuid: "home-account" },
@@ -813,16 +836,18 @@ it("bounds cached profiles across many token rotations", async () => {
     return jsonResponse({ account: { uuid: "account" }, organization: { uuid: "org" } });
   };
   for (let index = 0; index < 129; index++) {
-    await identify({}, fetchProfile, Date.now, tokenLookup(`rotation-fixture-${index}`));
+    const lookup = tokenLookup(`rotation-fixture-${index}`);
+    await identify(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup);
   }
-  await identify({}, fetchProfile, Date.now, tokenLookup("rotation-fixture-0"));
+  const lookup = tokenLookup("rotation-fixture-0");
+  await identify(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup);
   expect(calls).toBe(130);
 });
 
-it("discovery input rejects explicit credential routes", () => {
+it("discovery input requires a route and rejects raw credentials", () => {
   expect(inputSchema.safeParse({ accessToken: "unused" }).success).toBe(false);
   expect(inputSchema.safeParse({ configDir: "/unused" }).success).toBe(false);
-  expect(inputSchema.parse({})).toEqual({});
+  expect(() => inputSchema.parse({})).toThrow();
 });
 
 const tokenDirectories: string[] = [];
@@ -834,5 +859,26 @@ function tokenLookup(accessToken: string) {
   const directory = mkdtempSync(join(tmpdir(), "claude-profile-token-"));
   tokenDirectories.push(directory);
   writeClaudeCredentials(directory, accessToken);
-  return { claudeHome: directory, accountHome: directory };
+  return { claudeHome: directory, home: directory };
 }
+
+it("discovers a Pi OAuth login independently of the CLI login", async () => {
+  const { discover } = await import("./usage.js");
+  const { mkdir, mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const directory = await mkdtemp(join(tmpdir(), "usage-pi-discovery-"));
+  try {
+    await mkdir(join(directory, ".pi", "agent"), { recursive: true });
+    await writeFile(
+      join(directory, ".pi", "agent", "auth.json"),
+      JSON.stringify({
+        anthropic: { type: "oauth", access: "fixture-pi", accountId: "pi-account" },
+      }),
+    );
+    const inputs = await discover({ home: directory, env: {}, platform: "linux" });
+    expect(inputs).toContainEqual({
+      route: { store: "pi", path: join(directory, ".pi", "agent", "auth.json") },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

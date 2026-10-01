@@ -336,6 +336,17 @@ export default function contribute(server: PluginServerContext) {
 
 `discover()` is required and supplies configured inputs; return `[]` when no account is configured. `identify(input)` returns a stable account key and optional display label without fetching usage, or `null` when there are no credentials. The daemon combines the source ID and key as `<sourceId>:<accountKey>`. The key must be 1–128 characters from `[A-Za-z0-9._-]`, remain stable across token rotation, and identify the account or organization whose quota is metered. Never use a credential or raw email as the key; use `hashAccountKey(value)` when the only stable identity is sensitive.
 
+Return credential-store locators in preference order from `discover()`. The daemon groups inputs with the same source and account key into one card, keeps that order, and tries each login until `fetch()` returns `available`. An unavailable or error report, thrown failure, or missing login falls through to the next input. If none succeeds, the card carries the last attempted report (or `unavailable` if no login remains). Before fetching, the daemon identifies the login again and skips it if its account changed. Re-read credentials in `fetch()` so the harness's token rotations take effect; never refresh or write its tokens. Keep raw credentials out of discovery inputs and reports.
+
+Built-in subscription sources discover logins independently of agents and provider names:
+
+| Source | Login preference order                                   | Account key                                           |
+| ------ | -------------------------------------------------------- | ----------------------------------------------------- |
+| Codex  | Codex CLI (`$CODEX_HOME`, `~/.codex`), OpenCode, Pi, OMP | ChatGPT account ID from stored metadata or JWT claims |
+| Claude | Claude Code credential file, macOS keychain, Pi, OMP     | OAuth account UUID and organization UUID              |
+
+OpenCode honors `XDG_DATA_HOME`; Pi honors `PI_CODING_AGENT_DIR`. OMP honors its directory, profile, and XDG settings, reads enabled unexpired OAuth rows by credential ID, and is skipped when the host lacks `node:sqlite`. Claude Code honors `CLAUDE_CONFIG_DIR`. Each Claude login's OAuth profile supplies its identity.
+
 `usage.list_reports` discovers reports when called without IDs, or reads only the requested known IDs. It caches each report for five minutes and `forceRefresh` refreshes only the returned IDs. Each entry carries `id`, `account.label`, and `fetchedAt`; `fetch()` returns a `UsageReport` with `status` (`available`, `unavailable`, or `error`), optional `planLabel`, and generic `windows`, `balances`, and `details`. The icon is a path to a self-contained SVG under the plugin directory and follows the provider icon restrictions above.
 
 ## Entry point and cleanup
