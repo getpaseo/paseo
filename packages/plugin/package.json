@@ -1,6 +1,7 @@
 {
   "name": "@getpaseo/plugin",
   "version": "0.10.0",
+  "license": "Apache-2.0",
   "description": "Paseo plugin SDK package",
   "files": [
     "dist",
