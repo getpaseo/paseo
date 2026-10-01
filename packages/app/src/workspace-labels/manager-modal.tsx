@@ -110,7 +110,12 @@ export function WorkspaceLabelManagerModal({
     void model.delete((affected) =>
       confirmDialog({
         title: t("workspaceLabels.manage.deleteTitle", { name: editing.name }),
-        message: t("workspaceLabels.manage.deleteMessage", { count: affected }),
+        message: t(
+          affected === 1
+            ? "workspaceLabels.manage.deleteMessageOne"
+            : "workspaceLabels.manage.deleteMessageMany",
+          { count: affected },
+        ),
         confirmLabel: t("workspaceLabels.manage.delete"),
         destructive: true,
       }),

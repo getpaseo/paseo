@@ -39,3 +39,23 @@ test("Settings language selector switches to Korean", async ({ page }) => {
 
   await expect(page.getByText("Default send", { exact: true }).first()).toBeVisible();
 });
+
+test("Settings language selector switches to Ukrainian", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openSettingsSection(page, "general");
+
+  await page.getByRole("button", { name: "System", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Українська - Ukrainian", exact: true }).click();
+
+  await expect(
+    page.getByText("Надсилання за замовчуванням", { exact: true }).first(),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Українська", exact: true }).click();
+  await page.getByRole("menuitem", { name: "English - англійська", exact: true }).click();
+
+  await expect(page.getByText("Default send", { exact: true }).first()).toBeVisible();
+});

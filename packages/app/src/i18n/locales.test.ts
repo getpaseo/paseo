@@ -9,8 +9,10 @@ import {
 describe("parseAppLanguage", () => {
   it("accepts system and all supported language locales", () => {
     expect(
-      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
-    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "uk", "zh-CN"].map(
+        parseAppLanguage,
+      ),
+    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "uk", "zh-CN"]);
   });
 
   it("returns null for unknown values", () => {
@@ -29,6 +31,7 @@ describe("parseAppLanguage", () => {
       "ko",
       "pt-BR",
       "ru",
+      "uk",
       "zh-CN",
     ]);
   });
@@ -41,6 +44,7 @@ describe("formatLanguageOptionLabel", () => {
     const korean = LANGUAGE_OPTIONS.find((option) => option.value === "ko");
     const portuguese = LANGUAGE_OPTIONS.find((option) => option.value === "pt-BR");
     const spanish = LANGUAGE_OPTIONS.find((option) => option.value === "es");
+    const ukrainian = LANGUAGE_OPTIONS.find((option) => option.value === "uk");
     const chinese = LANGUAGE_OPTIONS.find((option) => option.value === "zh-CN");
 
     expect([
@@ -49,6 +53,7 @@ describe("formatLanguageOptionLabel", () => {
       formatLanguageOptionLabel(korean!, "en", "System"),
       formatLanguageOptionLabel(portuguese!, "en", "System"),
       formatLanguageOptionLabel(spanish!, "en", "System"),
+      formatLanguageOptionLabel(ukrainian!, "en", "System"),
       formatLanguageOptionLabel(chinese!, "en", "System"),
     ]).toEqual([
       "العربية - Arabic",
@@ -56,6 +61,7 @@ describe("formatLanguageOptionLabel", () => {
       "한국어 - Korean",
       "Português brasileiro - Brazilian Portuguese",
       "Español - Spanish",
+      "Українська - Ukrainian",
       "简体中文 - Simplified Chinese",
     ]);
   });
@@ -77,11 +83,23 @@ describe("formatLanguageOptionLabel", () => {
     const japanese = LANGUAGE_OPTIONS.find((option) => option.value === "ja");
     const korean = LANGUAGE_OPTIONS.find((option) => option.value === "ko");
     const portuguese = LANGUAGE_OPTIONS.find((option) => option.value === "pt-BR");
+    const ukrainian = LANGUAGE_OPTIONS.find((option) => option.value === "uk");
 
     expect(formatLanguageOptionLabel(english!, "en", "System")).toBe("English");
     expect(formatLanguageOptionLabel(japanese!, "ja", "システム")).toBe("日本語");
     expect(formatLanguageOptionLabel(korean!, "ko", "시스템")).toBe("한국어");
     expect(formatLanguageOptionLabel(portuguese!, "pt-BR", "Sistema")).toBe("Português brasileiro");
+    expect(formatLanguageOptionLabel(ukrainian!, "uk", "Системна")).toBe("Українська");
+  });
+
+  it("shows the native language name and Ukrainian name in Ukrainian UI", () => {
+    const english = LANGUAGE_OPTIONS.find((option) => option.value === "en");
+    const russian = LANGUAGE_OPTIONS.find((option) => option.value === "ru");
+
+    expect([
+      formatLanguageOptionLabel(english!, "uk", "Системна"),
+      formatLanguageOptionLabel(russian!, "uk", "Системна"),
+    ]).toEqual(["English - англійська", "Русский - російська"]);
   });
 
   it("uses the active-language name for System", () => {
@@ -101,6 +119,7 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("ko", ["en-US"])).toBe("ko");
     expect(resolveSupportedLocale("pt-BR", ["en-US"])).toBe("pt-BR");
     expect(resolveSupportedLocale("ru", ["en-US"])).toBe("ru");
+    expect(resolveSupportedLocale("uk", ["en-US"])).toBe("uk");
     expect(resolveSupportedLocale("zh-CN", ["en-US"])).toBe("zh-CN");
   });
 
@@ -114,6 +133,12 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("system", ["pt-BR"])).toBe("pt-BR");
     expect(resolveSupportedLocale("system", ["pt"])).toBe("pt-BR");
     expect(resolveSupportedLocale("system", ["ru-RU"])).toBe("ru");
+    expect(resolveSupportedLocale("system", ["uk-UA"])).toBe("uk");
+  });
+
+  it("maps Ukrainian system locales to Ukrainian", () => {
+    expect(resolveSupportedLocale("system", ["uk"])).toBe("uk");
+    expect(resolveSupportedLocale("system", ["uk-UA"])).toBe("uk");
   });
 
   it("maps Korean system locales to Korean", () => {
