@@ -173,6 +173,7 @@ interface DaemonBrowserTab {
   networkEntries: VerifyNetworkEntry[];
   pendingRequests: Map<Request, number>;
   dialogs: BrowserAutomationDialogEvent[];
+  mirrorEvents: BrowserMirrorEvent[];
 }
 
 export interface DaemonPlaywrightHostOptions {
@@ -517,19 +518,24 @@ export class DaemonPlaywrightHost {
     const { tab, command } = input;
     // Sent before acting: the refs expire once the page changes, and a click's navigation
     // must reach the viewer after the click, not before it.
-    const mirror = this.onMirror ? await mirrorActionFor(tab, command) : null;
+    const mirror = await mirrorActionFor(tab, command);
     if (mirror) this.emitMirror(tab, mirror);
     return this.dispatchTabCommand(input);
   }
 
   private emitMirror(tab: DaemonBrowserTab, action: BrowserMirrorAction, origin?: string): void {
-    this.onMirror?.({
+    const event: BrowserMirrorEvent = {
       workspaceId: tab.workspaceId,
       browserId: tab.browserId,
       action,
-      at: Date.now(),
+      at: Math.max(Date.now(), (tab.mirrorEvents.at(-1)?.at ?? 0) + 1),
       ...(origin ? { origin } : {}),
-    });
+    };
+    if (action.kind === "navigate") tab.mirrorEvents = [];
+    tab.mirrorEvents.push(event);
+    // ponytail: retain one document's latest 200 steps; use state checkpoints for longer pages.
+    if (tab.mirrorEvents.length > 201) tab.mirrorEvents.splice(1, 1);
+    this.onMirror?.(event);
   }
 
   /**
@@ -1010,6 +1016,24 @@ export class DaemonPlaywrightHost {
     return ok(requestId, { command: "close_tab", browserId });
   }
 
+  allowsTunnel(input: { workspaceId: string; browserId: string; origin: string }): boolean {
+    const tab = this.tabs.get(input.browserId);
+    if (!tab || tab.workspaceId !== input.workspaceId || tab.page.isClosed()) return false;
+    const urls = [
+      tab.page.url(),
+      ...tab.mirrorEvents.flatMap((event) =>
+        event.action.kind === "navigate" ? [event.action.url] : [],
+      ),
+    ];
+    return urls.some((url) => {
+      try {
+        return new URL(url).origin === input.origin;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   private async listTabs(input: {
     workspaceId: string;
     requestId: string;
@@ -1028,7 +1052,10 @@ export class DaemonPlaywrightHost {
         isLoading: false,
       });
     }
-    return ok(input.requestId, { command: "list_tabs", tabs });
+    const mirrorEvents = [...this.tabs.values()]
+      .filter((tab) => tab.workspaceId === input.workspaceId && !tab.page.isClosed())
+      .flatMap((tab) => tab.mirrorEvents);
+    return ok(input.requestId, { command: "list_tabs", tabs, mirrorEvents });
   }
 
   private requireTab(input: {
@@ -1117,6 +1144,7 @@ export class DaemonPlaywrightHost {
       networkEntries: [],
       pendingRequests: new Map(),
       dialogs: [],
+      mirrorEvents: [],
     };
     attachTabListeners(tab);
     this.tabs.set(browserId, tab);

@@ -2,14 +2,23 @@ import type {
   BrowserMirrorAction,
   BrowserMirrorEvent,
 } from "@getpaseo/protocol/browser-activity/rpc-schemas";
+import { BrowserMirrorActionSchema } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 
 // Daemon tab actions, fanned out to the desktop tabs that mirror them.
 type MirrorListener = (event: BrowserMirrorEvent) => void;
 const listeners = new Map<string, Set<MirrorListener>>();
+const history = new Map<string, BrowserMirrorEvent[]>();
 const keyFor = (serverId: string, browserId: string) => `${serverId}\u0000${browserId}`;
 
 export function publishBrowserMirror(serverId: string, event: BrowserMirrorEvent): void {
-  for (const listener of listeners.get(keyFor(serverId, event.browserId)) ?? []) listener(event);
+  const key = keyFor(serverId, event.browserId);
+  const events = history.get(key) ?? [];
+  if (event.at <= (events.at(-1)?.at ?? 0)) return;
+  if (event.action.kind === "navigate") events.length = 0;
+  events.push(event);
+  if (events.length > 201) events.splice(1, 1);
+  history.set(key, events);
+  for (const listener of listeners.get(key) ?? []) listener(event);
 }
 
 export function subscribeBrowserMirror(
@@ -21,9 +30,46 @@ export function subscribeBrowserMirror(
   const set = listeners.get(key) ?? new Set<MirrorListener>();
   set.add(listener);
   listeners.set(key, set);
+  for (const event of history.get(key) ?? []) listener(event);
   return () => {
     set.delete(listener);
     if (set.size === 0) listeners.delete(key);
+  };
+}
+
+/** A retained desktop page resumes once; a new native WebView supplies a fresh cursor. */
+export function subscribeBrowserMirrorReplay(input: {
+  serverId: string;
+  browserId: string;
+  cursor: { at: number };
+  replay: (action: BrowserMirrorAction) => Promise<void>;
+  onError: (error: unknown) => void;
+}): () => void {
+  let stopped = false;
+  let failed = false;
+  let queue = Promise.resolve(undefined);
+  const unsubscribe = subscribeBrowserMirror(input.serverId, input.browserId, (event) => {
+    queue = queue.then(async () => {
+      if (stopped || event.at <= input.cursor.at) return undefined;
+      if (event.origin === MIRROR_ORIGIN) {
+        input.cursor.at = event.at;
+        return undefined;
+      }
+      if (failed && event.action.kind !== "navigate") return undefined;
+      try {
+        await input.replay(event.action);
+        input.cursor.at = event.at;
+        failed = false;
+      } catch (error) {
+        failed = true;
+        input.onError(error);
+      }
+      return undefined;
+    });
+  });
+  return () => {
+    stopped = true;
+    unsubscribe();
   };
 }
 
@@ -53,7 +99,18 @@ export function replayMirrorAction(action: Exclude<BrowserMirrorAction, { kind: 
         (candidate as HTMLInputElement).placeholder ??
         (candidate as HTMLElement).innerText ??
         "";
-      if (label.trim() === name) return candidate;
+      const role =
+        candidate.getAttribute("role") ??
+        (
+          {
+            BUTTON: "button",
+            A: "link",
+            INPUT: "textbox",
+            TEXTAREA: "textbox",
+            SELECT: "combobox",
+          } as Record<string, string>
+        )[candidate.tagName];
+      if (label.trim() === name && (!target.role || target.role === role)) return candidate;
     }
     return null;
   };
@@ -130,6 +187,21 @@ export function mirrorReplaySource(action: Exclude<BrowserMirrorAction, { kind: 
   return `() => (${replayMirrorAction.toString()})(${JSON.stringify(action)})`;
 }
 
+/** Wait for asynchronously rendered controls in either Electron or a native WebView. */
+export function mirrorReplayReadySource(
+  action: Exclude<BrowserMirrorAction, { kind: "navigate" }>,
+) {
+  return `async () => {
+    const replay = ${mirrorReplaySource(action)};
+    const deadline = Date.now() + 5000;
+    do {
+      if (replay()) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } while (Date.now() < deadline);
+    throw new Error("Browser mirror target is missing from the local page");
+  }`;
+}
+
 /** This app's name in mirror events, so it can skip the echo of its own steps. */
 export const MIRROR_ORIGIN = `app-${Math.random().toString(36).slice(2, 12)}`;
 export const MIRROR_CAPTURE_MARK = "__paseo_mirror__";
@@ -140,12 +212,15 @@ const captureListeners = new Map<string, Set<LocalCaptureListener>>();
 /** A person's step in a local tab, as reported by the capture script in its page. */
 export function publishLocalMirrorCapture(browserId: string, message: string): void {
   if (!message.startsWith(MIRROR_CAPTURE_MARK)) return;
-  let action: BrowserMirrorAction;
+  let parsed: unknown;
   try {
-    action = JSON.parse(message.slice(MIRROR_CAPTURE_MARK.length)) as BrowserMirrorAction;
+    parsed = JSON.parse(message.slice(MIRROR_CAPTURE_MARK.length));
   } catch {
     return;
   }
+  const result = BrowserMirrorActionSchema.safeParse(parsed);
+  if (!result.success) return;
+  const action = result.data;
   for (const listener of captureListeners.get(browserId) ?? []) listener(action);
 }
 

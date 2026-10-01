@@ -178,7 +178,7 @@ export function BrowserActivityBar({ activity, onControl, onDismiss }: BrowserAc
   );
 }
 
-type BrowserHandoffAction = Extract<
+export type BrowserHandoffAction = Extract<
   BrowserActivityControlRequest["action"],
   "finish_handoff" | "cancel_handoff"
 >;

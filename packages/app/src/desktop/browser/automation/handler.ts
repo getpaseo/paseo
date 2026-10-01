@@ -418,7 +418,7 @@ async function openBrowserTabForRequest(params: {
   };
 }
 
-async function waitForBrowserRegistration(params: {
+export async function waitForBrowserRegistration(params: {
   request: BrowserAutomationExecuteRequest;
   browserId: string;
   workspaceId: string;

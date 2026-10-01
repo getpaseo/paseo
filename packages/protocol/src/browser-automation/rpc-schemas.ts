@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BrowserMirrorEventSchema } from "../browser-activity/rpc-schemas.js";
 
 export const BrowserAutomationErrorCodeSchema = z.enum([
   "browser_disabled",
@@ -299,6 +300,7 @@ export const BrowserAutomationTabInfoSchema = z.object({
 export const BrowserAutomationListTabsResultSchema = z.object({
   command: z.literal("list_tabs"),
   tabs: z.array(BrowserAutomationTabInfoSchema),
+  mirrorEvents: z.array(BrowserMirrorEventSchema).optional(),
 });
 
 export const BrowserAutomationNewTabResultSchema = z.object({

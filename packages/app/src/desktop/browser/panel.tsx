@@ -1,11 +1,11 @@
 import { useTranslation } from "react-i18next";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserMirrorAction } from "@getpaseo/protocol/browser-activity/rpc-schemas";
-import { Image } from "react-native";
+import { Image, View } from "react-native";
 import { Globe } from "@/components/icons/ui-icons";
 import invariant from "tiny-invariant";
-import { getIsElectron } from "@/constants/platform";
+import { getIsElectron, isNative } from "@/constants/platform";
 import { RemoteBrowserPane } from "@/desktop/browser/remote-pane";
 import { BrowserPane } from "@/desktop/browser/pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
@@ -19,12 +19,15 @@ import {
   browserActivityStatusBucket,
   useActiveBrowserHandoff,
   useBrowserActivity,
+  useBrowserActivityStore,
 } from "@/desktop/browser/activity";
+import { BrowserActivityBar, BrowserHandoffBar } from "@/desktop/browser/activity-bar";
+import type { BrowserHandoffAction } from "@/desktop/browser/activity-bar";
 import { useBrowserStore } from "@/desktop/browser/store";
 import {
   MIRROR_ORIGIN,
-  mirrorReplaySource,
-  subscribeBrowserMirror,
+  mirrorReplayReadySource,
+  subscribeBrowserMirrorReplay,
   subscribeLocalMirrorCapture,
 } from "@/desktop/browser/mirror";
 import { whileCreatingRemoteTab } from "@/desktop/browser/remote-tab-sync";
@@ -32,6 +35,8 @@ import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { getDesktopHost } from "@/desktop/host";
+import { resolveBrowserUrl } from "@/desktop/browser/tunnel";
+import { waitForBrowserRegistration } from "@/desktop/browser/automation/handler";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
 // A tab that never loaded a page shows Chrome's "about:blank", which reads as an error.
@@ -110,6 +115,8 @@ function useBrowserPanelDescriptor(
 }
 
 let mirrorRequestSequence = 0;
+const desktopReplayCursors = new Map<string, { at: number }>();
+const browserPanelStyle = { flex: 1 };
 // A navigation this soon after a mirrored step is that step's consequence, not a new one.
 const FOLLOW_UP_NAVIGATION_MS = 2_500;
 
@@ -153,33 +160,64 @@ function useBrowserMirror(input: BrowserMirrorInput) {
   useEffect(() => {
     const execute = getDesktopHost()?.browser?.executeAutomationCommand;
     if (!enabled || !remoteBrowserId || !execute) return;
-    const run = (command: BrowserAutomationCommand) =>
-      execute({
+    const request = (command: BrowserAutomationCommand) =>
+      ({
         type: "browser.automation.execute.request",
         requestId: `mirror-${(mirrorRequestSequence += 1)}`,
         workspaceId,
         command,
-      });
+      }) as const;
+    const registered = waitForBrowserRegistration({
+      request: request({ command: "list_tabs", args: {} }),
+      browserId: localBrowserId,
+      workspaceId,
+      executeAutomationCommand: execute,
+    });
+    const run = async (command: BrowserAutomationCommand) => {
+      if (!(await registered)) throw new Error("Local browser did not become ready");
+      const result = await execute(request(command));
+      if (!result.ok) throw new Error(result.error.message);
+    };
     const replay = async (action: BrowserMirrorAction): Promise<void> => {
       lastMirroredStepAtRef.current = Date.now();
       if (action.kind !== "navigate") {
         await run({
           command: "evaluate",
-          args: { browserId: localBrowserId, function: mirrorReplaySource(action) },
+          args: { browserId: localBrowserId, function: mirrorReplayReadySource(action) },
         });
         return;
       }
-      const current = useBrowserStore.getState().browsersById[localBrowserId]?.url;
-      if (current !== action.url) {
-        await run({ command: "navigate", args: { browserId: localBrowserId, url: action.url } });
-      }
+      if (!client) throw new Error("Host connection unavailable");
+      const url = await resolveBrowserUrl({
+        client,
+        serverId,
+        workspaceId,
+        browserId: remoteBrowserId,
+        url: action.url,
+      });
+      // The record may already contain the daemon URL while the guest is still blank.
+      const actual = await execute(request({ command: "list_tabs", args: {} }));
+      const current =
+        actual.ok && actual.result.command === "list_tabs"
+          ? actual.result.tabs.find((tab) => tab.browserId === localBrowserId)?.url
+          : undefined;
+      if (current !== url)
+        await run({ command: "navigate", args: { browserId: localBrowserId, url } });
     };
-    let queue = Promise.resolve();
-    return subscribeBrowserMirror(serverId, remoteBrowserId, ({ action, origin }) => {
-      if (origin === MIRROR_ORIGIN) return;
-      queue = queue.then(() => replay(action)).catch(() => undefined);
+    const key = `${serverId}\u0000${localBrowserId}`;
+    const cursor = desktopReplayCursors.get(key) ?? { at: 0 };
+    desktopReplayCursors.set(key, cursor);
+    return subscribeBrowserMirrorReplay({
+      serverId,
+      browserId: remoteBrowserId,
+      cursor,
+      replay,
+      onError: (error) =>
+        useBrowserStore.getState().updateBrowser(localBrowserId, {
+          lastError: error instanceof Error ? error.message : String(error),
+        }),
     });
-  }, [enabled, localBrowserId, remoteBrowserId, serverId, workspaceId]);
+  }, [client, enabled, localBrowserId, remoteBrowserId, serverId, workspaceId]);
 
   useEffect(() => {
     if (!enabled || !remoteBrowserId || !client) return;
@@ -196,6 +234,7 @@ function useBrowserMirror(input: BrowserMirrorInput) {
     });
     // The address bar, back and forward move the page without a click the page can see.
     const stopAddress = useBrowserStore.subscribe((state, previous) => {
+      if (!getIsElectron()) return;
       const url = state.browsersById[localBrowserId]?.url;
       if (!url || url === previous.browsersById[localBrowserId]?.url) return;
       if (Date.now() - lastMirroredStepAtRef.current < FOLLOW_UP_NAVIGATION_MS) return;
@@ -218,9 +257,29 @@ function BrowserPanel() {
   );
   // A handed-off tab needs the daemon's own page: the login has to land there.
   const handoff = useActiveBrowserHandoff(serverId, workspaceId, remoteBrowserId ?? undefined);
-  // The desktop app shows every tab in its own browser; a daemon tab's actions are
-  // replayed here. Phones and the web stream daemon tabs instead.
-  const mirrorsLocally = getIsElectron() && !handoff;
+  const activity = useBrowserActivity(serverId, workspaceId, remoteBrowserId ?? undefined);
+  const client = useHostRuntimeClient(serverId);
+  const [handoffAction, setHandoffAction] = useState<BrowserHandoffAction | null>(null);
+  const control = useCallback(
+    (action: "pause" | "resume" | BrowserHandoffAction) => {
+      if (!client || !remoteBrowserId) return;
+      if (action === "finish_handoff" || action === "cancel_handoff") setHandoffAction(action);
+      void client
+        .controlBrowserActivity({ workspaceId, browserId: remoteBrowserId, action })
+        .catch((error) => {
+          useBrowserStore.getState().updateBrowser(target.browserId, {
+            lastError: error instanceof Error ? error.message : String(error),
+          });
+          return undefined;
+        })
+        .finally(() => setHandoffAction(null));
+    },
+    [client, remoteBrowserId, target.browserId, workspaceId],
+  );
+  const dismiss = useCallback(() => {
+    if (activity) useBrowserActivityStore.getState().dismiss(serverId, activity);
+  }, [activity, serverId]);
+  const mirrorsLocally = getIsElectron() || isNative;
   useBrowserMirror({
     serverId,
     workspaceId,
@@ -230,14 +289,22 @@ function BrowserPanel() {
   });
   if (mirrorsLocally) {
     return (
-      <BrowserPane
-        browserId={target.browserId}
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={cwd}
-        isInteractive={isInteractive}
-        onFocusPane={focusPane}
-      />
+      <View style={browserPanelStyle}>
+        {handoff ? (
+          <BrowserHandoffBar handoff={handoff} pendingAction={handoffAction} onEnd={control} />
+        ) : null}
+        {activity ? (
+          <BrowserActivityBar activity={activity} onControl={control} onDismiss={dismiss} />
+        ) : null}
+        <BrowserPane
+          browserId={target.browserId}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          cwd={cwd}
+          isInteractive={isInteractive}
+          onFocusPane={focusPane}
+        />
+      </View>
     );
   }
   return (

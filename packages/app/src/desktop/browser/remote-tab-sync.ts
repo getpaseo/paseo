@@ -1,4 +1,6 @@
 import { getIsElectron } from "@/constants/platform";
+import type { BrowserMirrorEvent } from "@getpaseo/protocol/browser-activity/rpc-schemas";
+import { publishBrowserMirror } from "@/desktop/browser/mirror";
 import { isRemoteBrowserClosed, useBrowserStore } from "@/desktop/browser/store";
 import { duplicateRemoteBrowserRecordIds } from "@/desktop/browser/remote-tab-records";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
@@ -52,8 +54,15 @@ export function syncRemoteBrowserTabs(input: {
   tabs: readonly ListedRemoteTab[];
   workspaceId: string;
   workspaceKey: string;
+  serverId?: string;
+  mirrorEvents?: readonly BrowserMirrorEvent[];
 }): void {
   const { workspaceId, workspaceKey } = input;
+  if (input.serverId) {
+    for (const event of input.mirrorEvents ?? []) {
+      if (event.workspaceId === workspaceId) publishBrowserMirror(input.serverId, event);
+    }
+  }
   for (const duplicate of duplicateRemoteBrowserRecordIds(
     Object.values(useBrowserStore.getState().browsersById),
   )) {
@@ -73,7 +82,10 @@ export function syncRemoteBrowserTabs(input: {
         url: tab.url,
         title: tab.title,
       });
-    } else if (!getIsElectron() && (record.url !== tab.url || record.title !== tab.title)) {
+    } else if (
+      (!getIsElectron() || record.url === "about:blank" || !record.url) &&
+      (record.url !== tab.url || record.title !== tab.title)
+    ) {
       // In the desktop app the local tab owns its address; it follows the daemon through
       // mirror navigations, and a page the user moved on to stays where it is.
       browserStore.updateBrowser(record.browserId, { url: tab.url, title: tab.title });

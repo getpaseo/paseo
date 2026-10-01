@@ -273,7 +273,14 @@ function RemoteBrowserPane({
     const result = await execute({ command: "list_tabs", args: {} });
     if (result.command !== "list_tabs" || !mountedRef.current) return;
     const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-    if (workspaceKey) syncRemoteBrowserTabs({ tabs: result.tabs, workspaceId, workspaceKey });
+    if (workspaceKey)
+      syncRemoteBrowserTabs({
+        tabs: result.tabs,
+        mirrorEvents: result.mirrorEvents,
+        serverId,
+        workspaceId,
+        workspaceKey,
+      });
   }, [execute, serverId, workspaceId]);
 
   const ensureRemoteTab = useCallback(async () => {

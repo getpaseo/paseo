@@ -2279,6 +2279,30 @@ export class DaemonClient {
    * daemon to what this connection drains. "ended" means the tab closed or the subscription
    * failed, including after a reconnect; no further frames follow.
    */
+  observeBrowserTunnel(input: {
+    workspaceId: string;
+    browserId: string;
+    origin: string;
+    localOrigin: string;
+  }) {
+    return this.observe("browser.tunnel.connect.response", {
+      type: "browser.tunnel.connect.request",
+      ...input,
+    });
+  }
+
+  async operateBrowserTunnel(input: {
+    subscriptionId: string;
+    operation: "write" | "resume" | "close";
+    dataBase64?: string;
+  }): Promise<void> {
+    const result = await this.sendCorrelatedSessionRequest<"browser.tunnel.socket.response">({
+      message: { type: "browser.tunnel.socket.request", ...input },
+      responseType: "browser.tunnel.socket.response",
+    });
+    if (result.error) throw new Error(result.error);
+  }
+
   observeBrowserScreencast(
     input: { workspaceId: string; browserId: string; quality?: BrowserScreencastQuality },
     receive: (event: BrowserScreencastEvent) => void,

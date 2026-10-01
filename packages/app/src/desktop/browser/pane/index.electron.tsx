@@ -1,3 +1,5 @@
+import { resolveBrowserUrl, originalBrowserUrl } from "@/desktop/browser/tunnel";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   useCallback,
   useEffect,
@@ -120,17 +122,14 @@ type DeviceSizeId =
 
 interface DeviceSizePreset {
   id: DeviceSizeId;
-  /** Display name (not translated — device names are proper nouns). */
+
   name: string;
-  /** Fixed CSS width, or null for "fill the available area". */
+
   width: number | null;
   height: number | null;
   icon: LucideIcon;
 }
 
-// Viewport presets for the in-app browser. "responsive" fills the pane; the
-// others render a fixed-size, centered frame so the user can preview how a page
-// behaves at common device sizes. Content is centered (not left-aligned).
 const DEVICE_SIZE_PRESETS: readonly DeviceSizePreset[] = [
   { id: "responsive", name: "Responsive", width: null, height: null, icon: Maximize },
   { id: "iphone-se", name: "iPhone SE", width: 375, height: 667, icon: Smartphone },
@@ -327,10 +326,6 @@ interface BrowserAnnotationMarker {
   selector: string;
 }
 
-// Draws numbered badges over annotated elements inside the guest page. The
-// overlay is a fixed, pointer-events:none layer that re-measures element rects
-// on scroll/resize via rAF. Markers are matched by the CSS selector captured at
-// annotation time; unmatched selectors are simply skipped.
 function buildAnnotationMarkerScript(markers: readonly BrowserAnnotationMarker[]): string {
   const payload = JSON.stringify(
     markers.map((marker) => ({ index: marker.index, selector: marker.selector })),
@@ -472,8 +467,6 @@ function ToolbarButton({
   );
 }
 
-// Lucide icons themed via withUnistyles so their color stays theme-reactive
-// without a banned useUnistyles() call.
 const ThemedMaximize = withUnistyles(Maximize);
 const ThemedSmartphone = withUnistyles(Smartphone);
 const ThemedTablet = withUnistyles(Tablet);
@@ -612,6 +605,7 @@ export function BrowserPane({
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
   const webviewClipRef = useRef<HTMLElement | null>(null);
   const urlInputRef = useRef<EditingTextInputHandle | null>(null);
+  const client = useHostRuntimeClient(serverId);
   const initialUrlRef = useRef(browser?.url ?? DEFAULT_BROWSER_URL);
   const browserIdRef = useRef(browserId);
   browserIdRef.current = browserId;
@@ -631,8 +625,7 @@ export function BrowserPane({
   const toastRef = useRef(toast);
   toastRef.current = toast;
   const [pendingSelection, setPendingSelection] = useState<BrowserElementSelection | null>(null);
-  // Screenshot is captured at selection time (overlay already torn down, no
-  // scroll drift) and reused when the annotation card is submitted.
+
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? DEFAULT_BROWSER_URL);
   const workspaceAttachmentScopeKey = useMemo(
@@ -714,7 +707,11 @@ export function BrowserPane({
         canGoForward: webview.canGoForward?.() ?? false,
         ...(input?.syncUrl === false
           ? {}
-          : { url: normalizeWorkspaceBrowserUrl(pendingNavigationUrlRef.current ?? currentUrl) }),
+          : {
+              url: normalizeWorkspaceBrowserUrl(
+                pendingNavigationUrlRef.current ?? originalBrowserUrl(currentUrl),
+              ),
+            }),
       };
       updateBrowserRef.current(browserIdRef.current, patch);
     } catch {
@@ -739,6 +736,7 @@ export function BrowserPane({
       initialUrlRef.current,
       browserErrorLabelsRef.current,
     );
+    let disposed = false;
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
@@ -746,7 +744,7 @@ export function BrowserPane({
       prepareBrowserWebview(webview, {
         browserId,
         workspaceId,
-        initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+        initialUrl: "about:blank",
       });
     }
     releaseResidentBrowserWebview(browserId, webview);
@@ -782,8 +780,6 @@ export function BrowserPane({
       syncNavigationState();
     };
     const handleNavigate = (event: Event) => {
-      // did-navigate-in-page also fires for iframes; Jira's about:blank frames would
-      // otherwise replace the tab's address.
       if ((event as Event & { isMainFrame?: boolean }).isMainFrame === false) {
         return;
       }
@@ -791,7 +787,7 @@ export function BrowserPane({
         typeof (event as Event & { url?: unknown }).url === "string"
           ? ((event as Event & { url?: string }).url ?? "")
           : (webview.getURL?.() ?? webview.getAttribute("src") ?? "");
-      const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
+      const normalized = normalizeWorkspaceBrowserUrl(originalBrowserUrl(nextUrl));
       const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
       pendingNavigationUrlRef.current = null;
       updateBrowser(browserIdRef.current, {
@@ -846,8 +842,7 @@ export function BrowserPane({
     };
     const handleDomReady = () => {
       syncNavigationState();
-      // The previous page's overlay is gone after a load; re-apply markers for
-      // the freshly loaded document.
+
       const markers = annotationMarkersRef.current;
       if (markers.length > 0) {
         applyAnnotationMarkers(webview, markers);
@@ -880,8 +875,6 @@ export function BrowserPane({
       rememberResolvedBrowserWebviewSize(browserId, webview);
     }
     if (residentWebview) {
-      // An agent-opened tab loads while no pane listens, so its address and title
-      // were never recorded.
       syncNavigationState();
       try {
         const title = webview.getTitle?.();
@@ -899,7 +892,27 @@ export function BrowserPane({
       });
     }
 
+    if (!residentWebview && !initialUnsafeNavigationMessage && client) {
+      const loadInitialUrl = async () => {
+        const url = await resolveBrowserUrl({
+          client,
+          serverId,
+          workspaceId,
+          browserId: browserRef.current?.remoteBrowserId ?? browserId,
+          url: initialUrlRef.current,
+        });
+        if (!disposed) await webview.loadURL?.(url);
+      };
+      void loadInitialUrl().catch((error) =>
+        updateBrowser(browserId, {
+          isLoading: false,
+          lastError: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+
     return () => {
+      disposed = true;
       sizeObserver?.disconnect();
       webview.removeEventListener("did-start-loading", handleStartLoading);
       webview.removeEventListener("did-stop-loading", handleStopLoading);
@@ -975,23 +988,34 @@ export function BrowserPane({
         return;
       }
       if (webview?.loadURL) {
-        void webview.loadURL(normalizedUrl).catch((error: unknown) => {
-          const message = getLoadUrlRejectionMessage(error, browserErrorLabels.failedToLoad);
-          if (!message) {
-            return;
-          }
-          updateBrowserRef.current(browserIdRef.current, {
-            isLoading: false,
-            lastError: message,
+        const resolved = client
+          ? resolveBrowserUrl({
+              client,
+              serverId,
+              workspaceId,
+              browserId: browserRef.current?.remoteBrowserId ?? browserId,
+              url: normalizedUrl,
+            })
+          : Promise.resolve(normalizedUrl);
+        void resolved
+          .then((url) => webview.loadURL?.(url))
+          .catch((error: unknown) => {
+            const message = getLoadUrlRejectionMessage(error, browserErrorLabels.failedToLoad);
+            if (!message) {
+              return;
+            }
+            updateBrowserRef.current(browserIdRef.current, {
+              isLoading: false,
+              lastError: message,
+            });
           });
-        });
         return;
       }
       if (webview) {
         webview.setAttribute("src", normalizedUrl);
       }
     },
-    [browserErrorLabels],
+    [browserErrorLabels, browserId, client, serverId, workspaceId],
   );
 
   const handleBack = useCallback(() => {
@@ -1145,8 +1169,6 @@ export function BrowserPane({
         ? t("workspace.browser.controls.screenshotCopied")
         : t("workspace.browser.controls.elementCopied");
 
-      // Copy via the main process; the renderer's navigator.clipboard rejects
-      // with NotAllowedError because focus is inside the guest <webview>.
       if (typeof copyElement === "function") {
         try {
           const ok = await copyElement({ text, imageDataUrl });
@@ -1161,7 +1183,6 @@ export function BrowserPane({
         }
       }
 
-      // Fallback to expo-clipboard (text only) when the bridge is unavailable.
       try {
         await Clipboard.setStringAsync(text);
         toastRef.current?.show(t("workspace.browser.controls.elementCopied"), {
@@ -1305,7 +1326,7 @@ export function BrowserPane({
       return;
     }
     applyAnnotationMarkers(webview, annotationMarkers);
-    // markersKey captures the marker contents; re-run when they change.
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markersKey, currentPageUrl]);
 
@@ -1418,7 +1439,6 @@ export function BrowserPane({
             background: theme.colors.surface0,
           }
         : {
-            // Fixed-size device frame, centered within webviewWrap (see styles).
             display: "flex",
             width: browserViewport.width,
             height: browserViewport.height,
@@ -1780,8 +1800,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
     overflow: "hidden",
   },
-  // When a fixed device size is active, center the framed webview both axes over
-  // a muted backdrop instead of left-aligning it.
+
   webviewWrapDeviceFrame: {
     alignItems: "center",
     justifyContent: "center",

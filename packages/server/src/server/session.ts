@@ -218,6 +218,7 @@ import {
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import { BrowserTunnelSession } from "./session/browser/tunnel.js";
 import { BrowserScreencastSession } from "./session/browser/screencast.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
@@ -759,6 +760,7 @@ export class Session {
   private readonly validateSystemOneApiKey: typeof isTypeSafeApiKeyAccepted;
   private readonly verifySession: VerifySession | null;
   private readonly verifyHost: DaemonPlaywrightHost | null | undefined;
+  private readonly browserTunnel: BrowserTunnelSession;
   private readonly browserScreencast: BrowserScreencastSession;
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
@@ -1242,6 +1244,10 @@ export class Session {
     });
     this.verifySession = this.createVerifySession(options);
     this.verifyHost = options.verifyHost;
+    this.browserTunnel = new BrowserTunnelSession({
+      allows: (input) => this.verifyHost?.allowsTunnel(input) ?? false,
+      emit: (msg) => this.emit(msg),
+    });
     this.browserScreencast = new BrowserScreencastSession({
       host: this.verifyHost,
       emit: (msg) => this.emit(msg),
@@ -2346,6 +2352,10 @@ export class Session {
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
+    if (msg.type === "browser.tunnel.connect.request")
+      return this.browserTunnel.connect(msg, this.delivery);
+    if (msg.type === "browser.tunnel.socket.request")
+      return this.browserTunnel.operate(msg, source);
     if (msg.type === "browser.remote.execute.request") return this.executeRemoteBrowser(msg);
     if (msg.type === "browser.screencast.subscribe.request")
       return this.browserScreencast.subscribe(msg, this.delivery);

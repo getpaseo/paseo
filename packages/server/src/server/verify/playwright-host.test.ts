@@ -742,6 +742,10 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost mirror", { timeout: 60
         kind: "navigate",
         url: expect.stringContaining("/report"),
       });
+      const listing = await run({ command: "list_tabs", args: {} });
+      if (!listing.ok || listing.result.command !== "list_tabs") expect.unreachable();
+      expect(listing.result.mirrorEvents).toEqual([events.at(-1)]);
+      expect(JSON.stringify(listing.result.mirrorEvents)).not.toContain(FIXTURE_PASSWORD);
     } finally {
       await host.close();
       await app.close();

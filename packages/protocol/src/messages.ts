@@ -1,3 +1,10 @@
+import {
+  BrowserTunnelConnectRequestSchema,
+  BrowserTunnelConnectResponseSchema,
+  BrowserTunnelSocketRequestSchema,
+  BrowserTunnelSocketResponseSchema,
+  BrowserTunnelDataSchema,
+} from "./browser-tunnel/rpc-schemas.js";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "./agent-profile.js";
 export {
   AgentProfileSchema,
@@ -3568,6 +3575,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteResponseSchema,
   BrowserRemoteExecuteRequestSchema,
   BrowserScreencastSubscribeRequestSchema,
+  BrowserTunnelConnectRequestSchema,
+  BrowserTunnelSocketRequestSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
@@ -4029,6 +4038,8 @@ export const ServerInfoStatusPayloadSchema = z
         browserHandoff: z.boolean().optional(),
         // COMPAT(browserMirror): added in v0.9.1, remove gate after 2027-03-28.
         browserMirror: z.boolean().optional(),
+        // COMPAT(browserTunnel): added in v0.9.1, remove gate after 2027-04-01.
+        browserTunnel: z.boolean().optional(),
         // COMPAT(browserScreencast): added in v0.9.1, remove gate after 2027-03-27.
         browserScreencast: z.boolean().optional(),
         // COMPAT(agentHistory): added in v0.9.1, remove gate after 2027-03-29.
@@ -7269,6 +7280,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   BrowserRemoteExecuteResponseSchema,
   BrowserScreencastSubscribeResponseSchema,
+  BrowserTunnelConnectResponseSchema,
+  BrowserTunnelSocketResponseSchema,
+  BrowserTunnelDataSchema,
   BrowserScreencastEndedSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,

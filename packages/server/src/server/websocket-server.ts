@@ -1780,7 +1780,12 @@ export class VoiceAssistantWebSocketServer {
         agentHistory: true,
         ...(this.verifyHost ? { browserCookieImport: true, browserScreencast: true } : {}),
         ...(this.browserActivity
-          ? { browserActivity: true, browserHandoff: true, browserMirror: true }
+          ? {
+              browserActivity: true,
+              browserHandoff: true,
+              browserTunnel: true,
+              browserMirror: true,
+            }
           : {}),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
