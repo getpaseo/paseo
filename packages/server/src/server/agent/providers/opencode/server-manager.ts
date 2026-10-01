@@ -352,6 +352,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const processExit = new Promise<Error>((resolve) => {
       resolveProcessExit = resolve;
     });
+    let resolveListening!: () => void;
+    let rejectListening!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveListening = resolve;
+      rejectListening = reject;
+    });
     const server: OpenCodeServerGeneration = {
       process: serverProcess,
       port,
@@ -359,7 +365,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       refCount: 0,
       retired: false,
       ready: Promise.resolve(),
-      events: this.createEventSource({ serverUrl: url, processExit, logger: this.logger }),
+      events: this.createEventSource({
+        serverUrl: url,
+        processExit,
+        logger: this.logger,
+        listening: ready,
+      }),
       managedProcessRecord,
     };
     this.logger.info(
@@ -398,7 +409,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return sections.join("\n");
     };
 
-    const ready = new Promise<void>((resolve, reject) => {
+    {
       let timeout: ReturnType<typeof setTimeout>;
       const failStartup = (error: Error) => {
         if (settled) {
@@ -406,7 +417,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         }
         settled = true;
         clearTimeout(timeout);
-        reject(error);
+        rejectListening(error);
       };
       timeout = setTimeout(() => {
         if (!started) {
@@ -421,7 +432,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
           started = true;
           settled = true;
           clearTimeout(timeout);
-          resolve();
+          resolveListening();
         }
       });
 
@@ -457,7 +468,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
           }
         }
       });
-    });
+    }
 
     server.ready = ready.catch(async (error) => {
       await this.killServer(server);

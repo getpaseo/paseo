@@ -306,7 +306,10 @@ async function createPublicRecoverySession(
       serverProcess?.exit();
       return "terminated";
     },
-    createEventSource: (options) => new OpenCodeEventConsumer({ ...options, timing }),
+    createEventSource: (options) => {
+      expect(options.listening).toBeInstanceOf(Promise);
+      return new OpenCodeEventConsumer({ ...options, timing });
+    },
   });
   const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
     serverManager: manager,
