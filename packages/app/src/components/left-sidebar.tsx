@@ -528,6 +528,10 @@ function MobileSidebar({
     () => [styles.mobileCloseButtonRow, compactHeader ? styles.mobileCloseButtonRowCompact : null],
     [compactHeader],
   );
+  const headerGroupStyle = useMemo(
+    () => [styles.sidebarHeaderGroup, compactHeader ? styles.sidebarHeaderGroupCompact : null],
+    [compactHeader],
+  );
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -551,7 +555,7 @@ function MobileSidebar({
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
         <SidebarNavRows
-          style={styles.sidebarHeaderGroup}
+          style={headerGroupStyle}
           onBeforeNavigate={closeSidebar}
           trailingInset={
             MOBILE_CLOSE_BUTTON_SIZE + theme.spacing[2] + MOBILE_CLOSE_BUTTON_OPTICAL_INSET
@@ -723,9 +727,15 @@ function DesktopSidebar({
     () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
     [insetsTop],
   );
+  const { settings } = useAppSettings();
+  const compactHeader = settings.sidebarHeaderLayout === "compact";
   const sidebarHeaderGroupStyle = useMemo(
-    () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
-    [ownsTopLeft],
+    () => [
+      styles.sidebarHeaderGroup,
+      ownsTopLeft && styles.sidebarHeaderGroupBelowChrome,
+      compactHeader && styles.sidebarHeaderGroupCompact,
+    ],
+    [compactHeader, ownsTopLeft],
   );
   return (
     <Animated.View
@@ -850,6 +860,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarHeaderGroupBelowChrome: {
     paddingTop: 0,
+  },
+  // A single row needs no divider from the project list below it.
+  sidebarHeaderGroupCompact: {
+    borderBottomWidth: 0,
   },
   workspacesSectionHeader: {
     flexDirection: "row",
