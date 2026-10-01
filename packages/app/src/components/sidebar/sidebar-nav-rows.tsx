@@ -63,7 +63,8 @@ type PluginNavItem = Extract<SidebarNavItem<"header">, { kind: "plugin" }>;
  * wrapper — when every item is hidden.
  *
  * The compact layout puts the first visible builtin on one row and the other builtins beside it
- * as icon buttons. Plugin items keep their own rows below it.
+ * as icon buttons, outside the row's own hover and press area. Plugin items keep their own rows
+ * below it.
  */
 export function SidebarNavRows({ style, onBeforeNavigate, trailingInset }: SidebarNavRowsProps) {
   const { items } = useSidebarNavItems("header");
@@ -135,7 +136,7 @@ function CompactSidebarNavRow({
     () => [styles.compactActions, trailingInset ? styles.compactActionsInset(trailingInset) : null],
     [trailingInset],
   );
-  const trailing = useMemo(
+  const iconButtons = useMemo(
     () =>
       rest.length === 0 ? undefined : (
         <View style={actionsStyle}>
@@ -146,15 +147,15 @@ function CompactSidebarNavRow({
       ),
     [actionsStyle, rest],
   );
-  return <SidebarNavActionRow action={lead} trailing={trailing} />;
+  return <SidebarNavActionRow action={lead} actions={iconButtons} />;
 }
 
 function SidebarNavActionRow({
   action,
-  trailing,
+  actions,
 }: {
   action: SidebarNavAction;
-  trailing?: ReactNode;
+  actions?: ReactNode;
 }) {
   return (
     <SidebarHeaderRow
@@ -165,7 +166,7 @@ function SidebarNavActionRow({
       testID={action.testID}
       variant="compact"
       shortcutKeys={action.shortcutKeys}
-      trailing={trailing}
+      actions={actions}
     />
   );
 }
@@ -316,7 +317,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
-  // The header group and the row's trailing slot each pad spacing[2] on the right.
+  // The header group and the row's actions slot each pad spacing[2] on the right.
   compactActionsInset: (inset: number) => ({
     marginRight: inset + theme.spacing[1] - theme.spacing[2] * 2,
   }),

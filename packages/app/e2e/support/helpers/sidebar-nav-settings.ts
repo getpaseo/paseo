@@ -208,6 +208,22 @@ export async function expectSidebarNavIconsAlignedWithClose(
   }
 }
 
+/** Whether a header row paints its hover highlight, read from the hover-tracking wrapper. */
+export async function expectSidebarNavRowHighlighted(
+  page: Page,
+  key: SidebarNavKey,
+  highlighted: boolean,
+): Promise<void> {
+  const row = shellRow(page, key);
+  const background = () =>
+    row.evaluate((element) => getComputedStyle(element.parentElement as Element).backgroundColor);
+  if (highlighted) {
+    await expect.poll(background).not.toBe("rgba(0, 0, 0, 0)");
+  } else {
+    await expect.poll(background).toBe("rgba(0, 0, 0, 0)");
+  }
+}
+
 export async function hoverSidebarNavIcon(page: Page, key: SidebarNavKey): Promise<Locator> {
   await shellRow(page, key).hover();
   return page.getByTestId(`${SHELL_ROW_TEST_IDS[key]}-tooltip`);

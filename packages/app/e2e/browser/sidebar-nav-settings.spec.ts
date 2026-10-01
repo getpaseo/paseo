@@ -12,6 +12,7 @@ import {
   clickSidebarNavItem,
   expectCompactSidebarHeader,
   expectSidebarNavIconsAlignedWithClose,
+  expectSidebarNavRowHighlighted,
   expectStoredSidebarHeaderLayout,
   hoverSidebarNavIcon,
   setSidebarHeaderLayout,
@@ -117,8 +118,12 @@ test.describe("Sidebar items in Appearance settings", () => {
     });
 
     await test.step("an icon names itself on hover and navigates on press", async () => {
+      await page.getByTestId("sidebar-search").locator("visible=true").first().hover();
+      await expectSidebarNavRowHighlighted(page, "search", true);
       const tooltip = await hoverSidebarNavIcon(page, "history");
       await expect(tooltip.getByText("History", { exact: true })).toBeVisible();
+      // The icons sit beside the Search row, so hovering one leaves the row unhighlighted.
+      await expectSidebarNavRowHighlighted(page, "search", false);
       await footerScreenshot(page, "sidebar-header-compact-tooltip");
       await clickSidebarNavItem(page, "history");
       await expect(page).toHaveURL(/\/sessions/);
