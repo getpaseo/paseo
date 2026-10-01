@@ -595,7 +595,17 @@ function buildEditDiff(filePath: string): string {
   ].join("\n");
 }
 
-function buildCycleQueue(turnId: string, cycle: number, overflowReasoning: boolean): CycleEvent[] {
+interface BuildCycleQueueOptions {
+  turnId: string;
+  cycle: number;
+  overflowReasoning: boolean;
+}
+
+function buildCycleQueue({
+  turnId,
+  cycle,
+  overflowReasoning,
+}: BuildCycleQueueOptions): CycleEvent[] {
   const queue: CycleEvent[] = [];
 
   enqueueTokens(queue, "assistant_token", buildIntroParagraph(cycle));
@@ -1548,7 +1558,11 @@ export class MockLoadTestAgentSession implements AgentSession {
         turn.cycle += 1;
         turn.queue = turn.burst
           ? buildBurstyStreamQueue(turn.cycle)
-          : buildCycleQueue(turn.turnId, turn.cycle, turn.durationMs >= 60_000);
+          : buildCycleQueue({
+              turnId: turn.turnId,
+              cycle: turn.cycle,
+              overflowReasoning: turn.durationMs >= 60_000,
+            });
       }
       const event = turn.queue.shift();
       if (!event) {
