@@ -1,8 +1,11 @@
-import { fileURLToPath } from "node:url";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { BuiltinPluginLoader } from "./builtin/index.js";
+import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "./builtin/index.js";
 
 const fixtureRoot = fileURLToPath(new URL("./test-fixtures/", import.meta.url));
 const subprocessDirectory = fileURLToPath(
@@ -47,5 +50,79 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
   } finally {
     await client.close();
     await daemon.close();
+  }
+}, 60_000);
+
+test("a packaged daemon serves usage from external built-in resources", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-builtin-asar-"));
+  const packagePath = path.join("node_modules", "@getpaseo", "server", "dist", "server");
+  const resourceRoot = path.join(root, "builtin-plugins");
+  // An archive is a file, so the external compiler cannot traverse paths beneath it.
+  // Actual Electron archive packaging is covered by the packaged-app smoke check.
+  await writeFile(path.join(root, "app.asar"), "opaque archive fixture");
+  const directory = path.join(resourceRoot, "listed");
+  await mkdir(path.join(directory, "server"), { recursive: true });
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "listed", requirements: { paseo: ">=0.9.2" } }),
+  );
+  await writeFile(
+    path.join(directory, "server", "contract.d.ts"),
+    "export interface Account { key: string; label: string; }",
+  );
+  await writeFile(
+    path.join(directory, "server", "account.ts"),
+    "import type { Account } from './contract.js'; export const account: Account = { key: 'one', label: 'Test account' };",
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `import { z } from 'zod';
+import { account } from './server/account.js';
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: 'fixture', label: 'Fixture', input: z.object({}),
+    discover: async () => [{}],
+    identify: async () => account,
+    fetch: async () => ({ status: 'available', windows: [{ id: 'session', label: 'Session', usedPct: 37 }] }),
+  });
+  return () => {};
+}`,
+  );
+  const moduleUrl = pathToFileURL(
+    path.join(root, "app.asar", packagePath, "server", "plugins", "builtin", "index.js"),
+  );
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.9.2",
+    pluginsEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(resolveBuiltinPluginsRoot(moduleUrl), ["listed"]),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
+  try {
+    await client.connect();
+    const { reports } = await client.listUsageReports();
+    expect(
+      reports.map(({ id, sourceId, sourceLabel, account, report }) => ({
+        id,
+        sourceId,
+        sourceLabel,
+        account,
+        report,
+      })),
+    ).toEqual([
+      {
+        id: "fixture:one",
+        sourceId: "fixture",
+        sourceLabel: "Fixture",
+        account: { label: "Test account" },
+        report: {
+          status: "available",
+          windows: [{ id: "session", label: "Session", usedPct: 37 }],
+        },
+      },
+    ]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
   }
 }, 60_000);

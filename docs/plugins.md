@@ -93,6 +93,15 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
+Desktop packaging ships the entire built-in plugin directory as an external resource,
+including declarations. The external esbuild compiler cannot read Electron's `app.asar`
+filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.
+Built-ins can import only host modules (`@getpaseo/plugin/*`, `zod`) and Node built-ins:
+outside the archive, nothing resolves an npm dependency, and the dist build test cannot catch
+one because it resolves through the repository's `node_modules`.
+The packaged-app smoke check requires every listed built-in to start without relying on
+account credentials.
+
 Built-ins run in process and remain active independently of `pluginsEnabled`. They are
 absent from the installed plugin list and source configuration; their client bundles
 appear in the plugin catalog. Editing one in development requires a daemon restart.
