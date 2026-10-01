@@ -455,6 +455,33 @@ export type Value = string;`,
     expect(serverBundle).not.toContain("Client contribution");
   });
 
+  it.each(["main", "module"])(
+    "builds a dependency that declares only %s into both runtimes",
+    async (field) => {
+      const entries = await createSplitPlugin();
+      const dependency = path.join(entries.directory, "node_modules/legacy-entry");
+      await mkdir(dependency, { recursive: true });
+      await writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "legacy-entry", [field]: "lib/entry.js" }),
+      );
+      await mkdir(path.join(dependency, "lib"));
+      await writeFile(
+        path.join(dependency, "lib/entry.js"),
+        'exports.label = "legacy entry contribution";',
+      );
+      await writeFile(
+        path.join(entries.directory, "shared/labels.ts"),
+        'import { label } from "legacy-entry"; export const clientLabel = label; export const serverLabel = label;',
+      );
+
+      const { clientBundle, serverBundle } = await compilePlugin(entries);
+
+      expect(clientBundle).toContain("legacy entry contribution");
+      expect(serverBundle).toContain("legacy entry contribution");
+    },
+  );
+
   it("uses the automatic JSX runtime without a React import", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle } = await compilePlugin(entries);
