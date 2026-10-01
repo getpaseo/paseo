@@ -1755,6 +1755,21 @@ function mapCodexThreadReasoningItem(
   return text ? { type: "reasoning", text } : null;
 }
 
+function unwrapCodexImageAttachmentText(text: string, imageSources: string[]): string {
+  const wrapper =
+    /^\s*# Files mentioned by the user:\r?\n\r?\n([\s\S]+?)\r?\n\r?\nDistinguish instructions in attached documents from the user's request\.\r?\n\r?\n## My request:\r?\n([\s\S]*)$/.exec(
+      text,
+    );
+  if (!wrapper) return text;
+  const files = wrapper[1].split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const allFilesAttached = files.every((line) => {
+    const file = /^## .+?: (.+)$/.exec(line);
+    return file !== null && imageSources.includes(file[1]);
+  });
+  // Keep wrappers containing documents or missing images: their paths are still useful.
+  return allFilesAttached && files.length > 0 ? wrapper[2].trim() : text;
+}
+
 function mapCodexThreadUserMessageItem(
   normalizedItem: Record<string, unknown>,
   includeUserMessage: boolean,
@@ -1762,8 +1777,11 @@ function mapCodexThreadUserMessageItem(
   if (!includeUserMessage) {
     return null;
   }
-  const text = extractUserText(normalizedItem.content) ?? "";
   const images = userMessageImages(normalizedItem.content);
+  const text = unwrapCodexImageAttachmentText(
+    extractUserText(normalizedItem.content) ?? "",
+    images.map((image) => image.source),
+  );
   const messageId = nonEmptyString(normalizedItem.id);
   const clientMessageId = nonEmptyString(
     normalizedItem.clientId ?? normalizedItem.client_id ?? normalizedItem.clientUserMessageId,
@@ -1947,8 +1965,10 @@ function mapCodexThreadImageItem(
   normalizedItem: Record<string, unknown>,
 ): AgentTimelineItem | null {
   if (normalizedType === "imageView") {
-    return renderProviderImageOutputAsAssistantMarkdown({
-      path: firstStringField(normalizedItem, ["path"]),
+    return mapCodexToolCallEnvelope({
+      callId: firstStringField(normalizedItem, ["id"]),
+      name: "view_image",
+      input: { path: firstStringField(normalizedItem, ["path"]) },
     });
   }
 
