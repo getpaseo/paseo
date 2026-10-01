@@ -69,6 +69,7 @@ export async function verifyDelayedWorkspaceCreation(
     const knownIds = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
     await gotoWorkspace(page, project.workspaceId);
     await clickNewTerminal(page);
+    await expectWorkspaceOpensWithTerminalTab(page);
     await waitForSidebarHydration(page);
     await switchWorkspaceViaSidebar({ page, serverId, workspaceId: project.workspaceId });
 
@@ -160,8 +161,11 @@ export async function verifyDelayedWorkspaceCreation(
     });
 
     await test.step("Visit the new workspace and return without submitting a second draft", async () => {
-      if (launch === "empty") await gotoWorkspace(page, created.id);
-      else await switchWorkspaceViaSidebar({ page, serverId, workspaceId: created.id });
+      if (launch === "chat") {
+        await switchWorkspaceViaSidebar({ page, serverId, workspaceId: created.id });
+      } else {
+        await gotoWorkspace(page, created.id);
+      }
       if (launch === "chat") {
         await scrollTimelineToOldestLoadedEdge(page);
         await expect(page.getByText(PROMPT, { exact: true }).first()).toBeVisible();

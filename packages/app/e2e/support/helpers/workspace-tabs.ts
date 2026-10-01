@@ -63,16 +63,13 @@ function explorerSidebar(page: Page) {
 
 async function selectWorkspaceTab(tab: Locator): Promise<void> {
   if ((await tab.getAttribute("aria-selected")) !== "true") {
-    // The close action overlays the chip's trailing edge on hover. Click the
-    // leading icon area so Playwright does not target that separate control.
     await tab.click({ position: { x: 12, y: 13 } });
   }
   await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-/** Reveal the Explorer sidebar without changing its selected view. */
 export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
-  const toggle = page.getByTestId("workspace-explorer-toggle").first();
+  const toggle = visibleTestId(page, "workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
   const explorer = explorerSidebar(page);
   if ((await explorer.count()) === 0) {
@@ -82,7 +79,6 @@ export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
   return explorer;
 }
 
-/** Reveals the Explorer sidebar and selects one of its fixed navigation views. */
 async function openExplorerView(
   page: Page,
   view: { tabTestId: string; contentTestId: string; timeout?: number },
@@ -144,7 +140,6 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   });
 }
 
-/** Open the pane-local `+` menu and pick Agent. */
 export async function createAgentTabFromMenu(page: Page): Promise<void> {
   const trigger = visibleTestId(page, "workspace-new-tab-button").first();
   await expect(trigger).toBeVisible({ timeout: 10_000 });
@@ -185,7 +180,7 @@ export async function expectOnlyWorkspaceAgentTabsVisible(
 }
 
 export async function ensureWorkspaceAgentPaneVisible(page: Page): Promise<void> {
-  const toggle = page.getByTestId("workspace-explorer-toggle").first();
+  const toggle = visibleTestId(page, "workspace-explorer-toggle").first();
   if (!(await toggle.isVisible().catch(() => false))) {
     return;
   }

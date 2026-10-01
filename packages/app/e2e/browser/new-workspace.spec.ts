@@ -3,7 +3,7 @@ import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
+import { gotoWorkspace } from "../support/helpers/launcher";
 import {
   archiveWorkspaceFromDaemon,
   archiveLocalWorkspaceFromDaemon,
@@ -64,6 +64,8 @@ import {
   waitForWorkspaceInSidebar,
 } from "../support/helpers/workspace-ui";
 import { dropFileOnComposer, expectAttachmentPill } from "../support/helpers/composer";
+import { ensureWorkspaceHasContent } from "../support/helpers/mock-agent";
+import { openFilesPanel } from "../support/helpers/workspace-tabs";
 
 const BACKGROUND_RESOLUTION_FILE = {
   name: "background-context.json",
@@ -308,9 +310,11 @@ test.describe("New workspace flow", () => {
       const secondWorkspace = await openProjectViaDaemon(client, secondRepo.path);
       localWorkspaceIds.add(firstWorkspace.workspaceId);
       localWorkspaceIds.add(secondWorkspace.workspaceId);
-      for (const workspaceId of [firstWorkspace.workspaceId, secondWorkspace.workspaceId]) {
-        await gotoWorkspace(page, workspaceId);
-        await clickNewTerminal(page);
+      for (const [workspace, cwd] of [
+        [firstWorkspace, firstRepo.path],
+        [secondWorkspace, secondRepo.path],
+      ] as const) {
+        await ensureWorkspaceHasContent(client, workspace.workspaceId, cwd);
       }
 
       await gotoAppShell(page);
@@ -368,10 +372,12 @@ test.describe("New workspace flow", () => {
       });
       localWorkspaceIds.add(rootWorkspace.workspaceId);
       createdWorktreeDirectories.add(worktreeWorkspace.workspaceDirectory);
-      for (const workspaceId of [rootWorkspace.workspaceId, worktreeWorkspace.workspaceId]) {
-        await gotoWorkspace(page, workspaceId);
-        await clickNewTerminal(page);
-      }
+      await ensureWorkspaceHasContent(client, rootWorkspace.workspaceId, repo.path);
+      await ensureWorkspaceHasContent(
+        client,
+        worktreeWorkspace.workspaceId,
+        worktreeWorkspace.workspaceDirectory,
+      );
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -595,6 +601,7 @@ test.describe("New workspace flow", () => {
         subtitle: openedProject.projectDisplayName,
       });
 
+      await openFilesPanel(page);
       await switchSidebarToStatusGrouping(page);
       await startTrackingSidebarStatusGroups(page);
 
@@ -642,6 +649,7 @@ test.describe("New workspace flow", () => {
         subtitle: openedProject.projectDisplayName,
       });
 
+      await openFilesPanel(page);
       await switchSidebarToStatusGrouping(page);
 
       await openGlobalNewWorkspaceComposer(page);

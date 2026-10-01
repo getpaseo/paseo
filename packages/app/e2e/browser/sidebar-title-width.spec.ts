@@ -5,6 +5,7 @@ import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { type SeededWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
 import {
   closeSidebarDisplayPreferences,
   openMobileAgentSidebar,
@@ -39,7 +40,9 @@ async function seedChangedWorkspace() {
 }
 
 function workspaceRow(page: Page) {
-  return page.getByRole("button", { name: new RegExp(TITLE) }).filter({ visible: true });
+  return page
+    .getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`)
+    .filter({ visible: true });
 }
 
 async function titleWidth(row: Locator) {

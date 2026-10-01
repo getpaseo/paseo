@@ -5,7 +5,7 @@ import path from "node:path";
 import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
+import { gotoWorkspace } from "../support/helpers/launcher";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { submitMessage } from "../support/helpers/composer";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
@@ -14,6 +14,7 @@ import { buildAgentRoute } from "../support/helpers/mock-agent";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { openFilesPanel } from "../support/helpers/workspace-tabs";
 import { expectMobileAgentSidebarHidden } from "../support/helpers/sidebar";
 import {
   switchWorkspaceViaSidebar,
@@ -305,7 +306,7 @@ test.describe("plugin workspace panels and Command Center", () => {
         primaryLabel: "Primary plugin host",
       });
       await gotoWorkspace(page, primary.workspaceId);
-      await clickNewTerminal(page);
+      await openFilesPanel(page);
       await waitForWorkspaceInSidebar(page, {
         serverId: getServerId(),
         workspaceId: primary.workspaceId,

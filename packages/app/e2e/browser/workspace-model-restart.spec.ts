@@ -89,6 +89,7 @@ async function seedRestartHome(): Promise<SeededRestartHome> {
   const agentDir = path.join(paseoHome, "agents", projectDirNameFromCwd(cwd));
   mkdirSync(projectsDir, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
+  writeFileSync(path.join(cwd, "README.md"), "Restart ownership fixture\n");
 
   const projectDisplayName = path.basename(cwd);
   const project = {

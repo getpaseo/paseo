@@ -28,6 +28,7 @@ import {
 } from "../support/helpers/new-workspace-launch";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
+import { openFilesPanel } from "../support/helpers/workspace-tabs";
 
 let workspace: SeededWorkspace;
 let secondWorkspaceId: string | null = null;
@@ -85,8 +86,7 @@ test.describe("Tab creation", () => {
     const sequence = [workspace.workspaceId, secondWorkspaceId];
     for (const workspaceId of sequence) {
       await gotoWorkspace(page, workspaceId);
-      await clickNewTerminal(page);
-      await expectTerminalSurfaceVisible(page);
+      await openFilesPanel(page);
     }
     await waitForSidebarHydration(page);
 

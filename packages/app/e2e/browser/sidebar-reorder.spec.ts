@@ -17,6 +17,19 @@ async function rowTestIds(rows: Locator) {
 }
 
 async function visibleBoundingBox(row: Locator) {
+  await expect(row).toBeVisible();
+  await expect
+    .poll(() =>
+      row.evaluate((element) => {
+        for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+          if (ancestor.getAnimations().some((animation) => animation.playState === "running")) {
+            return false;
+          }
+        }
+        return true;
+      }),
+    )
+    .toBe(true);
   const box = await row.boundingBox();
   if (!box) throw new Error("Expected a visible draggable row");
   return box;

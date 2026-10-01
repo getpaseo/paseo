@@ -15,6 +15,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "checkoutRefresh"
   | "close"
   | "connect"
+  | "createAgent"
   | "createPaseoWorktree"
   | "createWorkspace"
   | "fetchAgents"
@@ -327,8 +328,6 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-// The isolation trigger renders the active isolation's label ("Local" / "New
-// worktree"), so asserting its text proves what the screen currently remembers.
 const ISOLATION_TRIGGER_LABEL: Record<"local" | "worktree", string> = {
   local: "Local",
   worktree: "New worktree",
@@ -351,8 +350,6 @@ export async function selectWorkspaceIsolation(
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  // Isolation options are derived from project capability. Wait for the option
-  // so this helper also covers route-to-project reconciliation.
   const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
@@ -385,8 +382,6 @@ export async function searchAndSelectBranchInPicker(page: Page, name: string): P
   await selectBranchInPicker(page, name);
 }
 
-// Ref picker rows are named for a user: "main, origin branch" is the upstream copy and
-// "main, local branch, 2 commits ahead of origin main" is the local one.
 export function startingRefRow(page: Page, accessibleName: string) {
   return page.getByRole("button", { name: accessibleName, exact: true });
 }
@@ -486,7 +481,6 @@ export async function assertNewWorkspaceSidebarAndHeader(
     assertHeader?: boolean;
   },
 ): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
-  // URL is the source of truth so concurrent sidebar rows cannot satisfy this.
   await expect
     .poll(
       () => {
@@ -537,7 +531,6 @@ function parseWebSocketJson(message: WebSocketMessage): unknown {
 }
 
 export async function loadSessionMessageReaders() {
-  // Use the same ESM module instance as the dynamically loaded daemon client.
   const { WSInboundMessageSchema, WSOutboundMessageSchema } = await loadProtocolSchemas();
   return {
     client(message: WebSocketMessage) {
@@ -650,10 +643,6 @@ export interface WorkspaceCreatedDelayControl {
   waitForCreateRequest(): Promise<void>;
 }
 
-/**
- * Holds workspace readiness events and responses so a test can act while the daemon is still
- * running `git worktree add` — most importantly, navigate somewhere else.
- */
 export async function delayBrowserWorkspaceCreatedResponse(
   page: Page,
 ): Promise<WorkspaceCreatedDelayControl> {
@@ -716,11 +705,6 @@ type WorkspaceEntry = Awaited<
   ReturnType<NewWorkspaceDaemonClient["fetchWorkspaces"]>
 >["entries"][number];
 
-/**
- * Waits for a workspace the caller did not already know about, and returns it. Tests that create a
- * workspace without navigating to it have no route to assert on, so the daemon's own list is the
- * signal that creation finished.
- */
 export async function waitForCreatedWorkspace(
   client: NewWorkspaceDaemonClient,
   knownWorkspaceIds: ReadonlySet<string>,

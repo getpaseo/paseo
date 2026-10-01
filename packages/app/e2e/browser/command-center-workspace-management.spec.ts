@@ -1,9 +1,10 @@
 import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "../support/fixtures";
-import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
+import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { openFilesPanel } from "../support/helpers/workspace-tabs";
 
 function workspaceRow(page: Page, workspaceId: string): Locator {
   return page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
@@ -16,7 +17,7 @@ function action(panel: Locator, title: string): Locator {
 
 async function openWorkspace(page: Page, workspaceId: string): Promise<void> {
   await gotoWorkspace(page, workspaceId);
-  await clickNewTerminal(page);
+  await openFilesPanel(page);
   await expect(workspaceRow(page, workspaceId)).toBeVisible({ timeout: 30_000 });
   await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
 }
