@@ -5,6 +5,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
 import { startDaemonInstance, readDaemonInstance } from "@getpaseo/server/daemon-control";
 import { expect, test } from "vitest";
 import { connectToDaemon } from "../../utils/client.js";
@@ -84,7 +85,7 @@ async function fixture() {
         },
         { timeout: 30_000 },
       )
-      // A connected socket can outlive a status RPC timeout without reporting the worker.
+
       .toMatchObject({ connectedDaemon: "reachable", workerPid: expect.any(Number) });
     return status;
   }
@@ -141,6 +142,7 @@ test("managed two-home restart retains its supervisor and never routes ordinary 
     if (process.platform !== "win32") {
       for (const home of [a, b, path.join(f.root, ".pandaos")])
         expect((await stat(home)).mode & 0o777).toBe(0o700);
+      expect(existsSync(path.join(f.root, ".paseo"))).toBe(false);
     }
 
     const repoB = path.join(f.root, "project-b");
@@ -199,6 +201,26 @@ test("removed flags and ambiguous targets fail before side effects; observation 
     await f.close();
   }
 }, 30_000);
+
+test("local status uses the credential and reports the server id of a password-protected daemon", async () => {
+  const f = await fixture();
+  const home = f.homes[0]!;
+  try {
+    await f.configure(home, `127.0.0.1:${await port()}`);
+    const configPath = path.join(home, "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.daemon.auth = { password: await hashDaemonPassword("secret") };
+    await writeFile(configPath, JSON.stringify(config));
+    await f.ok(["start", "--home", home, "--timeout", "30"]);
+    const authenticated = await f.liveStatus(home, { PASEO_PASSWORD: "secret" });
+    expect(await f.ok(["daemon", "status", "--home", home])).toMatchObject({
+      connectedDaemon: "reachable",
+      serverId: authenticated.serverId,
+    });
+  } finally {
+    await f.close();
+  }
+}, 60_000);
 
 test("an occupied initial or replacement address fails without false readiness or killing its owner", async () => {
   const f = await fixture();
@@ -275,7 +297,7 @@ test("worker restart preserves an already-running legacy supervisor's launch fla
         "--no-relay",
         "--no-web-ui",
       ],
-      // The legacy CLI translated --port into PASEO_LISTEN before spawning.
+
       env: { ...f.env, PASEO_LISTEN: `127.0.0.1:${launchPort}` },
       mode: "deployment",
       timeoutMs: 30_000,

@@ -463,7 +463,7 @@ class TestAgentSession implements AgentSession {
   async startTurn(): Promise<{ turnId: string }> {
     this.interrupted = false;
     const turnId = `turn-${++this.turnIdCounter}`;
-    // Use setTimeout so events arrive after the caller sets up the foreground waiter
+
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
       this.pushEvent({
@@ -766,7 +766,6 @@ test("refreshing an agent replaces the injected timeline store instead of append
     });
     agentId = agent.id;
 
-    // What session.handleRefreshAgentRequest does for a loaded agent, twice over.
     for (let refresh = 0; refresh < 2; refresh += 1) {
       await manager.reloadAgentSession(agent.id, undefined, {
         rehydrateFromDisk: true,
@@ -851,7 +850,6 @@ test("a failed history replay leaves the committed timeline intact", async () =>
 
     expect(await manager.getTimelineRows(agent.id)).toEqual(committed);
 
-    // A retry once the provider recovers replaces that history rather than stacking on it.
     failReplay = false;
     await manager.hydrateTimelineFromProvider(agent.id, { broadcast: true });
     await manager.flush();
@@ -4905,7 +4903,6 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   const afterReload = manager.getTimeline(snapshot.id);
   expect(afterReload).toEqual(beforeReload);
 
-  // If reload resets historyPrimed, this would replay provider history and append another item.
   await manager.hydrateTimelineFromProvider(snapshot.id);
   const afterHydrate = manager.getTimeline(snapshot.id);
   expect(afterHydrate).toEqual(beforeReload);
@@ -5885,7 +5882,7 @@ test("reloadAgentSession cancels active run and resumes existing session once th
       this.delayedInterrupted = false;
       const turnId = `delayed-turn-${Date.now()}`;
       this.activeTurnId = turnId;
-      // Push turn_started, then thread_started, then wait on gate
+
       setTimeout(async () => {
         this.pushEvent({
           type: "turn_started",
@@ -6003,8 +6000,6 @@ test("reloadAgentSession cancels active run and resumes existing session once th
   expect(first.done).toBe(false);
   expect(first.value?.type).toBe("turn_started");
 
-  // Wait for the thread_started event to propagate through subscribe
-  // (it's a session-level event, not forwarded to the foreground stream)
   await vi.waitFor(() => {
     const active = manager.getAgent(snapshot.id);
     expect(active?.persistence?.sessionId).toBe("delayed-session-1");
@@ -6021,7 +6016,6 @@ test("reloadAgentSession cancels active run and resumes existing session once th
   expect(client.resumeSessionCalls).toBe(1);
   expect(reloaded.persistence?.sessionId).toBe("delayed-session-1");
 
-  // Drain stream after cancellation to ensure clean shutdown.
   while (true) {
     const next = await stream.next();
     if (next.done) {
@@ -6263,9 +6257,6 @@ test("streams coalesced assistant chunks and retains the projected message", asy
     }
   }
 
-  // The coalescer flushes the first chunk on the leading edge, so "final " ships
-  // as its own event and "reply" follows on the trailing window. History retains
-  // their complete projected assistant message.
   const assistantTimelineEvents = streamEvents.filter(
     (event) => event.itemType === "assistant_message",
   );
@@ -6793,19 +6784,16 @@ test("waitForAgentEvent does not resolve idle until foreground turn is finalized
     }
   })();
 
-  // Wait for the turn to start
   await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
   const waitPromise = manager.waitForAgentEvent(snapshot.id);
 
-  // Should still be pending because turn_completed hasn't arrived
   const earlyResolution = await Promise.race([
     waitPromise.then(() => "resolved"),
     new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
   ]);
   expect(earlyResolution).toBe("pending");
 
-  // Release the turn_completed event
   releaseTurnCompleted.resolve();
   const waited = await waitPromise;
   expect(waited.status).toBe("idle");
@@ -7309,7 +7297,6 @@ test("applies live autonomous events and preserves usage omitted from completion
     { agentId: snapshot.id, replayState: false },
   );
 
-  // Push autonomous events through the session's subscribe() callbacks
   const autonomousTurnId = "autonomous-turn-1";
   capturedSession!.pushEvent({
     type: "turn_started",
@@ -7789,7 +7776,6 @@ test("autonomous events arriving during foreground run are processed via subscri
     return events;
   })();
 
-  // Wait for the foreground turn to start (lifecycle -> running)
   await new Promise<void>((resolve) => {
     const unsub = manager.subscribe(
       (event) => {
@@ -7806,7 +7792,6 @@ test("autonomous events arriving during foreground run are processed via subscri
     );
   });
 
-  // Push autonomous events while foreground is active
   const autonomousTurnId = "autonomous-during-fg-1";
   capturedSession!.pushEvent({
     type: "turn_started",
@@ -7845,7 +7830,6 @@ test("autonomous events arriving during foreground run are processed via subscri
   releaseForeground.resolve();
   const foregroundEvents = await foregroundResults;
 
-  // Foreground stream should contain its own turn events but NOT autonomous events
   expect(foregroundEvents.some((event) => event.type === "turn_completed")).toBe(true);
   expect(
     foregroundEvents.some(
@@ -7856,7 +7840,6 @@ test("autonomous events arriving during foreground run are processed via subscri
     ),
   ).toBe(false);
 
-  // Autonomous timeline item should still be recorded in the agent timeline
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_DURING_FOREGROUND",
@@ -7977,13 +7960,12 @@ test("keeps updatedAt monotonic when user message and run start happen in the sa
     const messageUpdatedAt = afterMessage!.updatedAt.getTime();
 
     const stream = manager.streamAgent(snapshot.id, "hello");
-    // Advance the generator so startTurn runs and lifecycle transitions to running
+
     await stream.next();
     const afterRunStart = manager.getAgent(snapshot.id);
     expect(afterRunStart).toBeDefined();
     expect(afterRunStart!.updatedAt.getTime()).toBeGreaterThan(messageUpdatedAt);
 
-    // Drain the rest of the stream
     while (true) {
       const next = await stream.next();
       if (next.done) break;
@@ -8147,7 +8129,6 @@ test("listAgents excludes internal agents", async () => {
     idFactory: () => generatedAgentIds[agentCounter++] ?? randomUUID(),
   });
 
-  // Create a normal agent
   await manager.createAgent(
     {
       provider: "codex",
@@ -8158,7 +8139,6 @@ test("listAgents excludes internal agents", async () => {
     { workspaceId: undefined },
   );
 
-  // Create an internal agent
   await manager.createAgent(
     {
       provider: "codex",
@@ -8230,7 +8210,6 @@ test("subscribe does not emit state events for internal agents to global subscri
     }
   });
 
-  // Create a normal agent - should emit
   await manager.createAgent(
     {
       provider: "codex",
@@ -8241,7 +8220,6 @@ test("subscribe does not emit state events for internal agents to global subscri
     { workspaceId: undefined },
   );
 
-  // Create an internal agent - should NOT emit to global subscriber
   await manager.createAgent(
     {
       provider: "codex",
@@ -8253,7 +8231,6 @@ test("subscribe does not emit state events for internal agents to global subscri
     { workspaceId: undefined },
   );
 
-  // Should only have events from the normal agent
   expect(receivedEvents.filter((id) => id === generatedAgentIds[0]).length).toBeGreaterThan(0);
   expect(receivedEvents.filter((id) => id === generatedAgentIds[1]).length).toBe(0);
 });
@@ -8347,7 +8324,7 @@ test("subscribe emits state events for internal agents when subscribed by agentI
   });
 
   const receivedEvents: string[] = [];
-  // Subscribe specifically to the internal agent
+
   manager.subscribe(
     (event) => {
       if (event.type === "agent_state") {
@@ -8368,7 +8345,6 @@ test("subscribe emits state events for internal agents when subscribed by agentI
     { workspaceId: undefined },
   );
 
-  // Should receive events when subscribed by specific agentId
   expect(receivedEvents.filter((id) => id === internalAgentId).length).toBeGreaterThan(0);
 });
 
@@ -8416,10 +8392,8 @@ test("onAgentAttention is not called for internal agents", async () => {
     { workspaceId: undefined },
   );
 
-  // Run and complete the agent (which normally triggers attention)
   await manager.runAgent(agent.id, "hello");
 
-  // Should NOT have triggered attention callback for internal agent
   expect(attentionCalls).toHaveLength(0);
 });
 
@@ -8856,7 +8830,7 @@ test("native archive and restore release the loaded session writer", async () =>
     });
     await manager.archiveAgent(agent.id);
     expect(client.archivedHandles).toHaveLength(1);
-    // Opening archived history can retain a writer, including records archived by older daemons.
+
     await ensureAgentLoaded(agent.id, {
       agentManager: manager,
       agentStorage: storage,
@@ -9651,7 +9625,7 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
         item.type === "assistant_message" && item.text.includes("[System Error]"),
     );
   expect(systemError?.text).toContain("Provider execution failed");
-  // The code rides in the sentence now rather than on a line of its own.
+
   expect(systemError?.text).toContain("(126)");
   expect(systemError?.text).toContain("No preset version installed for command claude");
 });
@@ -9745,8 +9719,8 @@ test("permission request notifies once without forcing unread attention state", 
   );
 
   const stream = manager.streamAgent(agent.id, "permission flow");
-  await stream.next(); // turn_started
-  await stream.next(); // permission_requested
+  await stream.next();
+  await stream.next();
 
   const withPermissionPending = manager.getAgent(agent.id);
   expect(withPermissionPending?.pendingPermissions.size).toBe(1);
@@ -9754,7 +9728,6 @@ test("permission request notifies once without forcing unread attention state", 
     requiresAttention: false,
   });
 
-  // Release permission resolution and drain the rest of the stream
   releasePermissionResolution.resolve();
   while (!(await stream.next()).done) {
     // no-op
@@ -9768,7 +9741,6 @@ test("respondToPermission updates currentModeId after plan approval", async () =
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
-  // Create a session that simulates plan approval mode change
   let sessionMode = "plan";
   class PlanModeTestSession implements AgentSession {
     readonly provider = "codex" as const;
@@ -9830,8 +9802,6 @@ test("respondToPermission updates currentModeId after plan approval", async () =
     }
 
     async respondToPermission(_requestId: string, response: { behavior: string }): Promise<void> {
-      // Simulate what claude-agent.ts does: when plan permission is approved,
-      // it calls setMode("acceptEdits") internally
       if (response.behavior === "allow") {
         sessionMode = "acceptEdits";
       }
@@ -9871,7 +9841,6 @@ test("respondToPermission updates currentModeId after plan approval", async () =
     idFactory: () => "00000000-0000-4000-8000-000000000112",
   });
 
-  // Create agent in plan mode
   const snapshot = await manager.createAgent(
     {
       provider: "codex",
@@ -9884,7 +9853,6 @@ test("respondToPermission updates currentModeId after plan approval", async () =
 
   expect(snapshot.currentModeId).toBe("plan");
 
-  // Simulate a pending plan permission request
   const agent = manager.getAgent(snapshot.id)!;
   const permissionRequest = {
     id: "perm-123",
@@ -9895,13 +9863,10 @@ test("respondToPermission updates currentModeId after plan approval", async () =
   };
   agent.pendingPermissions.set(permissionRequest.id, permissionRequest);
 
-  // Approve the plan permission
   await manager.respondToPermission(snapshot.id, "perm-123", {
     behavior: "allow",
   });
 
-  // The session's mode has changed to "acceptEdits" internally
-  // The manager should have updated currentModeId to reflect this
   const updatedAgent = manager.getAgent(snapshot.id);
   expect(updatedAgent?.currentModeId).toBe("acceptEdits");
 
@@ -10149,14 +10114,13 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
     async startTurn(): Promise<{ turnId: string }> {
       const turnId = `turn-${++this.turnIdCounter}`;
-      // Push turn_started, then block until closed
+
       setTimeout(() => {
         this.pushEvent({
           type: "turn_started",
           provider: this.provider,
           turnId,
         });
-        // The turn will be canceled when close() is called
       }, 0);
       return { turnId };
     }
@@ -10214,7 +10178,7 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
     async interrupt(): Promise<void> {
       this.closed = true;
-      // Push turn_canceled for any active turn
+
       if (this.turnIdCounter > 0) {
         this.pushEvent({
           type: "turn_canceled",
@@ -10228,7 +10192,7 @@ test("close during in-flight stream does not clear persistence sessionId", async
     async close(): Promise<void> {
       this.closed = true;
       this.threadId = null;
-      // Push turn_canceled for any active turn
+
       if (this.turnIdCounter > 0) {
         this.pushEvent({
           type: "turn_canceled",
@@ -10280,7 +10244,6 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
   await manager.closeAgent(snapshot.id);
 
-  // Drain stream finalizer path after close().
   while (true) {
     const next = await stream.next();
     if (next.done) {
@@ -11005,12 +10968,11 @@ test("provider user_message is recorded from the live stream", async () => {
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
-  // Session whose live turn yields a user_message without prior canonical recording
   class UnexpectedUserMessageSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       const turnId = "turn-unexpected-1";
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-      // Provider yields a staged user_message without client identity (e.g., system continuation).
+
       this.pushEvent({
         type: "timeline",
         provider: this.provider,
@@ -11062,7 +11024,6 @@ test("provider user_message is recorded from the live stream", async () => {
   const timeline = manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
 
-  // Provider's user_message should be recorded (no canonical to dedup against)
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0].text).toBe("continuation prompt");
 });
@@ -11340,9 +11301,6 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   const storage = new AgentStorage(storagePath, logger);
   const allowSecondRunToEnd = deferred<void>();
 
-  // Session where the first foreground turn never emits a terminal event
-  // (simulates the claude-agent pendingInterruptAbort suppression bug),
-  // and interrupt() does not produce events either.
   class StaleForegroundSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       this.interrupted = false;
@@ -11359,7 +11317,6 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
           // First turn: emit turn_started but NEVER emit a terminal event.
           // This simulates the provider suppressing the result.
         } else {
-          // Subsequent turns: complete normally
           await allowSecondRunToEnd.promise;
           this.pushEvent({
             type: "turn_completed",
@@ -11373,7 +11330,6 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
 
     override async interrupt(): Promise<void> {
       this.interrupted = true;
-      // No events produced — the terminal event was suppressed
     }
   }
 
@@ -11394,7 +11350,6 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
     workspaceId: undefined,
   });
 
-  // Start first foreground run — it will hang (no terminal event)
   const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
   const firstRunDrain = (async () => {
     for await (const _event of firstRun) {
@@ -11408,9 +11363,6 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   expect(beforeReplace?.lifecycle).toBe("running");
   expect(beforeReplace?.activeForegroundTurnId).toBe("turn-1");
 
-  // Replace the hung run. cancelAgentRun will time out after 2s because
-  // no terminal event arrives. After the fix, it should force-clear the
-  // stale foreground state so streamAgent can proceed.
   const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
   const collectedEvents: AgentStreamEvent[] = [];
   const secondRunDrain = (async () => {
@@ -11542,7 +11494,7 @@ test("listImportableSessions narrows to the providerFilter when supplied", async
 test("listImportableSessions skips providers that lack supportsSessionListing even when row listing is defined", async () => {
   const listableClient = new RecordingPersistedAgentsClient("claude");
   const nonListableClient = new RecordingPersistedAgentsClient("acp");
-  // Override capabilities to remove session listing support
+
   Object.defineProperty(nonListableClient, "capabilities", {
     value: {
       ...TEST_CAPABILITIES,
@@ -11761,33 +11713,31 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
 });
 
 test("commandMayHaveChangedExternalState matches remote-state commands", () => {
-  // GitHub PR operations (remote, no local file changes)
   expect(commandMayHaveChangedExternalState("gh pr merge 123")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr close 123")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr create")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr edit 123")).toBe(true);
   expect(commandMayHaveChangedExternalState('gh pr comment 123 -b "lgtm"')).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr review 123 -a")).toBe(true);
-  // Git remote operations (local refs unchanged)
+
   expect(commandMayHaveChangedExternalState("git push origin main")).toBe(true);
   expect(commandMayHaveChangedExternalState("git fetch origin")).toBe(true);
 });
 
 test("commandMayHaveChangedExternalState ignores local or read-only commands", () => {
-  // Local git mutations — already caught by file watchers on .git/HEAD
   expect(commandMayHaveChangedExternalState("git commit -m 'hello'")).toBe(false);
   expect(commandMayHaveChangedExternalState("git checkout main")).toBe(false);
   expect(commandMayHaveChangedExternalState("git merge feature")).toBe(false);
   expect(commandMayHaveChangedExternalState("git rebase main")).toBe(false);
   expect(commandMayHaveChangedExternalState("git reset --hard HEAD~1")).toBe(false);
-  // git pull includes a merge/rebase that changes local refs → watchers catch it
+
   expect(commandMayHaveChangedExternalState("git pull origin main")).toBe(false);
-  // Read-only gh commands
+
   expect(commandMayHaveChangedExternalState("gh pr view 123")).toBe(false);
   expect(commandMayHaveChangedExternalState("gh pr list")).toBe(false);
   expect(commandMayHaveChangedExternalState("gh auth status")).toBe(false);
   expect(commandMayHaveChangedExternalState("gh repo view")).toBe(false);
-  // Miscellaneous local commands
+
   expect(commandMayHaveChangedExternalState("git status")).toBe(false);
   expect(commandMayHaveChangedExternalState("ls -la")).toBe(false);
   expect(commandMayHaveChangedExternalState("cat file.txt")).toBe(false);
@@ -12103,13 +12053,11 @@ test("setAgentProvider replaces the runtime with the new provider and keeps the 
     "paseo.origin": "user",
   });
   expect(switched.createdAt).toEqual(agent.createdAt);
-  // The switch appends its own marker; everything said before it survives.
+
   expect(manager.getTimeline(agent.id).slice(0, timelineBeforeSwitch.length)).toEqual(
     timelineBeforeSwitch,
   );
 
-  // The new provider launches with the requested model and none of the old
-  // provider's mode or thinking selection.
   expect(target.createdConfigs).toHaveLength(1);
   expect(target.createdConfigs[0]).toMatchObject({
     provider: "claude",
@@ -12139,8 +12087,7 @@ test("setAgentProvider drops the previous provider session handle from the store
   expect(record?.provider).toBe("claude");
   expect(record?.persistence?.provider).toBe("claude");
   expect(record?.persistence?.sessionId).toBe(switched.persistence?.sessionId);
-  // A leftover handle for the old provider would make the next resume attach to
-  // a foreign session, so no trace of it may survive anywhere in the record.
+
   expect(JSON.stringify(record)).not.toContain(codexSessionId);
 });
 
@@ -12265,4 +12212,130 @@ test("setAgentProvider marks the provider cut in the timeline", async () => {
     level: "info",
     message: "Switched provider: codex → claude",
   });
+});
+
+test("commits startup notices once on create and after restored history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-startup-notice-"));
+  const notice: AgentTimelineItem = { type: "notification", level: "info", message: "Runtime v2" };
+  const history: AgentTimelineItem = { type: "assistant_message", text: "Existing conversation" };
+  const toolOutput: AgentTimelineItem = {
+    type: "tool_call",
+    callId: "startup-output",
+    name: "shell",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "shell",
+      command: "print output",
+      output: "x".repeat(1024 * 1024),
+      exitCode: 0,
+    },
+  };
+  const limitedToolOutput: AgentTimelineItem = {
+    ...toolOutput,
+    detail: { type: "shell", command: "print output", output: "x".repeat(64 * 1024), exitCode: 0 },
+  };
+  class NotifyingSession extends TestAgentSession {
+    readonly initialTimeline = [{ item: notice, timestamp: "2026-09-22T00:00:00.000Z" }];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: history,
+        timestamp: "2026-09-21T00:00:00.000Z",
+      };
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: toolOutput,
+        timestamp: "2026-09-21T01:00:00.000Z",
+      };
+      yield { type: "timeline", provider: "codex", ...this.initialTimeline[0] };
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new NotifyingSession(config);
+    }
+    override async resumeSession() {
+      return new NotifyingSession({ provider: "codex", cwd: workdir });
+    }
+  })();
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: store,
+    logger,
+  });
+  const ids: string[] = [];
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    ids.push(created.id);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    const resumed = await manager.resumeAgentFromPersistence({
+      provider: "codex",
+      sessionId: "existing",
+      metadata: { cwd: workdir },
+    });
+    ids.push(resumed.id);
+    await manager.hydrateTimelineFromProvider(resumed.id);
+    expect((await manager.getTimelineRows(resumed.id)).map((row) => row.item)).toEqual([
+      history,
+      limitedToolOutput,
+      notice,
+    ]);
+    await manager.hydrateTimelineFromProvider(resumed.id, { force: true });
+    expect((await manager.getTimelineRows(resumed.id)).map((row) => row.item)).toEqual([
+      history,
+      limitedToolOutput,
+      notice,
+    ]);
+    await manager.flush();
+    expect(store.writes.flat()).toContainEqual(expect.objectContaining({ item: notice }));
+  } finally {
+    for (const id of ids) await manager.closeAgent(id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed startup history closes the session without registering an agent", async () => {
+  let closed = false;
+  class FailingHistorySession extends TestAgentSession {
+    readonly initialTimeline = [
+      {
+        item: { type: "notification", level: "info", message: "Runtime v2" } as const,
+        timestamp: "2026-09-22T00:00:00.000Z",
+      },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      throw new Error("History unavailable");
+    }
+    override async close() {
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession() {
+      return new FailingHistorySession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence({
+        provider: "codex",
+        sessionId: "failed-history",
+        metadata: { cwd: tmpdir() },
+      }),
+    ).rejects.toThrow("History unavailable");
+    expect({ agents: manager.listAgents(), closed }).toEqual({ agents: [], closed: true });
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+  }
 });

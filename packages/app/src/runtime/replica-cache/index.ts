@@ -309,13 +309,11 @@ const StoredWorkspaceSchema = z.strictObject({
   name: z.string(),
   title: z.string().nullable(),
   pinnedAt: z.string().nullable(),
-  // Optional because entries written before labels existed have none. A cached workspace that
-  // dropped them painted its row without its chips and stayed that way: the directory cursor is
-  // current on reconnect, so the daemon has nothing newer to send back.
+
   labels: z.array(z.string()).optional(),
-  // Optional for entries cached before the done marker existed; same reasoning as labels.
+
   doneAt: z.string().nullable().optional(),
-  // Rows from before handoff sorting lack it; DIRECTORY_CACHE_SCHEMA makes the daemon resend them.
+
   handoff: z
     .object({
       agentId: z.string(),
@@ -325,7 +323,7 @@ const StoredWorkspaceSchema = z.strictObject({
     })
     .nullable()
     .optional(),
-  // Optional for entries cached before topics existed; same reasoning as labels.
+
   topic: z
     .strictObject({ id: z.string(), title: z.string(), description: z.string().nullable() })
     .nullable()
@@ -389,8 +387,6 @@ const DirectoryCursorSchema = z.strictObject({
   afterSeq: z.number().int().nonnegative(),
 });
 
-// Bump when a cached row gains a field the daemon would not resend: a checkpoint from another
-// version is dropped, so the next connect replaces the whole directory once.
 const DIRECTORY_CACHE_SCHEMA = 2;
 
 const DirectoryCheckpointSchema = z.strictObject({
@@ -399,6 +395,19 @@ const DirectoryCheckpointSchema = z.strictObject({
   workspaces: DirectoryCursorSchema.optional(),
   agents: DirectoryCursorSchema.optional(),
 });
+
+const StoredDirectoryCheckpointSchema = z.strictObject({
+  version: z.literal(1),
+  cursors: DirectoryCheckpointSchema,
+});
+
+function serializeDirectoryCheckpoint(cursors: DirectoryCheckpoint) {
+  return { version: 1 as const, cursors: { ...cursors, schema: DIRECTORY_CACHE_SCHEMA } };
+}
+
+function deserializeDirectoryCheckpoint(payload: string): DirectoryCheckpoint {
+  return parseStoredPayload(StoredDirectoryCheckpointSchema, payload).cursors;
+}
 
 function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | null {
   if (!stored) {
@@ -795,9 +804,6 @@ function pendingRowKey(key: ReplicaRowKey): string {
   return `${key.serverId}\u0000${rowKey(key)}`;
 }
 
-// Budget accounting runs over every stored row of a touched host on each persist. Rows are
-// immutable once stored, so their size is computed once. The count itself avoids the JS Buffer
-// polyfill, which materialises the whole byte array just to measure it.
 const rowBytesCache = new WeakMap<ReplicaRow, number>();
 
 function utf8ByteLength(text: string): number {
@@ -874,7 +880,7 @@ function applyDirectoryRow(
       if (row.id !== REPLICA_SINGLETON_ROW_ID) {
         throw new Error("Replica checkpoint row id mismatch");
       }
-      result.checkpoint = parseStoredPayload(DirectoryCheckpointSchema, row.payload);
+      result.checkpoint = deserializeDirectoryCheckpoint(row.payload);
       return;
     default:
       return;
@@ -1012,10 +1018,6 @@ export class ReplicaCache {
     try {
       await this.prepareStore();
       while (this.activeServerIds.has(serverId)) {
-        // A read may only answer from rows the store already holds, so it waits for this host's
-        // accepted commits to land. A store that rejects them will keep rejecting them: fail closed
-        // rather than re-attempt the write on every pass. A write rejected for another host leaves
-        // this host's stored rows readable.
         if (!(await this.syncPending()) && this.hasPendingHostChanges(serverId)) return [];
         const revision = this.hostRevisions.get(serverId) ?? 0;
         const rows = await this.rowStore.read(serverId, kinds, ids);
@@ -1044,7 +1046,7 @@ export class ReplicaCache {
     let checkpoint: DirectoryCheckpoint | undefined;
     if (checkpointRow) {
       try {
-        checkpoint = parseStoredPayload(DirectoryCheckpointSchema, checkpointRow.payload);
+        checkpoint = deserializeDirectoryCheckpoint(checkpointRow.payload);
         checkpoint = { ...checkpoint };
         delete checkpoint[invalidEntity];
       } catch {
@@ -1060,7 +1062,7 @@ export class ReplicaCache {
                 serverId: row.serverId,
                 kind: "checkpoint",
                 id: REPLICA_SINGLETON_ROW_ID,
-                payload: JSON.stringify({ ...checkpoint, schema: DIRECTORY_CACHE_SCHEMA }),
+                payload: JSON.stringify(serializeDirectoryCheckpoint(checkpoint)),
               },
             ]
           : [],
@@ -1086,7 +1088,7 @@ export class ReplicaCache {
                 serverId,
                 kind: "checkpoint",
                 id: REPLICA_SINGLETON_ROW_ID,
-                payload: JSON.stringify({ ...checkpoint, schema: DIRECTORY_CACHE_SCHEMA }),
+                payload: JSON.stringify(serializeDirectoryCheckpoint(checkpoint)),
               },
             ]
           : [],
@@ -1131,7 +1133,7 @@ export class ReplicaCache {
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
     this.advanceHostRevision(serverId);
-    // Replacing the directory must not discard independently accepted timeline changes.
+
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
     }
@@ -1209,7 +1211,6 @@ export class ReplicaCache {
     await this.syncPending();
   }
 
-  /** Resolves to whether every pending change reached the store. */
   private async syncPending(): Promise<boolean> {
     const persisted = await this.persist();
     await this.writeQueue.catch(() => undefined);
@@ -1249,7 +1250,7 @@ export class ReplicaCache {
         }
         return true;
       });
-    // The queue only sequences writes; every consumer decides for itself what a failure means.
+
     this.writeQueue = write.then(
       () => undefined,
       () => undefined,
@@ -1352,7 +1353,7 @@ export class ReplicaCache {
         if (!value) return null;
         break;
       case "checkpoint":
-        value = { ...upsert.value, schema: DIRECTORY_CACHE_SCHEMA };
+        value = serializeDirectoryCheckpoint(upsert.value);
         break;
     }
     return {

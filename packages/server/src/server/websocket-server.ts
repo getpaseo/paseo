@@ -81,11 +81,13 @@ import {
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
+  extractHttpBearerToken,
   extractWsBearerProtocol,
   extractWsBearerToken,
-  isBearerTokenValid,
+  isBearerTokenValidAsync,
   type DaemonAuthConfig,
 } from "./auth.js";
+import { resolveSessionAdmission } from "./session-admission-auth.js";
 import {
   WebSocketRuntimeMetricsWindow,
   type WebSocketRuntimeCounters,
@@ -136,7 +138,8 @@ interface PendingConnection {
   connectionLogger: pino.Logger;
   helloTimeout: ReturnType<typeof setTimeout> | null;
   identity: WebSocketConnectionIdentity;
-  admission: SessionAdmission;
+  admission: SessionAdmission | null;
+  authenticating: boolean;
 }
 
 interface WebSocketConnectionIdentity {
@@ -381,7 +384,6 @@ function resolveCapabilityReason(params: {
   return state.message;
 }
 
-// The daemon's instance knows the account profiles; tests construct the server without one.
 function resolveProviderUsageService(
   service: ProviderUsageService | undefined,
   logger: pino.Logger,
@@ -540,9 +542,6 @@ function requireWebSocketServices(params: {
   return { scheduleService, checkoutDiffManager };
 }
 
-/**
- * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
- */
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
@@ -569,6 +568,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
+  private readonly passwordHash: string | undefined;
+  private readonly credentialSource: DaemonAuthConfig | undefined;
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly resourcePolicyRuntime: Pick<ResourcePolicyRuntime, "checkStatusRead">;
@@ -607,7 +608,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerUsageService: ProviderUsageService;
   private readonly teamService: TeamService | undefined;
   private unsubscribeTerminalActivity: (() => void) | null = null;
-  private readonly browserToolsBroker: BrowserToolsBroker | null;
+  private browserToolsBroker: BrowserToolsBroker | null = null;
   private readonly browserActivity: BrowserActivityHub | undefined;
   private readonly verifyHost: DaemonPlaywrightHost | null;
   private readonly verifyEvidence: EvidenceStore | null;
@@ -701,8 +702,8 @@ export class VoiceAssistantWebSocketServer {
       throw new MissingDaemonVersionError();
     }
     this.daemonVersion = daemonVersion.trim();
+    this.credentialSource = auth;
     this.daemonRuntimeConfig = daemonRuntimeConfig;
-    this.browserToolsBroker = browserToolsBroker ?? null;
     this.browserActivity = browserActivity;
     const verify = resolveVerifyDependencies(verifyHost, verifyEvidence);
     this.verifyHost = verify.host;
@@ -733,6 +734,7 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
+    this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
     this.resourcePolicyRuntime =
@@ -742,6 +744,7 @@ export class VoiceAssistantWebSocketServer {
       });
     this.mcpBaseUrl = mcpBaseUrl;
     this.assignOptionalServices({
+      browserToolsBroker,
       speech,
       terminalManager,
       dictation,
@@ -802,6 +805,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private assignOptionalServices(params: {
+    browserToolsBroker: BrowserToolsBroker | null | undefined;
     speech: SpeechService | null | undefined;
     terminalManager: TerminalManager | null | undefined;
     dictation: { finalTimeoutMs?: number } | undefined;
@@ -816,6 +820,7 @@ export class VoiceAssistantWebSocketServer {
     serviceProxyPublicBaseUrl: string | null | undefined;
     resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | undefined;
   }): void {
+    this.browserToolsBroker = params.browserToolsBroker ?? null;
     this.speech = params.speech ?? null;
     this.terminalManager = params.terminalManager ?? null;
     if (this.terminalManager) {
@@ -901,8 +906,6 @@ export class VoiceAssistantWebSocketServer {
     (interval as unknown as { unref?: () => void }).unref?.();
   }
 
-  // Main-loop stall visibility: terminal frames and agent traffic share one event
-  // loop, so delay percentiles here are the ground truth for "the daemon is busy".
   private snapshotEventLoopDelay(): { p50Ms: number; p99Ms: number; maxMs: number } | null {
     const monitor = this.eventLoopDelayMonitor;
     if (!monitor) {
@@ -957,23 +960,37 @@ export class VoiceAssistantWebSocketServer {
     request: IncomingMessage,
     password: string | undefined,
   ): Promise<void> {
-    if (password) {
-      const requestMetadata = extractSocketRequestMetadata(request);
+    ws.pause();
+    try {
+      // COMPAT(headerAuth): added in v0.9.1, remove after 2027-03-24.
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
-      const token = extractWsBearerToken(protocol);
-      const isAuthorized = isBearerTokenValid({ password, token });
-      if (!isAuthorized) {
-        const reason = token === null ? "Password required" : "Incorrect password";
-        this.logger.warn(
-          { ...requestMetadata, hasToken: token !== null },
-          "Rejected WebSocket connection with invalid daemon password",
-        );
-        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, reason);
-        return;
+      const token =
+        extractHttpBearerToken(request.headers.authorization) ?? extractWsBearerToken(protocol);
+      const hasHeaderCredential = token !== null;
+      if (password && hasHeaderCredential) {
+        const requestMetadata = extractSocketRequestMetadata(request);
+        const isAuthorized = await isBearerTokenValidAsync({ password, token });
+        if (!isAuthorized) {
+          const reason = "Incorrect password";
+          this.logger.warn(
+            { ...requestMetadata, hasToken: true },
+            "Rejected WebSocket connection with invalid daemon password",
+          );
+          ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, reason);
+          return;
+        }
       }
-    }
 
-    await this.attachSocket(ws, request);
+      await this.attachSocket(
+        ws,
+        request,
+        undefined,
+        false,
+        hasHeaderCredential ? OWNER_SESSION_ADMISSION : null,
+      );
+    } finally {
+      ws.resume();
+    }
   }
 
   public broadcast(message: WSOutboundMessage): void {
@@ -1020,7 +1037,7 @@ export class VoiceAssistantWebSocketServer {
   public async attachExternalSocket(
     ws: WebSocketLike,
     metadata?: ExternalSocketMetadata,
-    admission: SessionAdmission = OWNER_SESSION_ADMISSION,
+    admission: SessionAdmission | null = null,
     initialHello?: WSHelloMessage,
   ): Promise<void> {
     if (metadata?.transport === "relay") {
@@ -1043,7 +1060,7 @@ export class VoiceAssistantWebSocketServer {
     this.pluginSocketIds.set(ws, pluginId);
     this.pluginSocketCleanup.set(ws, resolve);
     try {
-      await this.attachSocket(ws, undefined, undefined, true);
+      await this.attachSocket(ws, undefined, undefined, true, OWNER_SESSION_ADMISSION);
     } catch (error) {
       this.pluginSocketIds.delete(ws);
       this.finishPluginSocketCleanup(ws);
@@ -1057,7 +1074,7 @@ export class VoiceAssistantWebSocketServer {
     permissions: readonly DaemonPermission[],
   ): void {
     for (const pending of this.pendingConnections.values()) {
-      if (pending.admission.principalId === principalId) {
+      if (pending.admission?.principalId === principalId) {
         pending.admission = { ...pending.admission, permissions };
       }
     }
@@ -1123,7 +1140,6 @@ export class VoiceAssistantWebSocketServer {
       for (const ws of connection.sockets) {
         cleanupPromises.push(
           new Promise<void>((resolve) => {
-            // WebSocket.CLOSED = 3
             if (ws.readyState === 3) {
               resolve();
               return;
@@ -1174,7 +1190,7 @@ export class VoiceAssistantWebSocketServer {
         this.sessions.get(ws)?.session.delivery.permits(ws, message.message) !== true
       ) {
         this.incrementRuntimeCounter("applicationJsonRejected");
-        // Legacy broadcasts intentionally exclude modern sockets. Targeted failures are bugs.
+
         if (reportRejection)
           this.logger.warn(
             {
@@ -1295,8 +1311,6 @@ export class VoiceAssistantWebSocketServer {
       logMessage,
     );
     try {
-      // A close frame queues behind application data, so it cannot enforce a
-      // hard memory cutoff. Production transports expose terminate().
       if (ws.terminate) {
         ws.terminate();
       } else {
@@ -1325,7 +1339,7 @@ export class VoiceAssistantWebSocketServer {
     request?: unknown,
     metadata?: ExternalSocketMetadata,
     allowDuringStartup = false,
-    admission: SessionAdmission = OWNER_SESSION_ADMISSION,
+    admission: SessionAdmission | null = null,
     initialHello?: WSHelloMessage,
   ): Promise<void> {
     if (
@@ -1350,6 +1364,7 @@ export class VoiceAssistantWebSocketServer {
       helloTimeout: null,
       identity,
       admission,
+      authenticating: false,
     };
     const timeout = setTimeout(() => {
       if (this.pendingConnections.get(ws) !== pending) {
@@ -1381,9 +1396,7 @@ export class VoiceAssistantWebSocketServer {
       },
       "Client connected; awaiting hello",
     );
-    if (initialHello) {
-      this.handleHello({ ws, message: initialHello, pending });
-    }
+    if (initialHello) await this.handleHelloSafely({ ws, message: initialHello, pending });
   }
 
   private createSessionConnection(params: {
@@ -1436,10 +1449,7 @@ export class VoiceAssistantWebSocketServer {
           return null;
         }
         if (source) return (source as WebSocketLike).bufferedAmount ?? null;
-        // Relay-attached sockets are a WebSocketLike that doesn't expose
-        // bufferedAmount. Return null when no socket gives a signal so the
-        // terminal fallback can't mistake "no signal" for "client keeping up";
-        // a direct ws reports its real buffered bytes (0 when drained).
+
         let maxBuffered: number | null = null;
         for (const socket of connection.sockets) {
           if (typeof socket.bufferedAmount === "number") {
@@ -1586,14 +1596,14 @@ export class VoiceAssistantWebSocketServer {
     return pending;
   }
 
-  private handleHello(params: {
+  private async handleHello(params: {
     ws: WebSocketLike;
     message: WSHelloMessage;
     pending: PendingConnection;
-  }): void {
+  }): Promise<void> {
     const { ws, message, pending } = params;
 
-    if (message.protocolVersion !== WS_PROTOCOL_VERSION) {
+    if (message.protocolVersion < 1) {
       this.clearPendingConnection(ws);
       pending.connectionLogger.warn(
         {
@@ -1602,13 +1612,12 @@ export class VoiceAssistantWebSocketServer {
         },
         "Rejected hello due to protocol version mismatch",
       );
-      try {
-        ws.close(WS_CLOSE_INCOMPATIBLE_PROTOCOL, "Incompatible protocol version");
-      } catch {
-        // ignore close errors
-      }
+      await this.rejectHello(ws, message, "incompatible_protocol");
       return;
     }
+
+    pending.authenticating = true;
+    if (!pending.admission && !(await this.admitPendingHello(ws, message, pending))) return;
 
     const clientId = message.clientId.trim();
     if (clientId.length === 0) {
@@ -1635,11 +1644,13 @@ export class VoiceAssistantWebSocketServer {
     }
 
     this.clearPendingConnection(ws);
+    const admitted = pending.admission;
+    if (!admitted) throw new Error("Admitted hello has no session admission");
     pending.identity.clientId = clientId;
     if (message.appVersion) {
       pending.identity.appVersion = message.appVersion;
     }
-    const sessionKey = sessionConnectionKey(pending.admission.principalId, clientId);
+    const sessionKey = sessionConnectionKey(admitted.principalId, clientId);
     const existing = pluginId ? undefined : this.externalSessionsByKey.get(sessionKey);
     if (existing) {
       this.resumeSession({ ws, message, pending, existing });
@@ -1656,7 +1667,7 @@ export class VoiceAssistantWebSocketServer {
       clientCapabilities: message.capabilities ?? null,
       connectionLogger,
       lifecycle: pluginId ? { kind: "ephemeral-plugin", pluginId } : { kind: "reconnectable" },
-      admission: pending.admission,
+      admission: admitted,
     });
     this.sessions.set(ws, connection);
     if (connection.lifecycle === "reconnectable") {
@@ -1672,6 +1683,91 @@ export class VoiceAssistantWebSocketServer {
       },
       "Client connected via hello",
     );
+  }
+
+  private handleHelloSafely(params: {
+    ws: WebSocketLike;
+    message: WSHelloMessage;
+    pending: PendingConnection;
+  }): Promise<void> {
+    return this.handleHello(params).catch((error: unknown) => {
+      try {
+        this.handleRawMessageError({
+          ws: params.ws,
+          data: "",
+          error,
+          log: params.pending.connectionLogger,
+        });
+      } catch {
+        // The error reporter must not turn a connection failure into a process failure.
+      } finally {
+        try {
+          params.ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
+        } catch {
+          // The transport may already be closed.
+        }
+      }
+    });
+  }
+
+  private async admitPendingHello(
+    ws: WebSocketLike,
+    message: WSHelloMessage,
+    pending: PendingConnection,
+  ): Promise<boolean> {
+    if (pending.admission) return true;
+    try {
+      const resolved = await resolveSessionAdmission({
+        credential: message.auth,
+        passwordHash: this.passwordHash,
+        localCredential: this.credentialSource?.localCredential?.() ?? null,
+        transport: pending.identity.transport === "relay" ? "relay" : "direct",
+      });
+      if (this.pendingConnections.get(ws) !== pending) return false;
+      if ("rejection" in resolved) {
+        this.clearPendingConnection(ws);
+        await this.rejectHello(ws, message, resolved.rejection);
+        return false;
+      }
+      pending.admission = resolved.admission;
+      return true;
+    } catch (error) {
+      pending.connectionLogger.error({ err: error }, "Failed to resolve hello credential");
+      if (this.pendingConnections.get(ws) === pending) {
+        this.clearPendingConnection(ws);
+        await this.rejectHello(ws, message, "incorrect_password");
+      }
+      return false;
+    }
+  }
+
+  private async rejectHello(
+    ws: WebSocketLike,
+    hello: WSHelloMessage,
+    reason: "password_required" | "incorrect_password" | "incompatible_protocol",
+  ): Promise<void> {
+    if (hello.auth || hello.capabilities?.[CLIENT_CAPS.helloRejection] === true) {
+      try {
+        await ws.send(JSON.stringify({ type: "hello.rejected", reason, accepts: ["password"] }));
+      } catch {
+        // The close reason remains the compatibility signal.
+      }
+    }
+    const closeReason = {
+      password_required: "Password required",
+      incorrect_password: "Incorrect password",
+      incompatible_protocol: "Incompatible protocol version",
+    }[reason];
+    try {
+      ws.close(
+        reason === "incompatible_protocol"
+          ? WS_CLOSE_INCOMPATIBLE_PROTOCOL
+          : WS_CLOSE_DAEMON_AUTH_FAILED,
+        closeReason,
+      );
+    } catch {
+      // Ignore a transport that closed while the rejection was sent.
+    }
   }
 
   private resumeSession(params: {
@@ -1693,8 +1789,7 @@ export class VoiceAssistantWebSocketServer {
     }
     const newClientCapabilities = message.capabilities ?? null;
     // COMPAT(selectiveAgentTimeline): added in v0.1.106. Every capable resumed
-    // hello resets membership before server_info so stale retained-session
-    // state cannot leak. Remove after 2027-01-12.
+
     existing.session.updateClientCapabilities(newClientCapabilities, ws, newAppVersion);
     if (
       JSON.stringify(existing.clientCapabilities ?? null) !==
@@ -1719,6 +1814,7 @@ export class VoiceAssistantWebSocketServer {
   private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
     return {
       status: "server_info",
+      protocolVersion: WS_PROTOCOL_VERSION,
       serverId: this.serverId,
       hostname: getHostname(),
       version: this.daemonVersion,
@@ -1743,24 +1839,19 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
-        // feature gate and legacy fallback after 2027-01-17 once the supported
-        // daemon floor is >= v0.2.0.
+
         checkoutForgeSetAutoMerge: true,
         // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75 and retained as
-        // the fallback for checkoutForgeSetAutoMerge. Stop advertising it after
-        // 2027-01-17 once supported floors are >= v0.2.0.
+
         checkoutGithubSetAutoMerge: true,
         // COMPAT(githubCheckDetails): added in v0.1.92 and retained as the
-        // fallback for forgeCheckDetails. Stop advertising it after 2027-01-17
-        // once supported floors are >= v0.2.0.
+
         githubCheckDetails: true,
         // COMPAT(forgeCheckDetails): added in v0.2.0-beta.1. Remove the feature
-        // gate and legacy fallback after 2027-01-17 once the supported daemon
-        // floor is >= v0.2.0.
+
         forgeCheckDetails: true,
         // COMPAT(forgeSearch): added in v0.2.0-beta.1. Remove the feature gate
-        // and legacy fallback after 2027-01-17 once the supported daemon floor
-        // is >= v0.2.0.
+
         forgeSearch: true,
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         ...(this.advertiseDaemonStatusRpc ? { daemonStatusRpc: true } : {}),
@@ -1845,7 +1936,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain advertisement.
         projectedSubagentTimeline: true,
         // COMPAT(relatedPullRequests): added in v0.8.1, remove gates once the daemon
-        // floor ships the field; retain advertisement.
+
         relatedPullRequests: true,
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: true,
@@ -1883,7 +1974,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
         importSessionSearch: true,
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
-        // 2027-01-17 once the supported daemon floor is >= v0.2.0.
+
         forgeProviders: true,
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: true,
@@ -2214,8 +2305,8 @@ export class VoiceAssistantWebSocketServer {
     pendingConnection: PendingConnection;
   }): void {
     const { ws, message, pendingConnection } = params;
-    if (message.type === "hello") {
-      this.handleHello({
+    if (message.type === "hello" && !pendingConnection.authenticating) {
+      void this.handleHelloSafely({
         ws,
         message,
         pending: pendingConnection,
@@ -2285,17 +2376,11 @@ export class VoiceAssistantWebSocketServer {
       const message = parsedMessage.data;
       this.recordInboundMessageType(message.type);
 
-      if (message.type === "ping") {
-        // A plugin socket is IPC to a child this daemon already supervises, not
-        // an abandonable application socket.
+      if (message.type === "ping" && activeConnection) {
         if (!this.pluginSocketIds.has(ws)) {
           this.applicationSocketLease.claim(ws);
         }
         this.sendToClient(ws, { type: "pong" });
-        return;
-      }
-
-      if (message.type === "recording_state") {
         return;
       }
 
@@ -2305,6 +2390,10 @@ export class VoiceAssistantWebSocketServer {
           message,
           pendingConnection,
         });
+        return;
+      }
+
+      if (message.type === "recording_state") {
         return;
       }
 
@@ -2383,21 +2472,8 @@ export class VoiceAssistantWebSocketServer {
   }): void {
     const { ws, data, error, log } = params;
     const err = error instanceof Error ? error : new Error(String(error));
-    const { rawPayload, parsedPayload } = this.decodeRawMessagePayloadForError(data);
 
-    const trimmedRawPayload =
-      typeof rawPayload === "string" && rawPayload.length > 2000
-        ? `${rawPayload.slice(0, 2000)}... (truncated)`
-        : rawPayload;
-
-    log.error(
-      {
-        err,
-        rawPayload: trimmedRawPayload,
-        parsedPayload,
-      },
-      "Failed to parse/handle message",
-    );
+    log.error({ errorName: err.name }, "Failed to parse/handle message");
 
     if (this.pendingConnections.has(ws)) {
       this.clearPendingConnection(ws);
@@ -2409,7 +2485,9 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
-    const requestInfo = extractRequestInfoFromUnknownWsInbound(parsedPayload);
+    const requestInfo = extractRequestInfoFromUnknownWsInbound(
+      this.decodeRawMessagePayloadForError(data),
+    );
     this.sessions.get(ws)?.session.delivery.protocolFailure(ws, {
       ...requestInfo,
       error: `Invalid message: ${err.message}`,
@@ -2417,24 +2495,12 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
-  private decodeRawMessagePayloadForError(data: Buffer | ArrayBuffer | Buffer[] | string): {
-    rawPayload: string | null;
-    parsedPayload: unknown;
-  } {
-    let rawPayload: string | null = null;
-    let parsedPayload: unknown = null;
+  private decodeRawMessagePayloadForError(data: Buffer | ArrayBuffer | Buffer[] | string): unknown {
     try {
-      const buffer = bufferFromWsData(data);
-      rawPayload = buffer.toString();
-      parsedPayload = JSON.parse(rawPayload);
-    } catch (payloadError) {
-      rawPayload = rawPayload ?? "<unreadable>";
-      parsedPayload = parsedPayload ?? rawPayload;
-      const payloadErr =
-        payloadError instanceof Error ? payloadError : new Error(String(payloadError));
-      this.logger.error({ err: payloadErr }, "Failed to decode raw payload");
+      return JSON.parse(bufferFromWsData(data).toString());
+    } catch {
+      return null;
     }
-    return { rawPayload, parsedPayload };
   }
 
   private incrementRuntimeCounter(counter: keyof WebSocketRuntimeCounters): void {
@@ -2558,14 +2624,12 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
-  /** Whether sorted handbacks ping instead: then a plain "finished" no longer pushes by itself. */
   private handoffPingsActive: () => boolean = () => false;
 
   setHandoffPingsActive(isActive: () => boolean): void {
     this.handoffPingsActive = isActive;
   }
 
-  /** A sorted handback that asks the person something: push to phones and notify the app. */
   async notifyAgentHandoff(
     agentId: string,
     notification: AgentAttentionNotificationPayload,
@@ -2581,7 +2645,6 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
-  /** A push outside any agent, such as the morning summary of pings held overnight. */
   async sendPushNotification(notification: AgentAttentionNotificationPayload): Promise<void> {
     await this.pushNotificationSender.send(notification);
   }
@@ -2647,7 +2710,6 @@ export class VoiceAssistantWebSocketServer {
     }
 
     for (const { ws } of clientEntries) {
-      // A handback ping reaches every app that shows notifications, not just the one used last.
       const shouldNotify = params.forcePush
         ? notificationEntries.some((entry) => entry.ws === ws)
         : plan.inAppRecipientIndex !== null &&
@@ -3052,7 +3114,6 @@ function extractRequestInfoFromUnknownWsInbound(
     message?: unknown;
   };
 
-  // Session-wrapped messages
   if (record.type === "session" && record.message && typeof record.message === "object") {
     const msg = record.message as { requestId?: unknown; type?: unknown };
     if (typeof msg.requestId === "string") {
@@ -3063,7 +3124,6 @@ function extractRequestInfoFromUnknownWsInbound(
     }
   }
 
-  // Non-session messages (future-proof)
   if (typeof record.requestId === "string") {
     return {
       requestId: record.requestId,
@@ -3074,7 +3134,6 @@ function extractRequestInfoFromUnknownWsInbound(
   return null;
 }
 
-/** While sorted handbacks ping, a plain finished turn stays quiet; errors never push. */
 function isAttentionPushEligible(
   reason: "finished" | "error" | "permission",
   handoffPingsActive: boolean,
@@ -3083,7 +3142,6 @@ function isAttentionPushEligible(
   return isPushEligibleAttentionReason(reason);
 }
 
-// A ping reaches the phone even while another app window is in use, unless this session is open.
 function isFocusedOnAgent(states: readonly ClientPresenceState[], agentId: string): boolean {
   return states.some((state) => state.appVisible && state.focusedAgentId === agentId);
 }

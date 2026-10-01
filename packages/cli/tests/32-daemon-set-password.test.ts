@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
-import { isBearerTokenValid } from "@getpaseo/server/auth";
+import { isBearerTokenValidAsync } from "@getpaseo/server/auth";
+import { runLocalPaseo } from "./helpers/local-cli.ts";
 import {
   runSetPasswordCommand,
   setDaemonPasswordInConfig,
@@ -60,7 +61,10 @@ try {
     assert.notStrictEqual(config.daemon.auth.password, "shared-secret");
     assert.match(config.daemon.auth.password, /^\$2[aby]\$12\$/);
     assert.strictEqual(
-      isBearerTokenValid({ password: config.daemon.auth.password, token: "shared-secret" }),
+      await isBearerTokenValidAsync({
+        password: config.daemon.auth.password,
+        token: "shared-secret",
+      }),
       true,
     );
     console.log("✓ set-password writes bcrypt hash without clobbering config\n");
@@ -80,7 +84,7 @@ try {
 
     assert.strictEqual(result.data.action, "password_set");
     assert.strictEqual(
-      isBearerTokenValid({ password: config.daemon.auth.password, token: "new-secret" }),
+      await isBearerTokenValidAsync({ password: config.daemon.auth.password, token: "new-secret" }),
       true,
     );
     console.log("✓ command accepts matching confirmation\n");
@@ -104,6 +108,27 @@ try {
         error.code === "PASSWORD_MISMATCH",
     );
     console.log("✓ command refuses password mismatch\n");
+  }
+
+  {
+    console.log("Test 4: piped stdin fails with a message instead of exiting silently");
+    const pipedHome = join(root, "piped");
+    await mkdir(pipedHome, { recursive: true });
+    const run = runLocalPaseo(["daemon", "set-password", "--home", pipedHome, "--json"]);
+    run.stdin.end("x\nx\n");
+    const result = await run;
+
+    assert.strictEqual(result.exitCode, 1, result.stderr);
+    const error = JSON.parse(result.stderr).error as {
+      code: string;
+      message: string;
+      details: string;
+    };
+    assert.strictEqual(error.code, "PASSWORD_TTY_REQUIRED");
+    assert.match(error.message, /needs a terminal/);
+    assert.match(error.details, /PASEO_PASSWORD/);
+    await assert.rejects(readFile(join(pipedHome, "config.json"), "utf-8"));
+    console.log("✓ piped stdin reports that a terminal is required\n");
   }
 } finally {
   await rm(root, { recursive: true, force: true });

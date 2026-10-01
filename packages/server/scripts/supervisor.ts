@@ -1,7 +1,9 @@
 import { fork, spawn, type ChildProcess } from "child_process";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { createStream as createRotatingFileStream } from "rotating-file-stream";
+import {
+  createStream as createRotatingFileStream,
+  type RotatingFileStream,
+} from "rotating-file-stream";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -23,6 +25,7 @@ type WorkerLifecycleMessage =
   | {
       type: "paseo:ready";
       listen: string;
+      serverId: string;
     }
   | {
       type: "paseo:restart";
@@ -50,7 +53,7 @@ interface SupervisorOptions {
     args: string[];
     env?: NodeJS.ProcessEnv;
   } | null;
-  onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
+  onWorkerReady?: (message: { listen: string; serverId: string }) => Promise<void> | void;
   onWorkerExit?: () => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
@@ -78,11 +81,14 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     };
   }
   if (type === "paseo:ready") {
-    const listen = (msg as { listen?: unknown }).listen;
+    const { listen, serverId } = msg as { listen?: unknown; serverId?: unknown };
     if (typeof listen !== "string" || listen.trim().length === 0) {
       return null;
     }
-    return { type: "paseo:ready", listen };
+    if (typeof serverId !== "string" || serverId.trim().length === 0) {
+      return null;
+    }
+    return { type: "paseo:ready", listen, serverId };
   }
   if (type === "paseo:restart") {
     const reason = (msg as { reason?: unknown }).reason;
@@ -106,17 +112,58 @@ function toRotatingFileStreamSize(size: string): string {
   return `${value}${unit}`;
 }
 
-function createSupervisorLogStream(options: SupervisorLogFileOptions | undefined) {
-  if (!options) {
-    return null;
-  }
+// daemon.log is best effort: a full disk or a replaced log path must not take the
+// supervisor, and with it the worker, down. A failed stream is dropped and a new one
+// is opened on the next write, so logging resumes once the file is writable again.
+function createDurableLog(
+  options: SupervisorLogFileOptions | undefined,
+  reportFailure: (message: string) => void,
+) {
+  let stream: RotatingFileStream | null = null;
+  let failing = false;
 
-  mkdirSync(path.dirname(options.path), { recursive: true });
-  return createRotatingFileStream(path.basename(options.path), {
-    path: path.dirname(options.path),
-    size: toRotatingFileStreamSize(options.rotate.maxSize),
-    maxFiles: options.rotate.maxFiles,
-  });
+  const open = (logFile: SupervisorLogFileOptions): RotatingFileStream => {
+    const next = createRotatingFileStream(path.basename(logFile.path), {
+      path: path.dirname(logFile.path),
+      size: toRotatingFileStreamSize(logFile.rotate.maxSize),
+      maxFiles: logFile.rotate.maxFiles,
+    });
+    next.on("error", (error) => {
+      if (stream === next) {
+        stream = null;
+      }
+      if (!failing) {
+        failing = true;
+        reportFailure(
+          `Cannot write ${logFile.path}, will retry on the next log line: ${error.message}`,
+        );
+      }
+    });
+    return next;
+  };
+
+  return {
+    write(chunk: string | Buffer): void {
+      if (!options) {
+        return;
+      }
+      stream ??= open(options);
+      stream.write(chunk, (error) => {
+        if (!error) {
+          failing = false;
+        }
+      });
+    },
+    close(): Promise<void> {
+      return new Promise((resolve) => {
+        if (!stream) {
+          resolve();
+          return;
+        }
+        stream.end(() => resolve());
+      });
+    },
+  };
 }
 
 export function runSupervisor(options: SupervisorOptions): SupervisorController {
@@ -133,10 +180,12 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   let lifecycleFailed = false;
   let publication = Promise.resolve();
   let forceKillTimer: NodeJS.Timeout | null = null;
-  const logStream = createSupervisorLogStream(options.logFile);
+  const durableLog = createDurableLog(options.logFile, (message) => {
+    process.stderr.write(`[${options.name}] ${message}\n`);
+  });
 
   const writeDurableChunk = (chunk: string | Buffer): void => {
-    logStream?.write(chunk);
+    durableLog.write(chunk);
   };
 
   const writeLifecycleLog = (message: string, fields: Record<string, unknown> = {}): void => {
@@ -157,14 +206,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog(message);
   };
 
-  const closeLogStream = (): Promise<void> =>
-    new Promise((resolve) => {
-      if (!logStream) {
-        resolve();
-        return;
-      }
-      logStream.end(resolve);
-    });
+  const closeLogStream = (): Promise<void> => durableLog.close();
 
   const exitSupervisor = (code: number): void => {
     if (exiting) {
@@ -289,7 +331,12 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
         reachedReady = true;
         writeLifecycleLog("Worker ready", { listen: lifecycleMessage.listen });
         publication = publication
-          .then(() => options.onWorkerReady?.({ listen: lifecycleMessage.listen }))
+          .then(() =>
+            options.onWorkerReady?.({
+              listen: lifecycleMessage.listen,
+              serverId: lifecycleMessage.serverId,
+            }),
+          )
           .catch((error) => {
             lifecycleFailed = true;
             const message = error instanceof Error ? error.message : String(error);

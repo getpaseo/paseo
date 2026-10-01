@@ -1,13 +1,18 @@
 import * as React from "react";
 import {
   ArrowRight,
+  Blocks,
   Bot,
   BookOpen,
   Braces,
   Coffee,
+  Compass,
   ExternalLink,
+  Gem,
   GitFork,
   Laptop,
+  Lock,
+  Merge,
   Monitor,
   Puzzle,
   Smartphone,
@@ -124,6 +129,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <AutomationSection />
             <ExtensibleSection />
             <FAQ />
+            <PhilosophySection />
             <SponsorSection />
             <SponsorsSection />
           </div>
@@ -872,6 +878,63 @@ function ExtensibleCard({
         ))}
       </div>
     </div>
+  );
+}
+
+const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: string }> = [
+  {
+    icon: Lock,
+    title: "Private",
+    description: "No telemetry, tracking, or forced login. Code stays on your machine.",
+  },
+  {
+    icon: Compass,
+    title: "Independent",
+    description: "Paseo doesn't answer to investors. Its users guide what gets built.",
+  },
+  {
+    icon: Gem,
+    title: "Polished",
+    description: "Install the app and start working. No need to know what a daemon is.",
+  },
+  {
+    icon: Merge,
+    title: "Unified",
+    description: "Claude Code, Codex, OpenCode, Pi, and more, all used the same way.",
+  },
+  {
+    icon: Blocks,
+    title: "Composable",
+    description: "Run agents on your laptop or a server, and connect from any device.",
+  },
+  {
+    icon: Puzzle,
+    title: "Extensible",
+    description: "If Paseo doesn't fit how you work, change it with a plugin or fork.",
+  },
+];
+
+function PhilosophySection() {
+  return (
+    <FeatureSection
+      title="Philosophy"
+      description="What Paseo stands for, and what every feature is built on"
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        {PRINCIPLES.map((principle) => (
+          <div
+            key={principle.title}
+            className="rounded-xl border border-white/10 bg-white/[0.025] p-6"
+          >
+            <div className="mb-8 text-extra-muted-foreground">
+              <principle.icon className="h-6 w-6" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-lg font-medium text-white/85">{principle.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-white/45">{principle.description}</p>
+          </div>
+        ))}
+      </div>
+    </FeatureSection>
   );
 }
 

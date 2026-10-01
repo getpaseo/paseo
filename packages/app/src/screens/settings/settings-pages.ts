@@ -3,26 +3,24 @@ import type { HostSectionSlug, SettingsSectionSlug } from "@/utils/host-routes";
 
 export type SettingsGroupId = "you" | "agents" | "work" | "host";
 export type SettingsPageId = SettingsSectionSlug | HostSectionSlug;
-/** Where the page's controls work: the Electron wrapper, any web build, or every platform. */
+
 export type SettingsPageAvailability = "everywhere" | "desktop" | "web";
 
 interface SettingsPageBase {
   group: SettingsGroupId;
   labelKey: string;
-  /** Section headings on the page, so search can land on "Appearance › Fonts". */
+
   sectionKeys: readonly string[];
-  /** Comma-separated synonyms per locale; users search for words the page never prints. */
+
   hintsKey: string;
   availability: SettingsPageAvailability;
 }
 
-/** A page of this device's own settings, routed as `/settings/<id>`. */
 export interface AppSettingsPage extends SettingsPageBase {
   scope: "app";
   id: SettingsSectionSlug;
 }
 
-/** A page about one host, routed as `/settings/hosts/<serverId>/<id>`. */
 export interface HostSettingsPage extends SettingsPageBase {
   scope: "host";
   id: HostSectionSlug;
@@ -42,7 +40,6 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   { id: "host", labelKey: "settings.groups.host" },
 ];
 
-// Order within a group is the navigation order.
 export const SETTINGS_PAGES: readonly SettingsPage[] = [
   {
     scope: "app",
@@ -82,6 +79,33 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     sectionKeys: ["settings.layout.openInSidePane.title"],
     hintsKey: "settings.search.hints.layout",
     availability: "desktop",
+  },
+  {
+    scope: "app",
+    id: "sidebar",
+    group: "you",
+    labelKey: "settings.sections.sidebar",
+    sectionKeys: ["settings.appearance.sidebar.title"],
+    hintsKey: "settings.search.hints.appearance",
+    availability: "everywhere",
+  },
+  {
+    scope: "app",
+    id: "chat",
+    group: "you",
+    labelKey: "settings.sections.chat",
+    sectionKeys: ["settings.appearance.detailLevel.title"],
+    hintsKey: "settings.search.hints.appearance",
+    availability: "everywhere",
+  },
+  {
+    scope: "app",
+    id: "terminal",
+    group: "you",
+    labelKey: "settings.sections.terminal",
+    sectionKeys: ["settings.general.terminalScrollback.label"],
+    hintsKey: "settings.search.hints.general",
+    availability: "everywhere",
   },
   {
     scope: "app",
@@ -289,7 +313,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
 export interface SettingsPageVisibilityInput {
   isDesktopApp: boolean;
   isWeb: boolean;
-  /** Host pages need a host to scope to; without one the Host group offers "Add host". */
+
   hasHost: boolean;
 }
 
@@ -306,7 +330,6 @@ export function findSettingsPage(id: SettingsPageId): SettingsPage | null {
   return SETTINGS_PAGES.find((page) => page.id === id) ?? null;
 }
 
-/** The navigation entry a settings route belongs to; project and plugin detail live under theirs. */
 export function resolveSettingsPageIdForView(view: SettingsView): SettingsPageId | null {
   switch (view.kind) {
     case "root":

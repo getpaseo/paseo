@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
+import { openWebsiteSocket, tunnelOrigin } from "../session/browser/tunnel.js";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -16,6 +18,35 @@ import {
   startVerifyFixtureApp,
   type VerifyFixtureApp,
 } from "./fixtures/verify-fixture-app.js";
+
+it("tunnels a real local HTTP request and rejects remote origins", async () => {
+  let received: { host: string | undefined; path: string | undefined } | undefined;
+  const server = createServer((request, response) => {
+    received = { host: request.headers.host, path: request.url };
+    response.end("merged stable build");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Fixture listener unavailable");
+  const origin = tunnelOrigin(`http://127.0.0.1:${address.port}`);
+  const socket = await openWebsiteSocket(origin, new URL("http://127.0.0.1:4333"));
+  try {
+    socket.write(
+      "GET /check?version=0.10.0 HTTP/1.1\r\nHost: 127.0.0.1:4333\r\nConnection: close\r\n\r\n",
+    );
+    const chunks: Buffer[] = [];
+    for await (const chunk of socket) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks).toString()).toContain("merged stable build");
+    expect(received).toEqual({ host: origin.host, path: "/check?version=0.10.0" });
+    expect(() => tunnelOrigin("https://example.com")).toThrow("Only local website origins");
+    expect(() => tunnelOrigin("http://user:password@localhost")).toThrow(
+      "Only local website origins",
+    );
+  } finally {
+    socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
 
 function isDaemonBrowserAvailable(): boolean {
   try {
@@ -119,7 +150,7 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
       { command: "fill", args: { browserId, ref: passwordRef ?? "", value: FIXTURE_PASSWORD } },
       "login-flow",
     );
-    // Refs expire after page-modifying actions; re-snapshot before clicking submit.
+
     const freshYaml = await readSnapshotYaml(browserId, "login-flow");
     const freshSubmitRef = refFor(freshYaml, "button", "Sign in");
     expect(freshSubmitRef).not.toBeNull();
@@ -368,7 +399,7 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
       profile: "logs-flow",
       command: { command: "wait", args: { browserId, text: "Noisy page", timeoutMs: 10_000 } },
     });
-    // Give the page a moment to emit its console error and failed fetch.
+
     await new Promise((resolve) => setTimeout(resolve, 500));
     const logs = await host?.executeLocal({
       workspaceId: WORKSPACE_ID,
@@ -408,7 +439,7 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
       expect(screenshot.result.evidenceRef).toMatch(/^evidence:\/\/\S+\/\S+\/screenshot$/);
       expect(screenshot.result.bytes).toBeGreaterThan(0);
       expect(screenshot.result.width).toBeGreaterThan(0);
-      // Size guard: without reveal no single field may carry image bytes.
+
       expect(Buffer.byteLength(JSON.stringify(screenshot), "utf8")).toBeLessThan(32 * 1024);
     } else {
       expect.unreachable();
@@ -437,8 +468,6 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
       expect.unreachable();
     }
 
-    // A second tab hides the first before it navigates; the next frame must
-    // contain the new page, not the first tab's retained compositor surface.
     await openTab(`${app?.url}/login`, "default");
     await host?.executeLocal({
       workspaceId: WORKSPACE_ID,
@@ -778,7 +807,7 @@ describe.skipIf(!BROWSER_AVAILABLE)(
             action,
             origin: "mac-app",
           });
-        // Sent back to back, as an app does: the click must still come after both fills.
+
         void apply({ kind: "fill", target: { selector: "#email" }, value: FIXTURE_USERNAME });
         void apply({ kind: "fill", target: { selector: "#password" }, value: FIXTURE_PASSWORD });
         await apply({
@@ -800,7 +829,7 @@ describe.skipIf(!BROWSER_AVAILABLE)(
         expect(fromApp[0]).toMatchObject({ value: FIXTURE_USERNAME });
         expect(fromApp[1]).not.toHaveProperty("value");
         expect(JSON.stringify(events)).not.toContain(FIXTURE_PASSWORD);
-        // The daemon's own navigation carries no origin, so the app that clicked follows it too.
+
         expect(events.some((event) => !event.origin && event.action.kind === "navigate")).toBe(
           true,
         );

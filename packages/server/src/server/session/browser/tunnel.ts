@@ -18,7 +18,6 @@ export function tunnelOrigin(value: string): URL {
   return url;
 }
 
-// Node owns HTTP framing, keep-alive and upgrades; the PandaOS transport only carries bytes.
 export async function openWebsiteSocket(origin: URL, localOrigin: URL): Promise<Socket> {
   const transport = origin.protocol === "https:" ? https : http;
   const mapToHost = (value: string | undefined) =>
@@ -32,7 +31,7 @@ export async function openWebsiteSocket(origin: URL, localOrigin: URL): Promise<
   const target = (request: http.IncomingMessage) => {
     const url = new URL(request.url ?? "/", origin);
     if (url.origin !== origin.origin) throw new Error("Tunnel request changed origin");
-    // .localhost names identify daemon service routes but always connect over loopback.
+
     return {
       hostname: origin.hostname === "[::1]" ? "::1" : "127.0.0.1",
       port: origin.port || (origin.protocol === "https:" ? 443 : 80),

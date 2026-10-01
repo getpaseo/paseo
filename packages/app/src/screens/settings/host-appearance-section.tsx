@@ -1,15 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, Pencil } from "@/components/icons/ui-icons";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Pencil } from "@/components/icons/ui-icons";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { WorkspaceMetaRow } from "@/components/sidebar/workspace-meta-row";
 import { useToast } from "@/contexts/toast-context";
@@ -28,14 +24,9 @@ import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 
-const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedPencil = withUnistyles(Pencil);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-function dropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
-  return pressed ? [styles.trigger, styles.triggerPressed] : styles.trigger;
-}
 
 function HostRenameButton({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
@@ -119,23 +110,22 @@ function ColorMenuItem({
 function ColorRow({ color, onChange }: { color: HostColor; onChange: (color: HostColor) => void }) {
   const { t } = useTranslation();
   const selectedLabel = colorLabel(t, color);
+  const leading = useMemo(() => <ColorSwatch color={color} />, [color]);
   return (
     <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.color.label")}</Text>
       </View>
       <DropdownMenu>
-        <DropdownMenuTrigger
-          style={dropdownTriggerStyle}
+        <DropdownTrigger
           accessibilityRole="button"
           accessibilityLabel={t("settings.host.appearance.color.accessibilityLabel", {
             value: selectedLabel,
           })}
+          leading={leading}
         >
-          <ColorSwatch color={color} />
-          <Text style={styles.triggerText}>{selectedLabel}</Text>
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </DropdownMenuTrigger>
+          {selectedLabel}
+        </DropdownTrigger>
         <DropdownMenuContent side="bottom" align="end" width={200}>
           {HOST_COLORS.map((option) => (
             <ColorMenuItem
@@ -166,17 +156,15 @@ function BadgeDisplayRow({
         <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.badge.label")}</Text>
       </View>
       <DropdownMenu>
-        <DropdownMenuTrigger
+        <DropdownTrigger
           testID="host-appearance-badge-display"
-          style={dropdownTriggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("settings.host.appearance.badge.accessibilityLabel", {
             value: selectedLabel,
           })}
         >
-          <Text style={styles.triggerText}>{selectedLabel}</Text>
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </DropdownMenuTrigger>
+          {selectedLabel}
+        </DropdownTrigger>
         <DropdownMenuContent side="bottom" align="end" width={200}>
           {HOST_BADGE_DISPLAYS.map((option) => (
             <BadgeDisplayMenuItem
@@ -210,11 +198,6 @@ function BadgeDisplayMenuItem({
   );
 }
 
-/**
- * Shows the badge exactly as the sidebar will draw it, next to a sample workspace title on
- * the sidebar surface. The real component, never a restyled copy — a preview that can drift
- * from the thing it previews is worse than no preview.
- */
 function BadgePreview({
   host,
   badgeDisplay,
@@ -235,7 +218,7 @@ function BadgePreview({
           },
     [badgeDisplay, host.serverId, host.label, host.appearance.color],
   );
-  // The real sidebar row, so the preview can't drift from what the setting actually does.
+
   return (
     <View style={styles.preview} testID="host-appearance-preview">
       <Text style={styles.previewTitle} numberOfLines={1}>
@@ -312,23 +295,6 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  trigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  triggerPressed: {
-    opacity: 0.85,
-  },
-  triggerText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
   swatch: {
     width: ICON_SIZE.md,
     height: ICON_SIZE.md,

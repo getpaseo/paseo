@@ -16,6 +16,8 @@ import {
   Info,
   Keyboard,
   Layers,
+  MessageSquare,
+  PanelLeft,
   Link,
   Network,
   Palette,
@@ -66,6 +68,9 @@ export const SETTINGS_PAGE_ICONS: Record<SettingsPageId, LucideIcon> = {
   general: Settings,
   appearance: Palette,
   layout: PanelsTopLeft,
+  sidebar: PanelLeft,
+  chat: MessageSquare,
+  terminal: SquareTerminal,
   editor: Code2,
   shortcuts: Keyboard,
   notifications: Bell,
@@ -169,10 +174,6 @@ interface HostPickerProps {
   onAddHost: () => void;
 }
 
-/**
- * Scopes every host page, whichever group it sits in. A quiet row-styled
- * trigger opening the shared host <Combobox>; "Add host" is always reachable.
- */
 function HostPicker({ activeServerId, sortedHosts, onSelectHost, onAddHost }: HostPickerProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -306,10 +307,6 @@ export interface SettingsNavProps {
   layout: "desktop" | "mobile";
 }
 
-/**
- * Settings navigation: search over every page, then the four groups. Host
- * pages sit in whichever group they belong to and all follow the host picker.
- */
 export function SettingsNav({
   view,
   activeHostServerId,
@@ -330,7 +327,7 @@ export function SettingsNav({
   const hasHost = sortedHosts.length > 0;
   const isDesktopApp = isElectronRuntime();
   const [query, setQuery] = useState("");
-  // SearchField owns its text, so a jump from the results remounts it empty.
+
   const [searchFieldKey, setSearchFieldKey] = useState(0);
   const selectSearchHit = useCallback(
     (page: SettingsPage) => {
@@ -497,7 +494,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[4],
     gap: theme.spacing[0.5],
   },
-  // Small tracked capitals: the group names a region, it is not a row to act on.
+
   groupLabel: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
@@ -519,7 +516,7 @@ const styles = StyleSheet.create((theme) => ({
   itemHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
-  // The current page is filled with ink, whatever accent the user picked.
+
   itemSelected: {
     backgroundColor: theme.colors.foreground,
   },
@@ -563,7 +560,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
   },
-  // Match the page icons' footprint so the host label sits on the same rail.
+
   pickerTriggerDot: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,

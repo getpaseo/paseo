@@ -87,6 +87,11 @@ export function resolveRequiredProviderModel(
   };
 }
 
+export interface AgentWaitWithTimeoutResult extends WaitForAgentResult {
+  /** The wait gave up while the agent was still working. */
+  timedOut: boolean;
+}
+
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.
  * Returns a friendly message when timeout occurs, rather than letting
@@ -99,7 +104,7 @@ export async function waitForAgentWithTimeout(
     signal?: AbortSignal;
     waitForActive?: boolean;
   },
-): Promise<WaitForAgentResult> {
+): Promise<AgentWaitWithTimeoutResult> {
   const timeoutController = new AbortController();
   const combinedController = new AbortController();
 
@@ -134,7 +139,7 @@ export async function waitForAgentWithTimeout(
       signal: combinedController.signal,
       waitForActive: options?.waitForActive,
     });
-    return result;
+    return { ...result, timedOut: false };
   } catch (error) {
     if (error instanceof Error && error.message === "wait timeout") {
       const snapshot = agentManager.getAgent(agentId);
@@ -151,6 +156,7 @@ export async function waitForAgentWithTimeout(
         status: snapshot?.lifecycle ?? "idle",
         permission: null,
         lastMessage: message,
+        timedOut: true,
       };
     }
     throw error;

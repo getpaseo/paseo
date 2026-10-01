@@ -47,13 +47,7 @@ import { isNative } from "@/constants/platform";
 import type { PluginThemeOption } from "@/plugins/themes";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
-import { SidebarNavSection } from "./sidebar-nav-section";
-
-// ---------------------------------------------------------------------------
-// Theme-reactive leaf icons (withUnistyles + uniProps color mapping — no
-// useUnistyles). Icon sizes read the static ICON_SIZE token; the appearance
-// feature does not scale icons.
-// ---------------------------------------------------------------------------
+import { SidebarNavSection } from "@/screens/settings/sidebar/sidebar-nav-section";
 
 const ThemedSun = withUnistyles(Sun);
 const ThemedMoon = withUnistyles(Moon);
@@ -68,16 +62,12 @@ function getThemeLabel(t: TFunction, value: BuiltInThemePreference): string {
   return t(`settings.appearance.theme.options.${value}`);
 }
 
-// Platform default stacks can be the bare native tokens ("normal"/"monospace");
-// those read as a bug, so show a human label in the placeholder instead.
 const BARE_DEFAULT_STACKS: ReadonlySet<string> = new Set(["normal", "monospace"]);
 
 function resolveDefaultStackPlaceholder(t: TFunction, stack: string): string {
   return BARE_DEFAULT_STACKS.has(stack) ? t("settings.appearance.fonts.systemDefault") : stack;
 }
 
-// Local size string (digits only) -> preview override number. Empty/invalid
-// yields undefined so the preview falls back to the committed theme value.
 function sizeDraftToOverride(value: string): number | undefined {
   if (value.length === 0) return undefined;
   const parsed = Number.parseInt(value, 10);
@@ -87,10 +77,6 @@ function sizeDraftToOverride(value: string): number | undefined {
 function dropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
   return [styles.trigger, pressed ? styles.triggerPressed : null];
 }
-
-// ---------------------------------------------------------------------------
-// Theme picker
-// ---------------------------------------------------------------------------
 
 interface ThemeLeadingProps {
   themeValue: BuiltInThemePreference;
@@ -237,7 +223,7 @@ function ThemeRow({
   onSelectPluginTheme,
 }: ThemeRowProps) {
   const { t } = useTranslation();
-  // A selected contribution that is no longer installed shows the fallback the app renders.
+
   const builtInValue = value === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : value;
   const selectedLabel = selectedPluginTheme
     ? selectedPluginTheme.name
@@ -456,10 +442,6 @@ function SessionCardStyleRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Fonts: family text fields + numeric size fields (commit on blur/submit)
-// ---------------------------------------------------------------------------
-
 interface FontFamilyRowProps {
   title: string;
   hint: string;
@@ -487,10 +469,9 @@ function FontFamilyRow({
     onCommit(draft);
   }, [draft, onCommit]);
 
-  // Resync from the committed value when it changes elsewhere.
   useEffect(() => {
     onChangeDraft(value);
-    // Only resync on external value changes, not on local keystrokes.
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
@@ -560,10 +541,6 @@ function FontSizeRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Syntax highlight theme picker (commits immediately)
-// ---------------------------------------------------------------------------
-
 function syntaxLabelForId(id: SyntaxThemeId): string {
   const option = SYNTAX_THEME_OPTIONS.find((entry) => entry.id === id);
   return option ? option.label : id;
@@ -629,10 +606,6 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
 export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
@@ -653,7 +626,6 @@ export function AppearanceSection() {
   const [contentSizeDraft, setContentSizeDraft] = useState(String(settings.contentFontSize));
   const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
 
-  // Resync numeric drafts when the committed value changes elsewhere.
   useEffect(() => {
     setUiBaseSizeDraft(String(settings.uiBaseFontSize));
   }, [settings.uiBaseFontSize]);
@@ -812,9 +784,6 @@ export function AppearanceSection() {
     }
   }, [contentSizeDraft, settings.contentFontSize, updateSettings]);
 
-  // Live-while-typing: the in-progress drafts drive the preview without
-  // committing to the global theme. Empty/invalid fields fall back to the
-  // theme value inside the preview.
   const previewOverrides = useMemo(
     () => ({
       contentFontSize: sizeDraftToOverride(contentSizeDraft),

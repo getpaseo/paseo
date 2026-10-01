@@ -158,7 +158,6 @@ export interface DesktopSavedLogin {
 }
 
 export interface DesktopSavedPasswordList {
-  /** False when the OS offers no secure storage; passwords are then never saved. */
   available: boolean;
   logins: DesktopSavedLogin[];
 }
@@ -170,6 +169,21 @@ export interface DesktopAttachedBrowserRegistration {
 }
 
 export interface DesktopBrowserBridge {
+  tunnel?: {
+    start: (id: string) => Promise<number>;
+    stop: (id: string) => Promise<void>;
+    write: (id: string, data: string) => Promise<void>;
+    close: (id: string) => Promise<void>;
+    resume: (id: string) => Promise<void>;
+    onSocket: (
+      listener: (event: {
+        tunnelId: string;
+        connectionId: string;
+        kind: "open" | "data" | "close";
+        dataBase64?: string;
+      }) => void,
+    ) => Promise<() => void>;
+  };
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;
@@ -182,21 +196,21 @@ export interface DesktopBrowserBridge {
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
   listImportSources?: () => Promise<BrowserImportSource[]>;
-  /** Also copies the cookies into the desktop Paseo browser session. */
+
   readImportCookies?: (
     sourceId: string,
   ) => Promise<{ ok: true; cookies: BrowserImportCookie[] } | { ok: false; error: string }>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;
-  /** Capture a PNG screenshot of the guest viewport cropped to `rect`. */
+
   captureElement?: (
     browserId: string,
     rect: { x: number; y: number; width: number; height: number },
   ) => Promise<string | null>;
-  /** Copy element text and/or an image to the system clipboard from main. */
+
   copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;
-  /** Resolves false when the request expired or the password could not be stored. */
+
   respondToPasswordSave?: (input: {
     requestId: string;
     action: DesktopSavePasswordAction;

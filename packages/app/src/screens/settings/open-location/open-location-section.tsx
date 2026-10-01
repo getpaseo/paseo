@@ -5,6 +5,7 @@ import {
   useAppSettings,
   type OpenInSidePanePreferences,
   type PullRequestOpenLocation,
+  type ServiceUrlBehavior,
 } from "@/hooks/use-settings";
 
 const SOURCES = [
@@ -15,18 +16,26 @@ const SOURCES = [
   "subagents",
 ] as const satisfies readonly (keyof OpenInSidePanePreferences)[];
 
-type LayoutPreferenceSource = keyof OpenInSidePanePreferences | "pullRequests";
+const SERVICE_URL_BEHAVIORS: readonly ServiceUrlBehavior[] = ["ask", "in-app", "external"];
 
-function LayoutPreferenceRow({
+const SERVICE_URL_LABEL_KEYS: Record<ServiceUrlBehavior, string> = {
+  ask: "settings.general.serviceUrls.options.ask",
+  "in-app": "settings.general.serviceUrls.options.inApp",
+  external: "settings.general.serviceUrls.options.external",
+};
+
+type OpenLocationSource = keyof OpenInSidePanePreferences | "pullRequests";
+
+function OpenLocationRow({
   source,
   destination,
   allowExplorer,
   onDestinationChange,
 }: {
-  source: LayoutPreferenceSource;
+  source: OpenLocationSource;
   destination: PullRequestOpenLocation;
   allowExplorer?: boolean;
-  onDestinationChange(source: LayoutPreferenceSource, destination: PullRequestOpenLocation): void;
+  onDestinationChange(source: OpenLocationSource, destination: PullRequestOpenLocation): void;
 }) {
   const { t } = useTranslation();
   const options = useMemo(() => {
@@ -52,11 +61,34 @@ function LayoutPreferenceRow({
   );
 }
 
-export function LayoutSection() {
+function ServiceUrlRow() {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const options = useMemo(
+    () =>
+      SERVICE_URL_BEHAVIORS.map((value) => ({ value, label: t(SERVICE_URL_LABEL_KEYS[value]) })),
+    [t],
+  );
+  const change = useCallback(
+    (serviceUrlBehavior: ServiceUrlBehavior) => void updateSettings({ serviceUrlBehavior }),
+    [updateSettings],
+  );
+  return (
+    <SettingsSelect
+      label={t("settings.layout.openInSidePane.sources.serviceUrls.label")}
+      value={settings.serviceUrlBehavior}
+      options={options}
+      onValueChange={change}
+    />
+  );
+}
+
+/** Where things open: files, diffs, subagents, pull requests, and script URLs. Desktop only. */
+export function OpenLocationSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
   const handleDestinationChange = useCallback(
-    (source: LayoutPreferenceSource, destination: PullRequestOpenLocation) => {
+    (source: OpenLocationSource, destination: PullRequestOpenLocation) => {
       if (source === "pullRequests") {
         void updateSettings({ pullRequestOpenLocation: destination });
         return;
@@ -71,19 +103,20 @@ export function LayoutSection() {
     <SettingsSection title={t("settings.layout.openInSidePane.title")}>
       <SettingsCard>
         {SOURCES.map((source) => (
-          <LayoutPreferenceRow
+          <OpenLocationRow
             key={source}
             source={source}
             destination={settings.openInSidePane[source] ? "side" : "main"}
             onDestinationChange={handleDestinationChange}
           />
         ))}
-        <LayoutPreferenceRow
+        <OpenLocationRow
           source="pullRequests"
           destination={settings.pullRequestOpenLocation}
           allowExplorer
           onDestinationChange={handleDestinationChange}
         />
+        <ServiceUrlRow />
       </SettingsCard>
     </SettingsSection>
   );

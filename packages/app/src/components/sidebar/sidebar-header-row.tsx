@@ -27,12 +27,7 @@ interface SidebarHeaderRowProps {
   testID?: string;
   nativeID?: string;
   accessibilityLabel?: string;
-  /**
-   * "header" (default): a sidebar-height row with its own bottom separator —
-   * the lone header at the top of a sidebar (settings "Back to workspace").
-   * "compact": a workspace-row-height row with no separator, for entries that
-   * sit in a header group whose wrapper owns the single divider.
-   */
+
   variant?: SidebarHeaderRowVariant;
   shortcutKeys?: ShortcutKey[][] | null;
 }
@@ -135,26 +130,23 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    // Match the sidebar workspace-row shape (height, padding, radius) so the
-    // compact header entries sit tight against the workspace list below.
+
     minHeight: 36,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
-  // Compact header entries (New workspace / History) sit tighter than the
-  // workspace-row shape the base button mirrors.
+
   buttonCompact: {
     minHeight: 32,
     paddingVertical: theme.spacing[1.5],
-    // Match the project rows' inner padding so the icons align on one vertical
-    // edge with the workspace list below (base button uses a wider spacing[3]).
+
     paddingHorizontal: theme.spacing[2],
   },
   buttonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
-  // Where you are is filled with ink, as in the settings navigation.
+
   buttonActive: {
     backgroundColor: theme.colors.foreground,
   },

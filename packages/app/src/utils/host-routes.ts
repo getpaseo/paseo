@@ -86,7 +86,6 @@ function tryDecodeBase64UrlNoPadUtf8(input: string): string | null {
     return null;
   }
 
-  // Validate via round-trip to avoid false positives ("workspace-1" etc).
   if (toBase64UrlNoPad(decoded) !== normalized) {
     return null;
   }
@@ -445,7 +444,6 @@ export function buildDashboardRoute() {
   return "/dashboard" as const;
 }
 
-/** The dashboard has its own route so it opens only when asked for, never at startup. */
 export function isLeitstandPathname(pathname: string): boolean {
   return pathname === "/dashboard";
 }
@@ -511,6 +509,10 @@ export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
   "layout",
+  "sidebar",
+  "chat",
+  "terminal",
+  "browser",
   "editor",
   "shortcuts",
   "integrations",

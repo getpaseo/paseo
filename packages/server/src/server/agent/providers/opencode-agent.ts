@@ -193,8 +193,6 @@ const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
 
-// OpenCode child sessions run on the server process that spawned them. Adoption
-// resumes must attach to that same helper server to receive live global events.
 const openCodeChildSessionServerUrls = new Map<string, string>();
 
 function registerOpenCodeChildSessionServerUrl(sessionId: string, serverUrl: string): void {
@@ -265,9 +263,6 @@ function resolveOpenCodeCreateConfig(
       : input.featureValues;
 
   if (inheritsUnattended && requestedMode === undefined) {
-    // Unattendedness for OpenCode is carried by auto_accept (set above), not
-    // by any particular agent. Leave the mode unset so OpenCode uses its own
-    // default agent — `build` may not exist in the user's OpenCode config.
     return { modeId: undefined, featureValues };
   }
 
@@ -639,10 +634,6 @@ function matchesHydratedFingerprint(
   return hydratedFingerprint === JSON.stringify(value);
 }
 
-// `null` = no explicit mode. The `agent` field is then omitted from OpenCode
-// prompt/command calls so OpenCode falls back to its own configured default
-// agent — never assume any particular agent (even `build`) exists, since
-// OpenCode users can define or delete agents at will.
 function normalizeOpenCodeModeId(modeId: string | null | undefined): string | null {
   const trimmed = typeof modeId === "string" ? modeId.trim() : "";
   if (!trimmed || trimmed === "default") {
@@ -722,11 +713,7 @@ function mergeOpenCodeModes(discoveredModes: AgentMode[]): AgentMode[] {
   const filtered = discoveredModes.filter(
     (mode) => mode.id !== OPENCODE_LEGACY_FULL_ACCESS_MODE_ID,
   );
-  // When discovery returns results, trust them exactly — don't inject hardcoded
-  // defaults that the user may have intentionally disabled in their OpenCode config.
-  // When discovery produced nothing, return empty rather than fabricating modes:
-  // OpenCode users can rename or delete any agent, so a hardcoded fallback can
-  // validate a mode that does not actually exist (failing later at prompt time).
+
   return sortOpenCodeModes(filtered);
 }
 
@@ -806,8 +793,7 @@ function buildOpenCodeModelDefinition(
   },
 ): AgentModelDefinition {
   const rawVariants = model.variants ? Object.keys(model.variants) : [];
-  // Like OpenCode's web UI, Default omits `variant` and lets OpenCode resolve it.
-  // Reserve that choice instead of exposing a second upstream `default` entry.
+
   const thinkingOptions = rawVariants.length
     ? [
         { id: OPENCODE_DEFAULT_VARIANT_ID, label: "Default", isDefault: true },
@@ -884,8 +870,6 @@ function buildOpenCodeModelContextWindowLookup(
 
   const connectedProviderIds = new Set(providers.connected ?? []);
   for (const provider of providers.all ?? []) {
-    // Providers with source "api" are managed by the OpenCode console/subscription and are
-    // usable even though they don't appear in `connected` (which only lists env/config providers).
     if (!connectedProviderIds.has(provider.id) && provider.source !== "api") {
       continue;
     }
@@ -1318,7 +1302,10 @@ function buildOpenCodeReplayTimelineEvents(
   }
   if (info.role === "user") {
     const text = parts
-      .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
+      .filter(
+        (part): part is Extract<OpenCodePart, { type: "text" }> =>
+          part.type === "text" && isUserAuthoredOpenCodeText(part),
+      )
       .map((part) => part.text)
       .join("");
 
@@ -1445,24 +1432,16 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.acquireServer(openCodeConfig, launchContext);
-    const { url } = acquisition.server;
-    const client = this.createOpenCodeClient({
-      baseUrl: url,
-      directory: openCodeConfig.cwd,
-    });
+    const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
+    const connection = await connectServer();
+    const { client } = connection;
 
-    // OpenCode stores permission rules on the session, so they are set here and on resume
-    // rather than sent with each prompt, which drops them.
     const permission = buildOpenCodePermissionRules(
       openCodeConfig.providerOptions,
       openCodeConfig.toolPolicy,
     );
 
     try {
-      // Creating the first session for a directory is part of OpenCode coming up, so it
-      // shares the server startup budget instead of a shorter one that fails agent
-      // creation on contended cold starts.
       const response = await withTimeout(
         client.session.create({
           directory: openCodeConfig.cwd,
@@ -1492,16 +1471,17 @@ export class OpenCodeAgentClient implements AgentClient {
         session.id,
         this.logger,
         new Map(this.modelContextWindows),
-        acquisition.events,
-        acquisition.release,
+        connection.events,
+        connection.release,
         options?.persistSession,
         launchContext?.agentId,
-        url,
+        connection.url,
         false,
         unbindBridge,
+        connectServer,
       );
     } catch (error) {
-      await acquisition.release();
+      await connection.release();
       throw error;
     }
   }
@@ -1528,13 +1508,11 @@ export class OpenCodeAgentClient implements AgentClient {
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
       : null;
-    const acquisition =
-      registeredAcquisition ?? (await this.acquireServer(openCodeConfig, launchContext));
-    const { url } = acquisition.server;
-    const client = this.createOpenCodeClient({
-      baseUrl: url,
-      directory: openCodeConfig.cwd,
-    });
+    const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
+    const connection = registeredAcquisition
+      ? this.toServerConnection(registeredAcquisition, openCodeConfig.cwd)
+      : await connectServer();
+    const { client } = connection;
 
     try {
       await this.applySessionPermissionRules(client, openCodeConfig, handle.sessionId);
@@ -1547,16 +1525,17 @@ export class OpenCodeAgentClient implements AgentClient {
         handle.sessionId,
         this.logger,
         new Map(this.modelContextWindows),
-        acquisition.events,
-        acquisition.release,
+        connection.events,
+        connection.release,
         undefined,
         launchContext?.agentId,
-        url,
+        connection.url,
         registeredAcquisition !== null,
         unbindBridge,
+        connectServer,
       );
     } catch (error) {
-      await acquisition.release();
+      await connection.release();
       throw error;
     }
   }
@@ -1576,6 +1555,26 @@ export class OpenCodeAgentClient implements AgentClient {
         `Failed to apply OpenCode session permission rules: ${toDiagnosticErrorMessage(response.error)}`,
       );
     }
+  }
+
+  private async connectServer(
+    config: OpenCodeAgentConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<OpenCodeServerConnection> {
+    const acquisition = await this.acquireServer(config, launchContext);
+    return this.toServerConnection(acquisition, config.cwd);
+  }
+
+  private toServerConnection(
+    acquisition: OpenCodeServerAcquisition,
+    directory: string,
+  ): OpenCodeServerConnection {
+    return {
+      client: this.createOpenCodeClient({ baseUrl: acquisition.server.url, directory }),
+      events: acquisition.events,
+      url: acquisition.server.url,
+      release: acquisition.release,
+    };
   }
 
   private acquireServer(
@@ -1716,7 +1715,6 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    // OpenCode's numeric archive field uses zero as the active-session sentinel.
     await this.setNativeSessionArchived(handle, 0);
   }
 
@@ -1896,10 +1894,6 @@ export class OpenCodeAgentClient implements AgentClient {
     );
 
     if (response.error || !response.data) {
-      // Discovery failed — return an empty list rather than fabricating
-      // modes. OpenCode users can rename or delete any agent (including
-      // "build"/"plan"), so a hardcoded fallback can validate a mode that
-      // does not actually exist, which then fails at prompt time.
       return [];
     }
 
@@ -2379,8 +2373,6 @@ function sumOpenCodeAssistantMessageTokens(
   );
 }
 
-/** Presentation facts observable on a child assistant message. Token sums only count once the
- * message completes, so partial frames don't publish a shrinking total. */
 function readOpenCodeAssistantPresentationFacts(
   info: OpenCodeAssistantMessage,
 ): OpenCodeSubagentPresentationFacts | null {
@@ -2431,9 +2423,7 @@ function appendOpenCodeChildSessionDetected(
   }
 
   const knownChildSessionIds = getOpenCodeKnownChildSessionIds(state);
-  // Known limitation: detection runs once per child, so a session record that gains `agent`
-  // only in a later session.updated is not refreshed here. Assistant-frame facts recover the
-  // descriptor title and subtitle via appendChildAssistantPresentationUpsert.
+
   if (knownChildSessionIds.has(child.id)) {
     return false;
   }
@@ -2446,8 +2436,7 @@ function appendOpenCodeChildSessionDetected(
     ...(child.model?.variant ? { variant: child.model.variant } : {}),
   });
   const title = claimOpenCodeSubagentFallbackTitle(presentation, child.agent);
-  // The row label contract: `description` carries the task (session title fallback), `title`
-  // carries the subagent type. Neither gets a placeholder — absent facts render as nothing.
+
   events.push({
     type: "provider_subagent",
     provider: "opencode",
@@ -2496,11 +2485,6 @@ function linkOpenCodeSubAgentChildSession(
   appendOpenCodeSubAgentLinkPresentation(activity, childSessionId, state, events);
 }
 
-/**
- * When a child session ties to a parent `task` tool call, publish the task's identity onto the
- * descriptor: `description` (task input), `title` (subagent type), `toolCallId`. Presentation
- * only — no `status`, so it can never revert a finished child.
- */
 function appendOpenCodeSubAgentLinkPresentation(
   activity: OpenCodeSubAgentActivityState,
   childSessionId: string,
@@ -2837,6 +2821,10 @@ function shouldSuppressOpenCodeAssistantPart(
   );
 }
 
+function isUserAuthoredOpenCodeText(part: { synthetic?: boolean }): boolean {
+  return part.synthetic !== true;
+}
+
 function appendOpenCodeTextPart(
   part: Extract<
     Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
@@ -2847,7 +2835,11 @@ function appendOpenCodeTextPart(
   events: AgentStreamEvent[],
 ): void {
   if (messageRole === "user") {
-    if (!part.text || state.emittedUserMessageIds?.has(part.messageID)) {
+    if (
+      !part.text ||
+      !isUserAuthoredOpenCodeText(part) ||
+      state.emittedUserMessageIds?.has(part.messageID)
+    ) {
       return;
     }
     state.emittedUserMessageIds?.add(part.messageID);
@@ -3133,11 +3125,6 @@ function appendOpenCodeSessionStatus(
     return;
   }
   if (status.type === "retry") {
-    // Mirror what opencode's TUI shows: retry attempts are visible activity, not
-    // terminal. opencode itself never gives up — it backs off and tries again
-    // forever. If we silently swallow these the user sees a spinner with no
-    // explanation. Forwarding as a timeline error item is a no-op for old
-    // clients (the schema already supports it).
     const message = typeof status.message === "string" ? status.message.trim() : "";
     const text = message
       ? `Provider retry (attempt ${status.attempt}): ${message}`
@@ -3174,19 +3161,9 @@ type OpenCodeTurnState =
 
 type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
 
-/**
- * One in-flight stop of the OpenCode session runner.
- *
- * A stop tracks the run it is stopping: the terminal that run still owes, and
- * the cancellation the caller is still owed. The aborts it issues are tracked by
- * the session instead, because OpenCode's abort is session-scoped rather than
- * turn-scoped and can outlive the stop that issued it. The runner is reusable
- * only once both the terminal and every issued abort have settled.
- */
 interface OpenCodeStop {
-  /** Foreground turn still owed a cancellation acknowledgement; cleared once emitted. */
   pendingCancellationTurnId: string | null;
-  /** Resolves when the canceled run publishes its authoritative terminal. */
+
   readonly terminal: Deferred<void>;
 }
 
@@ -3323,12 +3300,23 @@ async function listOpenCodeChildSessions(
   return readOpenCodeChildSessionInfosFromResponse(sessionIdResponse) ?? [];
 }
 
+interface OpenCodeServerConnection {
+  client: OpencodeClient;
+  events: OpenCodeEventSource;
+  url: string;
+  release: () => Promise<void>;
+}
+
 class OpenCodeAgentSession implements AgentSession {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
 
   private readonly config: OpenCodeAgentConfig;
-  private readonly client: OpencodeClient;
+  private server: OpenCodeServerConnection;
+
+  private readonly connectServer: (() => Promise<OpenCodeServerConnection>) | null;
+  private serverExited = false;
+  private reconnection: Promise<void> | null = null;
   private readonly sessionId: string;
   private readonly logger: Logger;
   private readonly modelContextWindowsByModelKey: ReadonlyMap<string, number>;
@@ -3338,8 +3326,7 @@ class OpenCodeAgentSession implements AgentSession {
   private abortController: AbortController | null = null;
   private accumulatedUsage: AgentUsage = {};
   private sessionTotalCostUsd: number | undefined;
-  private mcpConfigured = false;
-  private mcpSetupPromise: Promise<void> | null = null;
+  private mcpSetup: Promise<void> | null = null;
   private messageRoles = new Map<string, OpenCodeMessageRole>();
   private pendingUserMessageText: string | null = null;
   private pendingClientMessageId: string | null = null;
@@ -3359,11 +3346,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private turnState: OpenCodeTurnState = { status: "idle" };
-  /**
-   * Settlement of every session-scoped abort issued so far. It outlives the stop
-   * that issued it because a request still in flight can cancel a replacement
-   * run, and a rejection means we never proved the runner stopped.
-   */
+
   private abortSettlement: Promise<void> = Promise.resolve();
   private externalStatusReconciliationStarted = false;
   private runnerStatusRevision = 0;
@@ -3386,7 +3369,6 @@ class OpenCodeAgentSession implements AgentSession {
   private childHydrationCompleted = false;
   private readonly unrelatedSessionIds = new Set<string>();
   private selectedModelContextWindowMaxTokens: number | undefined;
-  private releaseServer: (() => Promise<void>) | null;
   private releaseBridge: (() => void) | null;
   private ingress = Promise.resolve();
   private gapRepairRevision = 0;
@@ -3401,30 +3383,45 @@ class OpenCodeAgentSession implements AgentSession {
     sessionId: string,
     logger: Logger,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
-    private readonly events: OpenCodeEventSource = EMPTY_OPENCODE_EVENT_SOURCE,
-    releaseServer?: () => Promise<void>,
+    events: OpenCodeEventSource = EMPTY_OPENCODE_EVENT_SOURCE,
+    releaseServer: () => Promise<void> = async () => undefined,
     persistSession = true,
     private readonly agentId?: string,
-    private readonly serverUrl?: string,
+    serverUrl?: string,
     private readonly externallyDriven = false,
     releaseBridge?: () => void,
+    connectServer?: () => Promise<OpenCodeServerConnection>,
   ) {
     this.config = config;
-    this.client = client;
+    this.server = { client, events, url: serverUrl ?? "", release: releaseServer };
+    this.connectServer = connectServer ?? null;
     this.sessionId = sessionId;
     this.logger = logger.child({ agentId: this.agentId });
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
     this.autoAcceptEnabled = !config.toolPolicy && isOpenCodeAutoAcceptEnabled(config);
-    this.releaseServer = releaseServer ?? null;
     this.releaseBridge = releaseBridge ?? null;
     this.persistSession = persistSession;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
+    this.subscribeServerEvents();
+  }
+
+  private get client(): OpencodeClient {
+    return this.server.client;
+  }
+
+  private get events(): OpenCodeEventSource {
+    return this.server.events;
+  }
+
+  private subscribeServerEvents(): void {
     this.unsubscribeEvents = this.events.subscribe((input) => {
-      if ("type" in input && input.type === "server-exited")
+      if ("type" in input && input.type === "server-exited") {
         this.recoveryAbortController.abort(input.error);
+        this.serverExited = true;
+      }
       this.ingress = this.ingress
         .then(() => this.consumeEventSourceInput(input))
         .catch((error) => {
@@ -3434,6 +3431,41 @@ class OpenCodeAgentSession implements AgentSession {
           );
         });
     });
+  }
+
+  private async reconnectIfServerExited(): Promise<void> {
+    if (!this.serverExited || !this.connectServer) return;
+    this.reconnection ??= this.reconnect(this.connectServer).finally(() => {
+      this.reconnection = null;
+    });
+    await this.reconnection;
+  }
+
+  private async reconnect(connectServer: () => Promise<OpenCodeServerConnection>): Promise<void> {
+    const exited = this.server;
+    const next = await connectServer();
+    if (this.closed) {
+      await next.release();
+      return;
+    }
+    this.unsubscribeEvents?.();
+    this.unsubscribeEvents = null;
+
+    await this.ingress;
+    if (this.closed) {
+      await next.release();
+      return;
+    }
+    this.server = next;
+    this.serverExited = false;
+    this.recoveryAbortController = new AbortController();
+    this.mcpSetup = null;
+    this.subscribeServerEvents();
+    this.logger.info(
+      { sessionId: this.sessionId, previousUrl: exited.url, url: next.url },
+      "OpenCode session moved to the current server after its server exited",
+    );
+    await exited.release();
   }
 
   get id(): string | null {
@@ -3486,17 +3518,12 @@ class OpenCodeAgentSession implements AgentSession {
     this.abortController?.abort();
     const abort = this.issueStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
-    // the running tool actually stops, which can be tens of seconds for
-    // long-running tools. Cap the wait so the user-visible cancel lands
-    // quickly while still giving OpenCode a chance to confirm the abort
-    // cleanly. Drop the timeout once upstream returns abort acknowledgement
-    // before tool teardown.
+
     const settledAbort = abort.then(
       () => undefined,
       (error: unknown) => error,
     );
-    // Only the cap is tolerated. A settled failure means the runner may still be
-    // going, and the caller must hear about it.
+
     const abortFailure = await withTimeout(settledAbort, 2_000, "OpenCode session.abort").catch(
       (error) => {
         this.logger.warn(
@@ -3601,6 +3628,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async revertBoth(input: { messageId: string }): Promise<void> {
+    await this.reconnectIfServerExited();
     await revertOpenCodeConversationAndFiles({
       client: this.client,
       sessionId: this.sessionId,
@@ -3630,22 +3658,13 @@ class OpenCodeAgentSession implements AgentSession {
       });
   }
 
-  /**
-   * Gate every runner-affecting operation on the previous stop. OpenCode runs one
-   * runner per session and aborts it session-wide, so a replacement may start
-   * only once the canceled run published its terminal and our own abort settled.
-   * A failed abort never proved the runner stopped, so it fails closed until the
-   * next Stop issues a fresh one.
-   */
   private async awaitRunnerQuiescence(): Promise<void> {
     const providerIdle = this.waitUntilProviderIdle();
-    // A failed abort is decisive on its own, so let it reject this wait without
-    // leaving the still-running observation unhandled.
+
     void providerIdle.catch(() => undefined);
     let observed = this.abortSettlement;
     await Promise.all([observed, providerIdle]);
-    // Stop can issue a further abort while we waited, and the settlement is
-    // replaced rather than mutated, so drain until what we observed is current.
+
     while (this.abortSettlement !== observed) {
       observed = this.abortSettlement;
       await observed;
@@ -3704,7 +3723,7 @@ class OpenCodeAgentSession implements AgentSession {
       throw new Error("OpenCode returned an invalid session status response");
     }
     const status = readOpenCodeRecord(statuses[this.sessionId]);
-    // OpenCode drops idle sessions from the status map entirely.
+
     if (!status) {
       return "idle";
     }
@@ -3725,6 +3744,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
+    await this.reconnectIfServerExited();
     try {
       await this.awaitRunnerQuiescence();
     } catch (error) {
@@ -3801,8 +3821,6 @@ class OpenCodeAgentSession implements AgentSession {
         return { turnId };
       }
 
-      // command() is only dispatch acknowledgement. OpenCode session events are
-      // the source of truth for when the command turn becomes idle or fails.
       this.activeDispatchMessageId = createOpenCodeMessageId();
       void this.client.session
         .command({
@@ -3856,9 +3874,7 @@ class OpenCodeAgentSession implements AgentSession {
     } else {
       const dispatchMessageId = createOpenCodeMessageId();
       this.activeDispatchMessageId = dispatchMessageId;
-      // Wrap in an async IIFE so a synchronous throw from promptAsync (e.g.
-      // SDK input validation) is caught alongside async rejections. A plain
-      // `.then().catch()` chain would let a sync throw escape unhandled.
+
       void (async () => {
         this.traceOpenCode("provider.opencode.prompt_async.start", {
           turnId,
@@ -4179,11 +4195,6 @@ class OpenCodeAgentSession implements AgentSession {
     return messages;
   }
 
-  /**
-   * After replaying a historical child, derive presentation facts from the last assistant
-   * message (the session record's agent/model were already folded at detection) and publish
-   * any missing title plus the updated subtitle once. Presentation-only: no `status`.
-   */
   private emitHydratedChildPresentation(
     child: OpenCodeChildSessionInfo,
     messages: ReadonlyArray<OpenCodeSessionMessage>,
@@ -4231,8 +4242,8 @@ class OpenCodeAgentSession implements AgentSession {
       if (event.event.cwd) {
         this.childSessionCwds.set(event.event.id, event.event.cwd);
       }
-      if (this.serverUrl) {
-        registerOpenCodeChildSessionServerUrl(event.event.id, this.serverUrl);
+      if (this.server.url) {
+        registerOpenCodeChildSessionServerUrl(event.event.id, this.server.url);
       }
     } else if (event.event.type === "remove") {
       unregisterOpenCodeChildSessionServerUrl(event.event.id);
@@ -4511,9 +4522,7 @@ class OpenCodeAgentSession implements AgentSession {
     ) {
       return false;
     }
-    // Residue of the canceled run must not surface as a new turn. Its terminal
-    // is the authoritative end of the stop, so anything OpenCode publishes
-    // afterwards belongs to a new run by construction and takes the live path.
+
     if (isOpenCodeTerminalEvent(event, this.sessionId)) {
       this.finishStoppingTurn(this.turnState.stop);
     }
@@ -4543,8 +4552,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.turnState.status !== "idle") {
       return false;
     }
-    // Message records are mutable and can be patched after the runner stops.
-    // Only OpenCode's execution status is authoritative for autonomous activity.
+
     const runnerStatus = getOpenCodeRunnerStatusFromEvent(event, this.sessionId);
     return runnerStatus !== null && isOpenCodeRunnerActive(runnerStatus);
   }
@@ -4598,10 +4606,6 @@ class OpenCodeAgentSession implements AgentSession {
 
   private issueStop(turnId: string | null): Promise<void> {
     if (this.turnState.status === "stopping") {
-      // Stop pressed again during a stop retries that same stop. There is one
-      // runner per session, so a second boundary would race the first — and
-      // after a failed abort, a fresh one is both the only proof that can still
-      // acknowledge the canceled turn and the only way out of fail-closed.
       return this.issueOwnedAbort(this.turnState.stop);
     }
     const stop: OpenCodeStop = {
@@ -4611,8 +4615,7 @@ class OpenCodeAgentSession implements AgentSession {
     const abort = this.issueOwnedAbort(stop);
     if (turnId) {
       this.synthesizeInterruptedToolCalls(turnId);
-      // An idle session has no run to observe, so only abort settlement gates
-      // reuse there. A running one also owes the canceled run's terminal.
+
       this.turnState = { status: "stopping", stop };
     }
     this.pendingUserMessageText = null;
@@ -4624,15 +4627,11 @@ class OpenCodeAgentSession implements AgentSession {
 
   private issueOwnedAbort(stop: OpenCodeStop): Promise<void> {
     const abort = this.runOwnedAbort(stop.pendingCancellationTurnId);
-    // Abort is session-scoped, so its settlement is too: an older request lands
-    // on the runner whenever the server gets to it, however many stops have come
-    // and gone since. Only the newest abort may hold the gate closed, since
-    // recovering from a failed one is what pressing Stop again is for.
+
     const stillInFlight = this.abortSettlement.catch(() => undefined);
     this.abortSettlement = Promise.all([stillInFlight, abort]).then(() => undefined);
     void this.abortSettlement.catch(() => undefined);
-    // Cancellation is acknowledged as soon as an owned abort succeeds, or when
-    // the provider publishes the canceled run's terminal.
+
     void abort.then(
       () => this.acknowledgeCancellation(stop),
       () => undefined,
@@ -4652,13 +4651,7 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  /**
-   * Issues the session-scoped abort for one stop, retrying it once. The stop owns
-   * every abort it needs: a detached retry would outlive its own boundary and
-   * cancel whichever run happened to be current when it landed.
-   */
   private runOwnedAbort(turnId: string | null): Promise<void> {
-    // The turn hop also converts a synchronous SDK throw into a rejection.
     return Promise.resolve()
       .then(() => this.abortSession(turnId, "interrupt"))
       .catch((error) => {
@@ -4673,8 +4666,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (!this.isStopping(stop)) {
       return;
     }
-    // Acknowledge before leaving the stopping state so a successor run adopted
-    // from the very next event cannot start ahead of the cancellation.
+
     this.acknowledgeCancellation(stop);
     resetOpenCodeTurnTrackingState(this.createTranslationState());
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
@@ -4764,6 +4756,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    await this.reconnectIfServerExited();
     const sessionResponse = await this.client.session.get({
       sessionID: this.sessionId,
       directory: this.config.cwd,
@@ -4793,6 +4786,7 @@ class OpenCodeAgentSession implements AgentSession {
       return this.availableModesCache;
     }
 
+    await this.reconnectIfServerExited();
     const response = await openCodeMetadataLimit(() =>
       this.client.app.agents({
         directory: this.config.cwd,
@@ -4811,6 +4805,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
+    await this.reconnectIfServerExited();
     return await listOpenCodeCommandsFromSdk(this.client, this.config.cwd);
   }
 
@@ -4928,8 +4923,7 @@ class OpenCodeAgentSession implements AgentSession {
     } finally {
       this.releaseBridge?.();
       this.releaseBridge = null;
-      await this.releaseServer?.();
-      this.releaseServer = null;
+      await this.server.release();
     }
   }
 
@@ -5005,26 +4999,19 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async ensureMcpServersConfigured(): Promise<void> {
-    if (this.mcpConfigured) {
-      return;
-    }
-
     const mcpServers = this.config.mcpServers ?? {};
     const blockedServers = this.config.daemonBlockedMcpServers ?? [];
     if (Object.keys(mcpServers).length === 0 && blockedServers.length === 0) {
-      this.mcpConfigured = true;
       return;
     }
 
-    if (!this.mcpSetupPromise) {
-      this.mcpSetupPromise = this.configureMcpServers(mcpServers, blockedServers);
-    }
-
+    const setup = (this.mcpSetup ??= this.configureMcpServers(mcpServers, blockedServers));
     try {
-      await this.mcpSetupPromise;
-      this.mcpConfigured = true;
+      await setup;
     } catch (error) {
-      this.mcpSetupPromise = null;
+      if (this.mcpSetup === setup) {
+        this.mcpSetup = null;
+      }
       throw error;
     }
   }
@@ -5038,8 +5025,7 @@ class OpenCodeAgentSession implements AgentSession {
         this.registerMcpServer(name, toOpenCodeMcpConfig(serverConfig)),
       ),
     );
-    // Scoped to this directory's instance of Paseo's OpenCode server; the user's
-    // own OpenCode sessions keep their servers. Unknown names are not an error.
+
     await Promise.all(
       blockedServers
         .filter((name) => !(name in mcpServers))
@@ -5223,11 +5209,6 @@ class OpenCodeAgentSession implements AgentSession {
     return events;
   }
 
-  /**
-   * Fold presentation facts (agent, model, variant, completed-message tokens) off a child
-   * assistant `message.updated` frame and emit the missing title and/or changed subtitle.
-   * Never carries `status`: a presentation upsert must not revert a finished child.
-   */
   private appendChildAssistantPresentationUpsert(
     sessionId: string,
     event: OpenCodeEvent,

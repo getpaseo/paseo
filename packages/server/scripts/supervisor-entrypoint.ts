@@ -172,10 +172,11 @@ async function main(): Promise<void> {
       : undefined,
     restartOnCrash: true,
     logFile: supervisorLogFile,
-    onWorkerReady: async ({ listen }) => {
-      await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
+    onWorkerReady: async ({ listen, serverId }) => {
+      await updatePidLock(paseoHome, { listen, serverId }, { ownerPid: process.pid });
     },
-    onWorkerExit: () => updatePidLock(paseoHome, { listen: null }, { ownerPid: process.pid }),
+    onWorkerExit: () =>
+      updatePidLock(paseoHome, { listen: null, serverId: null }, { ownerPid: process.pid }),
     onSupervisorExit: releaseLock,
   });
   requestSupervisorShutdown = supervisor.requestShutdown;

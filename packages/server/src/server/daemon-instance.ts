@@ -33,6 +33,7 @@ export {
 } from "./home-migration.js";
 export { ensurePrivateDirectory } from "./private-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
+export { readLocalCredentialForTarget } from "./local-credential.js";
 export {
   isSamePidLock as isSameDaemonInstance,
   type PidLockInfo as DaemonInstance,

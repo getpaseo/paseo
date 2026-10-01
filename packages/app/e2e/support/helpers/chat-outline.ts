@@ -83,7 +83,7 @@ export async function splitCurrentPanelRight(page: Page): Promise<void> {
 export async function disableChatOutlineFromAppearance(page: Page): Promise<void> {
   const timelineUrl = page.url();
   await openSettings(page);
-  await openSettingsSection(page, "appearance");
+  await openSettingsSection(page, "chat");
   await page.getByRole("switch", { name: "Chat outline" }).click();
   await page.goto(timelineUrl);
 }

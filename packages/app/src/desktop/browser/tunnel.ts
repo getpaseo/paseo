@@ -60,6 +60,7 @@ async function listen() {
         };
         connections.set(event.connectionId, connection);
         observation.subscribe({
+          snapshot: () => {},
           update: (message) => {
             if (message.type !== "browser.tunnel.data") return;
             connection.incoming = connection.incoming
@@ -155,8 +156,6 @@ export function originalBrowserUrl(value: string): string {
       if (url.origin === tunnel.localOrigin)
         return tunnel.origin + url.pathname + url.search + url.hash;
     }
-  } catch {
-    /* about:blank has no website origin. */
-  }
+  } catch {}
   return value;
 }

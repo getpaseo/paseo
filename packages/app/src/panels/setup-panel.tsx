@@ -150,6 +150,7 @@ function BlockedSetupNotice({
   return (
     <>
       <Alert
+        size="sm"
         variant="warning"
         title={t("workspace.setup.blocked.title")}
         description={t("workspace.setup.blocked.description", {
@@ -163,7 +164,7 @@ function BlockedSetupNotice({
           </Button>
         ) : null}
       </Alert>
-      {runError ? <Alert variant="error" description={runError} /> : null}
+      {runError ? <Alert size="sm" variant="error" description={runError} /> : null}
     </>
   );
 }

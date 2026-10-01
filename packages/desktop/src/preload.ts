@@ -1,13 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
+import type { BrowserTunnelEvent } from "./features/browser-tunnel.js";
 
-// This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
-// NOT emit any runtime module load other than "electron" — a require() of a local or
-// third-party module throws and aborts the preload before exposeInMainWorld runs, leaving
-// window.paseoDesktop undefined (the 0.1.108 regression, #2103). Keep this literal in sync
-// with PASEO_BROWSER_PROFILE_PARTITION in features/browser-profile.ts; preload-sandbox.test.ts
-// guards both the no-local-import rule and this drift. Type-only imports are fine (erased at emit).
 const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
 
 type EventHandler = (payload: unknown) => void;
@@ -114,6 +109,22 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
+    tunnel: {
+      start: (id: string) => ipcRenderer.invoke("paseo:browser:tunnel:start", id),
+      stop: (id: string) => ipcRenderer.invoke("paseo:browser:tunnel:stop", id),
+      write: (id: string, data: string) =>
+        ipcRenderer.invoke("paseo:browser:tunnel:write", id, data),
+      close: (id: string) => ipcRenderer.invoke("paseo:browser:tunnel:close", id),
+      resume: (id: string) => ipcRenderer.invoke("paseo:browser:tunnel:resume", id),
+      onSocket: (handler: (event: BrowserTunnelEvent) => void): Promise<() => void> => {
+        const listener = (_event: Electron.IpcRendererEvent, payload: BrowserTunnelEvent) =>
+          handler(payload);
+        ipcRenderer.on("paseo:browser:tunnel:socket", listener);
+        return Promise.resolve(() =>
+          ipcRenderer.removeListener("paseo:browser:tunnel:socket", listener),
+        );
+      },
+    },
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,

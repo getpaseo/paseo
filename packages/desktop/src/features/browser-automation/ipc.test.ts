@@ -1,7 +1,47 @@
 import { describe, expect, test, vi } from "vitest";
+import { EventEmitter, once } from "node:events";
+import { createConnection } from "node:net";
+import { BrowserTunnelHost } from "../browser-tunnel.js";
 import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
+
+test("browser tunnel transports real socket bytes, owns connections and closes its listener", async () => {
+  const events = new EventEmitter();
+  const host = new BrowserTunnelHost((event) => events.emit(event.kind, event));
+  const otherHost = new BrowserTunnelHost(() => {});
+  const port = await host.start("website-1");
+  const opened = once(events, "open");
+  const socket = createConnection({ host: "127.0.0.1", port });
+  try {
+    expect(await host.start("website-1")).toBe(port);
+    const [connection] = await opened;
+    const incoming = once(events, "data");
+    socket.write("request");
+    host.resume(connection.connectionId);
+    const [frame] = await incoming;
+    expect(Buffer.from(frame.dataBase64, "base64").toString()).toBe("request");
+    expect(() => otherHost.write(connection.connectionId, "b2s=")).toThrow(
+      "Unknown tunnel connection",
+    );
+    expect(() => host.write(connection.connectionId, "invalid")).toThrow("Invalid tunnel data");
+    const response = once(socket, "data");
+    await host.write(connection.connectionId, Buffer.from("response").toString("base64"));
+    expect((await response)[0].toString()).toBe("response");
+    const closed = once(events, "close");
+    await host.stop("website-1");
+    expect((await closed)[0].connectionId).toBe(connection.connectionId);
+    const rejected = createConnection({ host: "127.0.0.1", port });
+    const [error] = await once(rejected, "error");
+    expect(error.code).toBe("ECONNREFUSED");
+    rejected.destroy();
+    expect(() => host.start("../invalid")).toThrow("Invalid tunnel ID");
+  } finally {
+    socket.destroy();
+    await host.dispose();
+    await otherHost.dispose();
+  }
+});
 
 class FakeImage implements TabImage {
   public toPNG(): Uint8Array {

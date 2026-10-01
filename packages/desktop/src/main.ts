@@ -53,6 +53,7 @@ import {
 } from "./features/notifications.js";
 import { createExternalUrlOpener } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
+import { BrowserTunnelHost } from "./features/browser-tunnel.js";
 import { readImportCookiesIntoSession } from "./features/browser-cookie-import.js";
 import { listBrowserImportSources } from "@getpaseo/server/browser-import";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
@@ -117,7 +118,7 @@ import {
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
-// Keep the renderer origin stable; the branded scheme remains an additive alias.
+
 const APP_SCHEME = "paseo";
 const APP_SCHEME_ALIASES = [APP_SCHEME, "pandaos"] as const;
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
@@ -132,9 +133,6 @@ const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 
-// A second-instance launch can arrive before the packaged protocol handler,
-// IPC handlers, and first window exist. Wait for full bootstrap, not just
-// app.whenReady(), before delivering navigation to the renderer.
 let resolveBootstrapComplete: () => void;
 const bootstrapComplete = new Promise<void>((resolve) => {
   resolveBootstrapComplete = resolve;
@@ -304,8 +302,6 @@ function installBrowserWindowOpenHandler(input: {
   });
 }
 
-// In dev mode, detect git worktrees and isolate each instance so multiple
-// Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
 const forcedUserDataDir = process.env.PASEO_ELECTRON_USER_DATA_DIR?.trim();
 if (forcedUserDataDir) {
@@ -319,7 +315,7 @@ if (forcedUserDataDir) {
       windowsHide: true,
     }).trim();
     devWorktreeName = path.basename(topLevel);
-    // Main checkout (e.g. "paseo") gets default userData — only worktrees diverge.
+
     const commonDir = path.resolve(
       topLevel,
       execFileSync("git", ["rev-parse", "--git-common-dir"], {
@@ -341,9 +337,6 @@ if (forcedUserDataDir) {
   }
 }
 
-// Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
-// rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
-// Must run before app.whenReady().
 const electronFlags = process.env.PASEO_ELECTRON_FLAGS?.trim();
 if (electronFlags) {
   for (const token of electronFlags.split(/\s+/)) {
@@ -354,7 +347,6 @@ if (electronFlags) {
 }
 
 if (process.platform === "linux") {
-  // Keep the desktop/dock identity independent of the wrapped Electron filename.
   app.setDesktopName("PandaOS.desktop");
   if (!app.commandLine.hasSwitch("class")) app.commandLine.appendSwitch("class", "PandaOS");
   log.info("[linux-sandbox]", {
@@ -369,10 +361,6 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
 });
 let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
 
-// Each window pulls its own pending open-project path on mount, keyed by
-// webContents id, so deep-linked windows (second-instance launches, the
-// in-app "Open in new window" action) land on the right project without
-// racing a global.
 let desktopWindowOwner: DesktopWindowOwner<AgentDeepLinkTarget>;
 
 if (PASEO_DEBUG) {
@@ -381,8 +369,6 @@ if (PASEO_DEBUG) {
   log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
 }
 
-// The renderer pulls the pending path on mount via IPC — this avoids
-// a race where the push event arrives before React registers its listener.
 ipcMain.handle("paseo:get-pending-open-project", (event) => {
   const webContentsId = event.sender.id;
   const result = desktopWindowOwner.takePendingProject(webContentsId);
@@ -395,6 +381,38 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
 
 ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
+});
+
+const browserTunnelHosts = new Map<number, BrowserTunnelHost>();
+
+function browserTunnelFor(sender: Electron.WebContents): BrowserTunnelHost {
+  if (BrowserWindow.fromWebContents(sender)?.webContents !== sender) {
+    throw new Error("Browser tunnels require an application window");
+  }
+  let host = browserTunnelHosts.get(sender.id);
+  if (!host) {
+    host = new BrowserTunnelHost((event) => {
+      if (!sender.isDestroyed()) sender.send("paseo:browser:tunnel:socket", event);
+    });
+    browserTunnelHosts.set(sender.id, host);
+    const ownedHost = host;
+    sender.once("destroyed", () => {
+      browserTunnelHosts.delete(sender.id);
+      void ownedHost.dispose().catch((error) => log.warn("Browser tunnel cleanup failed", error));
+    });
+  }
+  return host;
+}
+
+for (const operation of ["start", "stop", "close", "resume"] as const) {
+  ipcMain.handle(`paseo:browser:tunnel:${operation}`, (event, id: unknown) => {
+    if (typeof id !== "string") throw new Error("Invalid tunnel identifier");
+    return browserTunnelFor(event.sender)[operation](id);
+  });
+}
+ipcMain.handle("paseo:browser:tunnel:write", (event, id: unknown, data: unknown) => {
+  if (typeof id !== "string" || typeof data !== "string") throw new Error("Invalid tunnel write");
+  return browserTunnelFor(event.sender).write(id, data);
 });
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
@@ -579,8 +597,6 @@ registerBrowserPasswordsIpc(
     vault: new PasswordVault({
       filePath: path.join(app.getPath("userData"), "browser-passwords.json"),
       crypto: {
-        // Linux without a keyring falls back to a hard-coded key ("basic_text"); treat that as no
-        // encryption so passwords are never stored effectively in plaintext.
         isAvailable: () =>
           safeStorage.isEncryptionAvailable() &&
           (process.platform !== "linux" ||
@@ -610,10 +626,6 @@ protocol.registerSchemesAsPrivileged(
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   })),
 );
-
-// ---------------------------------------------------------------------------
-// Window creation
-// ---------------------------------------------------------------------------
 
 function getPreloadPath(): string {
   return path.join(__dirname, "preload.js");
@@ -688,7 +700,6 @@ async function getEffectiveAppIconPath(): Promise<string | null> {
 }
 
 async function applyAppIcon(): Promise<void> {
-  // Packaged apps keep the bundle icon and its macOS system appearance.
   if (app.isPackaged || process.platform !== "darwin") {
     return;
   }
@@ -706,8 +717,6 @@ async function applyAppIcon(): Promise<void> {
   app.dock?.setIcon(icon);
 }
 
-// Work areas with the primary display first, so window-state clamping treats
-// it as the fallback. getAllDisplays() order is not guaranteed to lead with it.
 function getWorkAreasPrimaryFirst(): Electron.Rectangle[] {
   const primary = screen.getPrimaryDisplay();
   const others = screen.getAllDisplays().filter((display) => display.id !== primary.id);
@@ -725,10 +734,6 @@ async function createWindow(
   const iconPath = await getEffectiveAppIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
-  // Only the first window of a session restores and persists saved geometry.
-  // Additional windows (⌘N, second-instance, "Open in new window") open at the
-  // default size and let the OS cascade them, so they neither stack on top of
-  // the restored window nor fight over the single window-state store.
   const restoreWindowState = options.restoreWindowState ?? false;
   const windowStateStore = restoreWindowState
     ? createWindowStateStore({ userDataPath: app.getPath("userData") })
@@ -793,8 +798,7 @@ async function createWindow(
       return;
     }
     webPreferences.nodeIntegration = false;
-    // The sandboxed keyboard preload must run in every frame so focused iframes keep
-    // the same page-first shortcut boundary. Node integration remains disabled.
+
     webPreferences.nodeIntegrationInSubFrames = true;
     webPreferences.nodeIntegrationInWorker = false;
     webPreferences.contextIsolation = true;
@@ -876,10 +880,6 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
     agentNavigationInbox.deliverOrQueue(webContentsId, target),
 });
 
-// ---------------------------------------------------------------------------
-// App lifecycle
-// ---------------------------------------------------------------------------
-
 function receiveAgentDeepLink(input: string): void {
   const target = parseAgentDeepLink(input);
   if (!target) {
@@ -938,9 +938,7 @@ function setupSingleInstanceLock(): boolean {
       isDefaultApp: false,
     });
     log.info("[open-project] second-instance openProjectPath:", openProjectPath);
-    // Relaunching the app (CLI `paseo [path]`, double-click, etc.) opens a new
-    // window rather than focusing the existing one. Wait for bootstrap (not just
-    // app.whenReady) so the protocol + IPC handlers exist before the window loads.
+
     void bootstrapComplete
       .then(() => desktopWindowOwner.openAdditional({ pendingProjectPath: openProjectPath }))
       .catch((error) => {
@@ -981,8 +979,6 @@ async function bootstrap(): Promise<void> {
     const { pathname, search, hash } = new URL(request.url);
     const decodedPath = decodeURIComponent(pathname);
 
-    // Chromium can occasionally request the exported entrypoint directly.
-    // Canonicalize it back to the route URL so Expo Router sees `/`, not `/index.html`.
     if (decodedPath.endsWith("/index.html")) {
       const normalizedPath = decodedPath.slice(0, -"/index.html".length) || "/";
       return Response.redirect(`${APP_SCHEME}://app${normalizedPath}${search}${hash}`, 307);
@@ -995,7 +991,6 @@ async function bootstrap(): Promise<void> {
       return new Response("Not found", { status: 404 });
     }
 
-    // SPA fallback: serve index.html for routes without a file extension
     if (!relativePath || !path.extname(relativePath)) {
       return net.fetch(pathToFileURL(path.join(appDistDir, "index.html")).toString());
     }
@@ -1024,8 +1019,6 @@ async function bootstrap(): Promise<void> {
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
 
-  // In-app "Open in new window": opens a window that lands on the given project
-  // via the same open-project flow as a CLI launch (no move, no ownership).
   ipcMain.handle("paseo:window:openNew", async (_event, options?: unknown) => {
     const pendingPath =
       options && typeof options === "object" && "pendingOpenProjectPath" in options
@@ -1036,7 +1029,6 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  // The first window of the session restores and persists saved geometry.
   const initialAgentNavigation = pendingAgentNavigation;
   pendingAgentNavigation = null;
   await desktopWindowOwner.openPrimary({
@@ -1045,8 +1037,6 @@ async function bootstrap(): Promise<void> {
   });
   pendingOpenProjectPath = null;
 
-  // Protocol + IPC handlers and the first window now exist: release any
-  // second-instance launches that arrived during cold start.
   bootstrapIsComplete = true;
   resolveBootstrapComplete();
 
@@ -1107,7 +1097,6 @@ const quitLifecycle = createQuitLifecycle({
   },
 });
 
-// electron-updater forwards this event through Electron's built-in autoUpdater.
 electronAutoUpdater.on("before-quit-for-update", () => {
   log.info("[auto-updater] before-quit-for-update", { currentVersion: app.getVersion() });
   quitLifecycle.handleBeforeQuitForUpdate();

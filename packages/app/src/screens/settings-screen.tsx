@@ -24,7 +24,11 @@ import {
   SettingsSection,
 } from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
-import { LayoutSection } from "@/screens/settings/layout/layout-section";
+import { OpenLocationSection as LayoutSection } from "@/screens/settings/open-location/open-location-section";
+import { ChatSection } from "@/screens/settings/chat/chat-section";
+import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
+import { SidebarNavSection } from "@/screens/settings/sidebar/sidebar-nav-section";
+import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import {
   useAppSettings,
   useSettings,
@@ -148,10 +152,6 @@ function renderHostSettingsContent(
   }
 }
 
-function themeTriggerStyle({ pressed }: PressableStateCallbackType) {
-  return [styles.themeTrigger, pressed && { opacity: 0.85 }];
-}
-
 function getSendBehaviorOptions(t: TFunction) {
   return [
     { value: "interrupt" as const, label: t("settings.general.defaultSend.options.interrupt") },
@@ -175,10 +175,6 @@ function getActiveLocale(language: string | undefined): SupportedLocale {
 }
 
 const SERVICE_URL_BEHAVIOR_VALUES: ServiceUrlBehavior[] = ["ask", "in-app", "external"];
-
-// ---------------------------------------------------------------------------
-// Section components
-// ---------------------------------------------------------------------------
 
 interface GeneralSectionProps {
   settings: AppSettings;
@@ -316,9 +312,8 @@ function GeneralSection({
             <DropdownTrigger
               accessibilityRole="button"
               accessibilityLabel={`${t("settings.general.defaultSend.label")}: ${selectedSendBehaviorLabel}`}
-              style={themeTriggerStyle}
             >
-              <Text style={styles.themeTriggerText}>{selectedSendBehaviorLabel}</Text>
+              {selectedSendBehaviorLabel}
             </DropdownTrigger>
             <DropdownMenuContent side="bottom" align="end" width={200}>
               {sendBehaviorOptions.map((option) => (
@@ -339,12 +334,8 @@ function GeneralSection({
             <Text style={settingsStyles.rowHint}>{t("settings.general.language.description")}</Text>
           </View>
           <DropdownMenu>
-            <DropdownTrigger
-              accessibilityRole="button"
-              accessibilityLabel={selectedLanguageLabel}
-              style={themeTriggerStyle}
-            >
-              <Text style={styles.themeTriggerText}>{selectedLanguageLabel}</Text>
+            <DropdownTrigger accessibilityRole="button" accessibilityLabel={selectedLanguageLabel}>
+              {selectedLanguageLabel}
             </DropdownTrigger>
             <DropdownMenuContent side="bottom" align="end" width={300}>
               {LANGUAGE_OPTIONS.map((option) => (
@@ -368,10 +359,8 @@ function GeneralSection({
               </Text>
             </View>
             <DropdownMenu>
-              <DropdownTrigger style={themeTriggerStyle}>
-                <Text style={styles.themeTriggerText}>
-                  {getServiceUrlBehaviorLabel(t, settings.serviceUrlBehavior)}
-                </Text>
+              <DropdownTrigger>
+                {getServiceUrlBehaviorLabel(t, settings.serviceUrlBehavior)}
               </DropdownTrigger>
               <DropdownMenuContent side="bottom" align="end" width={200}>
                 {SERVICE_URL_BEHAVIOR_VALUES.map((value) => (
@@ -786,10 +775,6 @@ function DesktopAppUpdateRow() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main screen
-// ---------------------------------------------------------------------------
-
 export interface SettingsScreenProps {
   view: SettingsView;
   openAddHostIntent?: string | null;
@@ -835,8 +820,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     }, [lastWorkspaceSelection?.serverId, routedSettingsHostServerId]),
   );
 
-  // The host every host page scopes to: the host on the active view, otherwise
-  // the picker choice, otherwise the connected local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
     if (view.kind === "host" || view.kind === "project" || view.kind === "plugin")
       return view.serverId;
@@ -977,8 +960,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [isCompactLayout, router],
   );
 
-  // Picker: choose the host for host-section rows. If the user is already on a
-  // host detail route, keep that detail section and swap only the host segment.
   const handleSelectHost = useCallback(
     (serverId: string) => {
       setSelectedSettingsHostServerId(serverId);
@@ -1086,6 +1067,15 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [crumbLabel],
   );
 
+  const sectionContent = useMemo<Partial<Record<SettingsSectionSlug, ReactNode>>>(
+    () => ({
+      sidebar: <SidebarNavSection />,
+      chat: <ChatSection />,
+      terminal: <TerminalSection />,
+      browser: isDesktopApp ? <BrowserDataSection /> : null,
+    }),
+    [isDesktopApp],
+  );
   let content: ReactNode;
   if (view.kind === "section" && view.section === "layout") {
     content = isDesktopApp ? <LayoutSection /> : null;
@@ -1113,6 +1103,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         );
       }
       if (view.kind === "section") {
+        if (sectionContent[view.section] !== undefined) return sectionContent[view.section];
         switch (view.section) {
           case "general":
             return (
@@ -1212,7 +1203,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     </>
   );
 
-  // Mobile root: full-screen sidebar-as-list.
   if (isCompactLayout && view.kind === "root") {
     return (
       <View style={styles.container}>
@@ -1248,9 +1238,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     );
   }
 
-  // Desktop split view — mirrors AppContainer: sidebar owns the titlebar drag
-  // region + traffic-light padding; detail pane renders whatever header the
-  // selected section provides.
   return (
     <View style={styles.container}>
       <View style={desktopStyles.row}>
@@ -1281,10 +1268,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     </View>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create((theme) => ({
   loadingContainer: {
