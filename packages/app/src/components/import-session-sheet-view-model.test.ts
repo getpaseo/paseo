@@ -7,6 +7,7 @@ import {
   collectProviderErrorRows,
   computeEmptyState,
   formatDirectoryLabel,
+  getImportErrorMessage,
   getPromptPreview,
   getSessionTitle,
   hasMoreSessions,
@@ -464,5 +465,26 @@ describe("computeEmptyState", () => {
       aggregatedCount: 1,
     });
     expect(result.emptyStateTitle).toBe("No z-ai sessions found.");
+  });
+});
+
+describe("getImportErrorMessage", () => {
+  it("explains how to release a Codex session with an active writer", () => {
+    expect(
+      getImportErrorMessage(
+        new Error("Failed to resume Codex thread abc: thread abc already has an active writer"),
+      ),
+    ).toBe(
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    );
+  });
+  it("preserves other import failure details", () => {
+    expect(getImportErrorMessage(new Error("Session not found"))).toBe(
+      "Could not import selected session. Session not found",
+    );
+  });
+  it("uses the generic message when no error details are available", () => {
+    expect(getImportErrorMessage(new Error("  "))).toBe("Could not import selected session.");
+    expect(getImportErrorMessage(null)).toBe("Could not import selected session.");
   });
 });

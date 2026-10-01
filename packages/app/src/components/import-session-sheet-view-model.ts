@@ -2,6 +2,19 @@ import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 
+export function getImportErrorMessage(error: unknown): string {
+  if (!(error instanceof Error) || !error.message.trim()) {
+    return i18n.t("importSession.status.failedImport");
+  }
+  const isCodexSessionInUse =
+    error.message.includes("Codex thread") &&
+    error.message.includes("already has an active writer");
+  if (isCodexSessionInUse) {
+    return i18n.t("importSession.status.codexSessionInUse");
+  }
+  return i18n.t("importSession.status.failedImportDetails", { message: error.message });
+}
+
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
