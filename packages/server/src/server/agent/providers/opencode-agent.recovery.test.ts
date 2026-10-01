@@ -15,29 +15,63 @@ import { OpenCodeServerManager } from "./opencode/server-manager.js";
 
 test("dispatches ascending OpenCode message identifiers through the public provider path", async () => {
   const upstream = await createRecoveryUpstream();
-  const fixture = await createPublicRecoverySession(upstream, new RecoveryTiming());
-  const observed: AgentStreamEvent[] = [];
-  fixture.session.subscribe((event) => observed.push(event));
-  await upstream.connected(1);
-  upstream.send(0, connectedRecord());
-
-  await fixture.session.startTurn("first");
-  await upstream.dispatched(1);
-  upstream.send(0, idleRecord());
-  await eventually(() =>
-    expect(observed.filter((event) => event.type === "turn_completed")).toHaveLength(1),
+  const client = new OpenCodeAgentClient(
+    createTestLogger(),
+    {
+      command: {
+        mode: "replace",
+        argv: [
+          process.execPath,
+          "-e",
+          `setInterval(() => {}, 1000); fetch(${JSON.stringify(
+            `${upstream.url}/test/listening`,
+          )}).then(() => console.log("listening on test server"));`,
+          "--",
+        ],
+      },
+    },
+    {
+      resolveHomeDir: () => process.cwd(),
+      createClient: ({ directory }) => createOpencodeClient({ baseUrl: upstream.url, directory }),
+    },
   );
-  await fixture.session.startTurn("second");
-  const ids = await upstream.dispatched(2);
+  try {
+    const creating = client.createSession({
+      provider: "opencode",
+      cwd: "/workspace",
+    });
+    void creating.catch(() => undefined);
+    await upstream.awaitingListening();
+    // The process is alive but has not reported listening, so even a reachable endpoint must stay untouched.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(upstream.connectionCount()).toBe(0);
+    upstream.reportListening();
+    const session = await creating;
+    const observed: AgentStreamEvent[] = [];
+    session.subscribe((event) => observed.push(event));
+    await upstream.connected(1);
+    upstream.send(0, connectedRecord());
 
-  expect(ids).toHaveLength(2);
-  expect(ids[0]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
-  expect(ids[1]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
-  expect((ids[0] as string) < (ids[1] as string)).toBe(true);
+    await session.startTurn("first");
+    await upstream.dispatched(1);
+    upstream.send(0, idleRecord());
+    await eventually(() =>
+      expect(observed.filter((event) => event.type === "turn_completed")).toHaveLength(1),
+    );
+    await session.startTurn("second");
+    const ids = await upstream.dispatched(2);
 
-  await fixture.session.close();
-  await fixture.manager.shutdown();
-  await upstream.close();
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+    expect(ids[1]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+    expect((ids[0] as string) < (ids[1] as string)).toBe(true);
+
+    await session.close();
+  } finally {
+    upstream.reportListening();
+    await client.shutdown();
+    await upstream.close();
+  }
 });
 
 test("recovers missed output after EOF without failing the active turn", async () => {
@@ -341,6 +375,7 @@ class RecoveryServerProcess extends EventEmitter {
 
 async function createRecoveryUpstream() {
   const streams: ServerResponse[] = [];
+  let listeningResponse: ServerResponse | null = null;
   const dispatchIds: string[] = [];
   const mcpAddNames: string[] = [];
   let messages: unknown[] = [];
@@ -348,6 +383,10 @@ async function createRecoveryUpstream() {
   let status: "busy" | "idle" = "idle";
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    if (pathname === "/test/listening") {
+      listeningResponse = response;
+      return;
+    }
     if (request.url?.startsWith("/global/event")) {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.flushHeaders();
@@ -381,6 +420,10 @@ async function createRecoveryUpstream() {
   return {
     port: address.port,
     url: `http://127.0.0.1:${address.port}`,
+    awaitingListening: async () =>
+      expect.poll(() => listeningResponse, { timeout: 3_000 }).not.toBeNull(),
+    reportListening: () => listeningResponse?.end(),
+    connectionCount: () => streams.length,
     connected: async (count: number) => eventually(() => expect(streams).toHaveLength(count)),
     send(index: number, value: unknown) {
       streams[index]?.write(`data: ${JSON.stringify(value)}\n\n`);
