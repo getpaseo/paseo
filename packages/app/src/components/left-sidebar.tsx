@@ -52,7 +52,7 @@ import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
-import { UsageSidebarItem, useOpenUsageScreen } from "@/usage";
+import { UsageSidebarItem, useHasUsageSummary, useOpenUsageScreen } from "@/usage";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
@@ -457,11 +457,17 @@ function SidebarFooter({
   );
 }
 
-/** The footer rows in the user's `sidebarFooterItems` order: the Usage item and plugin rows. */
+/**
+ * The footer rows in the user's `sidebarFooterItems` order: the Usage item and plugin rows. The
+ * Usage item is left out while it has no summary to show.
+ */
 function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void }) {
   const { items } = useSidebarNavItems("footer");
+  const hasUsageSummary = useHasUsageSummary();
   const rowsRef = useRef<View | null>(null);
-  const visibleItems = items.filter((item) => item.visible);
+  const visibleItems = items.filter(
+    (item) => item.visible && (item.kind === "plugin" || hasUsageSummary),
+  );
   if (visibleItems.length === 0) return null;
   return (
     <>
