@@ -262,7 +262,10 @@ test("without summary data the footer drops the Usage item and keeps the Usage i
           fetchedAt: new Date().toISOString(),
           sourceId: "alpha",
           sourceLabel: "Alpha plan",
-          report: { status: "unavailable", windows: [] },
+          report: {
+            status: "unavailable",
+            problem: { kind: "no_quota", detail: "No active coding plan" },
+          },
         },
       ],
     ],

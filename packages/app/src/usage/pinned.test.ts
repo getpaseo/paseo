@@ -255,3 +255,18 @@ describe("resolvePinnedUsage", () => {
     ]);
   });
 });
+
+it("keeps unavailable and error reports out of the sidebar summary", () => {
+  const expired: UsageReportEntry = {
+    ...claude,
+    report: {
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "2026-10-01T00:00:00.000Z", refreshedBy: "claude" },
+    },
+  };
+  const failed: UsageReportEntry = {
+    ...codex,
+    report: { status: "error", error: "Store deleted" },
+  };
+  expect(resolvePinnedUsage([expired, failed], preferences([]))).toEqual([]);
+});

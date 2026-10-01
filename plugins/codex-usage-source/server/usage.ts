@@ -3,6 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   balanceToneFromRemaining,
+  hashAccountKey,
+  unavailable,
+  type UsageAccount,
   toneFromUsedPct,
   windowFromUsedPct,
   type UsageReport,
@@ -39,7 +42,7 @@ interface Auth {
   expires?: number;
 }
 
-export async function discover(lookup: StoreLookup = {}): Promise<CodexUsageInput[]> {
+export async function discover(lookup: StoreLookup = {}): Promise<UsageAccount[]> {
   const env = lookup.env ?? process.env;
   const home = lookup.home ?? homedir();
   const paths = [
@@ -59,8 +62,11 @@ export async function discover(lookup: StoreLookup = {}): Promise<CodexUsageInpu
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
   );
-  const present: CodexUsageInput[] = [];
-  for (const input of candidates) if (await readAuth(input, lookup)) present.push(input);
+  const present: UsageAccount[] = [];
+  for (const input of candidates) {
+    const auth = await readAuth(input, lookup);
+    if (auth) present.push({ ...accountIdentity(auth, input), input });
+  }
   return present;
 }
 
@@ -104,8 +110,14 @@ export async function fetchUsage(
   lookup: StoreLookup = {},
 ): Promise<UsageReport> {
   const auth = await readAuth(input, lookup);
-  if (!auth || (auth.expires !== undefined && auth.expires <= (lookup.now ?? Date.now)()))
-    return { status: "unavailable", windows: [] };
+  if (!auth) throw new Error("Codex login store no longer exists");
+  const refreshedBy = input.route.store;
+  if (auth.expires !== undefined && auth.expires <= (lookup.now ?? Date.now)())
+    return unavailable({
+      kind: "expired",
+      expiresAt: new Date(auth.expires).toISOString(),
+      refreshedBy,
+    });
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.token}`,
     Accept: "application/json",
@@ -117,10 +129,10 @@ export async function fetchUsage(
     signal: AbortSignal.timeout(15_000),
   });
   if (response.status === 401 || response.status === 403)
-    return { status: "unavailable", windows: [] };
+    return unavailable({ kind: "rejected", status: response.status, refreshedBy });
   if (!response.ok) throw new Error(`Codex usage API returned ${response.status}`);
   const text = await response.text();
-  if (text.trim().startsWith("<")) return { status: "unavailable", windows: [] };
+  if (text.trim().startsWith("<")) throw new Error("Codex usage API returned HTML");
   const usage = responseSchema.parse(JSON.parse(text));
   const windows = [
     usageWindow(
@@ -181,9 +193,7 @@ function claimString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export async function identify(input: CodexUsageInput, lookup: StoreLookup = {}) {
-  const auth = await readAuth(input, lookup);
-  if (!auth) return null;
+function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; label?: string } {
   const access = jwtClaims(auth.token);
   const id = jwtClaims(auth.idToken);
   const accessAuth = claimObject(access, "https://api.openai.com/auth");
@@ -193,11 +203,11 @@ export async function identify(input: CodexUsageInput, lookup: StoreLookup = {})
     claimString(accessAuth?.["chatgpt_account_id"]) ??
     claimString(access?.["chatgpt_account_id"]) ??
     claimString(idAuth?.["chatgpt_account_id"]);
-  if (!key) return null;
+
   const label =
     claimString(claimObject(access, "https://api.openai.com/profile")?.["email"]) ??
     claimString(access?.["email"]) ??
     claimString(claimObject(id, "https://api.openai.com/profile")?.["email"]) ??
     claimString(id?.["email"]);
-  return { key, ...(label ? { label } : {}) };
+  return { key: key ?? hashAccountKey(JSON.stringify(input.route)), ...(label ? { label } : {}) };
 }

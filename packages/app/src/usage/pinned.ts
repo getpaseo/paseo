@@ -66,6 +66,7 @@ function groupBySource(reports: readonly UsageReportEntry[]): UsageReportEntry[]
  * or its first window with a percent when the source marks none.
  */
 function summaryWindows(entry: UsageReportEntry, preferences: UsagePreferences): UsageWindow[] {
+  if (entry.report.status !== "available") return [];
   const withPercent = entry.report.windows.filter(
     (window) => displayPercent(window, preferences.displayAs) !== null,
   );

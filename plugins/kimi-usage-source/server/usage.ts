@@ -1,11 +1,12 @@
 import type { UsageInput } from "../shared/input.js";
-import { existsSync, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
   toneFromUsedPct,
-  unavailableUsage,
+  unavailable,
+  type UsageAccount,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -251,9 +252,6 @@ export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  void input;
-  const homeDir = homedir();
-
   async function callUsageApi(token: string): Promise<Response> {
     return fetchApi(KIMI_USAGE_URL, {
       signal: AbortSignal.timeout(15_000),
@@ -264,52 +262,19 @@ export async function fetchUsage(
     });
   }
 
-  async function readCredentials(): Promise<KimiCredentials | null> {
-    const environmentToken = process.env["KIMI_TOKEN"] || process.env["KIMI_API_KEY"];
-    if (environmentToken) {
-      return { access_token: environmentToken };
-    }
-
-    for (const path of credentialPaths()) {
-      const credentials = await readCredentialFile(path);
-      if (credentials?.access_token) {
-        return { ...credentials, access_token: credentials.access_token };
-      }
-    }
-    return null;
-  }
-
-  function credentialPaths(): string[] {
-    const home = homeDir;
-    return [
-      join(
-        process.env["KIMI_CODE_HOME"] || join(home, ".kimi-code"),
-        "credentials",
-        "kimi-code.json",
-      ),
-      join(home, ".kimi", "credentials", "kimi-code.json"),
-    ];
-  }
-
-  async function readCredentialFile(path: string): Promise<KimiAuth | null> {
-    if (!existsSync(path)) return null;
-    try {
-      return KimiAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-    } catch {
-      return null;
-    }
-  }
-
-  const credentials = await readCredentials();
-  if (!credentials) return unavailableUsage();
+  const credentials = await readCredentials(input);
+  if (!credentials) throw new Error("Kimi login store no longer exists");
+  if (credentials.expires_at != null && credentials.expires_at * 1000 <= Date.now())
+    return unavailable({
+      kind: "expired",
+      expiresAt: new Date(credentials.expires_at * 1000).toISOString(),
+    });
 
   const res = await callUsageApi(credentials.access_token);
 
-  if (!res.ok) {
-    // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
-
-    return unavailableUsage();
-  }
+  if (res.status === 401 || res.status === 403)
+    return unavailable({ kind: "rejected", status: res.status });
+  if (!res.ok) throw new Error(`Kimi usage API returned ${res.status}`);
 
   const windows = kimiUsageWindowsFromPayload(await res.json());
 
@@ -322,24 +287,36 @@ export async function fetchUsage(
   };
 }
 
-export async function identify() {
-  if (process.env["KIMI_TOKEN"] || process.env["KIMI_API_KEY"]) return { key: "default" };
-  const home = homedir();
-  const paths = [
-    join(
-      process.env["KIMI_CODE_HOME"] || join(home, ".kimi-code"),
-      "credentials",
-      "kimi-code.json",
-    ),
-    join(home, ".kimi", "credentials", "kimi-code.json"),
-  ];
-  for (const path of paths) {
-    try {
-      const auth = KimiAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-      if (auth.access_token) return { key: "default" };
-    } catch {
-      continue;
-    }
+async function readCredentials(input: UsageInput): Promise<KimiCredentials | undefined> {
+  if (input.store === "env") {
+    const token = process.env[input.locator];
+    return token ? { access_token: token } : undefined;
   }
-  return null;
+  try {
+    const credentials = KimiAuthSchema.parse(JSON.parse(await fs.readFile(input.locator, "utf8")));
+    return credentials.access_token
+      ? { ...credentials, access_token: credentials.access_token }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export async function discover(): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = ["KIMI_TOKEN", "KIMI_API_KEY"].map((locator) => ({
+    store: "env",
+    locator,
+  }));
+  candidates.push(
+    ...[
+      join(
+        process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
+        "credentials",
+        "kimi-code.json",
+      ),
+      join(homedir(), ".kimi", "credentials", "kimi-code.json"),
+    ].map((locator) => ({ store: "file" as const, locator })),
+  );
+  for (const input of candidates)
+    if (await readCredentials(input)) return [{ key: "default", input }];
+  return [];
 }

@@ -5,7 +5,7 @@ import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import {
   hashAccountKey,
-  unavailableUsage,
+  unavailable,
   windowFromUsedPct,
   toneFromUsedPct,
 } from "@getpaseo/plugin/server/usage";
@@ -59,18 +59,19 @@ export class Usage {
       label: "Muse Code",
       icon: "icon.svg",
       input: inputSchema,
-      discover: async () => [...this.launches.keys()].map((account) => ({ account })),
-      identify: async (input) => {
-        const { account } = inputSchema.parse(input);
-        return this.launches.has(account) ? { key: account, label: "Muse Code" } : null;
-      },
+      discover: async () =>
+        [...this.launches.keys()].map((account) => ({
+          key: account,
+          label: "Muse Code",
+          input: { account },
+        })),
       fetch: async (input) => {
         const { account } = inputSchema.parse(input);
         const launch = this.launches.get(account);
-        if (!launch) return unavailableUsage();
+        if (!launch) throw new Error("Muse login no longer exists");
         try {
           const { usage } = await this.read(account, launch);
-          if (!usage) return unavailableUsage();
+          if (!usage) return unavailable({ kind: "no_quota", detail: "No usage quota reported" });
           return {
             status: "available",
             planLabel: usage.tier,
@@ -105,7 +106,6 @@ export class Usage {
         } catch (error) {
           return {
             status: "error",
-            windows: [],
             error: error instanceof Error ? error.message : String(error),
           };
         }

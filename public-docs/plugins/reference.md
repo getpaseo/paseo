@@ -309,13 +309,78 @@ SVG or URL.
 
 ### Usage sources
 
-**Requires Paseo 0.9.3 or newer.** Server plugins register a usage source with `server.registerUsageSource()` and import types and helpers from `@getpaseo/plugin/server/usage`.
+**Requires Paseo 0.11.** Register a source from your server entry with
+`server.registerUsageSource()`. Import its contract and helpers from
+`@getpaseo/plugin/server/usage`.
+
+A source implements two calls:
+
+```ts
+interface UsageAccount {
+  key: string;
+  label?: string;
+  input: JsonValue;
+}
+
+interface UsageSourceRegistration {
+  id: string;
+  label: string;
+  icon?: string;
+  input: ZodType;
+  discover(): Promise<UsageAccount[]>;
+  fetch(input: unknown): Promise<UsageReport>;
+}
+
+type UsageReport =
+  | {
+      status: "available";
+      planLabel?: string;
+      windows: UsageWindow[];
+      balances?: UsageBalance[];
+      details?: UsageDetail[];
+    }
+  | { status: "unavailable"; problem: UsageProblem }
+  | { status: "error"; error: string };
+
+type UsageProblem =
+  | { kind: "expired"; expiresAt: string; refreshedBy?: string }
+  | { kind: "rejected"; status: number; refreshedBy?: string }
+  | { kind: "no_quota"; detail: string };
+```
+
+Return every account whose login exists on the machine from `discover()`, including expired
+logins. Return `[]` when none exists. Discovery takes no arguments and must work independently of
+agent sessions and provider names. Inputs name credential stores; never put credentials in inputs
+or reports. Paseo validates each input against your schema before calling `fetch()`.
+
+Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
+organization whose quota is metered and survives token rotation. Never use a credential or raw
+email as the key. Use `hashAccountKey()` for sensitive stable identities or a store locator when
+account metadata is unavailable. Labels can name accounts without becoming their identity.
+
+Return logins in preference order. Several entries with the same key become one card, with their
+inputs tried in order until a report is `available`. An unavailable report, error report, or thrown
+fetch falls through to the next input. If none succeeds, the card carries the last report.
+Discovery failures are logged by the daemon and produce no card.
+
+Re-read the selected store in `fetch()` so the CLI's token rotations take effect. Never redeem
+refresh tokens or write credential stores: refreshing elsewhere can invalidate the CLI's copy,
+and rewriting parsed files can discard fields you do not model. If the store disappeared after
+discovery, throw; the card shows the error until the next discovery removes it.
+
+Use `unavailable(problem)` to explain why an existing login cannot supply quota. It requires a
+problem; there is no zero-argument form. `expiresAt` is an ISO timestamp. A rejected login carries
+the upstream HTTP status. `refreshedBy` is a CLI name, such as `claude`, `codex`, `opencode`, `omp`, or
+`pi`. Paseo owns the remedy sentence. Do not put instructions or user-facing sentences in that
+field. For `no_quota`, `detail` is displayed verbatim.
 
 ```ts
 import { z } from "zod";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { hashAccountKey, unavailable } from "@getpaseo/plugin/server/usage";
+import { findLoginStores, readLogin, readQuota } from "./server/logins";
 
-const input = z.object({ account: z.string() });
+const input = z.object({ path: z.string() }).strict();
 
 export default function contribute(server: PluginServerContext) {
   server.registerUsageSource({
@@ -323,31 +388,42 @@ export default function contribute(server: PluginServerContext) {
     label: "Example",
     icon: "icon.svg",
     input,
-    discover: async () => [{ account: "default" }],
-    identify: async (value) => {
-      const { account } = input.parse(value);
-      return { key: account };
+    discover: async () =>
+      (await findLoginStores()).map((path) => ({
+        key: hashAccountKey(path),
+        input: { path },
+      })),
+    fetch: async (value) => {
+      const { path } = input.parse(value);
+      const login = await readLogin(path);
+      if (login.expiresAt <= Date.now())
+        return unavailable({
+          kind: "expired",
+          expiresAt: new Date(login.expiresAt).toISOString(),
+          refreshedBy: "example",
+        });
+      return readQuota(login);
     },
-    fetch: async () => ({ status: "available", windows: [] }),
   });
   return () => {};
 }
 ```
 
-`discover()` is required and supplies configured inputs; return `[]` when no account is configured. `identify(input)` returns a stable account key and optional display label without fetching usage, or `null` when there are no credentials. The daemon combines the source ID and key as `<sourceId>:<accountKey>`. The key must be 1–128 characters from `[A-Za-z0-9._-]`, remain stable across token rotation, and identify the account or organization whose quota is metered. Never use a credential or raw email as the key; use `hashAccountKey(value)` when the only stable identity is sensitive.
+Built-in Claude discovery prefers the macOS Keychain login and uses the Claude Code credential
+file only when Keychain is empty. `CLAUDE_CONFIG_DIR` selects that file's directory. Fresh tokens
+use the OAuth profile's account and organization IDs; expired or rejected profiles use a locator
+hash. Codex prefers Codex CLI, OpenCode, Pi, then OMP and groups by the ChatGPT account ID from stored
+metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP requires
+`node:sqlite`.
 
-Return credential-store locators in preference order from `discover()`. The daemon groups inputs with the same source and account key into one card, keeps that order, and tries each login until `fetch()` returns `available`. An unavailable or error report, thrown failure, or missing login falls through to the next input. If none succeeds, the card carries the last attempted report (or `unavailable` if no login remains). Before fetching, the daemon identifies the login again and skips it if its account changed. Re-read credentials in `fetch()` so the harness's token rotations take effect; never refresh or write its tokens. Keep raw credentials out of discovery inputs and reports.
+`usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
+accounts without rediscovering identity. If a store switches accounts, the existing card shows the
+new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
+bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Clients gate the feature
+on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
+for 0.10 clients and renders problems into its `error` string.
 
-Built-in subscription sources discover logins independently of agents and provider names:
-
-| Source | Login preference order                                   | Account key                                           |
-| ------ | -------------------------------------------------------- | ----------------------------------------------------- |
-| Codex  | Codex CLI (`$CODEX_HOME`, `~/.codex`), OpenCode, Pi, OMP | ChatGPT account ID from stored metadata or JWT claims |
-| Claude | Claude Code credential file, macOS keychain, Pi, OMP     | OAuth account UUID and organization UUID              |
-
-OpenCode honors `XDG_DATA_HOME`; Pi honors `PI_CODING_AGENT_DIR`. OMP honors its directory, profile, and XDG settings, reads enabled unexpired OAuth rows by credential ID, and is skipped when the host lacks `node:sqlite`. Claude Code honors `CLAUDE_CONFIG_DIR`. Each Claude login's OAuth profile supplies its identity.
-
-`usage.list_reports` discovers reports when called without IDs, or reads only the requested known IDs. It caches each report for five minutes and `forceRefresh` refreshes only the returned IDs. Each entry carries `id`, `account.label`, and `fetchedAt`; `fetch()` returns a `UsageReport` with `status` (`available`, `unavailable`, or `error`), optional `planLabel`, and generic `windows`, `balances`, and `details`. The icon is a path to a self-contained SVG under the plugin directory and follows the provider icon restrictions above.
+The source icon follows the provider SVG restrictions above.
 
 ## Entry point and cleanup
 

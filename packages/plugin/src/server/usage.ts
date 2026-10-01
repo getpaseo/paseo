@@ -38,13 +38,28 @@ export interface UsageDetail {
   tone?: UsageWindow["tone"];
 }
 
-export interface UsageReport {
-  status: "available" | "unavailable" | "error";
-  planLabel?: string;
-  windows: UsageWindow[];
-  balances?: UsageBalance[];
-  details?: UsageDetail[];
-  error?: string;
+export type UsageProblem =
+  | { kind: "expired"; expiresAt: string; refreshedBy?: string }
+  | { kind: "rejected"; status: number; refreshedBy?: string }
+  | { kind: "no_quota"; detail: string };
+
+export type UsageReport =
+  | {
+      status: "available";
+      planLabel?: string;
+      windows: UsageWindow[];
+      balances?: UsageBalance[];
+      details?: UsageDetail[];
+    }
+  | { status: "unavailable"; problem: UsageProblem }
+  | { status: "error"; error: string };
+
+export interface UsageAccount {
+  /** Stable across token rotation; [A-Za-z0-9._-]{1,128}. Never a credential or raw email. */
+  key: string;
+  label?: string;
+  /** Store locator, opaque to the daemon. */
+  input: JsonValue;
 }
 
 export interface UsageSourceRegistration {
@@ -52,10 +67,10 @@ export interface UsageSourceRegistration {
   label: string;
   icon?: string;
   input: ZodType;
-  /** Stable account identity, resolved without fetching usage. */
-  identify(input: unknown): Promise<{ key: string; label?: string } | null>;
+  /** Every account whose login exists on this machine. Empty when none. */
+  discover(): Promise<UsageAccount[]>;
+  /** Re-reads the login store; never writes it. */
   fetch(input: unknown): Promise<UsageReport>;
-  discover(): Promise<JsonValue[]>;
 }
 
 export function windowFromUsedPct(input: {
@@ -122,11 +137,6 @@ export function hashAccountKey(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function unavailableUsage(): UsageReport {
-  return {
-    status: "unavailable",
-    windows: [],
-    balances: [],
-    details: [],
-  };
+export function unavailable(problem: UsageProblem): UsageReport {
+  return { status: "unavailable", problem };
 }

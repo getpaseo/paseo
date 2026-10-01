@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { fetchUsage, identify } from "./usage.js";
+import { fetchUsage, discover } from "./usage.js";
 
 import { inputSchema, type CodexUsageInput } from "../shared/input.js";
 
@@ -80,12 +80,12 @@ test("discovery input requires a route and rejects raw credentials", () => {
   expect(() => inputSchema.parse({})).toThrow();
 });
 
-test("identify returns a key when fetch finds Codex token credentials", async () => {
+test("discovery returns a key when fetch finds Codex token credentials", async () => {
   await writeAuth("fixture-supplied", "account-supplied");
   await fetchUsage(authInput(fixtureHome), (_url, init) =>
     response(init?.headers ?? {}, "account-supplied"),
   );
-  expect(await identify(authInput(fixtureHome))).toEqual({ key: "account-supplied" });
+  expect(await accountFor(authInput(fixtureHome))).toEqual({ key: "account-supplied" });
 });
 
 test("coerces credit balance and marks a 96 percent window dangerous", async () => {
@@ -136,12 +136,10 @@ test("summarizes the session and weekly windows by default, not code review", as
   ]);
 });
 
-test("HTML usage body is unavailable", async () => {
-  const report = await fetchUsage(
-    authInput(fixtureHome),
-    async () => new Response("<html>Login</html>", { status: 200 }),
-  );
-  expect(report.status).toBe("unavailable");
+test("HTML usage body is an error", async () => {
+  await expect(
+    fetchUsage(authInput(fixtureHome), async () => new Response("<html>Login</html>")),
+  ).rejects.toThrow("Codex usage API returned HTML");
 });
 
 test("401 leaves auth.json byte for byte unchanged and makes no refresh request", async () => {
@@ -178,14 +176,16 @@ test("auth account claim survives token rotation", async () => {
   const token = (suffix: string) =>
     `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "work-id" }, suffix })).toString("base64url")}.signature`;
   await writeAuth(token("first"));
-  expect(await identify(authInput(fixtureHome))).toEqual({ key: "work-id" });
+  expect(await accountFor(authInput(fixtureHome))).toEqual({ key: "work-id" });
   await writeAuth(token("second"));
-  expect(await identify(authInput(fixtureHome))).toEqual({ key: "work-id" });
+  expect(await accountFor(authInput(fixtureHome))).toEqual({ key: "work-id" });
   await writeAuth("opaque-token");
-  expect(await identify(authInput(fixtureHome))).toBeNull();
+  expect(await accountFor(authInput(fixtureHome))).toEqual({
+    key: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
 });
 
-test("identify reads an email label from auth id_token when access token has no profile", async () => {
+test("discovery reads an email label from auth id_token when access token has no profile", async () => {
   const home = await mkdtemp(join(tmpdir(), "usage-codex-label-"));
   try {
     process.env["CODEX_HOME"] = home;
@@ -196,7 +196,7 @@ test("identify reads an email label from auth id_token when access token has no 
         tokens: { account_id: "account-id", access_token: "opaque-token", id_token: idToken },
       }),
     );
-    expect(await identify(authInput(home))).toEqual({
+    expect(await accountFor(authInput(home))).toEqual({
       key: "account-id",
       label: "id-owner@example.test",
     });
@@ -206,7 +206,6 @@ test("identify reads an email label from auth id_token when access token has no 
 });
 
 test("discovers a Pi OAuth login independently of the CLI login", async () => {
-  const { discover } = await import("./usage.js");
   const directory = await mkdtemp(join(tmpdir(), "usage-pi-discovery-"));
   try {
     await mkdir(join(directory, ".pi", "agent"), { recursive: true });
@@ -217,10 +216,47 @@ test("discovers a Pi OAuth login independently of the CLI login", async () => {
       }),
     );
     const inputs = await discover({ home: directory, env: {}, platform: "linux" });
-    expect(inputs).toContainEqual({
+    expect(inputs.map((account) => account.input)).toContainEqual({
       route: { store: "pi", path: join(directory, ".pi", "agent", "auth.json") },
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function accountFor(input: CodexUsageInput) {
+  const accounts = await discover({
+    home: fixtureHome,
+    env: {
+      CODEX_HOME:
+        input.route.store === "codex"
+          ? (await import("node:path")).dirname(input.route.path)
+          : fixtureHome,
+    },
+    platform: "linux",
+  });
+  const account = accounts.find(
+    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
+  );
+  if (!account) throw new Error("Expected discovered login");
+  return { key: account.key, ...(account.label ? { label: account.label } : {}) };
+}
+
+test.each(["empty home", "unrelated files"])(
+  "discovers no Codex accounts in %s",
+  async (scenario) => {
+    const home = await mkdtemp(join(tmpdir(), "codex-no-login-"));
+    try {
+      if (scenario === "unrelated files") await writeFile(join(home, "unrelated.json"), "{}");
+      expect(await discover({ home, env: {}, platform: "linux" })).toEqual([]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([401, 403])("reports a Codex login rejected with HTTP %i", async (status) => {
+  expect(
+    await fetchUsage(authInput(fixtureHome), async () => new Response(null, { status })),
+  ).toEqual({ status: "unavailable", problem: { kind: "rejected", status, refreshedBy: "codex" } });
 });
