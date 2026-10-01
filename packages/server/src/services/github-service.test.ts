@@ -3972,27 +3972,30 @@ describe("ForgeService", () => {
     });
   });
 
-  it("reads a pull request by its bare number, merged ones included", async () => {
-    const merged = JSON.stringify({
-      number: 1347,
-      title: "Merged one",
-      url: "https://github.com/acme/repo/pull/1347",
-      state: "MERGED",
-      baseRefName: "main",
-      headRefName: "feature",
-      labels: [],
-    });
-    const runner = createRunner([merged]);
-    const service = createGitHubService({
-      runner: runner.runner,
-      resolveGhPath: async () => "/usr/bin/gh",
-    });
+  it.each(["OPEN", "MERGED", "CLOSED"])(
+    "reads a %s pull request by its exact number",
+    async (state) => {
+      const response = JSON.stringify({
+        number: 1347,
+        title: "Exact lookup",
+        url: "https://github.com/acme/repo/pull/1347",
+        state,
+        baseRefName: "main",
+        headRefName: "feature",
+        labels: [],
+      });
+      const runner = createRunner([response]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
 
-    const items = await service.listPullRequests({ cwd: "/repo", query: "#1347", limit: 10 });
+      const items = await service.listPullRequests({ cwd: "/repo", query: "#1347", limit: 10 });
 
-    expect(items.map((item) => [item.number, item.state])).toEqual([[1347, "MERGED"]]);
-    expect(runner.calls[0]?.args.slice(0, 3)).toEqual(["pr", "view", "1347"]);
-  });
+      expect(items.map((item) => [item.number, item.state])).toEqual([[1347, state]]);
+      expect(runner.calls[0]?.args.slice(0, 3)).toEqual(["pr", "view", "1347"]);
+    },
+  );
 
   it("returns cached results for identical calls within the TTL", async () => {
     const runner = createRunner([pullRequestJson("First result")]);

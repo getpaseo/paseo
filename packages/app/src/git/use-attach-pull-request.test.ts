@@ -68,6 +68,26 @@ describe("resolvePullRequestForAttach", () => {
     ]);
   });
 
+  it.each(["OPEN", "MERGED", "CLOSED"])("attaches a %s pull request by number", async (state) => {
+    const client = clientWith([searchItem(1377, "change_request", state)]);
+    const attached = await submitAttachPullRequests({
+      client,
+      cwd: "/repo",
+      workspaceKey: `srv:ws-terminal-${state}`,
+      rawValue: "1377",
+      formatInvalid: () => "invalid",
+      formatNotFound: () => "missing",
+    });
+    expect(attached).toEqual([
+      expect.objectContaining({ number: 1377, state: state.toLowerCase() }),
+    ]);
+    expect(pullRequestCurationStore.getFacts(`srv:ws-terminal-${state}`)).toEqual(attached);
+    expect(client.calls).toEqual([
+      { cwd: "/repo", query: "1377", limit: 10, kinds: ["change_request"] },
+    ]);
+    pullRequestCurationStore.clear(`srv:ws-terminal-${state}`);
+  });
+
   it("ignores fuzzy hits and matches the exact number", async () => {
     const client = clientWith([searchItem(13460), searchItem(1346)]);
     const result = await resolvePullRequestForAttach({ client, cwd: "/repo", number: 1346 });

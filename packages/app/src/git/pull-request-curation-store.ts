@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import {
   normalizePullRequestCuration,
   type PullRequestCuration,
@@ -10,16 +10,6 @@ interface WorkspaceCurationRecord {
   facts: Map<number, RelatedPullRequest>;
 }
 
-/**
- * Curation decisions plus the facts the app resolved for hand-added numbers, keyed by sidebar
- * workspace key.
- *
- * The daemon owns these decisions now and stores them on the workspace record, so this is the
- * write-through cache the plan called for: `hydrate` seeds it from the daemon's snapshot, the
- * panel sends every change on through `workspace.pull_requests.curate`, and the facts for a
- * hand-added number stay here because the daemon re-resolves them for itself. Never invent a
- * second durable home for curation here.
- */
 class EphemeralPullRequestCurationStore {
   private records = new Map<string, WorkspaceCurationRecord>();
   private versions = new Map<string, number>();
@@ -84,11 +74,6 @@ class EphemeralPullRequestCurationStore {
     this.touch(workspaceKey);
   }
 
-  /**
-   * Adopt what the daemon has stored for this workspace. Called with the snapshot's decisions,
-   * so a set someone assembled yesterday is there again after a restart. Same decisions in
-   * means no version bump, so this does not loop against the daemon echo that follows a write.
-   */
   hydrate(workspaceKey: string, curation: PullRequestCuration | null | undefined): void {
     const next = normalizePullRequestCuration(curation);
     const current = this.getCuration(workspaceKey);
@@ -115,13 +100,16 @@ export function usePullRequestCuration(workspaceKey: string): {
   curation: PullRequestCuration;
   facts: RelatedPullRequest[];
 } {
-  useSyncExternalStore(
+  const version = useSyncExternalStore(
     pullRequestCurationStore.subscribe,
     () => pullRequestCurationStore.getVersion(workspaceKey),
     () => pullRequestCurationStore.getVersion(workspaceKey),
   );
-  return {
-    curation: pullRequestCurationStore.getCuration(workspaceKey),
-    facts: pullRequestCurationStore.getFacts(workspaceKey),
-  };
+  return useMemo(() => {
+    void version;
+    return {
+      curation: pullRequestCurationStore.getCuration(workspaceKey),
+      facts: pullRequestCurationStore.getFacts(workspaceKey),
+    };
+  }, [workspaceKey, version]);
 }
