@@ -1,71 +1,96 @@
 import { describe, expect, it, vi } from "vitest";
-import { openChatLink, type OpenChatLinkInput } from "./open-chat-link";
+import {
+  openChatLink,
+  resolveChatLinkDialogChoice,
+  type ChatLinkAskResult,
+  type OpenChatLinkInput,
+} from "./open-chat-link";
 
 function createInput(
   behavior: OpenChatLinkInput["behavior"],
-  askToOpenInternal = vi.fn(async () => true),
+  askHowToOpen = vi.fn<() => Promise<ChatLinkAskResult>>(async () => "internal-tab"),
 ) {
   return {
     input: {
       url: "https://example.com/docs",
       behavior,
-      askToOpenInternal,
+      askHowToOpen,
       openInternal: vi.fn<OpenChatLinkInput["openInternal"]>(),
       openExternal: vi.fn<OpenChatLinkInput["openExternal"]>(async () => undefined),
     },
-    askToOpenInternal,
+    askHowToOpen,
   };
 }
 
 describe("openChatLink", () => {
   it("opens a link in an internal browser tab", async () => {
-    const { input, askToOpenInternal } = createInput("internal-tab");
+    const { input, askHowToOpen } = createInput("internal-tab");
 
     await openChatLink(input);
 
     expect(input.openInternal).toHaveBeenCalledWith("https://example.com/docs", "tab");
     expect(input.openExternal).not.toHaveBeenCalled();
-    expect(askToOpenInternal).not.toHaveBeenCalled();
+    expect(askHowToOpen).not.toHaveBeenCalled();
   });
 
   it("opens a link in the internal browser on the side", async () => {
-    const { input, askToOpenInternal } = createInput("internal-side");
+    const { input, askHowToOpen } = createInput("internal-side");
 
     await openChatLink(input);
 
     expect(input.openInternal).toHaveBeenCalledWith("https://example.com/docs", "side");
     expect(input.openExternal).not.toHaveBeenCalled();
-    expect(askToOpenInternal).not.toHaveBeenCalled();
+    expect(askHowToOpen).not.toHaveBeenCalled();
   });
 
   it("opens a link in the external browser", async () => {
-    const { input, askToOpenInternal } = createInput("external");
+    const { input, askHowToOpen } = createInput("external");
 
     await openChatLink(input);
 
     expect(input.openExternal).toHaveBeenCalledWith("https://example.com/docs");
     expect(input.openInternal).not.toHaveBeenCalled();
-    expect(askToOpenInternal).not.toHaveBeenCalled();
+    expect(askHowToOpen).not.toHaveBeenCalled();
   });
 
   it("asks before choosing an internal browser tab", async () => {
-    const { input, askToOpenInternal } = createInput("ask");
+    const { input, askHowToOpen } = createInput("ask");
 
     await openChatLink(input);
 
-    expect(askToOpenInternal).toHaveBeenCalledOnce();
+    expect(askHowToOpen).toHaveBeenCalledOnce();
     expect(input.openInternal).toHaveBeenCalledWith("https://example.com/docs", "tab");
     expect(input.openExternal).not.toHaveBeenCalled();
   });
 
   it("asks before choosing the external browser", async () => {
-    const askToOpenInternal = vi.fn(async () => false);
-    const { input } = createInput("ask", askToOpenInternal);
+    const askHowToOpen = vi.fn<() => Promise<ChatLinkAskResult>>(async () => "external");
+    const { input } = createInput("ask", askHowToOpen);
 
     await openChatLink(input);
 
-    expect(askToOpenInternal).toHaveBeenCalledOnce();
+    expect(askHowToOpen).toHaveBeenCalledOnce();
     expect(input.openExternal).toHaveBeenCalledWith("https://example.com/docs");
     expect(input.openInternal).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the Ask dialog is dismissed", async () => {
+    const askHowToOpen = vi.fn<() => Promise<ChatLinkAskResult>>(async () => null);
+    const { input } = createInput("ask", askHowToOpen);
+
+    await openChatLink(input);
+
+    expect(askHowToOpen).toHaveBeenCalledOnce();
+    expect(input.openExternal).not.toHaveBeenCalled();
+    expect(input.openInternal).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveChatLinkDialogChoice", () => {
+  it("maps explicit dialog buttons and leaves dismissal empty", () => {
+    expect(resolveChatLinkDialogChoice(null)).toBeNull();
+    expect(resolveChatLinkDialogChoice(0)).toBeNull();
+    expect(resolveChatLinkDialogChoice(1)).toBe("external");
+    expect(resolveChatLinkDialogChoice(2)).toBe("internal-tab");
   });
 });

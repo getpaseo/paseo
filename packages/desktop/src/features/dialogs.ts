@@ -12,6 +12,12 @@ interface AskWithCheckboxOptions extends AskOptions {
   checkboxChecked?: boolean;
 }
 
+interface ChooseOptions extends AskOptions {
+  buttons: string[];
+  defaultId?: number;
+  cancelId?: number;
+}
+
 interface OpenOptions {
   title?: string;
   defaultPath?: string;
@@ -61,6 +67,23 @@ export function registerDialogHandlers(): void {
       };
     },
   );
+
+  ipcMain.handle("paseo:dialog:choose", async (event, message: string, options: ChooseOptions) => {
+    if (!Array.isArray(options.buttons) || options.buttons.length === 0) {
+      throw new Error("Dialog choices require at least one button.");
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const cancelId = options.cancelId ?? 0;
+    const result = await dialog.showMessageBox(win ?? BrowserWindow.getFocusedWindow()!, {
+      type: resolveDialogType(options.kind),
+      title: options.title ?? "Choose",
+      message,
+      buttons: options.buttons,
+      defaultId: options.defaultId,
+      cancelId,
+    });
+    return result.response === cancelId ? null : result.response;
+  });
 
   ipcMain.handle("paseo:dialog:open", async (event, options?: OpenOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);

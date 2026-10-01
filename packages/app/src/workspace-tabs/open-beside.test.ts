@@ -28,6 +28,14 @@ beforeEach(() => {
 
 describe("openWorkspaceTargetAtLocation", () => {
   it("opens a browser tab in the main panel", () => {
+    const sideTabId = openWorkspaceTargetAtLocation({
+      isCompact: false,
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "browser", browserId: "browser-side-first" },
+      location: "side",
+    });
+    if (!sideTabId) throw new Error("Expected the side browser tab to open");
+
     const tabId = openWorkspaceTargetAtLocation({
       isCompact: false,
       workspaceKey: WORKSPACE_KEY,
@@ -38,8 +46,8 @@ describe("openWorkspaceTargetAtLocation", () => {
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[WORKSPACE_KEY];
     if (!tabId || !layout) throw new Error("Expected the browser tab to open");
+    expect(findPaneContainingTab(layout.root, sideTabId)?.id).not.toBe(DEFAULT_PANE_ID);
     expect(findPaneContainingTab(layout.root, tabId)?.id).toBe(DEFAULT_PANE_ID);
-    expect(state.sidePaneIdByWorkspace[WORKSPACE_KEY]).toBeUndefined();
   });
 
   it("opens a browser tab on the side", () => {
