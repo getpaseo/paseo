@@ -55,6 +55,7 @@ import { Route as ChangelogRouteImport } from "./routes/changelog";
 import { Route as BlogRouteImport } from "./routes/blog";
 import { Route as AutohandRouteImport } from "./routes/autohand";
 import { Route as AuggieRouteImport } from "./routes/auggie";
+import { Route as AntigravityRouteImport } from "./routes/antigravity";
 import { Route as AmpRouteImport } from "./routes/amp";
 import { Route as AgoragenticRouteImport } from "./routes/agoragentic";
 import { Route as AgentsRouteImport } from "./routes/agents";
@@ -302,6 +303,11 @@ const AuggieRoute = AuggieRouteImport.update({
   path: "/auggie",
   getParentRoute: () => rootRouteImport,
 } as any);
+const AntigravityRoute = AntigravityRouteImport.update({
+  id: "/antigravity",
+  path: "/antigravity",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const AmpRoute = AmpRouteImport.update({
   id: "/amp",
   path: "/amp",
@@ -390,6 +396,7 @@ export interface FileRoutesByFullPath {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/blog": typeof BlogRouteWithChildren;
@@ -454,6 +461,7 @@ export interface FileRoutesByTo {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/changelog": typeof ChangelogRoute;
@@ -517,6 +525,7 @@ export interface FileRoutesById {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/blog": typeof BlogRouteWithChildren;
@@ -583,6 +592,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/blog"
@@ -647,6 +657,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/changelog"
@@ -709,6 +720,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/blog"
@@ -774,6 +786,7 @@ export interface RootRouteChildren {
   AgentsRoute: typeof AgentsRoute;
   AgoragenticRoute: typeof AgoragenticRoute;
   AmpRoute: typeof AmpRoute;
+  AntigravityRoute: typeof AntigravityRoute;
   AuggieRoute: typeof AuggieRoute;
   AutohandRoute: typeof AutohandRoute;
   BlogRoute: typeof BlogRouteWithChildren;
@@ -1154,6 +1167,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AuggieRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/antigravity": {
+      id: "/antigravity";
+      path: "/antigravity";
+      fullPath: "/antigravity";
+      preLoaderRoute: typeof AntigravityRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/amp": {
       id: "/amp";
       path: "/amp";
@@ -1298,6 +1318,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsRoute: AgentsRoute,
   AgoragenticRoute: AgoragenticRoute,
   AmpRoute: AmpRoute,
+  AntigravityRoute: AntigravityRoute,
   AuggieRoute: AuggieRoute,
   AutohandRoute: AutohandRoute,
   BlogRoute: BlogRouteWithChildren,

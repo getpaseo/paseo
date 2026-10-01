@@ -98,6 +98,7 @@ function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): Usa
   return windowFromUsedPct({
     id: weekly ? "weekly" : "monthly",
     label: weekly ? "Weekly" : "Monthly",
+    shortLabel: weekly ? "wk" : "mo",
     utilizationPct: percent,
     resetsAt: period?.end ?? null,
     tone: toneFromUsedPct(percent),

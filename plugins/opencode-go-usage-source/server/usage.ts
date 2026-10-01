@@ -65,14 +65,16 @@ export async function fetchUsage(
   const data = responseSchema.parse(await response.json());
   const windows = (
     [
-      ["rolling", "Rolling", data.usage.rolling],
-      ["weekly", "Weekly", data.usage.weekly],
-      ["monthly", "Monthly", data.usage.monthly],
+      // The rolling window's length is not reported, so its percent stands without a name.
+      ["rolling", "Rolling", "", data.usage.rolling],
+      ["weekly", "Weekly", "wk", data.usage.weekly],
+      ["monthly", "Monthly", "mo", data.usage.monthly],
     ] as const
-  ).map(([id, label, value]) =>
+  ).map(([id, label, shortLabel, value]) =>
     windowFromUsedPct({
       id,
       label,
+      shortLabel,
       utilizationPct: value.percent,
       resetsAt: value.resetsAt,
       tone: toneFromUsedPct(value.percent),

@@ -84,6 +84,18 @@ async function openModelSelector(page: Page) {
   await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible({ timeout: 10_000 });
 }
 
+async function dismissStackedModelPickerWithBackdrop(page: Page) {
+  await page
+    .getByTestId("agent-controls-settings-list")
+    .getByRole("button", { name: /Select model/ })
+    .click();
+  await expect(page.getByTestId("agent-controls-model-browser-sheet")).toBeVisible();
+  await page.mouse.click(MOBILE_VIEWPORT.width / 2, 24);
+  await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeVisible();
+  await expect(page.getByTestId("agent-controls-model-sheet")).toBeVisible();
+  await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
+}
+
 async function openAndCloseTabSwitcherTwice(page: Page) {
   await openTabSwitcher(page);
   await closeBottomSheetWithBackdrop(page);
@@ -113,6 +125,8 @@ test.describe("mobile bottom sheet reopen", () => {
       await test.step("model search returns to configuration", async () => {
         await openModelSelector(page);
         const sheet = page.getByTestId("agent-controls-model-sheet");
+
+        await dismissStackedModelPickerWithBackdrop(page);
 
         await page.getByTestId("model-search-all-input").click();
         const model = page.getByRole("button", { name: /^Ten second stream/ });

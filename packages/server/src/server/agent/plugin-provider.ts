@@ -1090,6 +1090,7 @@ class PluginAgentClient implements AgentClient {
 }
 
 class PluginAgentSession implements AgentSession {
+  readonly initialTimeline: ImportedProviderSession["timeline"];
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history: AgentStreamEvent[] = [];
   private readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -1110,6 +1111,11 @@ class PluginAgentSession implements AgentSession {
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
+    // Opening notices arrive before the manager subscribes to the session.
+    // Commit them on registration and replay the same timestamps from history.
+    this.initialTimeline = this.timelineHistory().filter(
+      (entry) => entry.item.type === "notification",
+    );
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
   }
 
@@ -1490,6 +1496,7 @@ class PluginAgentSession implements AgentSession {
       {
         type: "timeline",
         provider: this.provider,
+        timestamp: new Date().toISOString(),
         item: {
           type: "notification",
           level: event.notice.severity,

@@ -59,6 +59,8 @@ test("discovers and fetches the default key from read-only auth.json", async () 
       ["weekly", 42, "2026-09-28T00:00:00.000Z"],
       ["monthly", 100, "2026-10-01T00:00:00.000Z"],
     ]);
+    // The rolling window's length is not reported, so its percent stands without a name.
+    expect(report.windows.map((window) => window.shortLabel)).toEqual(["", "wk", "mo"]);
     // The current upstream endpoint returns windows only; do not invent balances.
     expect(report.balances).toBeUndefined();
     expect(await readFile(path, "utf8")).toBe(content);

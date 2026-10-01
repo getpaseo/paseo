@@ -1,24 +1,12 @@
 import { useMemo } from "react";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatDisplayPct, formatResetLabel } from "./format";
-import { displayPercent, usageWindowRowLabel, usedPercent } from "./model";
+import { formatDisplayPct, formatResetLabel } from "./format";
+import { UsageMeter } from "./meter";
+import { displayPercent, usageWindowRowLabel } from "./model";
 import type { UsageDisplayAs } from "./preferences";
-import { deriveTone } from "./tone";
+import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
-
-function fillToneStyle(tone: UsageTone) {
-  switch (tone) {
-    case "ok":
-      return styles.fillOk;
-    case "warning":
-      return styles.fillWarning;
-    case "danger":
-      return styles.fillDanger;
-    default:
-      return styles.fillDefault;
-  }
-}
 
 // Pinned rows carry the pinned surface; hovering an unpinned row previews it at half strength,
 // so a hover never reads as the selection. Pinned rows do not react to hover.
@@ -43,15 +31,8 @@ export function UsageWindowBar({
   pinLabel: string;
   pinTestID: string;
 }) {
-  const usedPct = usedPercent(window);
   const shownPct = displayPercent(window, displayAs);
-  const tone = window.tone ?? deriveTone(usedPct);
-
-  const fillWidth = clampPct(shownPct ?? 0);
-  const fillStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.fill, fillToneStyle(tone), { width: `${fillWidth}%` }],
-    [fillWidth, tone],
-  );
+  const tone = windowTone(window);
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
   const trailing = isAtRisk
@@ -80,7 +61,8 @@ export function UsageWindowBar({
           value={value}
           trailing={trailing}
           isAtRisk={isAtRisk}
-          fillStyle={fillStyle}
+          percent={shownPct ?? 0}
+          tone={tone}
         />
       )}
     </Pressable>
@@ -93,14 +75,16 @@ function WindowRowContent({
   value,
   trailing,
   isAtRisk,
-  fillStyle,
+  percent,
+  tone,
 }: {
   highlight: StyleProp<ViewStyle>;
   label: string;
   value: string;
   trailing: string | null | undefined;
   isAtRisk: boolean;
-  fillStyle: StyleProp<ViewStyle>;
+  percent: number;
+  tone: UsageTone;
 }) {
   return (
     <>
@@ -116,9 +100,7 @@ function WindowRowContent({
           ) : null}
         </Text>
       </View>
-      <View style={styles.track}>
-        <View style={fillStyle} />
-      </View>
+      <UsageMeter percent={percent} tone={tone} />
     </>
   );
 }
@@ -173,27 +155,5 @@ const styles = StyleSheet.create((theme) => ({
   atRisk: {
     color: theme.colors.statusDanger,
     fontWeight: theme.fontWeight.normal,
-  },
-  track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.surface3,
-    overflow: "hidden",
-  },
-  fill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  fillDefault: {
-    backgroundColor: theme.colors.foregroundMuted,
-  },
-  fillOk: {
-    backgroundColor: theme.colors.statusSuccess,
-  },
-  fillWarning: {
-    backgroundColor: theme.colors.statusWarning,
-  },
-  fillDanger: {
-    backgroundColor: theme.colors.statusDanger,
   },
 }));

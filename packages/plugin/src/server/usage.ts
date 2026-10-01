@@ -5,6 +5,13 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 export interface UsageWindow {
   id: string;
   label: string;
+  /**
+   * A few characters naming the window where space is tight, e.g. "5h" or "wk". An empty string
+   * shows the percent alone; leaving it out shows `label`.
+   */
+  shortLabel?: string;
+  /** Shown in the usage summary until the user pins windows of their own. */
+  summary?: boolean;
   usedPct?: number | null;
   remainingPct?: number | null;
   resetsAt?: string | null;
@@ -54,6 +61,8 @@ export interface UsageSourceRegistration {
 export function windowFromUsedPct(input: {
   id: string;
   label: string;
+  shortLabel?: string;
+  summary?: boolean;
   utilizationPct: number | null | undefined;
   resetsAt?: string | null;
   tone?: UsageWindow["tone"];
@@ -66,6 +75,8 @@ export function windowFromUsedPct(input: {
     remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
     resetsAt: input.resetsAt ?? null,
   };
+  if (input.shortLabel !== undefined) window.shortLabel = input.shortLabel;
+  if (input.summary) window.summary = true;
   if (input.tone) window.tone = input.tone;
   return window;
 }

@@ -478,7 +478,7 @@ one section's order from built-ins, plugin groups, and the section's preference
 
 - The item's `Component` renders directly in the section, with no wrapper, so a fragment or array
   of rows lays out like separate items while Settings keeps one entry for the block. Footer items
-  are rows between Add project and the footer's icon row. The icon row (Hosts, Import session,
+  are rows between Add project and the footer's icon row. The icon row (Hosts,
   Help and support, Settings) is fixed app code, not a contribution slot, so the kit has no icon
   button.
 - `openPopover` opens through the same `PluginPopoverSurface` as header buttons

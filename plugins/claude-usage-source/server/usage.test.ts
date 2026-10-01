@@ -307,6 +307,38 @@ describe("Claude usage source scoped weekly limits", () => {
     );
   });
 
+  it("summarizes the session and weekly windows by default, not scoped ones", async () => {
+    const { provider } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit()],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => [window.id, window.summary ?? false])).toEqual([
+      ["five_hour", true],
+      ["weekly", true],
+      ["weekly_model_fable", false],
+    ]);
+  });
+
+  it("gives every window a short label for tight spaces", async () => {
+    const { provider } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit()],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => [window.id, window.shortLabel])).toEqual([
+      ["five_hour", "5h"],
+      ["weekly", "wk"],
+      ["weekly_model_fable", "wk Fable"],
+    ]);
+  });
+
   it("renders a scoped window that is at zero and inactive", async () => {
     const { provider } = claudeProvider({
       seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
