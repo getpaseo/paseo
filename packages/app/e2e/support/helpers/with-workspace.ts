@@ -3,11 +3,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { gotoWorkspace } from "./launcher";
 import { createTempGitRepo, resolveTempRoot } from "./workspace";
-import {
-  connectWorkspaceSetupClient,
-  openHomeWithProject,
-  type WorkspaceSetupDaemonClient,
-} from "./workspace-setup";
+import { connectWorkspaceSetupClient, type WorkspaceSetupDaemonClient } from "./workspace-setup";
 
 export interface CreatedWorkspace {
   workspaceId: string;
@@ -79,7 +75,6 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
       workspaceId,
       repoPath: workspacePath,
       navigateTo: async () => {
-        await openHomeWithProject(page, repo.path);
         await gotoWorkspace(page, workspaceId);
       },
     };

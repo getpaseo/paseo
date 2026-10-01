@@ -1,6 +1,6 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsSection } from "../support/helpers/settings";
 
@@ -19,7 +19,7 @@ test("shows Pure black in the appearance picker", async ({ page }, testInfo) => 
 });
 
 test("keeps the selected workspace visible in Light", async ({ page }, testInfo) => {
-  const workspace = await seedWorkspace({
+  const workspace = await seedMockAgentWorkspace({
     repoPrefix: "light-selected-workspace-",
     title: "Selected workspace",
   });
@@ -46,7 +46,7 @@ test("keeps the selected workspace visible in Light", async ({ page }, testInfo)
 });
 
 test("keeps the selected workspace visible in Pure black", async ({ page }, testInfo) => {
-  const workspace = await seedWorkspace({
+  const workspace = await seedMockAgentWorkspace({
     repoPrefix: "pure-black-selected-workspace-",
     title: "Selected workspace",
   });
@@ -81,7 +81,6 @@ test("applies the interface font size to settings text", async ({ page }) => {
   await openSettingsSection(page, "appearance");
 
   const sectionTitle = page.getByText("Theme", { exact: true }).first();
-  // Section titles use fontSize.base, which tracks the interface size one to one.
   await expect(sectionTitle).toHaveCSS("font-size", "21px");
 
   const interfaceSizeInput = page.getByLabel("Interface font size");
