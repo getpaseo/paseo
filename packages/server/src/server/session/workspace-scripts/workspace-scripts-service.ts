@@ -132,9 +132,13 @@ export function createWorkspaceScriptsService(deps: {
 
   async function emitStatusUpdate(workspaceId: string, _workspaceDirectory: string): Promise<void> {
     // Workspace subscribers need lifecycle updates even when status events are disabled.
-    await deps.emitWorkspaceUpdateToAllSessions?.(workspaceId).catch((error) => {
+    void deps.emitWorkspaceUpdateToAllSessions?.(workspaceId).catch((error) => {
       logger.warn({ err: error, workspaceId }, "Failed to broadcast workspace script lifecycle");
     });
+    await emitRequesterStatusUpdate(workspaceId);
+  }
+
+  async function emitRequesterStatusUpdate(workspaceId: string): Promise<void> {
     if (deps.wantsStatusUpdates && !deps.wantsStatusUpdates()) return;
     try {
       const workspace = await workspaceRegistry.get(workspaceId);
@@ -213,7 +217,7 @@ export function createWorkspaceScriptsService(deps: {
     if (!script) {
       throw new Error(`Script '${input.scriptName}' did not produce a status record`);
     }
-    void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    void emitRequesterStatusUpdate(workspace.workspaceId);
     return script;
   }
 
@@ -241,14 +245,14 @@ export function createWorkspaceScriptsService(deps: {
     if (!script) {
       throw new Error(`Script '${input.scriptName}' did not produce a status record`);
     }
-    void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    void emitRequesterStatusUpdate(workspace.workspaceId);
     return script;
   }
 
   async function start(request: StartWorkspaceScriptRequest): Promise<void> {
     try {
       const { workspace, terminalId } = await launchProcess(request);
-      void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+      void emitRequesterStatusUpdate(workspace.workspaceId);
       emit({
         type: "start_workspace_script_response",
         payload: {

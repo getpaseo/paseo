@@ -254,20 +254,39 @@ describe("lifecycle fan-out to other sessions", () => {
     });
 
     await service.start(request);
-    await vi.waitFor(() => expect(fannedOut).toEqual(["ws-1", "ws-1"]));
+    await vi.waitFor(() => expect(fannedOut).toEqual(["ws-1"]));
 
     // Simulate a natural exit after start() resolves.
     spawnCalls[0]?.onLifecycleChanged?.();
-    await vi.waitFor(() => expect(fannedOut).toEqual(["ws-1", "ws-1", "ws-1"]));
+    await vi.waitFor(() => expect(fannedOut).toEqual(["ws-1", "ws-1"]));
     const statusUpdateCount = () =>
       emitted.filter((message) => message.type === "script_status_update").length;
     await vi.waitFor(() => expect(statusUpdateCount()).toBe(3));
   });
 
+  test("requester status does not wait for peer delivery", async () => {
+    const peerDelivery = Promise.withResolvers<void>();
+    const { service, emitted } = buildService({
+      emitWorkspaceUpdateToAllSessions: () => peerDelivery.promise,
+    });
+
+    const statusUpdate = service.emitStatusUpdate("ws-1", "/tmp/repo");
+    try {
+      await vi.waitFor(() =>
+        expect(emitted).toEqual([
+          { type: "script_status_update", payload: { workspaceId: "ws-1", scripts: [] } },
+        ]),
+      );
+    } finally {
+      peerDelivery.resolve();
+      await statusUpdate;
+    }
+  });
+
   test("a failed fan-out does not block the requester's status update", async () => {
     const { service, emitted } = buildService({
       emitWorkspaceUpdateToAllSessions: async () => {
-        throw new Error("no subscription");
+        throw new Error("workspace delivery failed");
       },
     });
 
