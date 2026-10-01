@@ -2544,7 +2544,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         "Start one configured workspace script through Paseo's managed workspace-script launcher.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID containing the configured script."),
-        scriptName: z.string().min(1).describe("Configured paseo.json script name to start."),
+        scriptName: z.string().min(1).describe("Configured pandaos.json script name to start."),
       },
       outputSchema: {
         script: WorkspaceScriptPayloadSchema,
@@ -2570,7 +2570,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       description: "Stop a running workspace script through its supervised terminal lifecycle.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID containing the running script."),
-        scriptName: z.string().min(1).describe("Configured paseo.json script name to stop."),
+        scriptName: z.string().min(1).describe("Configured pandaos.json script name to stop."),
       },
       outputSchema: {
         script: WorkspaceScriptPayloadSchema,

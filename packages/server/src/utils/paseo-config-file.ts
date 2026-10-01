@@ -14,7 +14,16 @@ export {
   type ProjectConfigRpcError,
 } from "@getpaseo/protocol/paseo-config-schema";
 
-export const PASEO_CONFIG_FILE_NAME = "paseo.json";
+export const PASEO_CONFIG_FILE_NAME = "pandaos.json";
+// COMPAT(paseo-json): repos created before the PandaOS rename keep paseo.json until they rename it.
+export const LEGACY_PASEO_CONFIG_FILE_NAME = "paseo.json";
+
+export function resolvePaseoConfigFileName(repoRoot: string): string {
+  if (existsSync(join(repoRoot, PASEO_CONFIG_FILE_NAME))) return PASEO_CONFIG_FILE_NAME;
+  if (existsSync(join(repoRoot, LEGACY_PASEO_CONFIG_FILE_NAME)))
+    return LEGACY_PASEO_CONFIG_FILE_NAME;
+  return PASEO_CONFIG_FILE_NAME;
+}
 
 export type ReadPaseoConfigForEditResult =
   | { ok: true; config: PaseoConfigRaw | null; revision: PaseoConfigRevision | null }
@@ -31,7 +40,7 @@ export interface WritePaseoConfigForEditInput {
 }
 
 export function resolvePaseoConfigPath(repoRoot: string): string {
-  return join(repoRoot, PASEO_CONFIG_FILE_NAME);
+  return join(repoRoot, resolvePaseoConfigFileName(repoRoot));
 }
 
 export function statPaseoConfigPath(repoRoot: string): PaseoConfigRevision | null {

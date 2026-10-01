@@ -2221,7 +2221,7 @@ export const ar: TranslationResources = {
         systemOne: "Jev، TypeSafe، توجيه، قرارات، ثقة",
         metadata: "عناوين، أسماء الفروع، رسائل الإيداع، التسمية، التوليد",
         plugins: "امتدادات، إضافات، تثبيت، مصادر موثوقة",
-        projects: "مستودعات، سكربتات، paseo.json، إعدادات المشروع",
+        projects: "مستودعات، سكربتات، pandaos.json، إعدادات المشروع",
         workspaces: "جلسات، أرشفة، مدمج، أرشفة تلقائية، تنظيف",
         linkedAccounts: "GitHub، gh، حسابات، تسجيل الدخول، forge، طلبات السحب، Jira، التخطيط",
         host: "نظرة عامة، الخدمة، إعادة التشغيل، تحديث، الإصدار، إزالة المضيف، اللون، الشارة، منطقة الخطر",
@@ -2960,13 +2960,13 @@ export const ar: TranslationResources = {
         savedToast: "تم تحديث المشروع",
       },
       readFailures: {
-        invalidTitle: "تعذر تحليل paseo.json",
+        invalidTitle: "تعذر تحليل pandaos.json",
         invalidDescription: "قم بإصلاح الملف على القرص، ثم أعد تحميله.",
         missingTitle: "هذا المضيف ليس لديه هذا المشروع",
         missingSingleHost: "المضيف المحدد ليس لديه سجل لهذا المشروع.",
-        transportTitle: "تعذر تحميل paseo.json",
+        transportTitle: "تعذر تحميل pandaos.json",
         transportFallback: "المضيف لم يستجب.",
-        failedTitle: "تعذر تحميل paseo.json",
+        failedTitle: "تعذر تحميل pandaos.json",
         failedDescription: "أعد التحميل للمحاولة مرة أخرى.",
       },
       worktree: {
@@ -2976,7 +2976,7 @@ export const ar: TranslationResources = {
         docsTooltip: "راجع المستندات لمزيد من التفاصيل ومتغيرات البيئة المتاحة لهذه الأوامر",
         setup: "يثبت",
         setupAccessibility: "أوامر إعداد شجرة العمل",
-        uncommittedTitle: "ثبّت تغييرات paseo.json",
+        uncommittedTitle: "ثبّت تغييرات pandaos.json",
         uncommittedDescription:
           "تستخدم أشجار العمل الجديدة نص الإعداد البرمجي من الفرع الأساسي الذي تحدده.",
         teardown: "هدم",
@@ -3020,8 +3020,8 @@ export const ar: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "تم تغيير التكوين على القرص",
-        staleDescription: "أعد التحميل لجلب أحدث ملف paseo.json قبل الحفظ.",
-        failedTitle: "تعذر حفظ paseo.json",
+        staleDescription: "أعد التحميل لجلب أحدث ملف pandaos.json قبل الحفظ.",
+        failedTitle: "تعذر حفظ pandaos.json",
         failedDescription: "حاول مرة أخرى، أو أعد تحميل الإصدار الأحدث من القرص.",
       },
       actions: {

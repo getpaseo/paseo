@@ -2291,7 +2291,7 @@ export const en = {
         systemOne: "Jev, TypeSafe, routing, decisions, confidence",
         metadata: "titles, branch names, commit messages, naming, generation",
         plugins: "extensions, add-ons, install, trusted sources",
-        projects: "repositories, repos, scripts, paseo.json, project settings",
+        projects: "repositories, repos, scripts, pandaos.json, project settings",
         workspaces: "sessions, archive, merged, auto archive, cleanup",
         linkedAccounts: "GitHub, gh, accounts, login, forge, pull requests, Jira, planning",
         host: "overview, daemon, restart, update, version, remove host, color, badge, danger zone",
@@ -3247,13 +3247,13 @@ export const en = {
         savedToast: "Project updated",
       },
       readFailures: {
-        invalidTitle: "paseo.json couldn't be parsed",
+        invalidTitle: "pandaos.json couldn't be parsed",
         invalidDescription: "Fix the file on disk, then reload.",
         missingTitle: "This host doesn't have this project",
         missingSingleHost: "The selected host has no record of this project.",
-        transportTitle: "Couldn't load paseo.json",
+        transportTitle: "Couldn't load pandaos.json",
         transportFallback: "The host didn't respond.",
-        failedTitle: "Couldn't load paseo.json",
+        failedTitle: "Couldn't load pandaos.json",
         failedDescription: "Reload to try again.",
       },
       worktree: {
@@ -3264,7 +3264,7 @@ export const en = {
           "See docs for more details and the environment variables available to these commands",
         setup: "Setup",
         setupAccessibility: "Worktree setup commands",
-        uncommittedTitle: "Commit paseo.json changes",
+        uncommittedTitle: "Commit pandaos.json changes",
         uncommittedDescription:
           "New worktrees use the setup script from the base branch you select.",
         teardown: "Teardown",
@@ -3308,8 +3308,8 @@ export const en = {
       },
       writeFailures: {
         staleTitle: "Config changed on disk",
-        staleDescription: "Reload to fetch the latest paseo.json before saving.",
-        failedTitle: "Couldn't save paseo.json",
+        staleDescription: "Reload to fetch the latest pandaos.json before saving.",
+        failedTitle: "Couldn't save pandaos.json",
         failedDescription: "Try again, or reload the latest version from disk.",
       },
       actions: {

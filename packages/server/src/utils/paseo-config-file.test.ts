@@ -6,6 +6,7 @@ import { isPlatform } from "../test-utils/platform.js";
 import { getWorktreeSetupCommands, getWorktreeTeardownCommands } from "./worktree.js";
 import {
   readPaseoConfigForEdit,
+  resolvePaseoConfigFileName,
   statPaseoConfigPath,
   writePaseoConfigForEdit,
 } from "./paseo-config-file.js";
@@ -187,5 +188,13 @@ describe("paseo config file substrate", () => {
       config: { scripts: { dev: { command: "npm run dev" } } },
       revision: statPaseoConfigPath(join(tempDir, "nested")),
     });
+  });
+
+  it("writes pandaos.json for new repos and keeps a legacy paseo.json", () => {
+    expect(resolvePaseoConfigFileName(tempDir)).toBe("pandaos.json");
+    writeFileSync(join(tempDir, "paseo.json"), "{}");
+    expect(resolvePaseoConfigFileName(tempDir)).toBe("paseo.json");
+    writeFileSync(join(tempDir, "pandaos.json"), "{}");
+    expect(resolvePaseoConfigFileName(tempDir)).toBe("pandaos.json");
   });
 });

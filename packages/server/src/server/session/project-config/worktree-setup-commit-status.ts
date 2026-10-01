@@ -5,6 +5,7 @@ import {
 } from "@getpaseo/protocol/paseo-config-schema";
 import { READ_ONLY_GIT_ENV } from "../../checkout-git-utils.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
+import { resolvePaseoConfigFileName } from "../../../utils/paseo-config-file.js";
 
 export async function hasUncommittedWorktreeSetupChanges(input: {
   repoRoot: string;
@@ -22,7 +23,7 @@ async function resolveConfigGitPath(repoRoot: string): Promise<string> {
     cwd: repoRoot,
     envOverlay: READ_ONLY_GIT_ENV,
   });
-  return `${stdout.trim()}paseo.json`;
+  return `${stdout.trim()}${resolvePaseoConfigFileName(repoRoot)}`;
 }
 
 async function readCommittedConfig(

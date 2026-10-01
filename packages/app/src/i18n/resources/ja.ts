@@ -2246,7 +2246,7 @@ export const ja: TranslationResources = {
         systemOne: "Jev, TypeSafe, ルーティング, 判断, 信頼度",
         metadata: "タイトル, ブランチ名, コミットメッセージ, 命名, 生成",
         plugins: "拡張機能, アドオン, インストール, 信頼済みソース",
-        projects: "リポジトリ, スクリプト, paseo.json, プロジェクト設定",
+        projects: "リポジトリ, スクリプト, pandaos.json, プロジェクト設定",
         workspaces: "セッション, アーカイブ, マージ済み, 自動アーカイブ, クリーンアップ",
         linkedAccounts: "GitHub, gh, アカウント, ログイン, フォージ, プルリクエスト, Jira, 計画",
         host: "概要, デーモン, 再起動, 更新, バージョン, ホストを削除, 色, バッジ, 危険な操作",
@@ -2993,13 +2993,13 @@ export const ja: TranslationResources = {
         savedToast: "プロジェクトを更新しました",
       },
       readFailures: {
-        invalidTitle: "paseo.jsonを解析できませんでした",
+        invalidTitle: "pandaos.jsonを解析できませんでした",
         invalidDescription: "ディスク上のファイルを修正してから再読み込みしてください。",
         missingTitle: "このホストにはこのプロジェクトがありません",
         missingSingleHost: "選択したホストにはこのプロジェクトの記録がありません。",
-        transportTitle: "paseo.jsonを読み込めませんでした",
+        transportTitle: "pandaos.jsonを読み込めませんでした",
         transportFallback: "ホストが応答しませんでした。",
-        failedTitle: "paseo.jsonを読み込めませんでした",
+        failedTitle: "pandaos.jsonを読み込めませんでした",
         failedDescription: "再読み込みして再試行してください。",
       },
       worktree: {
@@ -3010,7 +3010,7 @@ export const ja: TranslationResources = {
           "これらのコマンドで使用可能な詳細と環境変数についてはドキュメントを参照してください",
         setup: "セットアップ",
         setupAccessibility: "ワークツリーセットアップコマンド",
-        uncommittedTitle: "paseo.json の変更をコミットしてください",
+        uncommittedTitle: "pandaos.json の変更をコミットしてください",
         uncommittedDescription:
           "新しいワークツリーでは、選択したベースブランチのセットアップスクリプトが使われます。",
         teardown: "削除時",
@@ -3054,8 +3054,8 @@ export const ja: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "設定がディスク上で変更されました",
-        staleDescription: "保存する前に最新のpaseo.jsonを取得するために再読み込みしてください。",
-        failedTitle: "paseo.jsonを保存できませんでした",
+        staleDescription: "保存する前に最新のpandaos.jsonを取得するために再読み込みしてください。",
+        failedTitle: "pandaos.jsonを保存できませんでした",
         failedDescription: "再試行するか、ディスクから最新バージョンを再読み込みしてください。",
       },
       actions: {

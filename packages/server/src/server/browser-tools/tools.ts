@@ -119,7 +119,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       {
         title: "Test in Paseo's testing engine",
         description:
-          "Paseo's testing engine. Use it first for every UI, end-to-end, or 'does it work in the browser' check instead of driving browser_* tools step by step. Call with no arguments to list the workspace's saved recipes; pass `recipe` to run one; or pass `steps` for an ad-hoc run. Steps run inside the daemon without model tokens: navigate (url, or service + path), click/fill/assert-visible (role + name), wait-text, assert-text, assert-console-errors, assert-failed-requests, screenshot, ensure-authenticated. Use a `goal` step ({ action: \"goal\", goal, verify: [{ text } | { url }] }) for parts you cannot script: Jev drives them in fast bounded steps. Returns only pass/fail, checks, log counts, and an evidence reference; open the browser_* tools only to debug a failed run. Pass `saveAs` with ad-hoc steps to store a passing run as a recipe in paseo.json, so the next run is fully scripted.",
+          "Paseo's testing engine. Use it first for every UI, end-to-end, or 'does it work in the browser' check instead of driving browser_* tools step by step. Call with no arguments to list the workspace's saved recipes; pass `recipe` to run one; or pass `steps` for an ad-hoc run. Steps run inside the daemon without model tokens: navigate (url, or service + path), click/fill/assert-visible (role + name), wait-text, assert-text, assert-console-errors, assert-failed-requests, screenshot, ensure-authenticated. Use a `goal` step ({ action: \"goal\", goal, verify: [{ text } | { url }] }) for parts you cannot script: Jev drives them in fast bounded steps. Returns only pass/fail, checks, log counts, and an evidence reference; open the browser_* tools only to debug a failed run. Pass `saveAs` with ad-hoc steps to store a passing run as a recipe in pandaos.json, so the next run is fully scripted.",
         inputSchema: {
           recipe: z.string().trim().min(1).optional(),
           steps: z.array(PaseoRecipeStepSchema).min(1).max(60).optional(),
@@ -128,7 +128,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
             .string()
             .regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
             .optional()
-            .describe("With steps: save the run as this recipe in paseo.json if it passes."),
+            .describe("With steps: save the run as this recipe in pandaos.json if it passes."),
         },
       },
       async (input: {

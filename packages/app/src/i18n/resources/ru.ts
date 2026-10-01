@@ -2258,7 +2258,7 @@ export const ru: TranslationResources = {
         systemOne: "Jev, TypeSafe, маршрутизация, решения, уверенность",
         metadata: "заголовки, имена веток, сообщения коммитов, именование, генерация",
         plugins: "расширения, дополнения, установка, доверенные источники",
-        projects: "репозитории, репо, скрипты, paseo.json, настройки проекта",
+        projects: "репозитории, репо, скрипты, pandaos.json, настройки проекта",
         workspaces: "сессии, архив, слияние, автоархивация, очистка",
         linkedAccounts: "GitHub, gh, аккаунты, вход, forge, pull request, Jira, планирование",
         host: "обзор, демон, перезапуск, обновление, версия, удалить хост, цвет, значок, опасная зона",
@@ -3017,13 +3017,13 @@ export const ru: TranslationResources = {
         savedToast: "Проект обновлён",
       },
       readFailures: {
-        invalidTitle: "Не удалось разобрать paseo.json",
+        invalidTitle: "Не удалось разобрать pandaos.json",
         invalidDescription: "Исправьте файл на диске, затем загрузите его заново.",
         missingTitle: "У этого хоста нет этого проекта",
         missingSingleHost: "У выбранного хоста нет записей об этом проекте.",
-        transportTitle: "Не удалось загрузить paseo.json.",
+        transportTitle: "Не удалось загрузить pandaos.json.",
         transportFallback: "Хост не ответил.",
-        failedTitle: "Не удалось загрузить paseo.json.",
+        failedTitle: "Не удалось загрузить pandaos.json.",
         failedDescription: "Загрузите данные заново, чтобы повторить попытку.",
       },
       worktree: {
@@ -3034,7 +3034,7 @@ export const ru: TranslationResources = {
           "Дополнительную информацию и переменные среды, доступные для этих команд, см. в документации.",
         setup: "Настройка",
         setupAccessibility: "Команды настройки worktree",
-        uncommittedTitle: "Закоммитьте изменения в paseo.json",
+        uncommittedTitle: "Закоммитьте изменения в pandaos.json",
         uncommittedDescription:
           "Новые worktree используют скрипт настройки из выбранной базовой ветки.",
         teardown: "Удаление",
@@ -3080,9 +3080,9 @@ export const ru: TranslationResources = {
       },
       writeFailures: {
         staleTitle: "Конфигурация изменена на диске",
-        staleDescription: "Перед сохранением загрузите с диска последнюю версию paseo.json.",
-        failedTitle: "Не удалось сохранить paseo.json.",
-        failedDescription: "Повторите попытку или загрузите с диска последнюю версию paseo.json.",
+        staleDescription: "Перед сохранением загрузите с диска последнюю версию pandaos.json.",
+        failedTitle: "Не удалось сохранить pandaos.json.",
+        failedDescription: "Повторите попытку или загрузите с диска последнюю версию pandaos.json.",
       },
       actions: {
         reload: "Загрузить заново",
