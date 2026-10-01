@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import readline from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -167,8 +167,33 @@ function readProviderTurnId(params: unknown): string | undefined {
   return isRecord(turn) && typeof turn.id === "string" ? turn.id : undefined;
 }
 
+/**
+ * Splits stdout into lines on "\n" only. `node:readline` additionally treats U+2028 and U+2029
+ * as line terminators, but Codex emits those characters raw inside JSON strings, so readline
+ * would cut a single JSON-RPC message into pieces that fail to parse.
+ */
+function createNewlineLineReader(
+  input: NodeJS.ReadableStream,
+  onLine: (line: string) => void,
+): { close(): void } {
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  const onData = (chunk: Buffer | string): void => {
+    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    let index = buffer.indexOf("\n");
+    while (index !== -1) {
+      const line = buffer.slice(0, index).replace(/\r$/, "");
+      buffer = buffer.slice(index + 1);
+      onLine(line);
+      index = buffer.indexOf("\n");
+    }
+  };
+  input.on("data", onData);
+  return { close: () => void input.off("data", onData) };
+}
+
 export class CodexAppServerClient {
-  private readonly rl: readline.Interface;
+  private readonly stdoutLineReader: { close(): void };
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private notificationHandler: NotificationHandler | null = null;
@@ -182,8 +207,7 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => {
+    this.stdoutLineReader = createNewlineLineReader(child.stdout, (line) => {
       void this.handleLine(line).catch((error) => {
         this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
       });
@@ -259,7 +283,7 @@ export class CodexAppServerClient {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
-    this.rl.close();
+    this.stdoutLineReader.close();
     this.rejectPending(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
@@ -286,7 +310,7 @@ export class CodexAppServerClient {
       return;
     }
     this.disposed = true;
-    this.rl.close();
+    this.stdoutLineReader.close();
     this.rejectPending(error);
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;

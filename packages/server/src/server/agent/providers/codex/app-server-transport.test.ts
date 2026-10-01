@@ -22,6 +22,25 @@ describe("Codex app-server transport", () => {
     child.stdin.end();
   });
 
+  test("keeps a JSON message intact when it contains raw U+2028/U+2029", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+
+    const request = client.request("thread/resume", {});
+    const text = "a\u2028b\u2029c\u0085d";
+    // Codex does not escape U+2028/U+2029 in JSON output, so write them raw.
+    const message = `{"id":1,"result":{"text":"${text}"}}\n`;
+    const bytes = Buffer.from(message, "utf8");
+    // Split mid-way (inside a multi-byte character) to exercise chunk boundaries.
+    child.stdout.write(bytes.subarray(0, 28));
+    child.stdout.write(bytes.subarray(28));
+
+    await expect(request).resolves.toEqual({ text });
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test("dispose rejects pending requests instead of leaving them hanging", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
