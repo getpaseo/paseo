@@ -1812,6 +1812,12 @@ export const ko: TranslationResources = {
     externalBrowser: "외부 브라우저",
     dontAskAgain: "다시 묻지 않기",
   },
+  chatLink: {
+    title: "URL 열기",
+    message: "{{url}}을(를) Paseo 또는 외부 브라우저에서 여시겠습니까?",
+    internalTab: "내부 브라우저 — 탭",
+    externalBrowser: "외부 브라우저",
+  },
   downloads: {
     requestTokenFailed: "다운로드 토큰을 요청하지 못했습니다.",
     hostUnavailable: "다운로드 호스트를 사용할 수 없습니다.",
@@ -2077,6 +2083,14 @@ export const ko: TranslationResources = {
         options: {
           ask: "물어보기",
           inApp: "Paseo에서",
+          external: "외부 브라우저",
+        },
+      },
+      chatLinks: {
+        options: {
+          ask: "물어보기",
+          internalSide: "내부 브라우저 — 측면",
+          internalTab: "내부 브라우저 — 탭",
           external: "외부 브라우저",
         },
       },
