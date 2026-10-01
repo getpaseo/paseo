@@ -155,7 +155,7 @@ function currentHandoff(session: LeitstandSession): LeitstandSession["handoff"] 
 /** Paperclip workers and schedules talk to Boss or to nobody; only the rest waits on the person. */
 function withPersonFacingAgents(session: LeitstandSession): LeitstandSession | null {
   const people = session.agents.filter((agent) => agent.personFacing);
-  if (session.agents.length > 0 && people.length === 0) return null;
+  if (people.length === 0) return null;
   if (people.length === session.agents.length) return session;
   const speaker = latestAgent(people);
   return {

@@ -279,6 +279,21 @@ describe("buildLeitstandInbox", () => {
     ]);
   });
 
+  it.each(["needs_input", "failed", "running", "attention", "done"] as const)(
+    "leaves a workspace without a chat out of the inbox even with PR alerts and %s status",
+    (bucket) => {
+      const empty = session({
+        bucket,
+        agents: [],
+        pullRequests: [
+          pr({ number: 21, checksStatus: "success" }),
+          pr({ number: 22, checksStatus: "failure" }),
+        ],
+      });
+      expect(inbox({ sessions: [empty] }).items).toEqual([]);
+    },
+  );
+
   it("drops a handback the daemon sorted as a plain report and shows what a question needs", () => {
     const handedBack = { bucket: "attention" as const, agents: [agent({ bucket: "attention" })] };
     const report = session({
