@@ -1,4 +1,5 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { isWorkspaceRootAgent } from "@/subagents/workspace-root-policy";
 import { pickAttentionAgent } from "@/utils/agent-attention";
 import {
   buildHostWorkspaceOpenRoute,
@@ -35,6 +36,7 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
   getSessionAgents: (serverId: string) => Iterable<Agent>;
   isWorkspaceLayoutHydrated: () => boolean;
+  getWorkspaceFocusedTarget: (workspaceKey: string) => WorkspaceTabTarget | null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
 }
@@ -99,12 +101,34 @@ export function navigateToWorkspace(
       prepareWorkspaceTab({ ...input, target: input.target }, deps);
     }
   } else {
+    const hostAgents = Array.from(deps.getSessionAgents(input.serverId));
+    const agentsById = new Map(hostAgents.map((agent) => [agent.id, agent]));
     const workspaceAgents = resolvedWorkspaceId
-      ? Array.from(deps.getSessionAgents(input.serverId)).filter(
+      ? hostAgents.filter(
           (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === resolvedWorkspaceId,
         )
       : [];
-    const attentionAgentId = pickAttentionAgent(workspaceAgents);
+    const workspaceKey = `${input.serverId}:${resolvedWorkspaceId}`;
+    const focusedTarget = deps.getWorkspaceFocusedTarget(workspaceKey);
+    let attentionAgentId = pickAttentionAgent(workspaceAgents);
+    if (
+      !attentionAgentId &&
+      deps.isWorkspaceLayoutHydrated() &&
+      (!focusedTarget || focusedTarget.kind === "new_tab")
+    ) {
+      attentionAgentId =
+        workspaceAgents
+          .filter(
+            (agent) =>
+              !agent.archivedAt &&
+              isWorkspaceRootAgent(agent, agentsById.get(agent.parentAgentId ?? "")),
+          )
+          .reduce<Agent | null>(
+            (latest, agent) =>
+              !latest || agent.lastActivityAt > latest.lastActivityAt ? agent : latest,
+            null,
+          )?.id ?? null;
+    }
     if (attentionAgentId && resolvedWorkspaceId) {
       deps.openTab({
         workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,

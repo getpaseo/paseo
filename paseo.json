@@ -322,6 +322,127 @@
             "max": 0
           }
         ]
+      },
+      "factory-team-cli-tracking": {
+        "params": ["teamsUrl"],
+        "steps": [
+          {
+            "url": "{{teamsUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Factory CLI verification",
+            "timeoutMs": 20000
+          },
+          {
+            "action": "wait-text",
+            "text": "CLI evidence acknowledged",
+            "timeoutMs": 10000
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "factory-team-cli-tracking"
+          }
+        ]
+      },
+      "session-workspace-opens-chat": {
+        "params": ["starterUrl", "workspaceButton", "chatText"],
+        "steps": [
+          {
+            "url": "{{starterUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Terminal profiles",
+            "timeoutMs": 15000
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "{{workspaceButton}}"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{chatText}}",
+            "timeoutMs": 15000
+          },
+          {
+            "action": "assert-visible",
+            "role": "textbox",
+            "name": "Message agent..."
+          },
+          {
+            "action": "screenshot",
+            "name": "existing-chat-reopened"
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          }
+        ]
+      },
+      "upstream-010-settings-smoke": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://localhost:4026/settings/general",
+            "action": "navigate"
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "Sidebar"
+          },
+          {
+            "action": "wait-text",
+            "text": "Sidebar"
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "Chat"
+          },
+          {
+            "action": "wait-text",
+            "text": "Chat"
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "Terminal"
+          },
+          {
+            "action": "wait-text",
+            "text": "Terminal scrollback"
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "Appearance"
+          },
+          {
+            "action": "wait-text",
+            "text": "Theme"
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "upstream-010-settings"
+          }
+        ]
       }
     }
   }

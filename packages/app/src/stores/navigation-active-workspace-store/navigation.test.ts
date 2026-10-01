@@ -25,6 +25,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
     isWorkspaceLayoutHydrated: () => true,
+    getWorkspaceFocusedTarget: () => null,
     openTab: ({ workspaceKey, target, pin = false }) => {
       openedTabs.push({ workspaceKey, target, pin });
       return target.kind === "agent" ? target.agentId : null;
@@ -60,6 +61,68 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it.each([
+    { target: { kind: "new_tab" } as WorkspaceTabTarget, hydrated: true, expected: "recent" },
+    {
+      target: { kind: "terminal", terminalId: "term" } as WorkspaceTabTarget,
+      hydrated: true,
+      expected: null,
+    },
+    {
+      target: { kind: "draft", draftId: "draft" } as WorkspaceTabTarget,
+      hydrated: true,
+      expected: null,
+    },
+    { target: { kind: "new_tab" } as WorkspaceTabTarget, hydrated: false, expected: null },
+  ])(
+    "opens the recent root chat from $target.kind only after hydration ($hydrated)",
+    ({ target, hydrated, expected }) => {
+      const workspace = {
+        id: "workspace-a",
+        workspaceDirectory: "/repo/workspace-a",
+      } as WorkspaceDescriptor;
+      const roots = [
+        { id: "old", lastActivityAt: new Date(1) },
+        { id: "recent", lastActivityAt: new Date(2) },
+        { id: "archived", lastActivityAt: new Date(3), archivedAt: new Date(3) },
+        { id: "child", lastActivityAt: new Date(4), parentAgentId: "recent" },
+      ].map(
+        (agent) =>
+          Object.assign(agent, { workspaceId: workspace.id, requiresAttention: false }) as Agent,
+      );
+      const { deps, openedTabs } = createFakeDeps({
+        getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+        getSessionAgents: () => roots,
+        getWorkspaceFocusedTarget: () => target,
+        isWorkspaceLayoutHydrated: () => hydrated,
+      });
+      navigateToWorkspace({ serverId: "server-1", workspaceId: workspace.id }, deps);
+      expect(openedTabs.map((tab) => tab.target)).toEqual(
+        expected ? [{ kind: "agent", agentId: expected }] : [],
+      );
+    },
+  );
+
+  it("opens a child whose parent belongs to another workspace", () => {
+    const workspace = { id: "workspace-a", workspaceDirectory: "/repo/a" } as WorkspaceDescriptor;
+    const agents = [
+      { id: "parent", workspaceId: "workspace-b", lastActivityAt: new Date(1) },
+      {
+        id: "child",
+        parentAgentId: "parent",
+        workspaceId: "workspace-a",
+        lastActivityAt: new Date(2),
+      },
+    ] as Agent[];
+    const { deps, openedTabs } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => agents,
+      getWorkspaceFocusedTarget: () => ({ kind: "new_tab" }),
+    });
+    navigateToWorkspace({ serverId: "server-1", workspaceId: workspace.id }, deps);
+    expect(openedTabs.map((tab) => tab.target)).toEqual([{ kind: "agent", agentId: "child" }]);
+  });
+
   it("reports when no last workspace is known", () => {
     const { deps } = createLastSelectionDeps(null);
 
@@ -204,11 +267,6 @@ describe("workspace navigation", () => {
     });
   });
 
-  // Desktop cold-starts at "/" (packages/desktop/src/main.ts) and restores the
-  // remembered workspace, so a workspace is mounted while the pathname carries
-  // no workspace at all. Anything that identifies the active workspace from the
-  // pathname alone silently gets nothing there — and reports that workspace's
-  // panes as closed.
   it("resolves a workspace the pathname alone cannot identify", () => {
     const params = { serverId: "server-1", workspaceId: "workspace-a" };
 

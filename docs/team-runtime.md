@@ -4,16 +4,16 @@ Status: accepted 2026-10-01. Runtime and `software-basic` are built (`packages/s
 
 Pilot evidence, real Codex sessions against an isolated daemon (2026-10-01):
 
-| Acceptance                             | Result                                                                                                                            |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 1 Team start from a boss session       | verified: `team_start` → PO plan → items                                                                                          |
-| 2 Daemon restart mid-work              | verified: restarts during reviewer and tester turns resumed the same sessions, no new agents, no false findings                   |
-| 3 Parallel developers in own worktrees | verified: three developers ran at once                                                                                            |
-| 4 Conflicting item waits               | verified: `titleCase` started after `countWords` finished                                                                         |
-| 5 Red test goes back to the developer  | verified: same developer session, then pass                                                                                       |
-| 6 Review finding goes back             | verified in unit test; real runs had no finding                                                                                   |
-| 7 Provider limit switches profile      | in-turn fallback skips profiles at their limit; exhausted seats wait for the earliest known reset (unit tests); not yet seen live |
-| 8 Readable team feed                   | `team_status` shows the event log; no app tab yet                                                                                 |
+| Acceptance                             | Result                                                                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Team start from a boss session       | verified: `team_start` → PO plan → items                                                                                              |
+| 2 Daemon restart mid-work              | verified: restarts during reviewer and tester turns resumed the same sessions, no new agents, no false findings                       |
+| 3 Parallel developers in own worktrees | verified: three developers ran at once                                                                                                |
+| 4 Conflicting item waits               | verified: `titleCase` started after `countWords` finished                                                                             |
+| 5 Red test goes back to the developer  | verified: same developer session, then pass                                                                                           |
+| 6 Review finding goes back             | verified in unit test; real runs had no finding                                                                                       |
+| 7 Provider limit switches profile      | in-turn fallback skips profiles at their limit; exhausted seats wait for the earliest known reset (unit tests); not yet seen live     |
+| 8 Readable team feed                   | Teams screen lists teams, reads their event log, links worker sessions, and sends input to the team; `team_status` also reads the log |
 
 Decisions taken while building:
 
@@ -243,6 +243,37 @@ legacy-named paths): item created, phase moved, transition
 rejected, role started, report received, decision failed, human message. The team chat tab is a
 projection of this log. Direct conversations are filtered views of the same log (`to: boss`,
 `to: role`). Nothing is said in the team that is not in the log.
+
+### CLI and agent tracking
+
+The Teams screen and `pandaos team` commands use the same daemon state. Use `team ls` to find a
+team, `team inspect <id>` for its phases and bindings, and `team events <id> --after
+<commit>` for one incremental history read. `inspect` returns the snapshot commit; its `--json`
+output also includes the event history. Pass `--json` for
+scripts or agents, and `--host` to select another daemon. `team message <id> <text>` sends input
+through the existing team-message path and resumes work waiting for an answer.
+
+Team creation stays with the boss's `team_start` tool. The CLI does not introduce another
+dispatcher. The [factory skill](../skills/pandaos-factory/SKILL.md) adapts Poteto's practices for
+small verifiable items and decision evidence to this runtime and the project's selected pack.
+
+Tracking a reported outcome does not independently verify it. Cost budgets, protected checks,
+credential isolation, and acceptance of the final commit still need enforcement outside these
+read commands. Worktree isolation alone does not restrict process or credential access.
+
+### Factory requirements still open
+
+Compared with the [9elf26 factory draft](https://9elf26.atlassian.net/wiki/spaces/~71202050dcf3a874274739a21aec064ed3cb73/pages/1174667265), the generic runtime already provides persisted phases, leased decisions, retries, concurrency limits and recovery. Company workflow packs own their integrations and policies.
+
+| Requirement                | Remaining enforcement                                                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stove                      | Scoped credentials and process/network isolation; hard cost and lifetime budgets; stopping active workers                                                                                               |
+| Trigger                    | Ownership across teams for the same ticket, stage and commit; chain-wide depth and resource limits                                                                                                      |
+| Verification               | Protected tests and infrastructure; independent acceptance evidence bound to the final commit. The current 9elf26 pack allows reviewer edits after validation without requiring another validation pass |
+| Insights and logbook       | Connect team events to product, ticket, role, skill and cost metadata; integrate the company's logbook and analyst                                                                                      |
+| Feature map and outer loop | Connect acceptance scenarios and the existing verify runner to team gates; add incident and user-report triggers                                                                                        |
+
+These are source-level findings from 2026-10-01. The CLI/browser check covers a controlled tracking fixture, not a multi-week autonomous factory run.
 
 ### Health
 

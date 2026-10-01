@@ -20,9 +20,9 @@ For testing rules, see [testing.md](testing.md).
 
 ## Comments and noise
 
-- Delete any comment where removing it loses zero information. Comments explain _why_, not _what_.
-- No tutorial comments explaining language features (`// Use destructuring to...`).
-- No decorative section dividers (`// ===== Helpers =====`). Use files and modules to organize, not ASCII art.
+- Do not add explanatory code comments, including inline, block and documentation comments.
+- Remove existing explanatory comments from code you edit. Put necessary rationale in the owning documentation or task report.
+- Preserve required license notices and directives used by compilers, type checkers, bundlers, linters or compatibility tooling.
 - No hedging comments (`// might need to revisit`, `// should work for most cases`). If you're unsure, investigate.
 - No commented-out code. Git remembers.
 - No `console.log` / `debugger` left behind. No `TODO: implement` stubs — if it needs to exist, write it.

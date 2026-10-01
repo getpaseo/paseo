@@ -36,23 +36,15 @@ import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
 type HoverState = PressableStateCallbackType & { hovered?: boolean };
 
 interface SidebarLeisteHeaderProps {
-  /** Wrapper for the Leitstand button and the nav rows; the sidebar owns its divider. */
   style?: StyleProp<ViewStyle>;
   onBeforeNavigate?: () => void;
-  /** Room kept free on the right of the Leitstand button, for the mobile close button. */
   trailingInset?: number;
 }
-
-/**
- * The head of the Leiste: the Leitstand button, the sidebar items, and "Needs you". This is what
- * the Leitstand shrinks to while a session is open, so it reads the same inbox and snoozes.
- */
 export function SidebarLeisteHeader({
   style,
   onBeforeNavigate,
   trailingInset = 0,
 }: SidebarLeisteHeaderProps) {
-  // useLeitstandInbox without the running count the panda's mood needs; same hooks, one pass.
   const { sessions, runningAgentCount } = useLeitstandSessions();
   const schedules = useLeitstandSchedules(sessions);
   const inbox = useSnoozableInbox(sessions, schedules);
@@ -65,7 +57,6 @@ export function SidebarLeisteHeader({
     router.push(buildDashboardRoute());
   }, [onBeforeNavigate]);
 
-  // A stable element, so a live inbox update does not re-render the nav rows.
   const navRows = useMemo(
     () => <SidebarNavRows onBeforeNavigate={onBeforeNavigate} />,
     [onBeforeNavigate],
@@ -209,10 +200,8 @@ const KIND_LABEL_KEY = {
   finished: "leitstand.inbox.kinds.finished",
 } as const satisfies Record<InboxItem["kind"], string>;
 
-/** Same landing as the Leitstand's primary action: the agent that asked or failed, if known. */
 function sessionTarget(item: InboxItem): WorkspaceTabTarget | undefined {
-  if (item.kind === "permission") return { kind: "agent", agentId: item.agentId };
-  if (item.kind === "agent_error" && item.agentId) return { kind: "agent", agentId: item.agentId };
+  if ("agentId" in item && item.agentId) return { kind: "agent", agentId: item.agentId };
   return undefined;
 }
 
@@ -262,7 +251,6 @@ const SidebarInboxRow = memo(function SidebarInboxRow({
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const showDone = doneToggle !== null && (isHovered || isNative || isCompact);
 
-  // Hover lives on the plain View so the check button inside never fights the row (docs/hover.md).
   return (
     <View
       style={styles.inboxRowContainer}
@@ -318,11 +306,9 @@ const styles = StyleSheet.create((theme) => ({
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
-  // Ink fill, as the settings navigation marks its current page.
   rowSelected: {
     backgroundColor: theme.colors.foreground,
   },
-  // The panda's fur colours are fixed, so on an ink fill it keeps a patch of paper to stand on.
   pandaTile: {
     borderRadius: theme.borderRadius.sm,
     padding: 2,
@@ -367,7 +353,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingBottom: theme.spacing[1],
   },
-  // Amber means "waits on you" everywhere; this heading is exactly that.
   inboxTitle: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,

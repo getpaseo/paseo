@@ -319,7 +319,6 @@ describe("buildLeitstandInbox", () => {
       }),
     ]);
 
-    // A sorting from an earlier turn says nothing about the current one.
     const stale = session({
       ...handedBack,
       handoff: { agentId: "agent-1", kind: "report", need: null, at: new Date(NOW - 3_600_000) },

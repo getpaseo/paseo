@@ -186,7 +186,49 @@ describe("filterEmptySidebarWorkspaces", () => {
     workspaceAgentActivity: new Map(),
     workspaces: new Map([[descriptor.id, descriptor]]),
   };
-  const input = { model, sessions: [session], layouts: {}, drafts: {}, pendingCreateAttempts: {} };
+  const input = {
+    model,
+    hasHydratedLayouts: true,
+    hasHydratedDrafts: true,
+    sessions: [session],
+    layouts: {},
+    drafts: {},
+    pendingCreateAttempts: {},
+  };
+
+  it.each(["hasHydratedLayouts", "hasHydratedDrafts"] as const)(
+    "keeps workspaces until %s completes",
+    (flag) => expect(filterEmptySidebarWorkspaces({ ...input, [flag]: false })).toBe(model),
+  );
+
+  it("keeps a terminal in a hidden pane beside the starter", () => {
+    const opened = createTabInLayout({
+      layout: createDefaultLayout(),
+      target: { kind: "terminal", terminalId: "term" },
+      placement: FOCUSED_PANE_PLACEMENT,
+      explorerSidebarPaneId: null,
+      now: 0,
+      createTabId: () => "terminal",
+    })!;
+    expect(opened.layout.root.kind).toBe("pane");
+    if (opened.layout.root.kind !== "pane") throw new Error("Expected terminal pane");
+    const layout: WorkspaceLayout = {
+      ...opened.layout,
+      root: {
+        kind: "group",
+        group: {
+          id: "group",
+          direction: "horizontal",
+          sizes: [0.5, 0.5],
+          children: [
+            createDefaultLayout().root,
+            { kind: "pane", pane: { ...opened.layout.root.pane, hidden: true } },
+          ],
+        },
+      },
+    };
+    expect(filterEmptySidebarWorkspaces({ ...input, layouts: { "srv:ws-1": layout } })).toBe(model);
+  });
 
   it("hides an empty PR workspace and its launcher, retaining the project header", () => {
     const candidates: Record<string, WorkspaceLayout>[] = [

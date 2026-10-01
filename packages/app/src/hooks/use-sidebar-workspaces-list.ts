@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import {
+  useWorkspaceLayoutStore,
+  useWorkspaceLayoutStoreHydrated,
+} from "@/stores/workspace-layout-store";
 import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
 import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
@@ -47,18 +50,6 @@ export {
   type SidebarStateBucket,
   type SidebarWorkspaceEntry,
 } from "./sidebar-workspaces-view-model";
-
-/**
- * Aggregate status for a project's workspaces, for the collapsed project row.
- *
- * `SidebarProjectEntry` is structural — it carries workspace identity but no status — and
- * `ProjectBlock` is memoized on that stable reference, so the row can't learn about a
- * child's status without its own subscription. Returns a primitive, so status churn in a
- * project only re-renders the row when the aggregate actually moves.
- *
- * Pass `enabled: false` while the project is expanded: the child rows show their own dots
- * and the selector is pure cost.
- */
 export function useSidebarProjectStatusBucket(input: {
   workspaces: readonly SidebarWorkspacePlacement[];
   enabled: boolean;
@@ -120,8 +111,6 @@ export function useSidebarWorkspacesList(options?: {
     }
     const selected = new Set(hostFilters);
     const matched = allServerIds.filter((id) => selected.has(id));
-    // Registry has settled but none of the pinned hosts still exist — fall back to every
-    // host rather than leaving the sidebar empty.
     if (hostRegistryLoaded && matched.length === 0) {
       return allServerIds;
     }
@@ -160,6 +149,12 @@ export function useSidebarWorkspacesList(options?: {
     areSidebarWorkspaceSessionsEqual,
   );
   const layouts = useWorkspaceLayoutStore((state) => state.layoutByWorkspace);
+  const hasHydratedLayouts = useWorkspaceLayoutStoreHydrated();
+  const hasHydratedDrafts = useSyncExternalStore(
+    useDraftStore.persist.onFinishHydration,
+    useDraftStore.persist.hasHydrated,
+    () => false,
+  );
   const drafts = useDraftStore((state) => state.drafts);
   const pendingCreateAttempts = useCreateFlowStore((state) => state.pendingByDraftId);
   const previousModel = useRef<{
@@ -169,6 +164,8 @@ export function useSidebarWorkspacesList(options?: {
   const sidebarModel = useMemo(() => {
     const visible = filterEmptySidebarWorkspaces({
       model: structuralModel,
+      hasHydratedLayouts,
+      hasHydratedDrafts,
       sessions,
       layouts,
       drafts,
@@ -186,7 +183,15 @@ export function useSidebarWorkspacesList(options?: {
     }
     previousModel.current = { structure: structuralModel, visible };
     return visible;
-  }, [structuralModel, sessions, layouts, drafts, pendingCreateAttempts]);
+  }, [
+    structuralModel,
+    sessions,
+    layouts,
+    drafts,
+    pendingCreateAttempts,
+    hasHydratedLayouts,
+    hasHydratedDrafts,
+  ]);
 
   const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
   const workspacePlacements =
