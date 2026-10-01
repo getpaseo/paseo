@@ -37,6 +37,31 @@ describe("useChatOutline", () => {
     runtime.subscribeAgentTimeline.mockClear();
   });
 
+  it("waits for a served timeline before requesting its prompt index", async () => {
+    runtime.listAgentTimelinePrompts.mockResolvedValue({ epoch: "epoch-1", prompts: [] });
+    const viewportRef = createRef<StreamViewportHandle>();
+    const { rerender } = renderHook(
+      ({ agentId, timelineEpoch }) =>
+        useChatOutline({
+          agentId,
+          serverId: "server-1",
+          timelineEpoch,
+          tail: [],
+          head: [],
+          enabled: true,
+          viewportRef,
+          onJumpError: vi.fn(),
+        }),
+      { initialProps: { agentId: "draft_msg_1", timelineEpoch: null as string | null } },
+    );
+
+    expect(runtime.listAgentTimelinePrompts).not.toHaveBeenCalled();
+
+    rerender({ agentId: "agent-1", timelineEpoch: "epoch-1" });
+    await waitFor(() => expect(runtime.listAgentTimelinePrompts).toHaveBeenCalledTimes(1));
+    expect(runtime.listAgentTimelinePrompts).toHaveBeenCalledWith("agent-1");
+  });
+
   it("drops a late prompt index after the authoritative timeline epoch changes", async () => {
     const first = deferred<{ epoch: string; prompts: [] }>();
     const second = deferred<{

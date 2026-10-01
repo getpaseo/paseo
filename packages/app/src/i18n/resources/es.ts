@@ -27,6 +27,7 @@ export const es: TranslationResources = {
     total: "{{total}} coincidencias",
   },
   common: {
+    bottomSheetBackdrop: "Fondo del panel inferior",
     back: "Atrás",
     loading: "Cargando...",
     actions: {
@@ -444,7 +445,9 @@ export const es: TranslationResources = {
       recovery: {
         archivedTitle: "Espacio de trabajo archivado",
         restoreDescription:
-          "{{workspaceName}} se archivó y se eliminó su worktree. Restaura la rama {{branch}} para volver a abrirlo.",
+          "Restaura {{workspaceName}} para volver a sus agentes. Su worktree usará la rama {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Restaura {{workspaceName}} para volver a sus agentes. Se creará una rama nueva desde la base guardada o la rama predeterminada del repositorio.",
         unarchiveDescription:
           "{{workspaceName}} está archivado. Desarchívalo para volver a abrirlo.",
         restoreAction: "Restaurar",
@@ -1181,6 +1184,9 @@ export const es: TranslationResources = {
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
     },
+    footer: {
+      usage: "Uso",
+    },
     help: {
       trigger: "Ayuda y soporte",
       sectionHelp: "Ayuda",
@@ -1568,6 +1574,8 @@ export const es: TranslationResources = {
     noFiles: "No se encontraron archivos ni directorios",
     noCommands: "No se encontraron comandos",
     failedToLoad: "No se pudo cargar",
+    chooseProjectForCommands: "Elige un proyecto para ver los comandos",
+    chooseModelForCommands: "Selecciona un modelo para ver los comandos",
   },
   loadOlderHistory: {
     failed: "No se pudo cargar el historial anterior",
@@ -1662,6 +1670,17 @@ export const es: TranslationResources = {
     hostPassword: {
       title: "Contraseña de {{host}}",
       label: "Contraseña del host",
+    },
+    hostConfirmation: {
+      title: "¿Conectar con este host?",
+      description:
+        "Este host podrá ejecutar código en esta app y acceder a tus otros hosts conectados. Conéctate solo si lo reconoces.",
+      descriptionChanged:
+        "Este enlace cambia cómo te conectas a este host. El host podrá ejecutar código en esta app y acceder a tus otros hosts conectados. Conéctate solo si lo reconoces.",
+      hostLabel: "Host",
+      fingerprintLabel: "Huella de la clave",
+      relayLabel: "Relay",
+      connect: "Conectar",
     },
     connectionMethods: {
       title: "Agregar conexión",
@@ -2221,9 +2240,16 @@ export const es: TranslationResources = {
         description: "Muestra un esquema para saltar entre instrucciones",
       },
       sidebar: {
-        title: "Barra lateral",
-        description:
-          "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+        header: {
+          title: "Encabezado",
+          description:
+            "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+        },
+        footer: {
+          title: "Pie",
+          description:
+            "Elige qué filas aparecen en la parte inferior de la barra lateral y en qué orden. Añadir proyecto y la fila de iconos siempre se muestran",
+        },
         moveUp: "Mover hacia arriba",
         moveDown: "Mover hacia abajo",
       },
@@ -2247,6 +2273,14 @@ export const es: TranslationResources = {
         codeSize: "Tamaño del código",
         codeSizeHint: "Se usa en código, diferencias y la salida del terminal",
         codeSizeAccessibility: "Tamaño de fuente del código",
+      },
+      layout: {
+        title: "Diseño",
+        contentWidth: "Ancho del contenido",
+        contentWidthHint: "Ancho máximo del chat y de los archivos Markdown en pantallas anchas",
+        contentWidthAccessibility: "Ancho del contenido en píxeles",
+        reset: "Restablecer",
+        resetAccessibility: "Restablecer el ancho del contenido",
       },
       syntax: {
         title: "Sintaxis",

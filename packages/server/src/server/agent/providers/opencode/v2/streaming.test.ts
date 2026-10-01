@@ -121,11 +121,8 @@ describe("OpenCode v2 token streaming", () => {
 
   test("withholds streamed prose during a structured-output turn", async () => {
     const harness = new V2Harness();
-    let settle!: () => void;
-    harness.wait = () =>
-      new Promise<void>((resolve) => {
-        settle = resolve;
-      });
+    harness.autoComplete = false;
+    const settle = () => harness.finishExecution();
     const client = new OpenCodeV2AgentClient({
       logger: createTestLogger(),
       runtime: harness.runtime,

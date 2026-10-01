@@ -1,13 +1,18 @@
 import * as React from "react";
 import {
   ArrowRight,
+  Blocks,
   Bot,
   BookOpen,
   Braces,
   Coffee,
+  Compass,
   ExternalLink,
+  Gem,
   GitFork,
   Laptop,
+  Lock,
+  Merge,
   Monitor,
   Puzzle,
   Smartphone,
@@ -73,6 +78,8 @@ import {
   CursorIcon,
   OpenCodeIcon,
   PiIcon,
+  MuseCodeIcon,
+  AntigravityIcon,
 } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
@@ -124,6 +131,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <AutomationSection />
             <ExtensibleSection />
             <FAQ />
+            <PhilosophySection />
             <SponsorSection />
             <SponsorsSection />
           </div>
@@ -155,6 +163,8 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.Rea
 
 const CLAUDE_CODE_BADGE_ICON = <ClaudeCodeIcon className="h-6 w-6" />;
 const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
+const ANTIGRAVITY_BADGE_ICON = <AntigravityIcon className="h-6 w-6" />;
+const MUSE_CODE_BADGE_ICON = <MuseCodeIcon className="h-6 w-6" />;
 const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
 const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
 const CURSOR_BADGE_ICON = <CursorIcon className="h-6 w-6" />;
@@ -426,6 +436,8 @@ function MultiProviderSection() {
     { name: "Claude Code", icon: <ClaudeIcon className={PROVIDER_ICON_CLASS} /> },
     { name: "Codex", icon: <CodexIcon className={PROVIDER_ICON_CLASS} /> },
     { name: "OpenCode", icon: <OpenCodeIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "Antigravity", icon: <AntigravityIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "Muse Code", icon: <MuseCodeIcon className={PROVIDER_ICON_CLASS} /> },
     { name: "Pi", icon: <PiIcon className={PROVIDER_ICON_CLASS} /> },
     { name: "Cursor", icon: <CursorIcon className={PROVIDER_ICON_CLASS} /> },
   ];
@@ -875,6 +887,64 @@ function ExtensibleCard({
   );
 }
 
+const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: string }> = [
+  {
+    icon: Lock,
+    title: "Private",
+    description: "No telemetry, tracking, or forced login. Code stays on your machine.",
+  },
+  {
+    icon: Compass,
+    title: "Independent",
+    description: "Paseo doesn't answer to investors. Its users guide what gets built.",
+  },
+  {
+    icon: Gem,
+    title: "Polished",
+    description: "Install the app and start working. No need to know what a daemon is.",
+  },
+  {
+    icon: Merge,
+    title: "Unified",
+    description:
+      "Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, and more, all used the same way.",
+  },
+  {
+    icon: Blocks,
+    title: "Composable",
+    description: "Run agents on your laptop or a server, and connect from any device.",
+  },
+  {
+    icon: Puzzle,
+    title: "Extensible",
+    description: "If Paseo doesn't fit how you work, change it with a plugin or fork.",
+  },
+];
+
+function PhilosophySection() {
+  return (
+    <FeatureSection
+      title="Philosophy"
+      description="What Paseo stands for, and what every feature is built on"
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        {PRINCIPLES.map((principle) => (
+          <div
+            key={principle.title}
+            className="rounded-xl border border-white/10 bg-white/[0.025] p-6"
+          >
+            <div className="mb-8 text-extra-muted-foreground">
+              <principle.icon className="h-6 w-6" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-lg font-medium text-white/85">{principle.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-white/45">{principle.description}</p>
+          </div>
+        ))}
+      </div>
+    </FeatureSection>
+  );
+}
+
 function GetStarted() {
   const platform = useVisitorPlatform();
   return (
@@ -899,6 +969,8 @@ function GetStarted() {
           <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
           <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
           <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
+          <AgentBadge name="Antigravity" icon={ANTIGRAVITY_BADGE_ICON} />
+          <AgentBadge name="Muse Code" icon={MUSE_CODE_BADGE_ICON} />
           <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
           <AgentBadge name="Cursor" icon={CURSOR_BADGE_ICON} />
         </div>
@@ -1144,9 +1216,14 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="What agents does it support?">
           Paseo supports many providers. It has custom implementations for Claude, Codex, OpenCode,
-          Pi, and OMP, and supports many more via ACP. See the full list here:{" "}
+          Pi, OMP, Antigravity, and Muse Code, and supports many more via ACP. See the full list
+          here:{" "}
           <a href="/agents" className="underline hover:text-white/80">
             all supported providers
+          </a>
+          . See{" "}
+          <a href="/docs/muse-code" className="underline hover:text-white/80">
+            Muse Code setup and limitations
           </a>
           .
         </FAQItem>

@@ -301,6 +301,7 @@ export const AgentFeatureSelectSchema = z.object({
   description: z.string().optional(),
   tooltip: z.string().optional(),
   icon: z.string().optional(),
+  desktopTrigger: z.enum(["icon", "label"]).optional(),
   value: z.string().nullable(),
   options: z.array(AgentSelectOptionSchema),
 });
@@ -417,7 +418,7 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpSseServerConfigSchema,
 ]);
 
-const ProviderOptionsSchema = z.record(z.string(), z.json());
+const ProviderOptionsSchema = z.record(z.string(), z.unknown());
 
 const McpToolRefSchema = z
   .object({
@@ -1772,6 +1773,13 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
+});
+
+export const UsageListReportsRequestMessageSchema = z.object({
+  type: z.literal("usage.list_reports.request"),
+  requestId: z.string(),
+  reportIds: z.array(z.string()).optional(),
+  forceRefresh: z.boolean().optional(),
 });
 
 export const ResumeAgentRequestMessageSchema = z.object({
@@ -3232,6 +3240,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
+  UsageListReportsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -3534,6 +3543,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
+        usageSources: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
@@ -6179,6 +6189,13 @@ export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "er
 export const ProviderUsageWindowSchema = z.object({
   id: z.string(),
   label: z.string(),
+  /**
+   * A few characters naming the window where space is tight, e.g. "5h" or "wk". An empty string
+   * shows the percent alone; leaving it out shows `label`.
+   */
+  shortLabel: z.string().optional(),
+  /** Shown in the usage summary until the user pins windows of their own. */
+  summary: z.boolean().optional(),
   usedPct: z.number().nullable().optional(),
   remainingPct: z.number().nullable().optional(),
   resetsAt: z.string().nullable().optional(),
@@ -6226,6 +6243,28 @@ export const ProviderUsageListResponseMessageSchema = z.object({
     fetchedAt: z.string(),
     providers: z.array(ProviderUsageSchema),
   }),
+});
+
+export const UsageReportSchema = z.object({
+  status: ProviderUsageStatusSchema,
+  planLabel: z.string().optional(),
+  windows: z.array(ProviderUsageWindowSchema),
+  balances: z.array(ProviderUsageBalanceSchema).optional(),
+  details: z.array(ProviderUsageDetailSchema).optional(),
+  error: z.string().optional(),
+});
+export const UsageReportEntrySchema = z.object({
+  id: z.string(),
+  account: z.object({ label: z.string().optional() }),
+  fetchedAt: z.string(),
+  sourceId: z.string(),
+  sourceLabel: z.string(),
+  icon: z.string().optional(),
+  report: UsageReportSchema,
+});
+export const UsageListReportsResponseMessageSchema = z.object({
+  type: z.literal("usage.list_reports.response"),
+  payload: z.object({ requestId: z.string(), reports: z.array(UsageReportEntrySchema) }),
 });
 
 const AgentSlashCommandSchema = z.object({
@@ -6913,6 +6952,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  UsageListReportsResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -7091,6 +7131,9 @@ export type ProviderDiagnosticResponseMessage = z.infer<
   typeof ProviderDiagnosticResponseMessageSchema
 >;
 export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;
+export type UsageReport = z.infer<typeof UsageReportSchema>;
+export type UsageReportEntry = z.infer<typeof UsageReportEntrySchema>;
+export type UsageListReportsResponseMessage = z.infer<typeof UsageListReportsResponseMessageSchema>;
 export type ProviderUsageStatus = z.infer<typeof ProviderUsageStatusSchema>;
 export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;

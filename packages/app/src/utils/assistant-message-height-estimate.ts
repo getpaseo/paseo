@@ -1,9 +1,8 @@
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { estimateAssistantMessageHeightFromCache as estimateAssistantImageMessageHeightFromCache } from "@/utils/assistant-image-metadata";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 
 const ASSISTANT_MARKDOWN_BLOCK_HEIGHT_CACHE_LIMIT = 1000;
-const ASSISTANT_MARKDOWN_BLOCK_ESTIMATE_WIDTH = MAX_CONTENT_WIDTH - 16;
+const ASSISTANT_MARKDOWN_BLOCK_INSET = 16;
 const ASSISTANT_MESSAGE_VERTICAL_PADDING = 24;
 const ASSISTANT_MARKDOWN_BLOCK_GAP = 12;
 
@@ -78,7 +77,10 @@ export function setAssistantMarkdownBlockHeight(input: {
   return height;
 }
 
-function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number | null {
+function estimateAssistantMarkdownBlockHeightFromCache(
+  markdown: string,
+  contentMaxWidth: number,
+): number | null {
   const blocks = splitMarkdownBlocks(markdown);
   if (blocks.length === 0) {
     return null;
@@ -88,7 +90,7 @@ function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number
   for (const block of blocks) {
     const key = createMarkdownBlockHeightKey({
       block,
-      width: ASSISTANT_MARKDOWN_BLOCK_ESTIMATE_WIDTH,
+      width: contentMaxWidth - ASSISTANT_MARKDOWN_BLOCK_INSET,
     });
     const cachedHeight = key ? assistantMarkdownBlockHeightCache.get(key) : undefined;
     if (cachedHeight === undefined) {
@@ -104,10 +106,13 @@ function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number
   );
 }
 
-export function estimateAssistantMessageHeightFromCache(markdown: string): number | null {
+export function estimateAssistantMessageHeightFromCache(
+  markdown: string,
+  contentMaxWidth: number,
+): number | null {
   return (
-    estimateAssistantMarkdownBlockHeightFromCache(markdown) ??
-    estimateAssistantImageMessageHeightFromCache(markdown)
+    estimateAssistantMarkdownBlockHeightFromCache(markdown, contentMaxWidth) ??
+    estimateAssistantImageMessageHeightFromCache(markdown, contentMaxWidth)
   );
 }
 

@@ -45,6 +45,7 @@ import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
+import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
 import {
   getIsElectronRuntime,
   HEADER_INNER_HEIGHT,
@@ -606,6 +607,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <CommandCenter />
         <AddProjectFlowHost />
         <HostChooserModal />
+        <HostConfirmationSheet />
         <ProviderSettingsHost />
         <WorkspaceSetupDialog />
         <KeyboardShortcutsDialog />
@@ -860,6 +862,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
       pathname === "/new" ||
       pathname === "/sessions" ||
       pathname === "/schedules" ||
+      pathname === "/usage" ||
       routeHasKnownHost);
 
   return <AppContainer chromeEnabled={shouldShowAppChrome}>{children}</AppContainer>;
@@ -892,6 +895,7 @@ function RootStack() {
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
         <Stack.Screen name="schedules" />
+        <Stack.Screen name="usage" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />

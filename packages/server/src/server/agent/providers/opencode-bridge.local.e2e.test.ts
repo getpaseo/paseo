@@ -8,6 +8,10 @@ import { expect, test } from "vitest";
 
 import { execCommand } from "../../../utils/spawn.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import {
+  getRealProviderConfig,
+  getRealProviderRuntimeSettings,
+} from "../../daemon-e2e/real-provider-test-config.js";
 import type { PaseoToolCatalog } from "../tools/types.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 import { OpenCodeV2AgentClient } from "./opencode/v2/agent.js";
@@ -199,6 +203,72 @@ test("real OpenCode server shares one process while shell.env stays session-scop
   }
 }, 240_000);
 
+test("real OpenCode server asks before running a Paseo tool with an ask rule", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-ask-"));
+  const cwd = path.join(root, "repo");
+  const logger = createTestLogger();
+  const bridge = new OpenCodeBridge({ paseoHome: root, logger });
+  await bridge.start();
+  const catalog = createCallerCatalog("ask-rule-agent");
+  bridge.setManifestCatalog(catalog);
+  const realSettings = getRealProviderRuntimeSettings("opencode");
+  const runtimeSettings = {
+    ...realSettings,
+    env: {
+      ...realSettings.env,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { "paseo_*": "ask" } }),
+    },
+  };
+  const manager = new OpenCodeServerManager({
+    logger,
+    runtimeSettings,
+    resolveHomeDir: () => root,
+    decorateServerEnv: (env) => bridge.decorateServerEnv(env),
+  });
+  const client = new OpenCodeAgentClient(logger, runtimeSettings, {
+    serverManager: manager,
+    bridge,
+  });
+  let session: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>> | undefined;
+
+  try {
+    await mkdir(cwd);
+    session = await client.createSession(
+      { ...getRealProviderConfig("opencode"), cwd },
+      { agentId: "ask-rule-agent", paseoTools: catalog },
+      { persistSession: false },
+    );
+    const asked: string[] = [];
+    const completedTools: string[] = [];
+    const activeSession = session;
+    session.subscribe((event) => {
+      if (event.type === "permission_requested") {
+        asked.push(event.request.name);
+        void activeSession.respondToPermission(event.request.id, { behavior: "allow" });
+      }
+      if (
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "completed"
+      ) {
+        completedTools.push(event.item.name);
+      }
+    });
+
+    await session.run(
+      "Call the paseo_report_caller_agent_id tool once, then reply with its exact result. Do not use any other tools.",
+    );
+
+    expect(completedTools).toContain("paseo_report_caller_agent_id");
+    expect(asked).toContain("paseo_report_caller_agent_id");
+  } finally {
+    await session?.close();
+    await manager.shutdown();
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 180_000);
+
 function createCallerCatalog(callerAgentId: string): PaseoToolCatalog {
   const tool = {
     name: "report_caller_agent_id",
@@ -355,7 +425,8 @@ test.each([
       await resumed?.close();
       await original?.close();
       await client.shutdown();
-      await rm(root, { recursive: true, force: true });
+      // Windows can retain a transient executable lock after provider shutdown.
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   },
   240_000,

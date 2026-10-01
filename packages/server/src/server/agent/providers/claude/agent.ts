@@ -1,3 +1,4 @@
+import { validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -1692,7 +1693,8 @@ export class ClaudeAgentClient implements AgentClient {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
     const model = config.model?.trim();
-    const providerOptions = ClaudeProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const providerOptions =
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, config.providerOptions) ?? {};
     return {
       ...config,
       provider: "claude",
@@ -2659,11 +2661,12 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
+    const { providerOptions: _providerOptions, ...persistedConfig } = this.config;
     this.persistence = {
       provider: "claude",
       sessionId: this.claudeSessionId,
       nativeHandle: this.claudeSessionId,
-      metadata: { ...this.config },
+      metadata: { ...persistedConfig },
     };
     return this.persistence;
   }
@@ -3353,13 +3356,17 @@ class ClaudeAgentSession implements AgentSession {
     input: { ultracode: boolean },
   ): Pick<ClaudeOptions, "settings"> | Record<string, never> {
     const fastMode = this.resolveFastModeSetting();
-    if (fastMode === null && !input.ultracode) {
+    // Internal agents do daemon work such as naming a branch, so the user's and
+    // project's hooks must not run for them.
+    const disableAllHooks = this.config.internal === true;
+    if (fastMode === null && !input.ultracode && !disableAllHooks) {
       return {};
     }
     return {
       settings: mergeClaudeSettings(providerOptions.settings, {
         ...(fastMode === null ? {} : { fastMode }),
         ...(input.ultracode ? { ultracode: true } : {}),
+        ...(disableAllHooks ? { disableAllHooks: true } : {}),
       }),
     };
   }
@@ -4874,10 +4881,15 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private loadPersistedHistory(sessionId: string): void {
+    let historyPath: string | null = null;
     try {
       this.taskState.reset();
-      const historyPath = this.resolveHistoryPath(sessionId);
+      historyPath = this.resolveHistoryPath(sessionId);
       if (!historyPath || !fs.existsSync(historyPath)) {
+        this.logger.info(
+          { sessionId, cwd: this.config.cwd, historyPath },
+          "No Claude transcript to load history from",
+        );
         return;
       }
       const content = fs.readFileSync(historyPath, "utf8");
@@ -4886,8 +4898,11 @@ class ClaudeAgentSession implements AgentSession {
         readClaudeSidechainHistory(historyPath),
       );
       this.ingestPersistedHistory(content, replay);
-    } catch {
-      // ignore history load failures
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId, historyPath },
+        "Failed to load Claude history from transcript",
+      );
     }
   }
 
