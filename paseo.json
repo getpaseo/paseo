@@ -81,6 +81,247 @@
             "name": "remote-browser-external-action"
           }
         ]
+      },
+      "session-subagent-working": {
+        "params": ["sessionUrl"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Subagents: 1 working",
+            "timeoutMs": 15000
+          },
+          {
+            "action": "screenshot",
+            "name": "session-subagent-working"
+          }
+        ]
+      },
+      "session-parent-and-subagent-working": {
+        "params": ["sessionUrl"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Working"
+          },
+          {
+            "action": "wait-text",
+            "text": "Subagents: 1 working"
+          },
+          {
+            "action": "screenshot",
+            "name": "panda-working"
+          }
+        ]
+      },
+      "session-needs-input": {
+        "params": ["sessionUrl"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Needs input"
+          },
+          {
+            "action": "screenshot",
+            "name": "panda-needs-input"
+          }
+        ]
+      },
+      "session-shell-working": {
+        "params": ["sessionUrl"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Working \u00b7 Shell",
+            "timeoutMs": 10000
+          },
+          {
+            "action": "screenshot",
+            "name": "session-shell-working"
+          },
+          {
+            "action": "wait-text",
+            "text": "Foreground command completed after steering.",
+            "timeoutMs": 10000
+          }
+        ]
+      },
+      "session-subagent-drilldown": {
+        "params": ["sessionUrl", "childTitle", "childPrompt"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Subagents: 1 working"
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "Subagents: 1 working"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{childTitle}}"
+          },
+          {
+            "action": "screenshot",
+            "name": "subagent-details"
+          },
+          {
+            "action": "click",
+            "role": "button",
+            "name": "{{childTitle}}"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{childPrompt}}"
+          },
+          {
+            "action": "screenshot",
+            "name": "subagent-session"
+          }
+        ]
+      },
+      "session-completed-panda": {
+        "params": ["sessionUrl"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Turn finished"
+          },
+          {
+            "action": "screenshot",
+            "name": "panda-completed"
+          }
+        ]
+      },
+      "session-workspace-move-result": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://localhost:4010/h/srv_hx_rv4HnVHst/workspace/wks_5d17a23973c872d4",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Move this session"
+          },
+          {
+            "action": "assert-text",
+            "text": "Existing target session"
+          },
+          {
+            "action": "assert-text",
+            "text": "Another target session"
+          },
+          {
+            "action": "screenshot",
+            "name": "move-and-unpin-persisted"
+          }
+        ]
+      },
+      "needs-you-requires-chat": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://localhost:4010/h/srv_hx_rv4HnVHst/workspace/wks_6ae6322eb75d63e1",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Needs you without chat regression"
+          },
+          {
+            "action": "assert-visible",
+            "role": "button",
+            "name": "Your turn: Drop sibling check"
+          },
+          {
+            "action": "goal",
+            "goal": "Read-only assertion on visible sidebar button labels: Drop sibling check is present, but there is no sidebar button containing Needs you without chat regression, neither normal session nor Needs you alert. The title in the top bar is allowed. If this holds, report success immediately without clicking.",
+            "verify": [
+              {
+                "text": "Needs you without chat regression"
+              }
+            ],
+            "maxSteps": 2
+          },
+          {
+            "action": "screenshot",
+            "name": "empty-session-hidden-sidebar"
+          },
+          {
+            "url": "http://localhost:4010/dashboard",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Drop sibling check"
+          },
+          {
+            "action": "goal",
+            "goal": "Read-only assertion: the dashboard lists Drop sibling check but no card or Needs you entry named Needs you without chat regression. If true, report success immediately without clicking.",
+            "verify": [
+              {
+                "text": "Drop sibling check"
+              }
+            ],
+            "maxSteps": 2
+          },
+          {
+            "action": "screenshot",
+            "name": "empty-session-hidden-dashboard"
+          }
+        ]
+      },
+      "session-starter-opens-chat": {
+        "params": [],
+        "steps": [
+          {
+            "url": "http://127.0.0.1:4024/h/srv_RtppvtlARpFR/workspace/wks_ac9bd28b681cfc62",
+            "action": "navigate"
+          },
+          {
+            "action": "goal",
+            "goal": "Wait for PandaOS to connect and display the current existing factory/session rollout agent chat. In the current workspace click New tab to focus the launcher, then click the same workspace entry in the sidebar. Verify its existing agent chat becomes selected again rather than leaving only the launcher. Do not create agents or send messages. Confirm Review PR 1444 Storybook mocks is absent from Needs you because it has no chat. If host setup appears, stop with details.",
+            "verify": [
+              {
+                "text": "Needs you"
+              }
+            ],
+            "maxSteps": 18
+          },
+          {
+            "action": "screenshot",
+            "name": "session-chat-restored"
+          },
+          {
+            "action": "assert-failed-requests",
+            "max": 0
+          }
+        ]
       }
     }
   }
