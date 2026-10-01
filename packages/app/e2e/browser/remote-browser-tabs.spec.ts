@@ -1,14 +1,14 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect } from "@playwright/test";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { test } from "../support/fixtures";
 import { openCommandCenter } from "../support/helpers/command-center";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 
-// The daemon lists a new tab while it still waits for the page, so a slow page
-// is what used to open the same daemon tab twice.
 async function startTestPages(): Promise<{ url: string; server: Server }> {
   const server = createServer((request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
@@ -55,8 +55,7 @@ test("a new daemon browser tab opens once, even while its page is still loading"
     const browserTabs = page.locator('[data-testid^="workspace-tab-browser_"]');
     await expect(browserTabs.first()).toBeVisible({ timeout: 15_000 });
     await expect(browserTabs.first()).toContainText("Slow page", { timeout: 20_000 });
-    // Tab listings run every second; none may adopt the tab again, not even for a
-    // moment before a cleanup closes the copy.
+
     const counts: number[] = [];
     for (let sample = 0; sample < 20; sample += 1) {
       counts.push(await browserTabs.count());
@@ -66,6 +65,57 @@ test("a new daemon browser tab opens once, even while its page is still loading"
   } finally {
     await seeded.cleanup();
     slow.server.close();
+  }
+});
+
+test("closing a daemon tab removes its mirror after reload and preserves the user's browser", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const pages = await startTestPages();
+  const seeded = await seedWorkspace({ repoPrefix: "remote-browser-close-" });
+  const client = await connectDaemonClient<DaemonClient>({
+    clientIdPrefix: "remote-browser-close",
+  });
+  try {
+    await page.addInitScript((startUrl) => {
+      if (!localStorage.getItem("workspace-browser-store")) {
+        localStorage.setItem(
+          "workspace-browser-store",
+          JSON.stringify({ state: { browsersById: {}, startUrl }, version: 0 }),
+        );
+      }
+    }, `${pages.url}copy`);
+    await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+    const panel = await openCommandCenter(page);
+    await panel.getByRole("textbox").fill("New browser");
+    await page.keyboard.press("Enter");
+    const browserTabs = page.locator('[data-testid^="workspace-tab-browser_"]');
+    await expect(browserTabs).toHaveCount(1);
+    await expect(browserTabs.first()).toContainText("Copy page", { timeout: 20_000 });
+
+    const created = await client.executeRemoteBrowserCommand({
+      workspaceId: seeded.workspaceId,
+      command: { command: "new_tab", args: { url: `${pages.url}tall` } },
+    });
+    if (!created.ok || created.result.command !== "new_tab") {
+      throw new Error("The daemon did not create the mirror tab");
+    }
+    await expect(browserTabs).toHaveCount(2, { timeout: 15_000 });
+    const closed = await client.executeRemoteBrowserCommand({
+      workspaceId: seeded.workspaceId,
+      command: { command: "close_tab", args: { browserId: created.result.browserId } },
+    });
+    expect(closed.ok).toBe(true);
+    await expect(browserTabs).toHaveCount(1, { timeout: 15_000 });
+    await expect(browserTabs.first()).toContainText("Copy page");
+    await page.reload();
+    await expect(browserTabs).toHaveCount(1, { timeout: 15_000 });
+    await expect(browserTabs.first()).toContainText("Copy page");
+  } finally {
+    await client.close();
+    await seeded.cleanup();
+    pages.server.close();
   }
 });
 
@@ -119,7 +169,6 @@ test("text selected in a daemon browser page copies to this device", async ({ pa
     const box = await frame.boundingBox();
     if (!box) throw new Error("no frame");
 
-    // Drag across the paragraph like a mouse user would, then Cmd/Ctrl+C.
     await page.mouse.move(box.x + 22, box.y + 40);
     await page.mouse.down();
     await page.mouse.move(box.x + 330, box.y + 40, { steps: 8 });
@@ -130,7 +179,6 @@ test("text selected in a daemon browser page copies to this device", async ({ pa
       .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 10_000 })
       .toContain("Paseo copy");
 
-    // A copy button on the page lands on this device's clipboard too.
     await page.mouse.click(box.x + 60, box.y + 110);
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 10_000 })

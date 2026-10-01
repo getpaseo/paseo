@@ -50,6 +50,7 @@ import {
   useBrowserStore,
 } from "@/desktop/browser/store";
 import {
+  beginRemoteBrowserTabSync,
   closeLocalBrowserTab,
   syncRemoteBrowserTabs,
   whileCreatingRemoteTab,
@@ -89,7 +90,6 @@ interface RemoteGestureState {
   longPressTimer: ReturnType<typeof setTimeout> | null;
 }
 
-// Syncs tab titles and polls old daemons' frames; frames from current daemons are pushed.
 const FRAME_REFRESH_MS = 1_000;
 const SCROLL_FRAME_REFRESH_MS = 250;
 const RESIZE_SETTLE_MS = 150;
@@ -126,7 +126,6 @@ function useExternalBrowserLink(
   return { externalUrl, open };
 }
 
-// A mouse or trackpad drags to select, as in any desktop browser; touch drags scroll.
 const HAS_FINE_POINTER =
   isWeb && typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches === true;
 const DOUBLE_CLICK_MS = 400;
@@ -175,7 +174,7 @@ function RemoteBrowserPane({
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? DEFAULT_BROWSER_URL);
-  // The address field shows the tab's live URL, except while the user edits it.
+
   const [shownUrl, setShownUrl] = useState(draftUrl);
   const isEditingUrlRef = useRef(false);
   const recordUrl = useBrowserStore((state) => state.browsersById[browserId]?.url ?? null);
@@ -267,20 +266,20 @@ function RemoteBrowserPane({
     [client, workspaceId],
   );
 
-  // Tab listings are owned by the workspace screen; the pane only follows its
-  // own record's address.
   const syncRemoteTabs = useCallback(async () => {
+    const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+    if (!workspaceKey) return;
+    const request = beginRemoteBrowserTabSync(workspaceKey);
     const result = await execute({ command: "list_tabs", args: {} });
     if (result.command !== "list_tabs" || !mountedRef.current) return;
-    const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-    if (workspaceKey)
-      syncRemoteBrowserTabs({
-        tabs: result.tabs,
-        mirrorEvents: result.mirrorEvents,
-        serverId,
-        workspaceId,
-        workspaceKey,
-      });
+    syncRemoteBrowserTabs({
+      tabs: result.tabs,
+      mirrorEvents: result.mirrorEvents,
+      serverId,
+      workspaceId,
+      workspaceKey,
+      request,
+    });
   }, [execute, serverId, workspaceId]);
 
   const ensureRemoteTab = useCallback(async () => {
@@ -338,8 +337,7 @@ function RemoteBrowserPane({
       if (!cancelled) {
         void refreshFrame().catch((caught: unknown) => {
           if (cancelled || !mountedRef.current) return;
-          // Closed from another tab showing the same daemon tab: follow it instead
-          // of offering a retry that would open it again.
+
           const remoteId = remoteBrowserIdRef.current;
           const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
           if (remoteId && workspaceKey && isRemoteBrowserClosed(remoteId)) {
@@ -413,7 +411,6 @@ function RemoteBrowserPane({
     });
   }, [enqueueRemoteOperation, refreshFrame]);
 
-  // A new step or a pause means the run finished a browser action; the interval stays as fallback.
   const activityRefreshKey = activity
     ? `${activity.runId}:${activity.step}:${activity.phase === "paused" || activity.phase === "finished" ? activity.phase : ""}`
     : null;
@@ -462,9 +459,6 @@ function RemoteBrowserPane({
     if (activity) useBrowserActivityStore.getState().dismiss(serverId, activity);
   }, [activity, serverId]);
 
-  // At most one scroll travels at a time and everything that arrives meanwhile
-  // rides in the next one: a trackpad fires ~60 events a second and the daemon
-  // takes ~60 ms per scroll, so queueing each one lagged ever further behind.
   const scrollInFlightRef = useRef(false);
   const lastScrollPointRef = useRef<RemotePoint | null>(null);
   const lastScrollAtRef = useRef(0);
@@ -478,7 +472,7 @@ function RemoteBrowserPane({
     pendingScrollRef.current = null;
     if (!pending) return;
     const last = lastScrollPointRef.current;
-    // Moving the daemon's mouse costs a round trip, so only when the pointer moved.
+
     const moved =
       !last || Math.abs(last.x - pending.point.x) > 4 || Math.abs(last.y - pending.point.y) > 4;
     lastScrollPointRef.current = pending.point;
@@ -528,8 +522,6 @@ function RemoteBrowserPane({
 
   const scheduleHover = useCallback(
     (targetBrowserId: string, point: RemotePoint) => {
-      // Pointer motion during a scroll is the scroll, not a hover; sending it would
-      // put the daemon's mouse to work while the page should be moving.
       if (Date.now() - lastScrollAtRef.current < 300) return;
       pendingHoverRef.current = { browserId: targetBrowserId, point };
       if (!hoverTimerRef.current) {
@@ -687,8 +679,6 @@ function RemoteBrowserPane({
     [enqueueRemoteOperation, execute, isCompact, onFocusPane, refreshFrame, takePageCopy],
   );
 
-  // A trackpad or mouse wheel never reaches the PanResponder, which only sees
-  // drags; without this the page scrolls only by click-and-drag, like a phone.
   const scrollSpeed = Number(useAppSettings().settings.browserScrollSpeed);
   const scrollSpeedRef = useRef(scrollSpeed);
   scrollSpeedRef.current = scrollSpeed;
@@ -714,7 +704,7 @@ function RemoteBrowserPane({
         viewportSizeRef.current,
       );
       if (!point) return;
-      // deltaMode 1 counts lines and 2 pages; trackpads report pixels (0).
+
       const unit = [1, 16, bounds.height][event.deltaMode] ?? 1;
       const speed = scrollSpeedRef.current * unit;
       scheduleScroll(currentBrowserId, point, event.deltaX * speed, event.deltaY * speed);
@@ -757,8 +747,6 @@ function RemoteBrowserPane({
     setViewportSize({ width, height });
   }, []);
 
-  // The Linux tab keeps its own viewport; without this it stays 1280x800 and the
-  // frame is stretched into whatever shape the pane has.
   useEffect(() => {
     const width = Math.round(viewportSize.width);
     const height = Math.round(viewportSize.height);
@@ -856,7 +844,6 @@ function RemoteBrowserPane({
             return;
           }
           if (current.longPress || HAS_FINE_POINTER) {
-            // Cmd/Ctrl+C after selecting must reach the pane's key handler.
             if (HAS_FINE_POINTER) remoteInputRef.current?.focus();
             enqueueRemoteOperation(async () => {
               await execute({

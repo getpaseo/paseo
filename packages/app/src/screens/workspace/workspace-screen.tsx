@@ -1,5 +1,8 @@
 import { useFinishedAgentTabsToFront } from "@/screens/workspace/use-finished-agent-tabs-to-front";
-import { syncRemoteBrowserTabs } from "@/desktop/browser/remote-tab-sync";
+import {
+  beginRemoteBrowserTabSync,
+  syncRemoteBrowserTabs,
+} from "@/desktop/browser/remote-tab-sync";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -224,7 +227,7 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
-// Android parcels clipboard text as UTF-16 through a ~1 MB binder buffer.
+
 const NATIVE_CLIPBOARD_MAX_CHARS = 200_000;
 
 function getWorkspaceScripts(
@@ -947,15 +950,6 @@ function useCloseTabs(): UseCloseTabsResult {
   return { closingTabIds, closeTab };
 }
 
-/**
- * Which project the workspace belongs to, and which machine it runs on.
- *
- * Compact gets both, on their own line under the workspace name: this header is the only thing on
- * screen that says where the workspace lives, because the sidebar that normally carries the host
- * badge is closed. It still follows the host's own badge setting, so a purely local setup stays
- * quiet. A project name that only repeats the workspace name is dropped on wide, where the two sit
- * side by side, and kept on compact, where the line exists for the host anyway.
- */
 function WorkspaceHeaderProjectRow({
   subtitle,
   isSubtitleDistinct,
@@ -1440,10 +1434,6 @@ function buildWorkspaceTerminalScopeKey(serverId: string, workspaceId: string): 
   return `${serverId}:${workspaceId}`;
 }
 
-/**
- * A pane the user acted inside owns the tab: it opens there, and an existing tab
- * moves there. No pane means the open has no opinion beyond the focused pane.
- */
 function paneLocalPlacement(paneId: string | null | undefined): WorkspaceTabPlacement {
   return paneId ? { mode: "pane", paneId } : FOCUSED_PANE_PLACEMENT;
 }
@@ -1685,6 +1675,7 @@ function WorkspaceScreenContent({
     let cancelled = false;
     const syncRemoteTabs = async () => {
       try {
+        const request = beginRemoteBrowserTabSync(persistenceKey);
         const response = await client.executeRemoteBrowserCommand({
           workspaceId: normalizedWorkspaceId,
           command: { command: "list_tabs", args: {} },
@@ -1697,10 +1688,9 @@ function WorkspaceScreenContent({
           serverId: normalizedServerId,
           workspaceId: normalizedWorkspaceId,
           workspaceKey: persistenceKey,
+          request,
         });
-      } catch {
-        // Connection state owns user-visible errors; this refresh is opportunistic.
-      }
+      } catch {}
     };
 
     void syncRemoteTabs();
@@ -1743,8 +1733,7 @@ function WorkspaceScreenContent({
     ) => openTab({ workspaceKey, target, intent: "reveal", parentTabId, placement }),
     [openTab],
   );
-  // File targets stay identity-stable so the same path reuses its tab. Keep navigation
-  // requests separate so clicking an unchanged path:line can still recenter the pane.
+
   const [fileNavigationRevisionByTabId, setFileNavigationRevisionByTabId] = useState<
     Record<string, number>
   >({});
@@ -1896,9 +1885,6 @@ function WorkspaceScreenContent({
   );
 
   useEffect(() => {
-    // Back dismisses the compact overlay only. On a wide native layout the
-    // explorer is a tab, `showMobileAgent` has no rendered consumer, and
-    // returning true would swallow Back with nothing to show for it.
     if (!isRouteFocused || isWeb || !isMobile || !isExplorerSidebarShowing) {
       return;
     }
@@ -2222,8 +2208,7 @@ function WorkspaceScreenContent({
     },
     [persistenceKey, selectWorkspaceTabInPane],
   );
-  // A "Show all" import can land in another workspace entirely; that
-  // agent has no tab here, so it opens its own workspace instead.
+
   const navigateToImportedAgent = useNavigateToImportedAgent(normalizedServerId);
   const handleImportedAgent = useCallback(
     (agentId: string) => {
@@ -2614,8 +2599,6 @@ function WorkspaceScreenContent({
     [navigateToTabId],
   );
 
-  // The new pane opens empty and the user picks what goes in it from the launcher.
-  // Seeding a draft here guessed for them, and guessed "new agent" every time.
   const handleCreateEmptySplit = useCallback(
     (input: { targetPaneId: string; position: "left" | "right" | "top" | "bottom" }) => {
       if (!persistenceKey) {
@@ -2725,7 +2708,6 @@ function WorkspaceScreenContent({
           return;
         }
 
-        // Errors (e.g. timeout) are handled by the mutation's onSettled callback
         void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
       });
     },
@@ -2882,7 +2864,6 @@ function WorkspaceScreenContent({
       const agent =
         useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
 
-      // A full export pages through the whole history, so it is not instant.
       toast.show(t("workspace.tabs.toasts.copyingChat"), { durationMs: null });
       let shared = false;
       try {
@@ -2893,7 +2874,6 @@ function WorkspaceScreenContent({
           format,
           fetchPage: (options) => client.fetchAgentTimeline(agentId, options),
           writeToClipboard: async (text) => {
-            // Android's clipboard rejects anything near 1 MB, so long chats go out as a file.
             if (isNative && text.length > NATIVE_CLIPBOARD_MAX_CHARS) {
               shared = true;
               await shareTextFile({
@@ -2936,10 +2916,7 @@ function WorkspaceScreenContent({
       toast.show(t("workspace.tabs.toasts.reloadingAgent"), { durationMs: null });
       try {
         await client.refreshAgent(agentId);
-        // Send the existing cursor so the server detects the new epoch and
-        // returns reset:true. Without a cursor, the server returns reset:false
-        // and the client takes the incremental path, where new-epoch rows are
-        // dropped against the stale cursor.
+
         const sessionState = useSessionStore.getState().sessions[normalizedServerId];
         const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
         await getHostRuntimeStore().fetchAgentTimeline(normalizedServerId, agentId, {
@@ -3155,9 +3132,7 @@ function WorkspaceScreenContent({
         return;
       }
       const pane = findPaneById(workspaceLayout.root, paneId);
-      // Ask before tearing anything down. The layout refuses to dismiss the final
-      // visible pane, and discovering that after closing its tabs would cost the
-      // user the tabs and leave the pane standing.
+
       if (!pane || !canDismissPaneInLayout(workspaceLayout, paneId, explorerSidebarPaneId)) {
         return;
       }
@@ -3410,8 +3385,7 @@ function WorkspaceScreenContent({
       if (action.id !== "sidebar.toggle.both") {
         return false;
       }
-      // This screen owns the layout key and the checkout, so it is the only
-      // place that can read "is the explorer open" correctly.
+
       const panel = usePanelStore.getState();
       toggleDesktopSidebarsWithCheckoutIntent({
         isAgentListOpen: selectIsAgentListOpen(panel, { isCompact: isMobile }),
@@ -3507,7 +3481,6 @@ function WorkspaceScreenContent({
     ],
   );
 
-  // Shared by every handler below: these actions only exist on a focused workspace route.
   const workspaceActionsEnabled = Boolean(
     isRouteFocused && normalizedServerId && normalizedWorkspaceId,
   );
@@ -3639,10 +3612,6 @@ function WorkspaceScreenContent({
     handle: handleWorkspaceSidebarAction,
   });
 
-  // Gated on the same predicate as the header menu item, so the command center never lists a
-  // Show setup entry the menu would hide.
-  // Gated by isActive so the handler is only dispatched when the workspace has visible setup;
-  // the command center contribution is separately gated by canShowSetup in workspace-registration.
   useKeyboardActionHandler({
     handlerId: `workspace-setup-show:${normalizedServerId}:${normalizedWorkspaceId}`,
     actions: ["workspace.setup.show"] as const,
@@ -4377,9 +4346,7 @@ const styles = StyleSheet.create((theme) => ({
       md: theme.spacing[2],
     },
   },
-  // No width cap. A percentage cap resolves against the title group, whose own width comes from
-  // this row's content, so it clips the project name while there is still room beside it.
-  // `flexShrink` on both this row and the title already gives up space only when there is none.
+
   headerProjectRow: {
     flexDirection: "row",
     alignItems: "center",
