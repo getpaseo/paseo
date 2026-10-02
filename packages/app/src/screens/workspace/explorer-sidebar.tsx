@@ -130,6 +130,8 @@ export function ExplorerSidebarDock({
               <WorkspaceDesktopTabsRow
                 host="explorer"
                 launchPurpose="supporting"
+                isFocused={isWorkspaceFocused}
+                ownsKeyboardShortcuts={false}
                 setHoveredCloseTabKey={setHoveredCloseTabKey}
                 onCopyResumeCommand={onCopyResumeCommand}
                 onCopyAgentId={onCopyAgentId}

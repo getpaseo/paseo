@@ -15,6 +15,25 @@ function explorerSidebar(page: Parameters<typeof ensureExplorerSidebar>[0]) {
   return page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
 }
 
+async function expectExplorerActiveTabForeground(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+) {
+  await openFilesPanel(page);
+  const main = page.getByTestId("workspace-pane-main");
+  await main.hover();
+  const activeMainLabel = main
+    .getByTestId("workspace-tabs-row")
+    .locator('[aria-selected="true"]')
+    .getByText("New tab", { exact: true });
+  const foreground = await activeMainLabel.evaluate((element) => getComputedStyle(element).color);
+  const activeFiles = explorerSidebar(page).getByRole("button", {
+    name: "Browse workspace files",
+    exact: true,
+  });
+  await expect(activeFiles).toHaveAttribute("aria-selected", "true");
+  await expect(activeFiles.getByText("Files", { exact: true })).toHaveCSS("color", foreground);
+}
+
 test.describe("Explorer sidebar", () => {
   test("starts with Files and Changes, switches views, and toggles without changing main", async ({
     page,
@@ -34,7 +53,7 @@ test.describe("Explorer sidebar", () => {
       await expect(explorer.getByTestId("workspace-tab-changes_tree")).toBeVisible();
       await expect(explorer.getByTestId("workspace-new-tab-button")).toHaveCount(1);
 
-      await openFilesPanel(page);
+      await expectExplorerActiveTabForeground(page);
       await expect(explorer.getByTestId("file-explorer-tree-scroll")).toBeVisible();
 
       await explorer.getByTestId("workspace-tab-changes_tree").click();
