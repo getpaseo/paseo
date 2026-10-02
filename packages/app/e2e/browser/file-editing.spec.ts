@@ -588,6 +588,46 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(preview.host).toBeVisible();
   });
 
+  test("splits an HTML preview tab by dragging it over its own preview", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-html-split-" });
+    await writeFile(
+      path.join(workspace.repoPath, "plan.html"),
+      "<!doctype html><html><body><h1>Visual plan</h1></body></html>",
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
+    const previewBox = await preview.host.boundingBox();
+    expect(previewBox).not.toBeNull();
+    const chip = page.getByTestId("workspace-tab-file_plan.html").filter({ visible: true });
+    const chipBox = await chip.boundingBox();
+    expect(chipBox).not.toBeNull();
+
+    // The whole path and the release land on the preview iframe, which is where a
+    // user aims to split the pane in half.
+    await page.mouse.move(chipBox!.x + chipBox!.width / 2, chipBox!.y + chipBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(chipBox!.x + chipBox!.width / 2 + 12, chipBox!.y + chipBox!.height / 2);
+    await page.mouse.move(
+      previewBox!.x + previewBox!.width * 0.95,
+      previewBox!.y + previewBox!.height / 2,
+      { steps: 20 },
+    );
+    await page.mouse.up();
+
+    await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+    await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
+    // Frames only stop taking the pointer for the length of the drag.
+    await expect(preview.host).toHaveCSS("pointer-events", "auto");
+  });
+
   test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {
     test.setTimeout(90_000);
     const workspace = await withWorkspace({ prefix: "file-editing-html-csp-" });
