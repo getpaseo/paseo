@@ -35,18 +35,14 @@ export default function contribute(client) {
 
 async function openExplorerMenu(page: Page) {
   const explorer = await ensureExplorerSidebar(page);
-  // The rail's empty background has no accessible role; tab menus are separate.
-  await explorer.getByTestId("explorer-sidebar-tab-rail").click({
-    button: "right",
-    position: { x: 20, y: 2 },
-  });
-  const menu = page.getByTestId("explorer-sidebar-tab-configuration");
+  await explorer.getByRole("button", { name: "New tab", exact: true }).click();
+  const menu = page.getByTestId("workspace-new-tab-menu").filter({ visible: true });
   await expect(menu).toBeVisible();
   await expect(menu).toHaveCSS("opacity", "1");
   return menu;
 }
 
-async function toggleExplorerView(page: Page, name: string) {
+async function launchExplorerView(page: Page, name: string | RegExp) {
   const menu = await openExplorerMenu(page);
   await menu.getByRole("menuitem", { name, exact: true }).click();
   await expect(menu).not.toBeVisible();
@@ -84,13 +80,12 @@ export async function withExplorerPanelPlugins(
 
 export async function expectWorkspacePanelsInExplorerLauncher(page: Page) {
   const menu = await openExplorerMenu(page);
-  await menu.getByRole("menuitem", { name: "New tab", exact: true }).click();
-  const launcher = page.getByTestId("workspace-explorer-sidebar");
-  await expect(launcher.getByRole("button", { name: "Review", exact: true })).toBeVisible();
-  await expect(launcher.getByRole("button", { name: "Review agent", exact: true })).toHaveCount(0);
-  await expect(launcher.getByRole("button", { name: "Review main only", exact: true })).toHaveCount(
+  await expect(menu.getByRole("menuitem", { name: "Review", exact: true })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Review agent", exact: true })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: "Review main only", exact: true })).toHaveCount(
     0,
   );
+  await page.keyboard.press("Escape");
 }
 
 export async function openWorkspacePanelFromExplorerMenu(
@@ -103,67 +98,43 @@ export async function openWorkspacePanelFromExplorerMenu(
     body: await page.screenshot({ path: testInfo.outputPath("explorer-panel-menu.png") }),
     contentType: "image/png",
   });
-  await expect(menu.getByRole("menuitem")).toHaveText([
-    "New tab",
-    "Changes",
-    "Files",
-    "Other review",
-    "Other review summary",
-    "Review",
-    "Review summary",
-  ]);
-  await expect(menu.getByRole("menuitem", { name: "Review", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
+  await expect(menu.getByRole("menuitem", { name: "Review", exact: true })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Other review", exact: true })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Review summary", exact: true })).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", { name: "Other review summary", exact: true }),
+  ).toBeVisible();
   await menu.getByRole("menuitem", { name: "Review", exact: true }).click();
   await expect(
     page.getByText(`Review workspace ${workspace.workspaceId}`, { exact: true }),
   ).toBeVisible();
 }
 
-export async function expectIndependentExplorerPanelToggles(
+export async function expectIndependentExplorerPanelTabs(
   page: Page,
   workspace: ExplorerPanelWorkspace,
 ) {
-  await toggleExplorerView(page, "Other review");
+  await launchExplorerView(page, "Other review");
   await expect(
     page.getByText(`Other review workspace ${workspace.workspaceId}`, { exact: true }),
   ).toBeVisible();
-  await toggleExplorerView(page, "Review summary");
-  const menu = await openExplorerMenu(page);
-  await expect(menu.getByRole("menuitem", { name: "Review", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(menu.getByRole("menuitem", { name: "Other review", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(menu.getByRole("menuitem", { name: "Review summary", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await menu.getByRole("menuitem", { name: "Review", exact: true }).click();
-  const updated = await openExplorerMenu(page);
-  await expect(updated.getByRole("menuitem", { name: "Review", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
+  await launchExplorerView(page, "Review summary");
+  const tabs = page.getByTestId("workspace-explorer-sidebar").getByTestId("workspace-tabs-row");
+  await expect(tabs.getByRole("button", { name: "Review", exact: true })).toBeVisible();
+  await expect(tabs.getByRole("button", { name: "Other review", exact: true })).toBeVisible();
+  await expect(tabs.getByRole("button", { name: "Review summary", exact: true })).toBeVisible();
+  await tabs
+    .getByRole("button", { name: "Review", exact: true })
+    .click({ button: "right", position: { x: 12, y: 13 } });
+  await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+  await expect(tabs.getByRole("button", { name: "Review", exact: true })).toHaveCount(0);
+  await expect(tabs.getByRole("button", { name: "Other review", exact: true })).toBeVisible();
+  await expect(tabs.getByRole("button", { name: "Review summary", exact: true })).toBeVisible();
+  await launchExplorerView(page, /^Files/);
+  await launchExplorerView(page, /^Files/);
   await expect(
-    updated.getByRole("menuitem", { name: "Other review", exact: true }),
-  ).toHaveAttribute("aria-checked", "true");
-  await expect(
-    updated.getByRole("menuitem", { name: "Review summary", exact: true }),
-  ).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Escape");
-  await toggleExplorerView(page, "Files");
-  await toggleExplorerView(page, "Files");
-  await expect(
-    page
-      .getByTestId("explorer-sidebar-tab-rail")
-      .getByRole("button", { name: "Browse workspace files", exact: true }),
-  ).toHaveCount(1);
+    tabs.getByRole("button", { name: "Browse workspace files", exact: true }),
+  ).toHaveCount(3);
 }
 
 export async function expectExplorerPanelWithFocusedAgent(

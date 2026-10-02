@@ -91,7 +91,7 @@ export function WorkspaceNewTabMenuContent({
   host: PaneHost;
   paneId?: string;
 }) {
-  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose, host });
+  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose, host, surface: "menu" });
 
   return (
     <DropdownMenuContent
