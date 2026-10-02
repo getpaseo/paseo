@@ -64,6 +64,7 @@ const PersistedWorkspaceRecordSchema = z.object({
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
   displayName: z.string(),
+  titleSource: z.enum(["manual", "provisional", "generated"]).optional(),
   // User-set title layered over the derived displayName. In Model B the title is
   // the workspace identity; branch/directory are backing metadata. Reconciliation
   // never touches this. Null means "use the derived displayName".
@@ -770,6 +771,7 @@ export function createPersistedWorkspaceRecord(input: {
   kind: PersistedWorkspaceKind;
   displayName: string;
   title?: string | null;
+  titleSource?: "manual" | "provisional" | "generated";
   branch?: string | null;
   worktreeRoot?: string | null;
   baseBranch?: string | null;

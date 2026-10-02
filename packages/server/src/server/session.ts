@@ -4190,6 +4190,7 @@ export class Session {
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
         title: nextTitle,
+        titleSource: "manual",
         updatedAt,
       }));
       if (!updated) {
@@ -7447,7 +7448,11 @@ export class Session {
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
-      { expectsInitialAgent: Boolean(request.firstAgentContext), workspaceId },
+      {
+        expectsInitialAgent: Boolean(request.firstAgentContext),
+        workspaceId,
+        titleSource: explicitTitle ? "manual" : "provisional",
+      },
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -8838,7 +8843,15 @@ export class Session {
     const stored = await this.agentStorage.get(agentId);
     if (stored && !stored.title && !stored.lastUserMessageAt) {
       const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: text });
-      if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
+      if (provisionalTitle) {
+        await this.agentStorage.applyContextualTitle(
+          agentId,
+          provisionalTitle,
+          null,
+          "provisional",
+        );
+        this.agentManager.notifyAgentState(agentId);
+      }
     }
   }
 

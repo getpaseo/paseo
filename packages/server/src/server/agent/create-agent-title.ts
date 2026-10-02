@@ -3,7 +3,28 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 
-function deriveInitialAgentTitle(prompt: string): string | null {
+export function isGreetingPrompt(prompt: string): boolean {
+  return /^(?:hi|hallo|hello|hey|moin|servus|guten (?:morgen|tag|abend)|good (?:morning|evening))[!.,?\s]*$/i.test(
+    prompt.trim(),
+  );
+}
+
+export function isSetupPrompt(prompt: string): boolean {
+  return (
+    isGreetingPrompt(prompt) ||
+    /^(?:ok|okay|yes|ja|danke|thanks|thank you|verstanden)[!.,?\s]*$/i.test(prompt.trim()) ||
+    /^(?:welche|was für|what|which).{0,30}(?:skills|fähigkeiten|capabilities|tools|werkzeuge).{0,40}$/i.test(
+      prompt.trim(),
+    )
+  );
+}
+
+export function resolveLegacyPromptTitle(prompt: string): string | null {
+  return deriveInitialAgentTitle(prompt, true);
+}
+
+function deriveInitialAgentTitle(prompt: string, includeGreeting = false): string | null {
+  if (!includeGreeting && isGreetingPrompt(prompt)) return null;
   const firstContentLine = prompt
     .split(/\r?\n/)
     .map((line) => line.trim())

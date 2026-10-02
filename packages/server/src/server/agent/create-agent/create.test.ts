@@ -666,3 +666,52 @@ test("session create keeps an explicit title after the initial prompt settles", 
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
+
+test("actual MCP initial prompts own provisional titles while explicit child role names remain manual", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-title-ownership-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const dependencies = {
+    agentManager,
+    agentStorage: storage,
+    logger,
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    ensureWorkspaceForCreate: async () => "workspace-fixture",
+  };
+  try {
+    const task = await createAgentCommand(dependencies, {
+      kind: "mcp",
+      provider: "codex",
+      cwd: workdir,
+      initialPrompt: "Reply with exactly the verified result",
+      background: true,
+    });
+    await vi.waitFor(async () =>
+      expect((await storage.get(task.snapshot.id))?.lastUserMessageAt).toBeTruthy(),
+    );
+    expect((await storage.get(task.snapshot.id))?.titleSource).toBe("provisional");
+    expect(agentManager.getAgent(task.snapshot.id)?.config.title).toBeUndefined();
+    const greeting = await createAgentCommand(dependencies, {
+      kind: "mcp",
+      provider: "codex",
+      cwd: workdir,
+      initialPrompt: "hi",
+      background: true,
+    });
+    expect((await storage.get(greeting.snapshot.id))?.title).toBeNull();
+    expect((await storage.get(greeting.snapshot.id))?.titleSource).not.toBe("manual");
+    const child = await createAgentCommand(dependencies, {
+      kind: "mcp",
+      provider: "codex",
+      cwd: workdir,
+      initialPrompt: "Run independent verification",
+      title: "Independent verifier",
+      background: true,
+      callerAgentId: task.snapshot.id,
+    });
+    expect((await storage.get(child.snapshot.id))?.title).toBe("Independent verifier");
+    expect((await storage.get(child.snapshot.id))?.titleSource).toBe("manual");
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});

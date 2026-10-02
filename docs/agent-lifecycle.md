@@ -12,6 +12,14 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Session titles
+
+An explicit title or rename belongs to you. Automatic metadata cannot replace it, even when the name matches a prompt preview or generation was already running.
+
+Greetings and initial capability questions leave naming provisional. The first concrete request uses the existing metadata provider to name the task, with up to two earlier user messages as context. Agent and workspace naming share a request. The resulting title stays stable; later messages do not continually rename the session. A later task can name a workspace left provisional by an introductory message, without changing its Git branch.
+
+Existing names remain unchanged unless they match the actual first user message's old preview format. Failed generation leaves the current provisional name available for a later request. No extra provider or metadata endpoint is configured for naming.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider

@@ -437,14 +437,26 @@ async function resolveMcpCreateAgent(
       ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
       workspaceId: intent.workspaceId,
       owner: input.owner,
+      initialTitle: resolveMcpInitialTitle(input, trimmedPrompt),
       env: input.env,
     },
     prompt: trimmedPrompt ? trimmedPrompt : undefined,
+    runOptions: { clientMessageId: resolveClientMessageId(undefined) },
     setupContinuation,
     createdWorktree,
     background: input.background,
     promptFailure: input.promptFailure ?? "log",
   };
+}
+
+function resolveMcpInitialTitle(
+  input: CreateAgentFromMcpInput,
+  initialPrompt: string,
+): string | null {
+  return resolveCreateAgentTitles({
+    configTitle: input.config?.title ?? input.title,
+    initialPrompt,
+  }).provisionalTitle;
 }
 
 async function applySubagentCreateRouting(params: {
@@ -535,7 +547,7 @@ function buildMcpSessionConfig(params: {
   resolvedFeatures?: Record<string, unknown>;
 }): AgentSessionConfig {
   const passthroughConfig = params.input.config;
-  const { provisionalTitle } = resolveCreateAgentTitles({
+  const { explicitTitle } = resolveCreateAgentTitles({
     configTitle: passthroughConfig?.title ?? params.input.title,
     initialPrompt: params.trimmedPrompt,
   });
@@ -549,8 +561,8 @@ function buildMcpSessionConfig(params: {
     thinkingOptionId: params.input.thinking ?? passthroughConfig?.thinkingOptionId,
     internal: params.input.internal ?? passthroughConfig?.internal,
   };
-  if (provisionalTitle) {
-    config.title = provisionalTitle;
+  if (explicitTitle) {
+    config.title = explicitTitle;
   }
   if (featureValues) {
     config.featureValues = featureValues;

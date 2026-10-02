@@ -1,3 +1,4 @@
+import { ContextualTitles } from "./contextual-titles.js";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import { isShadowModeEnabled } from "./system-one/scope.js";
 import { ShadowPredictor } from "./system-one/shadow-predictor.js";
@@ -1132,6 +1133,8 @@ export async function createPaseoDaemon(
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
       resolveFirstAgentPromptTitle(firstAgentContext),
+      undefined,
+      { titleSource: "provisional" },
     );
     if (firstAgentContext) {
       workspaceAutoName.scheduleForDirectory({
@@ -1205,6 +1208,24 @@ export async function createPaseoDaemon(
       await emitWorkspaceUpdatesExternal([workspaceId]);
     },
     logger,
+  });
+
+  const contextualTitles = new ContextualTitles({
+    agentManager,
+    agentStorage,
+    workspaceRegistry,
+    generate: ({ agent, prompt }) =>
+      workspaceAutoName.generateContextualName({
+        cwd: agent.cwd,
+        prompt,
+        currentSelection: {
+          provider: agent.provider,
+          model: agent.config?.model,
+          thinkingOptionId: agent.config?.thinkingOptionId,
+        },
+      }),
+    emitWorkspaceUpdate: (workspaceId) => emitWorkspaceUpdatesExternal([workspaceId]),
+    onError: (error) => logger.warn({ err: error }, "Contextual title generation failed"),
   });
 
   setupAutoArchiveOnMerge({
@@ -1440,6 +1461,8 @@ export async function createPaseoDaemon(
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       input.cwd,
       resolveFirstAgentPromptTitle(input.firstAgentContext),
+      undefined,
+      { titleSource: "provisional" },
     );
     workspaceAutoName.scheduleForDirectory({
       workspaceId: workspace.workspaceId,
@@ -2111,6 +2134,7 @@ export async function createPaseoDaemon(
     // they serve has been closed, further down.
     unsubscribePluginProviders();
     await hubRelationships.stop();
+    await contextualTitles.dispose();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.

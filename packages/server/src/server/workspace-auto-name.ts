@@ -1,7 +1,7 @@
 import type pino from "pino";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
-import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
+import { isSetupPrompt, resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
@@ -50,6 +50,7 @@ export class WorkspaceAutoName {
   private readonly emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   private readonly logger: pino.Logger;
   private readonly generateWorkspaceName: WorkspaceNameGenerator;
+  private readonly generations = new Map<string, Promise<GeneratedWorkspaceName | null>>();
 
   constructor(options: WorkspaceAutoNameOptions) {
     this.agentManager = options.agentManager;
@@ -181,6 +182,7 @@ export class WorkspaceAutoName {
     input: { title: string; branch?: string | null; promptTitle?: string | null },
   ): Promise<void> {
     await this.workspaceRegistry.update(workspaceId, (current) => {
+      if (current.titleSource === "manual") return current;
       let title = current.title;
       if (!title || (input.promptTitle && title === input.promptTitle)) {
         title = input.title;
@@ -188,9 +190,22 @@ export class WorkspaceAutoName {
       return {
         ...current,
         title,
+        titleSource: title === input.title ? "generated" : current.titleSource,
         ...(input.branch ? { branch: input.branch } : {}),
         updatedAt: new Date().toISOString(),
       };
+    });
+  }
+
+  generateContextualName(input: {
+    cwd: string;
+    prompt: string;
+    currentSelection: CurrentSelection;
+  }): Promise<GeneratedWorkspaceName | null> {
+    return this.generateFromContext({
+      cwd: input.cwd,
+      firstAgentContext: { prompt: input.prompt },
+      currentSelection: input.currentSelection,
     });
   }
 
@@ -199,7 +214,13 @@ export class WorkspaceAutoName {
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<GeneratedWorkspaceName | null> {
-    return this.generateWorkspaceName({
+    if (input.firstAgentContext.prompt && isSetupPrompt(input.firstAgentContext.prompt))
+      return Promise.resolve(null);
+    const key = JSON.stringify([input.cwd, input.firstAgentContext]);
+    const existing = this.generations.get(key);
+    if (existing) return existing;
+    if (this.generations.size >= 50) this.generations.delete(this.generations.keys().next().value!);
+    const generated = this.generateWorkspaceName({
       agentManager: this.agentManager,
       cwd: input.cwd,
       workspaceGitService: this.workspaceGitService,
@@ -209,6 +230,15 @@ export class WorkspaceAutoName {
       firstAgentContext: input.firstAgentContext,
       logger: this.logger,
     });
+    this.generations.set(key, generated);
+    void generated.then(
+      (value) => {
+        if (!value) this.generations.delete(key);
+        return value;
+      },
+      () => this.generations.delete(key),
+    );
+    return generated;
   }
 
   private schedule(run: () => Promise<void>, context: { cwd: string; message: string }): void {

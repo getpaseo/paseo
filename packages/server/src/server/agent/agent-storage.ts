@@ -53,6 +53,7 @@ const STORED_AGENT_SCHEMA = z.object({
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
+  titleSource: z.enum(["manual", "provisional", "generated"]).optional(),
   labels: z.record(z.string(), z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
@@ -339,6 +340,9 @@ export class AgentStorage {
         internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
       });
 
+      record.titleSource = existing?.titleSource;
+      if (hasTitleOverride && options?.title && existing?.title !== options.title)
+        record.titleSource = agent.config.title ? "manual" : "provisional";
       // Preserve soft-delete/archive status across snapshot flushes. The
       // projection runs inside the per-agent write queue so it cannot commit a
       // stale pre-archive record after the archive mutation.
@@ -351,12 +355,32 @@ export class AgentStorage {
 
   async setTitle(agentId: string, title: string): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return { ...existing, title, titleSource: "manual" };
+    });
+  }
+
+  async applyContextualTitle(
+    agentId: string,
+    title: string,
+    expectedTitle: string | null,
+    source: "provisional" | "generated",
+  ): Promise<boolean> {
+    await this.load();
+    let applied = false;
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      if (
+        existing.titleSource === "manual" ||
+        existing.titleSource === "generated" ||
+        (existing.title ?? null) !== expectedTitle
+      )
+        return existing;
+      applied = true;
+      return { ...existing, title, titleSource: source, updatedAt: new Date().toISOString() };
+    });
+    return applied;
   }
 
   async flush(): Promise<void> {
@@ -506,10 +530,6 @@ export class AgentStorage {
       this.daemonAgentIdsByExecution.delete(key);
     }
     this.daemonExecutionKeysByAgentId.delete(agentId);
-  }
-
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
 }
 

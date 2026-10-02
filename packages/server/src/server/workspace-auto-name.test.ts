@@ -1,5 +1,5 @@
 import pino from "pino";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
@@ -63,4 +63,66 @@ test("auto-name preserves workspace archival that lands during its metadata writ
     title: "generated",
     archivedAt,
   });
+});
+
+test("shares one metadata request for automatic workspace and agent names and skips initial setup", async () => {
+  const emitted = deferred();
+  const generated = vi.fn(async () => ({
+    title: "Fix token refresh",
+    branch: "fix-token-refresh",
+  }));
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-fixture",
+    projectId: "project-fixture",
+    cwd: "/workspace",
+    kind: "directory",
+    displayName: "Fixture",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const autoName = new WorkspaceAutoName({
+    agentManager: {} as AgentManager,
+    workspaceRegistry: {
+      update: async (_, mutate) => {
+        workspace = mutate(workspace);
+        return workspace;
+      },
+    },
+    workspaceGitService: {} as WorkspaceGitService,
+    providerSnapshotManager: {} as ProviderSnapshotManager,
+    readDaemonConfig: () => ({}),
+    gitMutation: { notifyGitMutation: async () => {} },
+    emitWorkspaceUpdateForCwd: async () => {},
+    emitWorkspaceUpdateForWorkspaceId: async () => emitted.resolve(),
+    logger: pino({ level: "silent" }),
+    generateWorkspaceName: generated,
+  });
+  expect(
+    await autoName.generateContextualName({
+      cwd: "/workspace",
+      prompt: "hi",
+      currentSelection: null,
+    }),
+  ).toBeNull();
+  expect(
+    await autoName.generateContextualName({
+      cwd: "/workspace",
+      prompt: "welche skills kannst du nutzen?",
+      currentSelection: null,
+    }),
+  ).toBeNull();
+  expect(generated).not.toHaveBeenCalled();
+  autoName.scheduleForDirectory({
+    workspaceId: workspace.workspaceId,
+    cwd: workspace.cwd,
+    firstAgentContext: { prompt: "Fix token refresh" },
+  });
+  await autoName.generateContextualName({
+    cwd: workspace.cwd,
+    prompt: "Fix token refresh",
+    currentSelection: null,
+  });
+  await emitted.promise;
+  expect(generated).toHaveBeenCalledTimes(1);
+  expect(workspace.title).toBe("Fix token refresh");
 });
