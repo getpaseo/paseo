@@ -434,7 +434,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto("/usage");
       const screen = page.getByTestId(`usage-host-${getServerId()}`);
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 30_000 });
-      const settings = screen.getByTestId("usage-options-toggle");
+      const settings = screen.getByRole("button", { name: "Settings", exact: true });
       const chevron = settings.locator("svg").locator("../..");
       await expect(settings).toHaveAccessibleName("Settings");
       await expect(settings).toHaveAttribute("aria-expanded", "false");
