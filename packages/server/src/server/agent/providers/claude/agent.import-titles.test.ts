@@ -16,7 +16,17 @@ interface ClaudeTranscriptRecord {
 let configDir: string;
 let previousConfigDir: string | undefined;
 
-function userRecord(sessionId: string, content: string): ClaudeTranscriptRecord {
+interface UserRecordInput {
+  sessionId: string;
+  content: string;
+}
+
+interface WriteSessionInput {
+  sessionId: string;
+  records: ClaudeTranscriptRecord[];
+}
+
+function userRecord({ sessionId, content }: UserRecordInput): ClaudeTranscriptRecord {
   return {
     isSidechain: false,
     type: "user",
@@ -26,7 +36,7 @@ function userRecord(sessionId: string, content: string): ClaudeTranscriptRecord 
   };
 }
 
-async function writeSession(sessionId: string, records: ClaudeTranscriptRecord[]): Promise<void> {
+async function writeSession({ sessionId, records }: WriteSessionInput): Promise<void> {
   const projectDir = claudeProjectDirSync(SESSION_CWD, { configDir });
   await fs.mkdir(projectDir, { recursive: true });
   await fs.writeFile(
@@ -69,10 +79,13 @@ afterEach(async () => {
 describe("importing a renamed Claude session", () => {
   test("names the imported agent after a /rename", async () => {
     const sessionId = "renamed-session";
-    await writeSession(sessionId, [
-      userRecord(sessionId, "Review this project"),
-      { type: "custom-title", customTitle: "My research session", sessionId },
-    ]);
+    await writeSession({
+      sessionId,
+      records: [
+        userRecord({ sessionId, content: "Review this project" }),
+        { type: "custom-title", customTitle: "My research session", sessionId },
+      ],
+    });
 
     const imported = await importSession(sessionId);
 
@@ -81,11 +94,14 @@ describe("importing a renamed Claude session", () => {
 
   test("uses the last rename when the session was renamed more than once", async () => {
     const sessionId = "renamed-twice";
-    await writeSession(sessionId, [
-      userRecord(sessionId, "Move invoices to the new schema"),
-      { type: "custom-title", customTitle: "invoices", sessionId },
-      { type: "custom-title", customTitle: "billing rework", sessionId },
-    ]);
+    await writeSession({
+      sessionId,
+      records: [
+        userRecord({ sessionId, content: "Move invoices to the new schema" }),
+        { type: "custom-title", customTitle: "invoices", sessionId },
+        { type: "custom-title", customTitle: "billing rework", sessionId },
+      ],
+    });
 
     const imported = await importSession(sessionId);
 
@@ -94,11 +110,14 @@ describe("importing a renamed Claude session", () => {
 
   test("keeps the rename when a later record carries no usable name", async () => {
     const sessionId = "malformed-later-record";
-    await writeSession(sessionId, [
-      userRecord(sessionId, "Review this project"),
-      { type: "custom-title", customTitle: "My research session", sessionId },
-      { type: "custom-title", sessionId },
-    ]);
+    await writeSession({
+      sessionId,
+      records: [
+        userRecord({ sessionId, content: "Review this project" }),
+        { type: "custom-title", customTitle: "My research session", sessionId },
+        { type: "custom-title", sessionId },
+      ],
+    });
 
     const imported = await importSession(sessionId);
 
@@ -107,10 +126,13 @@ describe("importing a renamed Claude session", () => {
 
   test("ignores a rename recorded on a sidechain transcript", async () => {
     const sessionId = "sidechain-rename";
-    await writeSession(sessionId, [
-      userRecord(sessionId, "Review this project"),
-      { type: "custom-title", customTitle: "Subagent title", sessionId, isSidechain: true },
-    ]);
+    await writeSession({
+      sessionId,
+      records: [
+        userRecord({ sessionId, content: "Review this project" }),
+        { type: "custom-title", customTitle: "Subagent title", sessionId, isSidechain: true },
+      ],
+    });
 
     const imported = await importSession(sessionId);
 
@@ -119,7 +141,10 @@ describe("importing a renamed Claude session", () => {
 
   test("leaves the agent untitled when the session was never renamed", async () => {
     const sessionId = "never-renamed";
-    await writeSession(sessionId, [userRecord(sessionId, "Review this project")]);
+    await writeSession({
+      sessionId,
+      records: [userRecord({ sessionId, content: "Review this project" })],
+    });
 
     const imported = await importSession(sessionId);
 
@@ -128,10 +153,13 @@ describe("importing a renamed Claude session", () => {
 
   test("does not name the imported agent after a generated ai-title", async () => {
     const sessionId = "auto-titled";
-    await writeSession(sessionId, [
-      userRecord(sessionId, "Add pagination to the invoice list"),
-      { type: "ai-title", aiTitle: "Invoice list pagination", sessionId },
-    ]);
+    await writeSession({
+      sessionId,
+      records: [
+        userRecord({ sessionId, content: "Add pagination to the invoice list" }),
+        { type: "ai-title", aiTitle: "Invoice list pagination", sessionId },
+      ],
+    });
 
     const imported = await importSession(sessionId);
 
