@@ -2754,7 +2754,7 @@ export const uk: TranslationResources = {
       models: {
         one: "1 модель",
         many: "Моделей: {{count}}",
-        addModel: "Додати модель",
+        addModel: "Додати",
         addCustomTitle: "Додати власну модель",
         modelId: "ID моделі",
         modelIdPlaceholder: "напр. openai/gpt-5",
