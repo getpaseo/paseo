@@ -1537,6 +1537,12 @@ export const uk: TranslationResources = {
       },
     },
   },
+  hostPicker: {
+    addHost: "Додати хост",
+    allHosts: "Усі хости",
+    enableBuiltInDaemon: "Увімкнути вбудований демон",
+    fallback: "Хост",
+  },
   projectPicker: {
     placeholder: "Почніть вводити для пошуку...",
     browse: "Огляд…",

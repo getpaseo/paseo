@@ -1501,6 +1501,12 @@ export const ko: TranslationResources = {
       },
     },
   },
+  hostPicker: {
+    addHost: "호스트 추가",
+    allHosts: "모든 호스트",
+    enableBuiltInDaemon: "내장 데몬 활성화",
+    fallback: "호스트",
+  },
   projectPicker: {
     placeholder: "검색할 내용을 입력하세요...",
     browse: "찾아보기…",

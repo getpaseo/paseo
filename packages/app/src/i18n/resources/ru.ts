@@ -1519,6 +1519,12 @@ export const ru: TranslationResources = {
       },
     },
   },
+  hostPicker: {
+    addHost: "Добавить хост",
+    allHosts: "Все хосты",
+    enableBuiltInDaemon: "Включить встроенный демон",
+    fallback: "Хост",
+  },
   projectPicker: {
     placeholder: "Введите текст для поиска...",
     browse: "Обзор…",

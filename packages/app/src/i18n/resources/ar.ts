@@ -1492,6 +1492,12 @@ export const ar: TranslationResources = {
       },
     },
   },
+  hostPicker: {
+    addHost: "أضف مضيفًا",
+    allHosts: "كل المضيفين",
+    enableBuiltInDaemon: "تفعيل البرنامج الخفي المدمج",
+    fallback: "المضيف",
+  },
   projectPicker: {
     placeholder: "اكتب للبحث...",
     browse: "استعراض…",

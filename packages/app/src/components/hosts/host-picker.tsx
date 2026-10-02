@@ -2,6 +2,7 @@ import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import { Plus, Server, Settings } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
@@ -121,11 +122,11 @@ export function HostPickerOption({
   );
 }
 
-const SYSTEM_HOST_PICKER_OPTION_LABELS: Record<"add" | "all" | "enableBuiltInDaemon", string> = {
-  add: "Add host",
-  all: "All hosts",
-  enableBuiltInDaemon: "Enable built-in daemon",
-};
+const SYSTEM_HOST_PICKER_OPTION_LABEL_KEYS = {
+  add: "hostPicker.addHost",
+  all: "hostPicker.allHosts",
+  enableBuiltInDaemon: "hostPicker.enableBuiltInDaemon",
+} as const;
 
 function SystemHostPickerOption({
   active,
@@ -141,8 +142,9 @@ function SystemHostPickerOption({
   testID?: string;
 }): ReactElement {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const Icon = kind === "add" ? Plus : Server;
-  const label = SYSTEM_HOST_PICKER_OPTION_LABELS[kind];
+  const label = t(SYSTEM_HOST_PICKER_OPTION_LABEL_KEYS[kind]);
   const leadingSlot = useMemo(
     () => <Icon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
     [Icon, theme.colors.foregroundMuted, theme.iconSize.sm],
@@ -205,6 +207,7 @@ export function HostPicker({
   hostOptionTestID,
   children,
 }: HostPickerProps): ReactElement {
+  const { t } = useTranslation();
   const localServerId = useLocalDaemonServerId();
   const orderedHosts = useMemo(
     () => orderHostsLocalFirst(hosts, localServerId),
@@ -213,15 +216,18 @@ export function HostPicker({
 
   const options = useMemo(() => {
     const hostOptions = orderedHosts.map((host) => ({ id: host.serverId, label: host.label }));
-    if (includeAllHost) hostOptions.unshift({ id: ALL_HOSTS_OPTION_ID, label: "All hosts" });
-    if (includeAddHost) hostOptions.push({ id: ADD_HOST_OPTION_ID, label: "Add host" });
+    if (includeAllHost) {
+      hostOptions.unshift({ id: ALL_HOSTS_OPTION_ID, label: t("hostPicker.allHosts") });
+    }
+    if (includeAddHost)
+      hostOptions.push({ id: ADD_HOST_OPTION_ID, label: t("hostPicker.addHost") });
     if (includeEnableBuiltInDaemon)
       hostOptions.push({
         id: ENABLE_BUILT_IN_DAEMON_OPTION_ID,
-        label: "Enable built-in daemon",
+        label: t("hostPicker.enableBuiltInDaemon"),
       });
     return hostOptions;
-  }, [orderedHosts, includeAllHost, includeAddHost, includeEnableBuiltInDaemon]);
+  }, [orderedHosts, includeAllHost, includeAddHost, includeEnableBuiltInDaemon, t]);
 
   const isSearchable = searchable === true && orderedHosts.length > SEARCHABLE_THRESHOLD;
 

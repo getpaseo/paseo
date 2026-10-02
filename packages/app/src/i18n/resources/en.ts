@@ -1516,6 +1516,12 @@ export const en = {
       },
     },
   },
+  hostPicker: {
+    addHost: "Add host",
+    allHosts: "All hosts",
+    enableBuiltInDaemon: "Enable built-in daemon",
+    fallback: "Host",
+  },
   projectPicker: {
     placeholder: "Type to search...",
     browse: "Browse…",

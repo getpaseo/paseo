@@ -1508,6 +1508,12 @@ export const ja: TranslationResources = {
       },
     },
   },
+  hostPicker: {
+    addHost: "ホストを追加",
+    allHosts: "すべてのホスト",
+    enableBuiltInDaemon: "組み込みデーモンを有効にする",
+    fallback: "ホスト",
+  },
   projectPicker: {
     placeholder: "入力して検索...",
     browse: "参照…",
