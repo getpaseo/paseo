@@ -34,7 +34,7 @@ describe("openWorkspaceTargetAtLocation", () => {
       target: { kind: "browser", browserId: "browser-side-first" },
       location: "side",
     });
-    if (!sideTabId) throw new Error("Expected the side browser tab to open");
+    expect(sideTabId).toBeTruthy();
 
     const tabId = openWorkspaceTargetAtLocation({
       isCompact: false,
@@ -45,9 +45,9 @@ describe("openWorkspaceTargetAtLocation", () => {
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[WORKSPACE_KEY];
-    if (!tabId || !layout) throw new Error("Expected the browser tab to open");
-    expect(findPaneContainingTab(layout.root, sideTabId)?.id).not.toBe(DEFAULT_PANE_ID);
-    expect(findPaneContainingTab(layout.root, tabId)?.id).toBe(DEFAULT_PANE_ID);
+    expect(tabId).toBeTruthy();
+    expect(findPaneContainingTab(layout!.root, sideTabId!)?.id).not.toBe(DEFAULT_PANE_ID);
+    expect(findPaneContainingTab(layout!.root, tabId!)?.id).toBe(DEFAULT_PANE_ID);
   });
 
   it("opens a browser tab on the side", () => {
@@ -61,9 +61,8 @@ describe("openWorkspaceTargetAtLocation", () => {
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[WORKSPACE_KEY];
     const sidePaneId = state.sidePaneIdByWorkspace[WORKSPACE_KEY];
-    if (!tabId || !layout || !sidePaneId) {
-      throw new Error("Expected the browser tab to open in a side pane");
-    }
-    expect(findPaneContainingTab(layout.root, tabId)?.id).toBe(sidePaneId);
+    expect(tabId).toBeTruthy();
+    expect(sidePaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout!.root, tabId!)?.id).toBe(sidePaneId);
   });
 });
