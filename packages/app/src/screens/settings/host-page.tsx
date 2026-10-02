@@ -39,6 +39,7 @@ import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
+import { PairedDevicesCard } from "@/screens/settings/paired-devices-card";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import {
@@ -272,6 +273,7 @@ export function HostPairDevicePage({ serverId }: { serverId: string }) {
   return (
     <SettingsSection title={t("settings.host.pairDevices.title")}>
       <PairDeviceRow serverId={serverId} />
+      <PairedDevicesCard serverId={serverId} />
     </SettingsSection>
   );
 }

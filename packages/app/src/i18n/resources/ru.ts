@@ -2713,6 +2713,15 @@ export const ru: TranslationResources = {
         rowTitle: "Подключить устройство",
         rowHint:
           "Отсканируйте QR-код или скопируйте ссылку, чтобы подключить телефон к этому хосту.",
+        devicesTitle: "Paired devices",
+        lock: "Разрешить только сопряжённые устройства",
+        unlock: "Разрешить регистрацию новых устройств",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         sectionTitle: "Навыки оркестрации",

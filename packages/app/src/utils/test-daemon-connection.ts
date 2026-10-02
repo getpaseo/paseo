@@ -201,6 +201,14 @@ export async function buildClientConfig(
       serverId,
     }),
     e2ee: { enabled: true, daemonPublicKeyB64: connection.daemonPublicKeyB64 },
+    ...(connection.deviceCredential
+      ? {
+          device: {
+            credential: connection.deviceCredential,
+            ...(connection.pairingInvite ? { pairingInvite: connection.pairingInvite } : {}),
+          },
+        }
+      : {}),
   };
 }
 

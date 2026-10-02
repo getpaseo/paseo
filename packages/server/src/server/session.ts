@@ -225,6 +225,7 @@ import { ProjectConfigSession } from "./session/project-config/project-config-se
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
+import type { PairedDeviceManagement } from "./device-access.js";
 import { HubExecutionController } from "./hub/execution-controller.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
@@ -570,6 +571,7 @@ export interface SessionOptions {
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
+  pairedDevices?: PairedDeviceManagement;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -841,6 +843,7 @@ export class Session {
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly serviceProxy: ServiceProxySubsystem | null;
+  private readonly pairedDevices: PairedDeviceManagement | undefined;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
   private readonly getDaemonTcpHost: (() => string | null) | null;
@@ -908,6 +911,7 @@ export class Session {
       providerSnapshotManager,
       providerUsageService,
       serviceProxy,
+      pairedDevices,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
       workspaceSetupRuntime,
@@ -1206,6 +1210,7 @@ export class Session {
     });
     this.providerSnapshotManager = providerSnapshotManager;
     this.serviceProxy = serviceProxy ?? null;
+    this.pairedDevices = pairedDevices;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
     this.workspaceSetupRuntime = resolveWorkspaceSetupRuntime(workspaceSetupRuntime);
@@ -2451,6 +2456,7 @@ export class Session {
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
       this.dispatchWorkspaceTopicMessage(msg) ??
+      this.dispatchDeviceMessage(msg) ??
       this.dispatchWorkspaceSetupMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg)
     );
@@ -3124,6 +3130,52 @@ export class Session {
     }
     if (msg.type === "workspace.setup.run.request") {
       return this.handleWorkspaceSetupRunRequest(msg);
+    }
+    return undefined;
+  }
+
+  private dispatchDeviceMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "device.list.request") {
+      this.emit({
+        type: "device.list.response",
+        payload: {
+          requestId: msg.requestId,
+          devices: this.pairedDevices?.list() ?? [],
+          locked: this.pairedDevices?.isLocked() ?? false,
+          error: this.pairedDevices ? null : "Paired devices are not available on this host",
+        },
+      });
+      return Promise.resolve();
+    }
+    if (msg.type === "device.lock.set.request") {
+      let error: string | null = this.pairedDevices ? null : "Paired devices are not available";
+      try {
+        this.pairedDevices?.setLocked(msg.locked);
+      } catch (err) {
+        error = getErrorMessageOr(err, "Failed to change the device lock");
+      }
+      this.emit({
+        type: "device.lock.set.response",
+        payload: {
+          requestId: msg.requestId,
+          locked: this.pairedDevices?.isLocked() ?? false,
+          error,
+        },
+      });
+      return Promise.resolve();
+    }
+    if (msg.type === "device.revoke.request") {
+      const revoked = this.pairedDevices?.revoke(msg.deviceId) ?? false;
+      this.emit({
+        type: "device.revoke.response",
+        payload: {
+          requestId: msg.requestId,
+          deviceId: msg.deviceId,
+          revoked,
+          error: revoked ? null : "Unknown device",
+        },
+      });
+      return Promise.resolve();
     }
     return undefined;
   }

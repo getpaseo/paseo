@@ -124,6 +124,7 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
   WorkspaceTopic,
+  PairedDevice,
   PluginListItem,
   PluginLogEntry,
   PluginSourceStatusItem,
@@ -428,6 +429,10 @@ export interface DaemonClientConfig {
   e2ee?: {
     enabled?: boolean;
     daemonPublicKeyB64?: string;
+  };
+  device?: {
+    credential: string;
+    pairingInvite?: string;
   };
   reconnect?: {
     enabled?: boolean;
@@ -3470,6 +3475,37 @@ export class DaemonClient {
       throw new Error(payload.error ?? "setWorkspaceDone rejected");
     }
     return { doneAt: payload.doneAt };
+  }
+
+  async listPairedDevices(
+    requestId?: string,
+  ): Promise<{ devices: PairedDevice[]; locked: boolean }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "device.list.request" },
+      responseType: "device.list.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+    return { devices: payload.devices, locked: payload.locked };
+  }
+
+  async setPairedDeviceLock(locked: boolean, requestId?: string): Promise<boolean> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "device.lock.set.request", locked },
+      responseType: "device.lock.set.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.locked;
+  }
+
+  async revokePairedDevice(deviceId: string, requestId?: string): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "device.revoke.request", deviceId },
+      responseType: "device.revoke.response",
+    });
+    if (!payload.revoked) throw new Error(payload.error ?? "revokePairedDevice rejected");
   }
 
   /** Combines workspaces under a new topic. Gate on `server_info.features.workspaceTopics`. */
@@ -6608,6 +6644,10 @@ export class DaemonClient {
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
+        ...(this.config.device ? { deviceCredential: this.config.device.credential } : {}),
+        ...(this.config.device?.pairingInvite
+          ? { pairingInvite: this.config.device.pairingInvite }
+          : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send hello message";

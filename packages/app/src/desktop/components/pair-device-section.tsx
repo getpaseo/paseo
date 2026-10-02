@@ -58,7 +58,9 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     },
     enabled: supportsPairingRpc && Boolean(client && isConnected),
     dataShape: "value",
-    staleTimeMs: 5 * 60 * 1000,
+
+    staleTimeMs: 4 * 60 * 1000,
+    refetchInterval: 4 * 60 * 1000,
     retry: 1,
   });
 

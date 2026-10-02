@@ -2729,6 +2729,15 @@ export const es: TranslationResources = {
         title: "Emparejar dispositivos",
         rowTitle: "Emparejar un dispositivo",
         rowHint: "Escanee un códigoQRo copie un enlace para conectar su teléfono a este host",
+        devicesTitle: "Paired devices",
+        lock: "Permitir solo dispositivos vinculados",
+        unlock: "Permitir registrar nuevos dispositivos",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         ...en.settings.host.skills,

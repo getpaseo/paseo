@@ -1954,7 +1954,7 @@ export const en = {
       unavailable: "Pairing offer unavailable.",
       hint: "Scan this QR code with PandaOS on your phone, or copy the link below.",
       securityWarning:
-        "Treat this pairing link like a password. Anyone with it can access this daemon.",
+        "This link works once and expires after 10 minutes. Whoever uses it first can access this daemon.",
       qrUnavailable: "QR code unavailable.",
       qrAccessibility: "Pairing QR code",
       retry: "Retry",
@@ -2952,6 +2952,15 @@ export const en = {
         title: "Pair devices",
         rowTitle: "Pair a device",
         rowHint: "Scan a QR code or copy a link to connect your phone to this host",
+        devicesTitle: "Paired devices",
+        lock: "Allow only paired devices",
+        unlock: "Allow new devices to register",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         sectionTitle: "Orchestration skills",

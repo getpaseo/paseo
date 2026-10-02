@@ -1095,6 +1095,35 @@ export const WorkspaceDoneSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// COMPAT(pairedDevices): added in v0.9.2. Gate on server_info.features.pairedDevices.
+
+export const PairedDeviceSchema = z.object({
+  id: z.string(),
+  via: z.enum(["invite", "adopted"]),
+  appVersion: z.string().nullable(),
+  createdAt: z.string(),
+  lastSeenAt: z.string(),
+  current: z.boolean(),
+});
+
+export const DeviceListRequestSchema = z.object({
+  type: z.literal("device.list.request"),
+  requestId: z.string(),
+});
+
+export const DeviceLockSetRequestSchema = z.object({
+  type: z.literal("device.lock.set.request"),
+
+  locked: z.boolean(),
+  requestId: z.string(),
+});
+
+export const DeviceRevokeRequestSchema = z.object({
+  type: z.literal("device.revoke.request"),
+  deviceId: z.string(),
+  requestId: z.string(),
+});
+
 // COMPAT(workspaceTopics): added in v0.9.2. Gate on server_info.features.workspaceTopics.
 // A topic groups workspaces that started apart but belong to one piece of work. It exists
 // only through the workspaces that carry it, so there is no delete verb: detaching the last
@@ -2346,6 +2375,35 @@ export const WorkspaceDoneSetResponseSchema = z.object({
   }),
 });
 
+export const DeviceListResponseSchema = z.object({
+  type: z.literal("device.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    devices: z.array(PairedDeviceSchema),
+    locked: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const DeviceLockSetResponseSchema = z.object({
+  type: z.literal("device.lock.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    locked: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const DeviceRevokeResponseSchema = z.object({
+  type: z.literal("device.revoke.response"),
+  payload: z.object({
+    requestId: z.string(),
+    deviceId: z.string(),
+    revoked: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceTopicCreateResponseSchema = z.object({
   type: z.literal("workspace.topic.create.response"),
   payload: z.object({
@@ -3517,6 +3575,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceDoneSetRequestSchema,
   AgentLastRepliesRequestSchema,
   WorkspaceTopicCreateRequestSchema,
+  DeviceListRequestSchema,
+  DeviceRevokeRequestSchema,
+  DeviceLockSetRequestSchema,
   WorkspaceTopicAssignRequestSchema,
   WorkspaceTopicUpdateRequestSchema,
   WorkspaceForgeAccountSetRequestSchema,
@@ -4018,6 +4079,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceTopics): added in v0.9.2, remove gate after 2027-04-01.
         workspaceTopics: z.boolean().optional(),
+        // COMPAT(pairedDevices): added in v0.9.2, remove gate after 2027-04-01.
+        pairedDevices: z.boolean().optional(),
         // COMPAT(systemOneUsage): added in v0.9.2, gates the browser-goal switch and Jev usage.
         systemOneUsage: z.boolean().optional(),
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
@@ -7333,6 +7396,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceDoneSetResponseSchema,
   AgentLastRepliesResponseSchema,
   WorkspaceTopicCreateResponseSchema,
+  DeviceListResponseSchema,
+  DeviceRevokeResponseSchema,
+  DeviceLockSetResponseSchema,
   WorkspaceTopicAssignResponseSchema,
   WorkspaceTopicUpdateResponseSchema,
   WorkspaceForgeAccountSetResponseSchema,
@@ -7728,6 +7794,9 @@ export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema
 export type WorkspaceDoneSetRequest = z.infer<typeof WorkspaceDoneSetRequestSchema>;
 export type WorkspaceDoneSetResponse = z.infer<typeof WorkspaceDoneSetResponseSchema>;
 export type WorkspaceTopic = z.infer<typeof WorkspaceTopicSchema>;
+export type PairedDevice = z.infer<typeof PairedDeviceSchema>;
+export type DeviceListResponse = z.infer<typeof DeviceListResponseSchema>;
+export type DeviceRevokeResponse = z.infer<typeof DeviceRevokeResponseSchema>;
 export type WorkspaceTopicCreateRequest = z.infer<typeof WorkspaceTopicCreateRequestSchema>;
 export type WorkspaceTopicAssignRequest = z.infer<typeof WorkspaceTopicAssignRequestSchema>;
 export type WorkspaceTopicUpdateRequest = z.infer<typeof WorkspaceTopicUpdateRequestSchema>;
@@ -7957,6 +8026,10 @@ export const WSHelloMessageSchema = z.object({
     ])
     .optional(),
   appVersion: z.string().optional(),
+  // COMPAT(pairedDevices): added in v0.9.2. Relay clients prove the device with a secret they
+  // registered once; the invitation from a pairing link registers it the first time.
+  deviceCredential: z.string().optional(),
+  pairingInvite: z.string().optional(),
   capabilities: z
     .object({
       voice: z.boolean().optional(),

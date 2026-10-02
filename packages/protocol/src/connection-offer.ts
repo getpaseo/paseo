@@ -14,6 +14,8 @@ export const ConnectionOfferV2Schema = z.object({
     endpoint: z.string().min(1),
     useTls: z.boolean().optional(),
   }),
+  // COMPAT(pairedDevices): added in v0.9.2. Single-use secret that registers the pairing device.
+  invite: z.string().optional(),
 });
 
 export type ConnectionOfferV2 = z.infer<typeof ConnectionOfferV2Schema>;

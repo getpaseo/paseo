@@ -2681,6 +2681,15 @@ export const ko: TranslationResources = {
         title: "기기 페어링",
         rowTitle: "기기 페어링",
         rowHint: "QR 코드를 스캔하거나 링크를 복사하여 휴대폰을 이 호스트에 연결하세요",
+        devicesTitle: "Paired devices",
+        lock: "페어링된 기기만 허용",
+        unlock: "새 기기 등록 허용",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         ...en.settings.host.skills,

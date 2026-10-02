@@ -206,7 +206,12 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import type { ProviderOverrides } from "@getpaseo/protocol/provider-config";
-import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+import {
+  loadPersistedConfig,
+  readPersistedConfig,
+  type PersistedConfig,
+} from "./persisted-config.js";
+import { DeviceAccess } from "./device-access.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
@@ -2026,6 +2031,13 @@ export async function createPaseoDaemon(
               resourcePolicyRuntime,
               browserActivity,
               providerUsageService,
+              new DeviceAccess({
+                paseoHome: config.paseoHome,
+                isLocked: () =>
+                  readPersistedConfig(config.paseoHome).daemon?.relay?.requireDeviceCredential ===
+                  true,
+                logger,
+              }),
             );
             // Sorted handbacks ping when System One sorts them; a plain finish then stays quiet.
             wsServer.setHandoffPingsActive(
