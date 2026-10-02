@@ -3549,6 +3549,9 @@ describe("HostRuntimeStore", () => {
     );
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    const connection = pairedHost?.connections[0];
+    const deviceCredential = connection?.type === "relay" ? connection.deviceCredential : undefined;
+    expect(deviceCredential).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(pairedHost?.connections).toEqual([
       {
         id: "relay:wss:relay.example.com:443",
@@ -3556,8 +3559,15 @@ describe("HostRuntimeStore", () => {
         relayEndpoint: "relay.example.com:443",
         useTls: true,
         daemonPublicKeyB64: "pk_test_offer",
+        deviceCredential,
       },
     ]);
+
+    await store.upsertConnectionFromOffer(
+      makeOffer({ relay: { endpoint: "relay.example.com:443", useTls: true } }),
+      "tls relay",
+    );
+    expect(store.getHosts()[0]?.connections[0]).toEqual(connection);
 
     store.syncHosts([]);
   });
@@ -3584,6 +3594,9 @@ describe("HostRuntimeStore", () => {
     await store.upsertConnectionFromOfferUrl(oldPairingUrl, "old relay");
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    const connection = pairedHost?.connections[0];
+    const deviceCredential = connection?.type === "relay" ? connection.deviceCredential : undefined;
+    expect(deviceCredential).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(pairedHost?.connections).toEqual([
       {
         id: "relay:wss:relay.paseo.sh:443",
@@ -3591,8 +3604,12 @@ describe("HostRuntimeStore", () => {
         relayEndpoint: "relay.paseo.sh:443",
         useTls: true,
         daemonPublicKeyB64: "pk_test_offer",
+        deviceCredential,
       },
     ]);
+
+    await store.upsertConnectionFromOfferUrl(oldPairingUrl, "old relay");
+    expect(store.getHosts()[0]?.connections[0]).toEqual(connection);
 
     store.syncHosts([]);
   });
