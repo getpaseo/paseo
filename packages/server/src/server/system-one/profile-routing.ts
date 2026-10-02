@@ -415,12 +415,22 @@ async function decideRoute(
     return unavailable("Jev did not produce a confident route.");
   const candidate = candidates[Number(selected.choice.slice(5))];
   if (!candidate) return unavailable("Jev selected an unknown route.");
+  const requirement =
+    rationale.confidence < options.minimumConfidence()
+      ? "task classification uncertain"
+      : {
+          mechanical: "a lookup or small mechanical change",
+          implementation: "routine implementation or execution",
+          complex: "complex architecture, debugging or security work",
+        }[rationale.choice];
+  const observedUsage = (usage.get(candidate.profile.id)?.windows ?? [])
+    .filter((window) => typeof window.usedPct === "number" && Number.isFinite(window.usedPct))
+    .map((window) => `${window.label}: ${Math.round(window.usedPct! * 10) / 10}% used`)
+    .join(", ");
   return candidateRoute(
     candidate,
     reset,
-    preserving
-      ? `Jev preserved model and effort (${selected.confidence})`
-      : `Jev reassessed: ${rationale.confidence >= options.minimumConfidence() ? rationale.choice : "task classification uncertain"} (${selected.confidence})`,
+    `Jev selected ${candidate.profile.label} · ${candidate.model.id}${candidate.effort ? ` · ${candidate.effort}` : ""} for ${requirement}.${preserving ? " Jev preserved model and effort." : ""}${observedUsage ? ` Observed quota: ${observedUsage}.` : ""}`,
   );
 }
 

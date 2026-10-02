@@ -167,7 +167,9 @@ it("reassesses only after preserving candidates are exhausted, with auditable po
     [profiles[0], { id: "claude", label: "Claude", enabled: true, harness: "claude", models }],
   );
   const route = await f.router({ ...f.input, fallback: "quota" });
-  expect(route?.reason).toContain("reassessed: implementation");
+  expect(route?.reason).toContain("routine implementation or execution");
+  expect(route?.reason).toContain("Observed quota: Session: 10% used");
+  expect(route?.reason).toContain(route!.model);
   const question = f.decide.mock.calls[0][0].questions.route;
   if (question.type !== "choice") throw new Error("expected choice");
   const candidates = Object.values(question.criteria) as Array<{ model: string; effort: string }>;
