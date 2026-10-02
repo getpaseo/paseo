@@ -72,7 +72,7 @@ describe("encrypted browser backup", () => {
     ).rejects.toThrow(/No data was restored/);
     await expect(encryptBrowserBackup(data, "short")).rejects.toThrow(/12–1024/);
   });
-  test("keeps session cookies encrypted with private permissions across instances and fails closed without OS encryption", async () => {
+  test("keeps session cookies encrypted across instances with POSIX-private permissions and fails closed without OS encryption", async () => {
     const dir = mkdtempSync(join(tmpdir(), "paseo-session-fixture-"));
     const file = join(dir, "session.enc");
     const key = randomBytes(32);
@@ -96,7 +96,7 @@ describe("encrypted browser backup", () => {
     try {
       await writeBrowserSessionCookies(file, data.cookies, crypto);
       expect(readFileSync(file).includes(Buffer.from("synthetic-session"))).toBe(false);
-      expect(statSync(file).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
       expect(await readBrowserSessionCookies(file, crypto)).toEqual(data.cookies);
       await expect(
         writeBrowserSessionCookies(file, [], { ...crypto, isAvailable: () => false }),
