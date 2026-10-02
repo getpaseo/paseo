@@ -4,7 +4,7 @@ import { createServer as createHTTPServer, type IncomingMessage, type ServerResp
 import { constants, existsSync, unlinkSync } from "fs";
 import { open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import { hostname as getHostname } from "node:os";
+import { getHostName } from "./host-name.js";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Logger } from "pino";
@@ -524,7 +524,7 @@ function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger:
     createWebUiMiddleware({
       enabled: config.webUi?.enabled ?? false,
       distDir: config.webUi?.distDir ?? null,
-      label: getHostname(),
+      label: getHostName(),
       logger,
     }),
   );
@@ -795,7 +795,7 @@ export async function createPaseoDaemon(
     res.json({
       status: "server_info",
       serverId,
-      hostname: getHostname(),
+      hostname: getHostName(),
       version: daemonVersion,
       listen: formatListenTarget(boundListenTarget ?? listenTarget),
     });
@@ -1237,7 +1237,7 @@ export async function createPaseoDaemon(
   });
   const hubRelationships = new HubRelationshipController({
     paseoHome: config.paseoHome,
-    hostname: getHostname(),
+    hostname: getHostName(),
     serverId,
     daemonPublicKey: daemonKeyPair.publicKeyB64,
     logger,

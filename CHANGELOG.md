@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.0-beta.3 - 2026-10-02
+
+### Added
+
+- Added a pin button to Usage window rows, shown on hover and filled when the window is pinned ([#5876](https://github.com/getpaseo/paseo/pull/5876))
+
+### Changed
+
+- Changed usage source plugins to implement `discover()` and `fetch()` instead of `identify()` ([#5876](https://github.com/getpaseo/paseo/pull/5876))
+
+### Fixed
+
+- Fixed a Usage card disappearing when its login expired; the card now shows the expiry and the command that refreshes it ([#5876](https://github.com/getpaseo/paseo/pull/5876))
+- Fixed a Usage card disappearing when its login was rejected; the card now shows the HTTP status ([#5876](https://github.com/getpaseo/paseo/pull/5876))
+- Fixed an extra Usage card appearing when a usage source failed to discover accounts ([#5876](https://github.com/getpaseo/paseo/pull/5876))
+
 ## 0.11.0-beta.2 - 2026-10-01
 
 ### Added
@@ -90,6 +106,12 @@
 - Fixed tapping the context ring and long-pressing a workspace tab doing nothing on native tablets ([#5713](https://github.com/getpaseo/paseo/pull/5713) by [@JichenZhang](https://github.com/JichenZhang))
 - Fixed iPad chat text keeping its narrow width after the Explorer closes ([#5716](https://github.com/getpaseo/paseo/pull/5716))
 - Fixed bundling `@getpaseo/client` from npm failing with `Could not resolve "@getpaseo/relay/e2ee"` ([#5815](https://github.com/getpaseo/paseo/pull/5815))
+
+## 0.10.3 - 2026-10-02
+
+### Added
+
+- Added a confirmation before a pairing link connects to a new host or to a saved host whose key or relay changed ([#5753](https://github.com/getpaseo/paseo/pull/5753))
 
 ## 0.10.2 - 2026-09-30
 

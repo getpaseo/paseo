@@ -114,6 +114,11 @@ test.describe("Usage item", () => {
       await gotoAppShell(page);
       await usageItem(page).click();
       await expectOnUsageScreen(page);
+      await qaScreenshot(page, "default-pins-card");
+      await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Claude", "Weekly")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Weekly")).toBeChecked();
     });
 
     await test.step("pinning Claude 5-hour and Codex weekly shows both in the Usage item", async () => {
@@ -122,9 +127,13 @@ test.describe("Usage item", () => {
       await expect(page.locator('[data-testid="usage-host-filter-trigger"]:visible')).toHaveCount(
         0,
       );
-      await togglePin(screen, "Claude", "Session");
-      await expectPinnedUsage(page, ["31% 5h"]);
-      await togglePin(screen, "Codex", "Weekly");
+      await togglePin(screen, "Claude", "Weekly");
+      await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
+      await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Weekly")).toBeChecked();
+      await qaScreenshot(page, "default-pins-after-one-toggle");
+      await togglePin(screen, "Codex", "Session");
       await expectPinnedUsage(page, ["31% 5h", "12% wk"]);
       await expect(usageItem(page)).not.toHaveText("Usage");
       await qaScreenshot(page, "desktop-footer-pins", { kind: "footer" });
@@ -226,16 +235,18 @@ test.describe("Usage item", () => {
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 10_000 });
     });
 
-    await test.step("unpinning both brings back default windows, and that survives a reload", async () => {
+    await test.step("unpinning everything stays empty after a reload", async () => {
       await togglePin(screen, "Claude", "Session");
       await togglePin(screen, "Codex", "Weekly");
-      await expectPinnedUsage(page, ["69% 5h", "46% wk", "93% 5h", "88% wk"]);
+      await expectNoUsageItem(page);
       await page.reload();
       await expect(screen.getByText("88% left")).toBeVisible({ timeout: 10_000 });
-      await expectPinnedUsage(page, ["69% 5h", "46% wk", "93% 5h", "88% wk"]);
-      await gotoAppShell(page);
-      await usageItem(page).click();
-      await expectOnUsageScreen(page);
+      await expectNoUsageItem(page);
+      await expect(pinRow(screen, "Claude", "Session")).not.toBeChecked();
+      await expect(pinRow(screen, "Claude", "Weekly")).not.toBeChecked();
+      await expect(pinRow(screen, "Codex", "Session")).not.toBeChecked();
+      await expect(pinRow(screen, "Codex", "Weekly")).not.toBeChecked();
+      await qaScreenshot(page, "explicit-empty-pins-after-reload");
     });
 
     await test.step("Settings > Sidebar lists the Usage item", async () => {
@@ -262,7 +273,10 @@ test("without summary data the footer drops the Usage item and keeps the Usage i
           fetchedAt: new Date().toISOString(),
           sourceId: "alpha",
           sourceLabel: "Alpha plan",
-          report: { status: "unavailable", windows: [] },
+          report: {
+            status: "unavailable",
+            problem: { kind: "no_quota", detail: "No active coding plan" },
+          },
         },
       ],
     ],
