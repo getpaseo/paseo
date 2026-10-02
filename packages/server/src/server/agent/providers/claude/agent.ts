@@ -6395,8 +6395,7 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 async function readClaudeRenamedSessionTitle(
   input: ImportProviderSessionInput,
 ): Promise<string | null> {
-  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-  const projectDir = claudeProjectDirSync(input.cwd, { configDir });
+  const projectDir = claudeProjectDirSync(input.cwd);
   let content: string;
   try {
     content = await fsPromises.readFile(
