@@ -72,7 +72,16 @@ import type { DesktopPlatform, MobilePlatform } from "~/platform";
 import { isMobilePlatform } from "~/platform";
 import { useRelease, useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
-import { AgentPageIcon } from "~/components/agent-icons";
+import {
+  AntigravityIcon,
+  ClaudeCodeIcon,
+  CodexIcon,
+  CursorIcon,
+  MuseCodeIcon,
+  OmpIcon,
+  OpenCodeIcon,
+  PiIcon,
+} from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
@@ -154,14 +163,14 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.Rea
 }
 
 const FEATURED_AGENTS = [
-  { slug: "claude-code", name: "Claude Code" },
-  { slug: "codex", name: "Codex" },
-  { slug: "opencode", name: "OpenCode" },
-  { slug: "pi", name: "Pi" },
-  { slug: "omp", name: "OMP" },
-  { slug: "cursor", name: "Cursor" },
-  { slug: "muse-code", name: "Muse Code" },
-  { slug: "antigravity", name: "Antigravity" },
+  { name: "Claude Code", Icon: ClaudeCodeIcon },
+  { name: "Codex", Icon: CodexIcon },
+  { name: "OpenCode", Icon: OpenCodeIcon },
+  { name: "Pi", Icon: PiIcon },
+  { name: "OMP", Icon: OmpIcon },
+  { name: "Cursor", Icon: CursorIcon },
+  { name: "Muse Code", Icon: MuseCodeIcon },
+  { name: "Antigravity", Icon: AntigravityIcon },
 ] as const;
 
 const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENTS.length;
@@ -248,7 +257,7 @@ const SOCIAL_PROOF_ROWS = [
 
 type SocialProofTweet = (typeof SOCIAL_PROOF_TWEETS)[number];
 
-function AgentBadge({ slug, name }: { slug: string; name: string }) {
+function AgentBadge({ name, Icon }: (typeof FEATURED_AGENTS)[number]) {
   const [hovered, setHovered] = React.useState(false);
   const handleMouseEnter = React.useCallback(() => setHovered(true), []);
   const handleMouseLeave = React.useCallback(() => setHovered(false), []);
@@ -259,7 +268,7 @@ function AgentBadge({ slug, name }: { slug: string; name: string }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <AgentPageIcon slug={slug} className="h-6 w-6" />
+      <Icon className="h-6 w-6" />
       <AnimatePresence>
         {hovered && (
           <motion.span
@@ -432,11 +441,11 @@ function MultiProviderSection() {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
         {FEATURED_AGENTS.map((agent) => (
           <div
-            key={agent.slug}
+            key={agent.name}
             className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:gap-3 sm:px-5 sm:py-4"
           >
             <span className="shrink-0 text-white/80">
-              <AgentPageIcon slug={agent.slug} className="h-5 w-5 sm:h-7 sm:w-7" />
+              <agent.Icon className="h-5 w-5 sm:h-7 sm:w-7" />
             </span>
             <span className="truncate text-sm font-medium sm:text-base">{agent.name}</span>
           </div>
@@ -951,7 +960,7 @@ function GetStarted() {
         <span className="text-xs text-muted-foreground">Supports</span>
         <div className="flex items-center gap-1">
           {FEATURED_AGENTS.map((agent) => (
-            <AgentBadge key={agent.slug} slug={agent.slug} name={agent.name} />
+            <AgentBadge key={agent.name} name={agent.name} Icon={agent.Icon} />
           ))}
         </div>
         <a

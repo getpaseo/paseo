@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
-import { AgentPageIcon } from "~/components/agent-icons";
+import { AgentPageIcon } from "~/components/agent-page-icon";
 import { SiteShell } from "~/components/site-shell";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { pageMeta } from "~/meta";
