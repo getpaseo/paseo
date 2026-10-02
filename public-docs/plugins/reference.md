@@ -376,6 +376,8 @@ Accepted user-message timeline items also persist optional `prompt`, so plugins 
 original rich blocks through public timeline refetch after reconnect or restart. Older items without
 that field remain valid. Provider echoes never invent rich blocks.
 The hook requires a message ID; use stable IDs for submissions that need durable deduplication.
+Plugin timeline annotations persist in the same agent record across reopen and restart. Reusing a
+plugin item ID with identical content returns the existing entry; changed content requires a new ID.
 
 ### Change configuration and inject an MCP server
 

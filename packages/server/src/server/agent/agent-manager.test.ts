@@ -693,6 +693,66 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+test("plugin timeline annotations survive disk reopen and retries without duplicating acknowledged items", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-plugin-annotations-"));
+  const storagePath = join(workdir, "agents");
+  const first = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(storagePath, logger),
+    logger,
+  });
+  let second: AgentManager | undefined;
+  let agentId: string | undefined;
+  const item: AgentTimelineItem = {
+    type: "plugin",
+    pluginId: "crew",
+    id: "mission-1",
+    kind: "mission",
+    version: 1,
+    data: { teamId: "team-1" },
+  };
+  try {
+    const agent = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const initial = await first.appendTimelineItem(agent.id, item);
+    expect(await first.appendTimelineItem(agent.id, item)).toEqual(initial);
+    expect(
+      first.fetchTimeline(agent.id, { limit: 0 }).rows.filter((row) => row.item.type === "plugin"),
+    ).toHaveLength(1);
+    await first.closeAgent(agent.id);
+    await first.flush();
+    second = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: new AgentStorage(storagePath, logger),
+      logger,
+      idFactory: () => agent.id,
+    });
+    await second.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await second.hydrateTimelineFromProvider(agent.id, { force: true });
+    const restored = await second.appendTimelineItem(agent.id, item);
+    expect(await second.appendTimelineItem(agent.id, item)).toEqual(restored);
+    expect(
+      second
+        .fetchTimeline(agent.id, { limit: 0 })
+        .rows.filter((row) => row.item.type === "plugin")
+        .map((row) => row.item),
+    ).toEqual([item]);
+    await expect(
+      second.appendTimelineItem(agent.id, { ...item, data: { teamId: "other" } }),
+    ).rejects.toThrow("different content");
+  } finally {
+    if (agentId && second) await second.closeAgent(agentId);
+    if (second) await second.flush();
+    if (agentId) await first.closeAgent(agentId).catch(() => undefined);
+    await first.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
   const store = new RecordingTimelineStore();

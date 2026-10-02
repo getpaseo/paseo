@@ -180,6 +180,27 @@ describe("AgentStorage", () => {
     ).toEqual([]);
   });
 
+  test("enriching an accepted prompt preserves same-millisecond submission order", async () => {
+    const agent = createManagedAgent({ id: "ordered-agent" });
+    await storage.applySnapshot(agent);
+    const message = (id: string) => ({
+      timestamp: "2026-10-03T12:00:00.000Z",
+      item: { type: "user_message" as const, text: id, clientMessageId: id, prompt: id },
+    });
+    await storage.saveAcceptedUserMessage(agent.id, message("A"));
+    await storage.saveAcceptedUserMessage(agent.id, message("B"));
+    await storage.saveAcceptedUserMessage(agent.id, {
+      ...message("A"),
+      providerMessageId: "provider-A",
+    });
+    const restored = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(restored?.acceptedUserMessages?.map((entry) => entry.item.clientMessageId)).toEqual([
+      "A",
+      "B",
+    ]);
+    expect(restored?.acceptedUserMessages?.[0]?.providerMessageId).toBe("provider-A");
+  });
+
   test("applySnapshot persists configs and snapshot metadata", async () => {
     await storage.applySnapshot(
       createManagedAgent({

@@ -13,6 +13,7 @@ import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { composeDaemonAppendSystemPrompt } from "./writing-block-instruction.js";
 import { forgeAccountEnvOverlay } from "../workspace-forge-account.js";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -2879,6 +2880,20 @@ export class AgentManager {
   ): Promise<{ seq: number; epoch: string }> {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
+    if (item.type === "plugin" && this.registry) {
+      await this.registry.flush();
+      const record = await this.registry.get(agentId);
+      const pluginItem = item;
+      const stored = record?.pluginTimelineItems?.find(
+        (entry) => entry.item.id === pluginItem.id && entry.item.pluginId === pluginItem.pluginId,
+      );
+      if (stored) {
+        if (!isDeepStrictEqual(stored.item, item))
+          throw new Error("Plugin timeline item ID already exists with different content");
+        const row = this.recordTimeline(agentId, stored.item, { timestamp: stored.timestamp });
+        return { seq: row.seq, epoch: this.timelineStore.getEpoch(agentId) };
+      }
+    }
     this.touchUpdatedAt(agent);
     const row = this.recordTimeline(agentId, item);
     this.dispatchStream(
@@ -2895,6 +2910,8 @@ export class AgentManager {
       },
     );
     await this.persistSnapshot(agent);
+    if (this.registry && item.type === "plugin")
+      await this.registry.savePluginTimelineItem(agentId, { timestamp: row.timestamp, item });
     return { seq: row.seq, epoch: this.timelineStore.getEpoch(agentId) };
   }
 
@@ -4675,6 +4692,19 @@ export class AgentManager {
     if (prune && this.registry) {
       await this.registry.retainAcceptedUserMessages(agent.id, restored.retainedIds);
     }
+    for (const entry of record?.pluginTimelineItems ?? []) {
+      const event: Extract<AgentStreamEvent, { type: "timeline" }> = {
+        type: "timeline",
+        provider: agent.provider,
+        timestamp: entry.timestamp,
+        item: entry.item,
+      };
+      const insertion = restored.events.findIndex((item) =>
+        item.timestamp ? item.timestamp > entry.timestamp : false,
+      );
+      if (insertion < 0) restored.events.push(event);
+      else restored.events.splice(insertion, 0, event);
+    }
     return restored.events;
   }
 
@@ -5939,6 +5969,22 @@ export class AgentManager {
     },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
+    if (item.type === "plugin") {
+      const pluginItem = item;
+      const existing = this.timelineStore
+        .getRows(agentId)
+        .find(
+          (entry) =>
+            entry.item.type === "plugin" &&
+            entry.item.id === pluginItem.id &&
+            entry.item.pluginId === pluginItem.pluginId,
+        );
+      if (existing) {
+        if (!isDeepStrictEqual(existing.item, item))
+          throw new Error("Plugin timeline item ID already exists with different content");
+        return existing;
+      }
+    }
     const row = this.timelineStore.append(agentId, item, options);
     this.enqueueAcceptedUserMessage(agentId, row);
     this.enqueueDurableTimelineAppend(agentId, row);

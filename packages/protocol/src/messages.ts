@@ -779,6 +779,15 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
     ToolCallCanceledPayloadSchema,
   ]);
 
+export const PluginTimelineItemPayloadSchema = z.object({
+  type: z.literal("plugin"),
+  id: z.string(),
+  pluginId: PluginIdSchema,
+  kind: z.string(),
+  version: z.number(),
+  data: JsonWireValueSchema,
+});
+
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
@@ -824,14 +833,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
   }),
-  z.object({
-    type: z.literal("plugin"),
-    id: z.string(),
-    pluginId: PluginIdSchema,
-    kind: z.string(),
-    version: z.number(),
-    data: JsonWireValueSchema,
-  }),
+  PluginTimelineItemPayloadSchema,
 ]);
 
 export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [

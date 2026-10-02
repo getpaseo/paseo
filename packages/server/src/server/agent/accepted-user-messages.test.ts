@@ -42,3 +42,18 @@ test("reload enriches exact provider identity, never a repeated text, and rewind
   expect(rewound.events).toEqual([replay("other")]);
   expect(rewound.retainedIds.size).toBe(0);
 });
+
+test("explicit client identity prevents a conflicting provider ID from attaching another accepted prompt", () => {
+  const conflict = {
+    ...replay("provider-1"),
+    item: {
+      type: "user_message" as const,
+      text: "Other request",
+      clientMessageId: "client-B",
+      messageId: "provider-1",
+    },
+  };
+  const restored = restoreAcceptedUserMessages([conflict], [accepted], "mock", false);
+  expect(restored.events).toEqual([conflict]);
+  expect(restored.retainedIds.size).toBe(0);
+});

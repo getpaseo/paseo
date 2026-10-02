@@ -14,12 +14,13 @@ export function restoreAcceptedUserMessages(
     if (event.item.type !== "user_message") return event;
     const item = event.item;
     const accepted = messages.find((message) =>
-      Boolean(
-        (item.clientMessageId && item.clientMessageId === message.item.clientMessageId) ||
-        (item.messageId &&
-          (item.messageId === message.providerMessageId ||
-            item.messageId === message.item.messageId)),
-      ),
+      item.clientMessageId
+        ? item.clientMessageId === message.item.clientMessageId
+        : Boolean(
+            item.messageId &&
+            (item.messageId === message.providerMessageId ||
+              item.messageId === message.item.messageId),
+          ),
     );
     if (!accepted) return event;
     retainedIds.add(accepted.item.clientMessageId);

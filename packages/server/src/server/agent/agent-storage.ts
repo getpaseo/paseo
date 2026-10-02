@@ -9,6 +9,7 @@ import {
   AgentStatusSchema,
   AgentRoutingNoticeSchema,
   AgentPromptInputSchema,
+  PluginTimelineItemPayloadSchema,
 } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
@@ -63,8 +64,15 @@ const AcceptedUserMessageSchema = z.object({
 
 export type AcceptedUserMessage = z.infer<typeof AcceptedUserMessageSchema>;
 
+const StoredPluginTimelineItemSchema = z.object({
+  timestamp: z.string(),
+  item: PluginTimelineItemPayloadSchema,
+});
+export type StoredPluginTimelineItem = z.infer<typeof StoredPluginTimelineItemSchema>;
+
 const STORED_AGENT_SCHEMA = z.object({
   acceptedUserMessages: z.array(AcceptedUserMessageSchema).optional(),
+  pluginTimelineItems: z.array(StoredPluginTimelineItemSchema).optional(),
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),
@@ -130,6 +138,7 @@ function preserveSnapshotMetadata(
   existing: StoredAgentRecord | null,
 ): void {
   record.acceptedUserMessages = existing?.acceptedUserMessages;
+  record.pluginTimelineItems = existing?.pluginTimelineItems;
   record.titleSource = existing?.titleSource;
   if (existing && existing.archivedAt !== undefined) record.archivedAt = existing.archivedAt;
 }
@@ -382,19 +391,36 @@ export class AgentStorage {
     await this.queueRecordMutation(agentId, (existing) => {
       if (!existing) throw new Error(`Agent ${agentId} not found`);
       const messages = existing.acceptedUserMessages ?? [];
+      const index = messages.findIndex(
+        (entry) => entry.item.clientMessageId === message.item.clientMessageId,
+      );
+      const updated = AcceptedUserMessageSchema.parse({ ...messages[index], ...message });
       return {
         ...existing,
-        acceptedUserMessages: [
-          ...messages.filter(
-            (entry) => entry.item.clientMessageId !== message.item.clientMessageId,
-          ),
-          AcceptedUserMessageSchema.parse({
-            ...messages.find(
-              (entry) => entry.item.clientMessageId === message.item.clientMessageId,
-            ),
-            ...message,
-          }),
-        ],
+        acceptedUserMessages:
+          index < 0
+            ? [...messages, updated]
+            : messages.map((entry, position) => (position === index ? updated : entry)),
+      };
+    });
+  }
+
+  async savePluginTimelineItem(agentId: string, entry: StoredPluginTimelineItem): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const entries = existing.pluginTimelineItems ?? [];
+      const index = entries.findIndex(
+        (stored) =>
+          stored.item.pluginId === entry.item.pluginId && stored.item.id === entry.item.id,
+      );
+      const updated = StoredPluginTimelineItemSchema.parse(entry);
+      return {
+        ...existing,
+        pluginTimelineItems:
+          index < 0
+            ? [...entries, updated]
+            : entries.map((stored, position) => (position === index ? updated : stored)),
       };
     });
   }
