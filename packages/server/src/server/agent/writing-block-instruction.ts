@@ -14,6 +14,8 @@ export const TESTING_ENGINE_INSTRUCTION = `For testing, whenever \`browser_test\
 
 export const CODE_COMMENT_INSTRUCTION = `In every project you work on, do not add explanatory code comments, including inline comments, block comments, and documentation comments. Remove existing explanatory comments in code you edit. Put necessary rationale in the task report or the owning documentation. Preserve required license notices and directives used by compilers, type checkers, bundlers, linters, or compatibility tooling.`;
 
+export const QUESTION_LIFECYCLE_INSTRUCTION = `When an asynchronous question becomes unnecessary because you found another route or completed the dependent work, call \`dismiss_questions\` with a short explanation before reporting completion. Preserve questions that still need user input. Elapsed time is never an answer or approval.`;
+
 export const SYSTEM_ONE_CALL_EXAMPLE =
   '{"state":{"task":"fix login"},"questions":{"next":{"type":"choice","criteria":{"inspect":"Inspect the failure","edit":"Edit the code"}}}}';
 
@@ -25,6 +27,6 @@ When you delegate work, prefer Paseo's \`create_agent\` so quota-aware routing a
 
 export function composeDaemonAppendSystemPrompt(userPrompt: string): string {
   const trimmed = userPrompt.trim();
-  const base = `${TESTING_ENGINE_INSTRUCTION}\n\n${CODE_COMMENT_INSTRUCTION}\n\n${WRITING_BLOCK_INSTRUCTION}\n\n${SYSTEM_ONE_INSTRUCTION}`;
+  const base = `${TESTING_ENGINE_INSTRUCTION}\n\n${CODE_COMMENT_INSTRUCTION}\n\n${WRITING_BLOCK_INSTRUCTION}\n\n${QUESTION_LIFECYCLE_INSTRUCTION}\n\n${SYSTEM_ONE_INSTRUCTION}`;
   return trimmed ? `${base}\n\n${trimmed}` : base;
 }

@@ -1,0 +1,52 @@
+{
+  "status": "pass",
+  "recipe": "ad-hoc",
+  "workspaceId": "wks_1792a1281cbd8fa6",
+  "profile": "default",
+  "authReused": null,
+  "route": "http://127.0.0.1:4033/open-project",
+  "checks": [
+    {
+      "name": "screenshot integrated-dashboard-reopened",
+      "ok": true
+    }
+  ],
+  "trace": [
+    {
+      "action": "navigate",
+      "ok": true,
+      "ms": 543
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 233
+    },
+    {
+      "action": "click",
+      "ok": true,
+      "ms": 98
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 2176
+    },
+    {
+      "action": "click",
+      "ok": true,
+      "ms": 45
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 20
+    },
+    {
+      "action": "screenshot",
+      "ok": true,
+      "ms": 91
+    }
+  ],
+  "durationMs": 3212
+}

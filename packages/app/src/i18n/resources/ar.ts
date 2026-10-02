@@ -2668,6 +2668,15 @@ export const ar: TranslationResources = {
         title: "إقران الأجهزة",
         rowTitle: "إقران جهاز",
         rowHint: "امسح رمز QR ضوئيًا أو انسخ رابطًا لتوصيل هاتفك بهذا المضيف",
+        devicesTitle: "Paired devices",
+        lock: "السماح للأجهزة المقترنة فقط",
+        unlock: "السماح بتسجيل أجهزة جديدة",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         ...en.settings.host.skills,

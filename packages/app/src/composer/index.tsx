@@ -1,3 +1,4 @@
+import { formatRoutingNotice } from "./routing-notice";
 import type { ComposerTextSource } from "./text-source";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
@@ -275,6 +276,7 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
+      routingNotice: agent?.routingNotice,
     };
   };
 }
@@ -2418,6 +2420,11 @@ function ComposerContentImpl({
           <View style={styles.inputAreaContent}>
             {queueList}
             {sendErrorNode}
+            {agentState.routingNotice ? (
+              <Text accessibilityLiveRegion="polite" style={styles.routingNoticeText}>
+                {formatRoutingNotice(agentState.routingNotice)}
+              </Text>
+            ) : null}
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocompleteBinding
@@ -2645,6 +2652,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   queueSendButton: {
     backgroundColor: theme.colors.accent,
+  },
+  routingNoticeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   sendErrorText: {
     color: theme.colors.palette.red[500],

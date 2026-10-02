@@ -101,6 +101,7 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).toEqual({
       id: "relay:relay.example.com:80",
       type: "relay",
+      deviceCredential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
       relayEndpoint: "relay.example.com:80",
       daemonPublicKeyB64: "pubkey",
     });
@@ -123,6 +124,7 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).toEqual({
       id: "relay:wss:relay.example.com:443",
       type: "relay",
+      deviceCredential: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
       relayEndpoint: "relay.example.com:443",
       useTls: true,
       daemonPublicKeyB64: "pubkey",

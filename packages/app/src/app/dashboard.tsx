@@ -1,10 +1,6 @@
-import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import { DashboardScreen } from "@/leitstand/dashboard-screen";
+import { Redirect } from "expo-router";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
 
-export default function DashboardRoute() {
-  return (
-    <HostRouteBootstrapBoundary>
-      <DashboardScreen />
-    </HostRouteBootstrapBoundary>
-  );
+export default function LegacyPluginRoute() {
+  return <Redirect href={buildOpenProjectRoute()} />;
 }

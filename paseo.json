@@ -589,6 +589,61 @@
             "name": "upstream-010-theme40-reloaded"
           }
         ]
+      },
+      "obsolete-question-visible": {
+        "params": ["workspaceUrl", "questionTitle"],
+        "steps": [
+          {
+            "url": "{{workspaceUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "Submit",
+            "timeoutMs": 30000
+          },
+          {
+            "action": "assert-visible",
+            "role": "textbox",
+            "name": "{{questionTitle}}"
+          },
+          {
+            "action": "screenshot",
+            "name": "fresh-question-before"
+          }
+        ]
+      },
+      "obsolete-question-withdrawn": {
+        "params": ["workspaceUrl", "questionTitle", "completionText", "loadedText"],
+        "steps": [
+          {
+            "url": "{{workspaceUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{loadedText}}",
+            "timeoutMs": 30000
+          },
+          {
+            "action": "goal",
+            "goal": "Verify that this chat has no visible unanswered question form: no Submit or Dismiss question button and no {{questionTitle}} textbox. The normal Message agent composer remains. Do not click or navigate; finish only if the question form is absent.",
+            "verify": [
+              {
+                "text": "{{completionText}}"
+              }
+            ],
+            "maxSteps": 2
+          },
+          {
+            "action": "assert-console-errors",
+            "max": 0
+          },
+          {
+            "action": "screenshot",
+            "name": "withdrawn-question-after-reload"
+          }
+        ]
       }
     }
   }

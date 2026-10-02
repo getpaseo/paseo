@@ -70,15 +70,6 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
   });
 
-  it("leaves the desktop dashboard for the last session on Escape", () => {
-    expect(
-      routeKeyboardShortcut(
-        { action: "agent.interrupt", payload: null },
-        makeCtx({ pathname: "/dashboard" }),
-      ),
-    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
-  });
-
   it("keeps agent interrupt behavior on compact settings layouts", () => {
     expect(
       routeKeyboardShortcut(
@@ -361,32 +352,6 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
           pathname: "/settings/general",
           isMobile: true,
         }),
-      ),
-    ).toEqual<ShortcutAction>({ kind: "router-back" });
-  });
-});
-
-describe("routeKeyboardShortcut — leitstand.toggle", () => {
-  it("opens the dashboard from a workspace", () => {
-    expect(
-      routeKeyboardShortcut({ action: "leitstand.toggle", payload: null }, makeCtx()),
-    ).toEqual<ShortcutAction>({ kind: "router-push", route: "/dashboard" });
-  });
-
-  it("returns to the last workspace from the dashboard on desktop", () => {
-    expect(
-      routeKeyboardShortcut(
-        { action: "leitstand.toggle", payload: null },
-        makeCtx({ pathname: "/dashboard", isMobile: false }),
-      ),
-    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
-  });
-
-  it("goes back on mobile", () => {
-    expect(
-      routeKeyboardShortcut(
-        { action: "leitstand.toggle", payload: null },
-        makeCtx({ pathname: "/dashboard", isMobile: true }),
       ),
     ).toEqual<ShortcutAction>({ kind: "router-back" });
   });

@@ -839,6 +839,10 @@ describe("browser MCP tools", () => {
 
   it("omits output schemas from tools/list and keeps tool call content model-visible", async () => {
     const agentManager = new BoundaryAgentManagerFake();
+    agentManager.getAgent("agent-1")!.labels = {
+      "pandaos.team.role": "developer",
+      "pandaos.team.tools": "team_report",
+    };
     const agentStorage = new BoundaryAgentStorageFake();
     const broker = new FakeBrowserToolsBroker({
       requestId: "req-browser-tabs",
@@ -890,6 +894,8 @@ describe("browser MCP tools", () => {
       expect(expectSingleTextContent(listAgentsResult)).toContain('"agents": []');
 
       const listedTools = await client.listTools();
+      expect(listedTools.tools.some((tool) => tool.name.startsWith("team_"))).toBe(false);
+      expect(listedTools.tools.some((tool) => tool.name === "item_plan")).toBe(false);
       expect(listedTools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining(["browser_list_tabs", "list_agents"]),
       );
@@ -5697,7 +5703,20 @@ describe("agent snapshot MCP serialization", () => {
     expect(spies.agentStorage.get).toHaveBeenCalledWith("archived-agent");
   });
 
-  it("returns full-detail snapshots from get_agent_status", async () => {
+  it.each([
+    undefined,
+    {
+      fromProfile: "primary",
+      toProfile: "secondary",
+      fromModel: "gpt-5.4",
+      model: "gpt-5.4",
+      fromEffort: "high",
+      effort: "high",
+      resetsAt: null,
+      reason: "Preserved model and effort",
+      status: "selected" as const,
+    },
+  ])("returns full-detail snapshots from get_agent_status [%#]", async (routingNotice) => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentStorage.get.mockResolvedValue({ title: "Full detail agent" });
     spies.agentManager.getAgent.mockReturnValue(
@@ -5705,7 +5724,7 @@ describe("agent snapshot MCP serialization", () => {
         id: "full-detail-agent",
         provider: "codex",
         cwd: "/tmp/full-detail",
-        config: { model: "gpt-5.4", thinkingOptionId: "high" },
+        config: { model: "gpt-5.4", thinkingOptionId: "high", routingNotice },
         runtimeInfo: {
           provider: "codex",
           sessionId: "session-full",
@@ -5763,6 +5782,8 @@ describe("agent snapshot MCP serialization", () => {
         `get_agent_status response failed AgentSnapshotPayloadSchema: ${JSON.stringify(parsed.error.issues, null, 2)}`,
       );
     }
+    expect(snapshot.routingNotice).toEqual(routingNotice);
+    if (!routingNotice) expect(snapshot).not.toHaveProperty("routingNotice");
     expect(response.structuredContent.status).toBe("idle");
     expect(snapshot).toEqual(
       expect.objectContaining({

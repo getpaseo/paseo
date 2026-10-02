@@ -18,6 +18,7 @@ const ItemSchema = z.object({
 const RecordSchema = z.object({
   item: ItemSchema,
   resolution: z.union([z.literal("dismissed"), z.array(z.string())]).optional(),
+  dismissalReason: z.string().trim().min(1).optional(),
 });
 type QuestionRecord = z.infer<typeof RecordSchema>;
 
@@ -46,6 +47,12 @@ function toPermission(record: QuestionRecord): AgentPermissionRequest {
 
 function toTimeline(record: QuestionRecord): ToolCallTimelineItem {
   const answers = Array.isArray(record.resolution) ? record.resolution : undefined;
+  let dismissal = "";
+  if (record.resolution === "dismissed") {
+    dismissal = record.dismissalReason
+      ? `\n\nQuestion closed: ${record.dismissalReason}`
+      : "\n\nDismissed";
+  }
   return {
     type: "tool_call",
     callId: record.item.id,
@@ -62,7 +69,7 @@ function toTimeline(record: QuestionRecord): ToolCallTimelineItem {
               .filter(Boolean)
               .join("\n"),
           )
-          .join("\n\n") + (record.resolution === "dismissed" ? "\n\nDismissed" : ""),
+          .join("\n\n") + dismissal,
     },
   };
 }
@@ -72,7 +79,6 @@ export function codexAsyncQuestionToTimeline(item: unknown): ToolCallTimelineIte
   return parsed.success ? toTimeline({ item: parsed.data }) : null;
 }
 
-/** Codex emits these as completed messages; the outstanding answer belongs to the session. */
 export class CodexAsyncQuestions {
   private readonly records = new Map<string, QuestionRecord>();
 
@@ -129,6 +135,9 @@ export class CodexAsyncQuestions {
       prompt,
       complete: () => {
         record.resolution = resolution;
+        if (response.behavior === "deny" && response.message?.trim()) {
+          record.dismissalReason = response.message.trim();
+        }
         return toTimeline(record);
       },
     };

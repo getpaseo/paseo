@@ -1,0 +1,55 @@
+{
+  "status": "verified",
+  "coreCommit": "ec88ddb64",
+  "version": "0.10.0",
+  "serverId": "srv_w2JL_fC38Mri",
+  "ownHome": "/home/admin/projects/pandaos-plugin-first/.dev/paseo-home",
+  "host": "127.0.0.1:4132",
+  "macUrl": "http://localhost:3032",
+  "macHttpStatus": 200,
+  "providerTurns": 0,
+  "fixtures": {
+    "agentId": "36b94651-4c3a-4ad9-9fa8-208c47fc026d",
+    "workspaceId": "wks_64f6551eeb0d758b",
+    "scheduleId": "ddf6a4ca",
+    "origin": "real public daemon requests; missing cwd failed before agent/provider invocation"
+  },
+  "checks": {
+    "kitchenSidebar": true,
+    "dashboardPluginSidebar": true,
+    "nativeTeamsRemoved": true,
+    "nativeDashboardRemoved": true,
+    "oldTeamsRedirect": "/open-project",
+    "oldDashboardRedirect": "/open-project",
+    "globalKitchenCommandOnHostRoute": true,
+    "globalDashboardCommandOnHostRoute": true,
+    "kitchenFullForm": true,
+    "dashboardFullHeader": true,
+    "jiraSharedTextbox": true,
+    "nativeDoneUiSetsActualDoneAt": "2026-10-02T12:50:41.896Z",
+    "nativeReopenUiClearsActualDoneAt": true,
+    "realScheduleFailure": true,
+    "snoozeUiPersisted": true,
+    "dashboardDoneBoard": true,
+    "dashboardDoneLeavesNativeDoneAtNull": true,
+    "agentStillIdleNoPrompt": true
+  },
+  "finalBrowserTest": {
+    "status": "pass",
+    "runId": "evr_9575a234-5a99-4704-aaeb-a39fb844237a"
+  },
+  "limitations": [
+    "Existing upstream Command Center collector requires host-scoped URL or selected workspace; plugins are unavailable in Search on /open-project, Sidebar entries work there",
+    "Console failures are static app bootstrap probing ws://localhost:6767/ws and receiving403; explicitly connected own4132 host works"
+  ],
+  "consoleErrors": [
+    "WebSocket connection to 'ws://localhost:6767/ws' failed: Error during WebSocket handshake: Unexpected response code: 403",
+    "WebSocket connection to 'ws://localhost:6767/ws' failed: Error during WebSocket handshake: Unexpected response code: 403",
+    "WebSocket connection to 'ws://localhost:6767/ws' failed: Error during WebSocket handshake: Unexpected response code: 403"
+  ],
+  "screenshots": [
+    "current-core-kitchen-global-command.png",
+    "current-core-dashboard-global-command-header.png",
+    "current-core-shared-jira-settings.png"
+  ]
+}

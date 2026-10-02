@@ -85,7 +85,6 @@ function tryDecodeBase64UrlNoPadUtf8(input: string): string | null {
   if (!decoded) {
     return null;
   }
-
   if (toBase64UrlNoPad(decoded) !== normalized) {
     return null;
   }
@@ -432,20 +431,8 @@ export function buildSchedulesRoute() {
   return "/schedules" as const;
 }
 
-export function buildTeamsRoute() {
-  return "/teams" as const;
-}
-
 export function buildOpenProjectRoute() {
   return "/open-project" as const;
-}
-
-export function buildDashboardRoute() {
-  return "/dashboard" as const;
-}
-
-export function isLeitstandPathname(pathname: string): boolean {
-  return pathname === "/dashboard";
 }
 
 interface NewWorkspaceRouteOptions {

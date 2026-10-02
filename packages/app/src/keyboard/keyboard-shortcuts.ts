@@ -14,8 +14,6 @@ import {
 
 export type { KeyCombo } from "@/keyboard/shortcut-string";
 
-// --- Public types ---
-
 export interface KeyboardShortcutContext {
   isMac: boolean;
   isDesktop: boolean;
@@ -44,7 +42,6 @@ export interface KeyboardShortcutHelpRow {
   id: string;
   label: string;
   labelKey: string;
-  /** The keys that actually fire this action, or `null` when it has none. */
   chord: ShortcutKey[][] | null;
   note?: string;
   noteKey?: string;
@@ -59,25 +56,17 @@ export interface KeyboardShortcutHelpSection {
   rows: KeyboardShortcutHelpRow[];
 }
 
-// --- Binding definition types ---
-
 interface KeyboardShortcutPlatformContext {
   isMac: boolean;
   isDesktop: boolean;
 }
 
 interface ShortcutWhen {
-  /** true = mac only, false = non-mac only */
   mac?: boolean;
-  /** true = desktop only, false = web only */
   desktop?: boolean;
-  /** false = disabled when a text-editing surface is focused */
   editable?: false;
-  /** false = disabled when terminal is focused */
   terminal?: false;
-  /** false = disabled when command center is open */
   commandCenter?: false;
-  /** Allowed focus scope or scopes */
   focusScope?: KeyboardFocusScope | readonly KeyboardFocusScope[];
 }
 
@@ -90,13 +79,6 @@ interface ShortcutHelp {
   id: string;
   section: ShortcutSectionId;
   label: string;
-  /**
-   * Display keys to show instead of the combo. Set this only when the combo
-   * cannot express what the row means — the `Digit` wildcard, which stands for
-   * any of 1-9, and `Shift+?`, whose Shift is implied by the character itself.
-   * Every other row derives its keys from `combo`, so a rebound shortcut shows
-   * what it now does rather than what it shipped as.
-   */
   defaultDisplayKeys?: ShortcutKey[];
   note?: string;
 }
@@ -122,10 +104,6 @@ export interface ChordState {
   step: number;
   timeoutId: ReturnType<typeof setTimeout> | null;
 }
-
-// --- Constants ---
-
-// Sections are listed in this order, most-reached-for first.
 const SHORTCUT_HELP_SECTION_ORDER: readonly ShortcutSectionId[] = [
   "general",
   "workspaces",
@@ -149,16 +127,11 @@ const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
   layout: "settings.shortcuts.sections.layout",
   "agent-input": "settings.shortcuts.sections.agentInput",
 };
-
-// Rows render in this order rather than in binding-definition order, so the shortcut someone opens
-// this sheet to find sits at the top of its section. Every help id must appear here; the unit test
-// fails when a new shortcut is added without a place, instead of silently sinking to the bottom.
 export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[]> = {
   general: [
     "toggle-command-center",
     "search-files",
     "show-shortcuts",
-    "toggle-leitstand",
     "toggle-settings",
     "cycle-theme",
   ],
@@ -243,7 +216,6 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "toggle-right-sidebar": "settings.shortcuts.help.toggleRightSidebar",
   "toggle-both-sidebars": "settings.shortcuts.help.toggleBothSidebars",
   "toggle-settings": "settings.shortcuts.help.toggleSettings",
-  "toggle-leitstand": "sidebar.leitstand.toggle",
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
@@ -258,14 +230,7 @@ const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
   "show-shortcuts": "settings.shortcuts.helpNotes.showKeyboardShortcuts",
 };
 
-// --- Binding definitions ---
-
 const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
-  // --- Open project ---
-  // Open project moved from Cmd+Shift+O to Cmd+O. The binding ids intentionally
-  // keep their original "cmd-shift-o" / "ctrl-shift-o" names: user shortcut
-  // overrides are keyed by binding id, so renaming them would silently drop a
-  // user's customized Open project shortcut on upgrade.
   {
     id: "agent-new-cmd-shift-o-mac",
     action: "agent.new",
@@ -288,8 +253,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Open project",
     },
   },
-
-  // --- New workspace ---
   {
     id: "workspace-new-cmd-n-mac",
     action: "workspace.new",
@@ -312,8 +275,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "New workspace",
     },
   },
-
-  // --- Search files (switch project on the New Workspace screen) ---
   {
     id: "workspace-project-pick-cmd-p-mac",
     action: "command-center.files",
@@ -336,8 +297,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Search files",
     },
   },
-
-  // --- Archive workspace ---
   {
     // COMPAT(workspaceArchiveShortcutOverride): added in v0.1.106; remove after
     // 2027-01-11 with a stored-override migration. Keeps existing custom chords.
@@ -364,8 +323,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Archive workspace",
     },
   },
-
-  // --- Pin workspace ---
   {
     id: "workspace-pin-cmd-shift-p-mac",
     action: "workspace.pin",
@@ -388,8 +345,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Pin chat",
     },
   },
-
-  // --- Tab management ---
   {
     id: "workspace-tab-new-cmd-t-mac",
     action: "workspace.tab.menu.open",
@@ -457,7 +412,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    // Keep the binding id stable so saved overrides from the former Cmd+Shift+C default survive.
     id: "workspace-tab-target-changes-cmd-shift-c-mac",
     action: "workspace.tab.target.changes",
     combo: "Cmd+Shift+G",
@@ -469,7 +423,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    // Keep the binding id stable so saved overrides from the former Ctrl+Shift+C default survive.
     id: "workspace-tab-target-changes-ctrl-shift-c-non-mac",
     action: "workspace.tab.target.changes",
     combo: "Ctrl+Shift+G",
@@ -535,8 +488,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Close current tab",
     },
   },
-
-  // --- Workspace index jump ---
   {
     id: "workspace-navigate-index-cmd-digit-mac",
     action: "workspace.navigate.index",
@@ -576,8 +527,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       defaultDisplayKeys: ["alt", "1-9"],
     },
   },
-
-  // --- Tab index jump ---
   {
     id: "workspace-tab-navigate-index-cmd-alt-digit-mac-desktop",
     action: "workspace.tab.navigate.index",
@@ -617,8 +566,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       defaultDisplayKeys: ["alt", "shift", "1-9"],
     },
   },
-
-  // --- Workspace relative navigation ---
   {
     id: "workspace-navigate-relative-cmd-left-mac",
     action: "workspace.navigate.relative",
@@ -713,8 +660,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Next workspace needing attention",
     },
   },
-
-  // --- Tab relative navigation ---
   {
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
@@ -739,8 +684,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Next tab",
     },
   },
-
-  // --- Pane management (mac only) ---
   {
     id: "workspace-pane-split-right-cmd-backslash",
     action: "workspace.pane.split.right",
@@ -862,7 +805,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Close pane",
     },
   },
-  // --- New terminal ---
   {
     id: "workspace-terminal-new-cmd-shift-t-mac",
     action: "workspace.terminal.new",
@@ -885,8 +827,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "New terminal",
     },
   },
-
-  // --- Command center ---
   {
     id: "command-center-toggle-cmd-k-mac",
     action: "command-center.toggle",
@@ -909,8 +849,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Toggle command center",
     },
   },
-
-  // --- Keyboard shortcuts dialog ---
   {
     id: "shortcuts-dialog-toggle-question-mark",
     action: "shortcuts.dialog.toggle",
@@ -925,8 +863,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       note: "Available when focus is not in a text field or terminal.",
     },
   },
-
-  // --- Sidebar toggles ---
   {
     id: "sidebar-toggle-left-mac-cmd-b",
     action: "sidebar.toggle.left",
@@ -977,8 +913,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     combo: "Ctrl+`",
     when: { commandCenter: false },
   },
-
-  // --- Toggle both sidebars ---
   {
     id: "sidebar-toggle-both-cmd-period-mac",
     action: "sidebar.toggle.both",
@@ -1001,32 +935,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Toggle both sidebars",
     },
   },
-
-  // --- Leitstand toggle ---
-  {
-    id: "leitstand-toggle-cmd-shift-l-mac",
-    action: "leitstand.toggle",
-    combo: "Cmd+Shift+L",
-    when: { mac: true, commandCenter: false },
-    help: {
-      id: "toggle-leitstand",
-      section: "general",
-      label: "Toggle Leitstand",
-    },
-  },
-  {
-    id: "leitstand-toggle-ctrl-shift-l-non-mac",
-    action: "leitstand.toggle",
-    combo: "Ctrl+Shift+L",
-    when: { mac: false, commandCenter: false, terminal: false },
-    help: {
-      id: "toggle-leitstand",
-      section: "general",
-      label: "Toggle Leitstand",
-    },
-  },
-
-  // --- Settings toggle ---
   {
     id: "settings-toggle-cmd-comma-mac",
     action: "settings.toggle",
@@ -1049,8 +957,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Toggle settings",
     },
   },
-
-  // --- Focus mode ---
   {
     id: "view-toggle-focus-cmd-shift-f-mac",
     action: "view.toggle.focus",
@@ -1073,8 +979,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Toggle focus mode",
     },
   },
-
-  // --- Theme cycling ---
   {
     id: "theme-cycle-cmd-shift-t-mac",
     action: "theme.cycle",
@@ -1097,8 +1001,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Cycle theme",
     },
   },
-
-  // --- Message input ---
   {
     id: "message-input-focus-cmd-l-mac",
     action: "message-input.action",
@@ -1222,23 +1124,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 ];
 
-// --- Parse bindings at module load ---
-
-/**
- * The stored value meaning "the user deliberately unassigned this shortcut".
- * Distinct from a missing key, which means "no override, use the default".
- */
 export const UNASSIGNED_COMBO = null;
 
-/**
- * Parse a binding's combo string into a chord.
- *
- * An empty combo yields an empty chord, which never matches any event — the
- * matcher skips bindings whose first combo is missing. That is how both a
- * user-unassigned shortcut and a binding authored without a default combo are
- * represented: one state, not two. Authors who want a default-less binding
- * write `combo: ""` and nothing else.
- */
 export function parseBindingChord(combo: string): KeyCombo[] {
   if (combo === "") {
     return [];
@@ -1266,7 +1153,6 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
     if (override === UNASSIGNED_COMBO) {
       return { ...binding, combo: "", parsedChord: [] };
     }
-    // Storage is unvalidated JSON, so anything can turn up here.
     if (typeof override !== "string") {
       return binding;
     }
@@ -1289,25 +1175,11 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
   });
 }
 
-/**
- * `editable: false` is a statement about a binding's *default* combo, not
- * about its action: the pane-focus defaults carry it so that Cmd+Shift+Arrow
- * keeps selecting text in a field instead of moving pane focus. An override
- * replaces that combo, so the guard no longer describes anything and has to
- * go, the same way `defaultDisplayKeys` does — otherwise the combo the user
- * picked in Settings silently refuses to fire wherever they are typing.
- *
- * The other guards stay. Platform, command center, terminal and focus scope
- * are properties of the action and of where it makes sense, and none of them
- * change because the keys did.
- */
 function withoutDefaultComboGuard(when: ShortcutWhen | undefined): ShortcutWhen | undefined {
   if (when?.editable !== false) return when;
   const { editable: _editable, ...rest } = when;
   return rest;
 }
-
-// --- Matching engine ---
 
 function parseDigit(event: KeyboardShortcutInput): number | null {
   const code = event.code;
@@ -1335,11 +1207,6 @@ function matchesKeyOrCode(combo: KeyCombo, event: KeyboardShortcutInput): boolea
   if (combo.shift === true && combo.shiftedKey !== undefined && eventKey === combo.shiftedKey) {
     return true;
   }
-  // macOS rewrites event.key when Option is held (Option+T -> "†",
-  // Option+[ -> "“"), so Alt-bound letter / bracket bindings can only
-  // match by event.code. Stay key-first for non-Alt bindings so Dvorak
-  // keeps its logical-character matching (e.g. Cmd+V on physical Period
-  // must paste, not trigger Cmd+.).
   if (combo.alt === true && event.code === combo.code) return true;
   return combo.codeFallback === true && event.code === combo.code;
 }
@@ -1441,8 +1308,6 @@ function helpMatchesPlatform(
   if (when?.desktop !== undefined && when.desktop !== context.isDesktop) return false;
   return true;
 }
-
-// --- Public API ---
 
 function buildMatchFromBinding(
   binding: ParsedShortcutBinding,
@@ -1587,10 +1452,6 @@ export function resolveKeyboardShortcut(input: {
   preventDefault: boolean;
 } {
   const { event, context, chordState, onChordReset, bindings = DEFAULT_BINDINGS } = input;
-  // Pressing a modifier emits its own keydown before the combo that holds it,
-  // so a chord waiting on `Ctrl+J` sees a bare `Control` first. That keydown
-  // matches no combo, and resolving it would drop the chord back to its first
-  // step. It decides nothing: leave the chord where it is.
   if (isModifierKeyCode(event.code)) {
     return { match: null, nextChordState: chordState, preventDefault: false };
   }
@@ -1616,17 +1477,6 @@ export function getBindingIdForAction(
   return null;
 }
 
-/**
- * The keys to display for one binding, derived from the combo that actually
- * fires so a rebound shortcut never advertises the keys it shipped with.
- *
- * `help.defaultDisplayKeys` wins where it is set, but only on the shipped
- * binding. Effective bindings discard it when an override replaces the combo,
- * so rebound rows still derive the keys that now fire.
- * `parsedChord` is the single source of truth for "has no keys": it is derived
- * from `combo`, so it covers both a user-unassigned shortcut and a binding
- * authored without a default.
- */
 function displayChordForBinding(binding: ParsedShortcutBinding): ShortcutKey[][] | null {
   if (binding.parsedChord.length === 0) {
     return null;
@@ -1655,15 +1505,6 @@ export function getDefaultKeysForAction(
   return null;
 }
 
-/**
- * The keys to display for a shortcut: the user's override if they set one,
- * the default otherwise, and `null` when the shortcut has no keys at all —
- * either the user unassigned it or it ships without a default combo.
- *
- * The single resolver behind every display surface (hint badges, the command
- * palette, and the settings rows). It validates an override the same way
- * matching does, so what is shown is always what actually fires.
- */
 export function resolveShortcutKeysForAction(
   actionId: string,
   overrides: ShortcutOverrides,
@@ -1680,34 +1521,17 @@ export function resolveShortcutKeysForAction(
   if (override === UNASSIGNED_COMBO || override === "") {
     return null;
   }
-  // Storage is unvalidated JSON: a missing key and a corrupt value both mean
-  // "fall back to the default".
   if (typeof override !== "string") {
     return defaultChord;
   }
   try {
     parseBindingChord(override);
   } catch {
-    // Matching falls back to the default for an unparseable override, so the
-    // display has to as well or it would advertise keys that do nothing.
     return defaultChord;
   }
   return chordStringToShortcutKeys(override);
 }
 
-/**
- * The `KeyboardEvent.key` whose hold reveals the sidebar workspace-jump number
- * badges, or `null` when no badges should appear.
- *
- * It must match the modifier of the active `workspace.navigate.index` binding
- * for this runtime, otherwise the badges appear for a modifier that does not
- * actually jump. That binding is parameterized — its key is the `Digit`
- * wildcard, which stands for any of 1-9 — so the badges are only honest when
- * the effective binding is still a single combo built on that wildcard.
- * Anything else (unassigned, rebound to one concrete digit, or a multi-step
- * chord) yields `null`, because the 1-9 badges would be advertising more than
- * the shortcut delivers.
- */
 export function getWorkspaceIndexJumpModifierKey(
   platform: { isMac: boolean; isDesktop: boolean },
   bindings: readonly ParsedShortcutBinding[] = DEFAULT_BINDINGS,
@@ -1726,8 +1550,6 @@ export function getWorkspaceIndexJumpModifierKey(
   if (!combo || combo.code !== "Digit") {
     return null;
   }
-  // Exactly one modifier: holding it is what reveals the badges, so a combo
-  // needing a second one would show badges the user cannot act on.
   const modifiers = [combo.mod, combo.meta, combo.ctrl, combo.alt, combo.shift];
   if (modifiers.filter(Boolean).length !== 1) {
     return null;

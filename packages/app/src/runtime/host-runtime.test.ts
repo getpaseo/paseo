@@ -3549,6 +3549,9 @@ describe("HostRuntimeStore", () => {
     );
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    const connection = pairedHost?.connections[0];
+    const deviceCredential = connection?.type === "relay" ? connection.deviceCredential : undefined;
+    expect(deviceCredential).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(pairedHost?.connections).toEqual([
       {
         id: "relay:wss:relay.example.com:443",
@@ -3556,8 +3559,15 @@ describe("HostRuntimeStore", () => {
         relayEndpoint: "relay.example.com:443",
         useTls: true,
         daemonPublicKeyB64: "pk_test_offer",
+        deviceCredential,
       },
     ]);
+
+    await store.upsertConnectionFromOffer(
+      makeOffer({ relay: { endpoint: "relay.example.com:443", useTls: true } }),
+      "tls relay",
+    );
+    expect(store.getHosts()[0]?.connections[0]).toEqual(connection);
 
     store.syncHosts([]);
   });
@@ -3584,6 +3594,9 @@ describe("HostRuntimeStore", () => {
     await store.upsertConnectionFromOfferUrl(oldPairingUrl, "old relay");
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    const connection = pairedHost?.connections[0];
+    const deviceCredential = connection?.type === "relay" ? connection.deviceCredential : undefined;
+    expect(deviceCredential).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(pairedHost?.connections).toEqual([
       {
         id: "relay:wss:relay.paseo.sh:443",
@@ -3591,19 +3604,25 @@ describe("HostRuntimeStore", () => {
         relayEndpoint: "relay.paseo.sh:443",
         useTls: true,
         daemonPublicKeyB64: "pk_test_offer",
+        deviceCredential,
       },
     ]);
+
+    await store.upsertConnectionFromOfferUrl(oldPairingUrl, "old relay");
+    expect(store.getHosts()[0]?.connections[0]).toEqual(connection);
 
     store.syncHosts([]);
   });
 
   it("probes a pairing link immediately and saves only after admission", async () => {
+    let admittedDevice: string | undefined;
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => {
+        connectToDaemon: async ({ host, connection }) => {
           if (host.password !== "correct-password")
             throw new DaemonAuthenticationError("password_required");
+          if (connection.type === "relay") admittedDevice = connection.deviceCredential;
           return {
             client: makeConnectedProbeClient(5) as unknown as DaemonClient,
             serverId: host.serverId,
@@ -3621,6 +3640,11 @@ describe("HostRuntimeStore", () => {
     const result = await store.probeAndUpsertConnectionFromOfferUrl(offerUrl, "correct-password");
     expect(result.serverId).toBe("srv_offer");
     expect(store.getHosts()[0]?.password).toBe("correct-password");
+    const saved = store.getHosts()[0]?.connections[0];
+    expect(admittedDevice).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(saved?.type === "relay" && saved.deviceCredential).toBe(admittedDevice);
+    await store.probeAndUpsertConnectionFromOfferUrl(offerUrl, "correct-password");
+    expect(store.getHosts()[0]?.connections[0]).toEqual(saved);
     store.syncHosts([]);
   });
 

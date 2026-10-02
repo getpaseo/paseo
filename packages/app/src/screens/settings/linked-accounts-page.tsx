@@ -6,7 +6,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
-import { JiraSiteSetting } from "@/leitstand/jira-site-setting";
+import { JiraSiteSetting } from "@/screens/settings/jira-site-setting";
 
 /**
  * Accounts this host acts as toward planning and code hosting. GitHub lists the

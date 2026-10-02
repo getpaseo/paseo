@@ -33,6 +33,14 @@ import {
 } from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
 import { launchInteractiveBrowser } from "./interactive-browser.js";
+import { ProfileCookieSecrets } from "./profile-secrets.js";
+import {
+  encryptBrowserBackup,
+  decryptBrowserBackup,
+  BrowserBackupError,
+} from "../browser-import/browser-backup.js";
+import type { BrowserImportLogin } from "../browser-import/browser-cookie-import.js";
+import { BrowserImportError } from "../browser-import/browser-cookie-import.js";
 import { EvidenceStore, formatEvidenceRef } from "./evidence-store.js";
 import {
   collectSnapshotNodes,
@@ -52,14 +60,10 @@ const DEFAULT_VERIFY_VIEWPORT = { width: 1280, height: 720 };
 const IMPORTED_COOKIES_FILE = "imported-cookies.json";
 const IMPORTED_COOKIES_MARKER = ".paseo-imported-cookies-version";
 const SHARED_PROFILE_DIR = "shared";
-// Caches and Chrome's single-instance locks stay behind when a profile is carried over.
+
 const PROFILE_SEED_SKIP =
   /^(Singleton|Cache$|Code Cache$|GPUCache$|DawnCache$|GrShaderCache$|ShaderCache$)/;
 
-/**
- * Before the shared profile existed every workspace had its own. The first shared launch
- * starts from the most recently used of those, so the logins made there carry over.
- */
 export function seedSharedProfile(input: {
   profilesRoot: string;
   userDataDir: string;
@@ -83,12 +87,11 @@ export function seedSharedProfile(input: {
 }
 const SAVED_TABS_FILE = "open-tabs.json";
 const SAVE_TABS_DELAY_MS = 300;
-// A page closing this long after its browser died was lost, not closed by the user.
+
 const LOST_TAB_GRACE_MS = 1_000;
-// Measured on a 390x750 phone viewport: q70 costs ~11% more bytes than q60 and keeps text legible.
+
 const SCREENCAST_JPEG_QUALITY = 70;
-// A page's copy button writes to the daemon's clipboard, which the person cannot
-// reach; remembering the text lets the viewer put it on the clipboard of their device.
+
 const REMEMBER_PAGE_COPIES_SCRIPT = `(() => {
   const remember = (text) => { window.__paseoCopied = { text: String(text), at: Date.now() }; };
   const clipboard = navigator.clipboard;
@@ -107,7 +110,6 @@ interface ImportedCookieStore {
   cookies: BrowserImportCookie[];
 }
 
-/** A JPEG viewport frame as Chrome sent it; width and height are CSS pixels. */
 export interface ScreencastFrame {
   dataBase64: string;
   width: number;
@@ -158,7 +160,7 @@ interface SavedTab {
   workspaceId: string;
   profile: string;
   url: string;
-  /** Null until the tab is reopened in this daemon process. */
+
   context: BrowserContext | null;
 }
 
@@ -179,6 +181,7 @@ interface DaemonBrowserTab {
 export interface DaemonPlaywrightHostOptions {
   paseoHome: string;
   logger: Logger;
+  profileEncryptionKey?: () => Promise<Buffer>;
 }
 
 export interface ExecuteLocalInput {
@@ -192,17 +195,18 @@ export interface ExecuteLocalInput {
 export class DaemonPlaywrightHost {
   private readonly paseoHome: string;
   private readonly logger: Logger;
+  private readonly profileSecrets: ProfileCookieSecrets;
+  private profileWrites: Promise<unknown> = Promise.resolve();
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly contextProfileDirs = new Map<BrowserContext, string>();
   private readonly tabs = new Map<string, DaemonBrowserTab>();
-  // Open tabs outlive a daemon restart: saved on every change, reopened under the same
-  // browserId the first time their workspace is used again.
+
   private readonly savedTabs = new Map<string, SavedTab>();
   private readonly savedTabsLoaded: Promise<void>;
   private readonly restoredWorkspaces = new Map<string, Promise<void>>();
   private saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
-  /** Receives every action on a daemon tab so a desktop app can replay it locally. */
+
   public onMirror: ((event: BrowserMirrorEvent) => void) | null = null;
   private readonly mirrorQueues = new Map<string, Promise<void>>();
   private executablePath: string | null = null;
@@ -221,6 +225,7 @@ export class DaemonPlaywrightHost {
   public constructor(options: DaemonPlaywrightHostOptions) {
     this.paseoHome = options.paseoHome;
     this.logger = options.logger;
+    this.profileSecrets = new ProfileCookieSecrets(options.profileEncryptionKey);
     this.savedTabsLoaded = this.loadSavedTabs();
   }
 
@@ -299,8 +304,7 @@ export class DaemonPlaywrightHost {
         browserId: saved.browserId,
         url: saved.url,
       });
-      // Load in the background: one slow or dead site must not hold up the command
-      // that woke the workspace.
+
       void page.goto(saved.url, { waitUntil: "domcontentloaded" }).catch(() => undefined);
     }
   }
@@ -387,7 +391,6 @@ export class DaemonPlaywrightHost {
     }
   }
 
-  /** Streams viewport frames until the returned stop runs; onEnd fires when the tab closes. */
   public async startScreencast(input: {
     workspaceId: string;
     browserId: string;
@@ -406,8 +409,6 @@ export class DaemonPlaywrightHost {
     }
     const cdp = await tab.context.newCDPSession(tab.page);
     cdp.on("Page.screencastFrame", (event) => {
-      // Ack before pacing: Chrome skips paints while a frame is unacked, so a late ack
-      // can drop the last change of a page that then stays still.
       void cdp.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
       input.onFrame({
         dataBase64: event.data,
@@ -418,7 +419,7 @@ export class DaemonPlaywrightHost {
     tab.page.once("close", input.onEnd);
     const stop = async () => {
       tab.page.off("close", input.onEnd);
-      // Detaching ends the screencast; it rejects once the tab is already gone.
+
       await cdp.detach().catch(() => {});
     };
     try {
@@ -435,6 +436,14 @@ export class DaemonPlaywrightHost {
   }
 
   public async close(): Promise<void> {
+    await this.saveTabs();
+    for (const context of this.contexts.values()) {
+      await this.saveSessionCookies(context).catch(() =>
+        this.logger.warn(
+          "Browser session checkpoint failed; unlock the host keyring before restarting.",
+        ),
+      );
+    }
     this.closing = true;
     if (this.saveTabsTimer) clearTimeout(this.saveTabsTimer);
     this.saveTabsTimer = null;
@@ -516,8 +525,7 @@ export class DaemonPlaywrightHost {
     agentId?: string;
   }): Promise<BrowserToolsResponsePayload> {
     const { tab, command } = input;
-    // Sent before acting: the refs expire once the page changes, and a click's navigation
-    // must reach the viewer after the click, not before it.
+
     const mirror = await mirrorActionFor(tab, command);
     if (mirror) this.emitMirror(tab, mirror);
     return this.dispatchTabCommand(input);
@@ -533,23 +541,17 @@ export class DaemonPlaywrightHost {
     };
     if (action.kind === "navigate") tab.mirrorEvents = [];
     tab.mirrorEvents.push(event);
-    // ponytail: retain one document's latest 200 steps; use state checkpoints for longer pages.
+
     if (tab.mirrorEvents.length > 201) tab.mirrorEvents.splice(1, 1);
     this.onMirror?.(event);
   }
 
-  /**
-   * A person's step in an app's local copy of a daemon tab: repeated on the daemon's page,
-   * so agents see what the person did, and passed on to the other apps. A target this page
-   * lacks is skipped, like on the apps.
-   */
   public applyMirrorAction(input: {
     workspaceId: string;
     browserId: string;
     action: BrowserMirrorAction;
     origin: string;
   }): Promise<void> {
-    // One tab's steps run in the order they were made: Enter must not overtake the typing.
     const previous = this.mirrorQueues.get(input.browserId) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => this.applyMirrorActionNow(input));
     this.mirrorQueues.set(input.browserId, next);
@@ -915,8 +917,7 @@ export class DaemonPlaywrightHost {
         height: viewport.height,
       });
     }
-    // Capture time, not write time: with a capture retry the two differ,
-    // and the timeline anchor must point at the moment the pixels existed.
+
     const capturedAt = new Date().toISOString();
     const viewport = tab.page.viewportSize() ?? DEFAULT_VERIFY_VIEWPORT;
     const workspaceId = tab.workspaceId;
@@ -965,8 +966,6 @@ export class DaemonPlaywrightHost {
     const capture = previous
       .catch(() => undefined)
       .then(async () => {
-        // A background tab can retain its old compositor surface after navigation.
-        // Serialize activation with capture so another tab cannot hide it midway.
         await tab.page.bringToFront();
         await waitForPaint(tab.page);
         return tab.page.screenshot({ fullPage, timeout: 5_000 });
@@ -1010,6 +1009,9 @@ export class DaemonPlaywrightHost {
   }): Promise<BrowserToolsResponsePayload> {
     const { tab, requestId } = input;
     const browserId = tab.browserId;
+    await this.saveSessionCookies(tab.context).catch(() =>
+      this.logger.warn("Browser session checkpoint failed; unlock the host keyring."),
+    );
     this.forgetTab(browserId);
     await tab.page.close().catch(() => undefined);
     this.tabs.delete(browserId);
@@ -1105,8 +1107,7 @@ export class DaemonPlaywrightHost {
       await page.goto(input.url, { waitUntil: "domcontentloaded" });
     }
     await page.bringToFront();
-    // Normal Chrome keeps paint holding enabled; input before its first frame
-    // can be dropped even though DOMContentLoaded already fired.
+
     await waitForPaint(page);
     return tab;
   }
@@ -1121,7 +1122,6 @@ export class DaemonPlaywrightHost {
   }): DaemonBrowserTab {
     const existing = [...this.tabs.values()].find((tab) => tab.page === input.page);
     if (existing) {
-      // newPage() announces the page before a restore can name it; take the saved id.
       if (input.browserId && existing.browserId !== input.browserId) {
         this.tabs.delete(existing.browserId);
         this.savedTabs.delete(existing.browserId);
@@ -1154,7 +1154,7 @@ export class DaemonPlaywrightHost {
       if (frame !== input.page.mainFrame()) return;
       const url = frame.url();
       this.rememberTabUrl(tab, url);
-      // Link clicks, redirects and history moves all land here, not only navigate.
+
       if (url !== mirroredUrl && /^(https?|file):/i.test(url)) {
         mirroredUrl = url;
         this.emitMirror(tab, { kind: "navigate", url });
@@ -1188,8 +1188,6 @@ export class DaemonPlaywrightHost {
     truncated: boolean;
     stats: { nodeCount: number; refCount: number; textLength: number };
   }> {
-    // Playwright serializes this function into the page, where the tsx/esbuild
-    // __name() helper does not exist. Strip those calls before evaluating.
     const snapshotSource = collectSnapshotNodes.toString().replace(/__name\([^;]*\);?/g, "");
     const collected = (await tab.page.evaluate(`(${snapshotSource})()`)) as CollectedSnapshotNode[];
     const formatted = formatSnapshotYaml(collected);
@@ -1252,8 +1250,6 @@ export class DaemonPlaywrightHost {
     workspaceId: string;
     profile: string;
   }): Promise<BrowserContext> {
-    // One Chrome profile for every workspace: a login made once holds everywhere, and new
-    // workspaces (Paperclip opens one per feature) do not start signed out.
     const key = input.profile;
     const existing = this.contexts.get(key);
     if (existing) {
@@ -1278,8 +1274,7 @@ export class DaemonPlaywrightHost {
     await context.addInitScript(REMEMBER_PAGE_COPIES_SCRIPT);
     this.contexts.set(key, context);
     this.contextProfileDirs.set(context, userDataDir);
-    // OAuth providers can open a popup; it belongs to the workspace of the tab that opened it.
-    // Pages the host opens itself are registered by their caller with the right workspace.
+
     context.on("page", (page) => {
       void page.opener().then((opener) => {
         const openerTab = opener
@@ -1304,19 +1299,53 @@ export class DaemonPlaywrightHost {
         this.contexts.delete(key);
       }
     });
-    const store = await this.readImportedCookieStore();
-    if (store) {
-      await this.applyImportedCookies({ context, userDataDir, store });
+    try {
+      const store = await this.readImportedCookieStore();
+      if (store) await this.applyImportedCookies({ context, userDataDir, store });
+      const sessionCookies = await this.profileSecrets.read(
+        path.join(userDataDir, "session-cookies.enc"),
+      );
+      if (sessionCookies) {
+        const currentCookies = await context.cookies();
+        const missing = sessionCookies.cookies.filter(
+          (cookie) =>
+            !currentCookies.some(
+              (current) =>
+                current.domain === cookie.domain &&
+                current.path === cookie.path &&
+                current.name === cookie.name,
+            ),
+        );
+        await context.addCookies(missing);
+      }
+    } catch (error) {
+      await this.closeBrowsers.get(context)?.();
+      throw error;
     }
     return context;
   }
 
-  /**
-   * Merges cookies into the host-wide import store and applies them to every open profile.
-   * Profiles launched later pick the store up once, tracked by a version marker in their
-   * userDataDir, so cookies the site rotates afterwards are not overwritten on each launch.
-   */
+  private async saveSessionCookies(context: BrowserContext): Promise<void> {
+    const dir = this.contextProfileDirs.get(context);
+    if (!dir) return;
+    const cookies = (await context.cookies()).filter((cookie) => cookie.expires === -1);
+    await this.profileSecrets.write(path.join(dir, "session-cookies.enc"), {
+      version: randomUUID(),
+      cookies,
+    });
+  }
+
   public async importCookies(cookies: BrowserImportCookie[]): Promise<ImportCookiesResult> {
+    return this.updateProfile(() => this.applyCookieImport(cookies));
+  }
+
+  private updateProfile<T>(write: () => Promise<T>): Promise<T> {
+    const next = this.profileWrites.catch(() => undefined).then(write);
+    this.profileWrites = next;
+    return next;
+  }
+
+  private async applyCookieImport(cookies: BrowserImportCookie[]): Promise<ImportCookiesResult> {
     const nowSeconds = Date.now() / 1000;
     const merged = new Map<string, BrowserImportCookie>();
     for (const cookie of [...((await this.readImportedCookieStore())?.cookies ?? []), ...cookies]) {
@@ -1324,7 +1353,7 @@ export class DaemonPlaywrightHost {
       merged.set(`${cookie.domain}\t${cookie.path}\t${cookie.name}`, cookie);
     }
     const store: ImportedCookieStore = { version: randomUUID(), cookies: [...merged.values()] };
-    await writeFileAtomic(this.importedCookieStorePath(), JSON.stringify(store), { mode: 0o600 });
+    await this.profileSecrets.write(this.importedCookieStorePath(), store);
     for (const [context, userDataDir] of this.contextProfileDirs) {
       await this.applyImportedCookies({ context, userDataDir, store });
     }
@@ -1334,13 +1363,203 @@ export class DaemonPlaywrightHost {
     };
   }
 
+  private async readSavedLogins(): Promise<BrowserImportLogin[]> {
+    return (
+      (
+        await this.profileSecrets.read(
+          path.join(this.paseoHome, "browser-profiles", "saved-logins.enc"),
+        )
+      )?.logins ?? []
+    );
+  }
+
+  public async autofillFromUserCommand(
+    workspaceId: string,
+    command: BrowserAutomationCommand,
+  ): Promise<void> {
+    if (command.command !== "click" && command.command !== "keypress") return;
+    const tab = this.tabs.get(command.args.browserId);
+    if (!tab || tab.workspaceId !== workspaceId || tab.page.isClosed()) return;
+    try {
+      const field = await tab.page.evaluate(() => {
+        const password = document.activeElement;
+        if (
+          !(password instanceof HTMLInputElement) ||
+          password.type !== "password" ||
+          password.value ||
+          !password.form
+        )
+          return null;
+        const username = password.form.querySelector<HTMLInputElement>(
+          'input[autocomplete="username"], input[type="email"], input[type="text"]',
+        );
+        return { origin: location.origin, username: username?.value ?? "" };
+      });
+      if (!field) return;
+      const logins = (await this.readSavedLogins()).filter(
+        (login) => login.origin === field.origin,
+      );
+      let login = logins.length === 1 ? logins[0] : undefined;
+      if (field.username) login = logins.find((entry) => entry.username === field.username);
+      if (!login) return;
+
+      await tab.page.evaluate((credential) => {
+        const password = document.activeElement;
+        if (
+          location.origin !== credential.origin ||
+          !(password instanceof HTMLInputElement) ||
+          password.type !== "password" ||
+          password.value ||
+          !password.form
+        )
+          return;
+        const username = password.form.querySelector<HTMLInputElement>(
+          'input[autocomplete="username"], input[type="email"], input[type="text"]',
+        );
+        if (username?.value && username.value !== credential.username) return;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        if (username && !username.value) {
+          setter.call(username, credential.username);
+          username.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        setter.call(password, credential.password);
+        password.dispatchEvent(new Event("input", { bubbles: true }));
+        password.dispatchEvent(new Event("change", { bubbles: true }));
+      }, login);
+    } catch {
+      this.logger.warn(
+        "Saved password autofill unavailable; unlock the host keyring or sign in manually.",
+      );
+    }
+  }
+
+  public async manageSavedPasswords(input: {
+    action: "list" | "remove";
+    origin?: string;
+    username?: string;
+  }): Promise<Array<{ origin: string; username: string }>> {
+    return this.updateProfile(() => this.updateSavedPasswords(input));
+  }
+
+  private async updateSavedPasswords(input: {
+    action: "list" | "remove";
+    origin?: string;
+    username?: string;
+  }): Promise<Array<{ origin: string; username: string }>> {
+    let logins = await this.readSavedLogins();
+    if (input.action === "remove") {
+      if (input.origin === undefined || input.username === undefined)
+        throw new BrowserImportError("Choose a saved password to remove.");
+      logins = logins.filter(
+        (login) => login.origin !== input.origin || login.username !== input.username,
+      );
+      await this.profileSecrets.write(
+        path.join(this.paseoHome, "browser-profiles", "saved-logins.enc"),
+        { version: randomUUID(), cookies: [], logins },
+      );
+    }
+    return logins.map(({ origin, username }) => ({ origin, username }));
+  }
+
+  private async importSavedLogins(logins: BrowserImportLogin[]) {
+    const existing = await this.readSavedLogins();
+    const added = logins.filter(
+      (login) =>
+        !existing.some(
+          (entry) => entry.origin === login.origin && entry.username === login.username,
+        ),
+    );
+    const merged = new Map(
+      existing.map((entry) => [JSON.stringify([entry.origin, entry.username]), entry]),
+    );
+    for (const login of added)
+      if (!merged.has(JSON.stringify([login.origin, login.username])))
+        merged.set(JSON.stringify([login.origin, login.username]), login);
+
+    await this.profileSecrets.write(
+      path.join(this.paseoHome, "browser-profiles", "saved-logins.enc"),
+      { version: randomUUID(), cookies: [], logins: [...merged.values()] },
+    );
+    return {
+      passwordCount: merged.size - existing.length,
+      skippedPasswords: logins.length - (merged.size - existing.length),
+    };
+  }
+
+  public async importProfile(cookies: BrowserImportCookie[], logins: BrowserImportLogin[]) {
+    return this.updateProfile(async () => {
+      const credentials = await this.importSavedLogins(logins);
+      return { ...(await this.applyCookieImport(cookies)), ...credentials };
+    });
+  }
+
+  public async backupProfile(input: {
+    action: "export" | "restore";
+    passphrase: string;
+    encrypted?: string;
+  }) {
+    return this.updateProfile(() => this.runProfileBackup(input));
+  }
+
+  private async runProfileBackup(input: {
+    action: "export" | "restore";
+    passphrase: string;
+    encrypted?: string;
+  }) {
+    const context = await this.ensureContext({
+      workspaceId: "browser-profile-settings",
+      profile: DEFAULT_VERIFY_PROFILE,
+    });
+    const existing = await context.cookies();
+    const logins = await this.readSavedLogins();
+    if (input.action === "export")
+      return {
+        encrypted: await encryptBrowserBackup(
+          { version: 1, cookies: existing, logins },
+          input.passphrase,
+        ),
+        cookieCount: existing.length,
+        passwordCount: logins.length,
+        skippedCookies: 0,
+        skippedPasswords: 0,
+      };
+    if (!input.encrypted)
+      throw new BrowserBackupError("Select an encrypted browser backup to restore.");
+    const data = await decryptBrowserBackup(input.encrypted, input.passphrase);
+    const cookieKey = (cookie: { domain: string; path: string; name: string }) =>
+      JSON.stringify([cookie.domain, cookie.path, cookie.name]);
+    const keys = new Set(existing.map(cookieKey));
+    const missing = data.cookies.filter(
+      (cookie) =>
+        !keys.has(cookieKey(cookie)) &&
+        (cookie.expires === -1 || cookie.expires > Date.now() / 1000),
+    );
+    const credentials = await this.importSavedLogins(data.logins);
+    try {
+      await context.addCookies(missing);
+      await this.saveSessionCookies(context);
+    } catch {
+      throw new BrowserBackupError(
+        "Restore could not finish. Existing logins were preserved; some new logins may already have been restored. Unlock the host keyring and retry.",
+      );
+    }
+    return {
+      ...credentials,
+      cookieCount: missing.length,
+      skippedCookies: data.cookies.length - missing.length,
+    };
+  }
+
   private importedCookieStorePath(): string {
-    return path.join(this.paseoHome, "browser-profiles", IMPORTED_COOKIES_FILE);
+    return path.join(this.paseoHome, "browser-profiles", "imported-cookies.enc");
   }
 
   private async readImportedCookieStore(): Promise<ImportedCookieStore | null> {
-    const raw = await readFile(this.importedCookieStorePath(), "utf8").catch(() => null);
-    return raw ? (JSON.parse(raw) as ImportedCookieStore) : null;
+    await this.profileSecrets.migrate(
+      path.join(this.paseoHome, "browser-profiles", IMPORTED_COOKIES_FILE),
+      this.importedCookieStorePath(),
+    );
+    return this.profileSecrets.read(this.importedCookieStorePath());
   }
 
   private async applyImportedCookies(input: {
@@ -1354,14 +1573,16 @@ export class DaemonPlaywrightHost {
     try {
       await input.context.addCookies(input.store.cookies);
     } catch {
-      // One cookie Chromium rejects fails the whole batch; retry singly and drop the rejects.
       let rejected = 0;
       for (const cookie of input.store.cookies) {
         await input.context.addCookies([cookie]).catch(() => {
           rejected += 1;
         });
       }
-      this.logger.warn({ rejected }, "Chromium rejected some imported cookies");
+      if (rejected)
+        throw new BrowserImportError(
+          `The host browser rejected ${rejected} cookies. Some cookies may have been imported; retry after closing the source browser.`,
+        );
     }
     await writeFile(markerPath, input.store.version);
   }
@@ -1390,7 +1611,6 @@ function ok(requestId: string, result: CommandResult): BrowserToolsResponsePaylo
 
 const MIRROR_ACTION_TIMEOUT_MS = 3_000;
 
-/** A password typed in one app reaches the daemon's page but no other app. */
 async function withoutSecret(
   tab: DaemonBrowserTab,
   action: BrowserMirrorAction,
@@ -1451,7 +1671,6 @@ function mirrorTarget(tab: DaemonBrowserTab, ref: string | undefined): BrowserMi
 
 async function isPasswordField(tab: DaemonBrowserTab, target: BrowserMirrorTarget | null) {
   if (!target) {
-    // Keyboard input without a ref goes to whatever has focus.
     const focused = await tab.page
       .evaluate("document.activeElement && document.activeElement.type")
       .catch(() => null);
@@ -1465,10 +1684,6 @@ async function isPasswordField(tab: DaemonBrowserTab, target: BrowserMirrorTarge
   return type?.toLowerCase() === "password";
 }
 
-/**
- * The DOM-level form of a command, for replay in another browser. Coordinate input has no
- * element to name there, and navigation is reported from the page itself, so both are left out.
- */
 async function mirrorActionFor(
   tab: DaemonBrowserTab,
   command: BrowserAutomationCommand,

@@ -1,0 +1,13 @@
+{
+  "status": "verified",
+  "sourceHead": "4f8197f9c0038fbd34cd49267029f2b53cce2e71",
+  "runId": "evr_40e4d99e-da69-40bc-bdf3-676b48710dab",
+  "fixture": "synthetic paired device qa-device-1 in own isolated home; actual UI RPC lock/unlock/revoke",
+  "durableResult": {
+    "devices": []
+  },
+  "productionDaemonChanges": 0,
+  "paidProviderTurns": 0,
+  "platforms": "browser web; native mobile and OS-backed successful Mac persistence not verified",
+  "durableRevocationTombstoneCount": 1
+}

@@ -1,9 +1,8 @@
-import { TeamService } from "./team/service.js";
-import { PackRegistry } from "./team/pack.js";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import { isShadowModeEnabled } from "./system-one/scope.js";
 import { ShadowPredictor } from "./system-one/shadow-predictor.js";
 import { createSystemOneTurnRouter } from "./system-one/model-routing.js";
+import { createProfileRouter } from "./system-one/profile-routing.js";
 import { createSystemOneCreateRouter } from "./system-one/create-routing.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { isSystemOneExcluded } from "./system-one/scope.js";
@@ -207,7 +206,12 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import type { ProviderOverrides } from "@getpaseo/protocol/provider-config";
-import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+import {
+  loadPersistedConfig,
+  readPersistedConfig,
+  type PersistedConfig,
+} from "./persisted-config.js";
+import { DeviceAccess } from "./device-access.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
@@ -1031,7 +1035,6 @@ export async function createPaseoDaemon(
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
-    getAgentProfiles: () => daemonConfigStore.get().agentProfiles,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
     resourcePolicy: config.resourcePolicy,
@@ -1279,6 +1282,7 @@ export async function createPaseoDaemon(
 
   const providerUsageService = new ProviderUsageService({
     logger,
+    onFreshUsage: () => agentManager.notifyRoutingAvailable(),
     listProfiles: () =>
       // The persisted type narrows providers to runtime settings; the parsed file carries the
       // full profile override (extends, label, enabled).
@@ -1292,12 +1296,35 @@ export async function createPaseoDaemon(
         env: provider?.env ?? {},
       })),
   });
-  const getProviderUsageForRouting = () => providerUsageService.listUsage().catch(() => null);
-  const createRouter = createSystemOneCreateRouter({
-    paseoHome: config.paseoHome,
-    daemonConfigStore,
-    getUsage: getProviderUsageForRouting,
+  const profileRouter = createProfileRouter({
+    getRouting: () => loadPersistedConfig(config.paseoHome).daemon?.systemOne?.routing ?? {},
+    getProfiles: (cwd) =>
+      providerSnapshotManager.getCachedSnapshot(cwd).records.map(({ entry }) => ({
+        id: entry.provider,
+        label: entry.label ?? entry.provider,
+        harness:
+          initialAgentManagerState.providerDefinitions[entry.provider]?.derivedFromProviderId ??
+          entry.provider,
+        enabled: entry.enabled,
+        models: entry.models ?? [],
+      })),
+    getUsage: (profileIds) => providerUsageService.listUsage({ profileIds }).catch(() => null),
+    decisionSource: (cwd) =>
+      createConfiguredSystemOneDecisionSource(
+        config.paseoHome,
+        daemonConfigStore,
+        () => cwd,
+        "routing",
+      ),
+    enabled: (cwd) =>
+      daemonConfigStore.get().systemOne?.enabled === true &&
+      !isSystemOneExcluded(config.paseoHome, cwd),
+    minimumConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
   });
+  agentManager.setProfileRouter(profileRouter);
+  daemonConfigStore.onFieldChange("systemOne", () => agentManager.notifyRoutingAvailable());
+  providerSnapshotManager.on("change", () => agentManager.notifyRoutingAvailable());
+  const createRouter = createSystemOneCreateRouter({ profileRouter });
   const createAgentCommandDependencies: CreateAgentCommandDependencies = {
     agentManager,
     agentStorage,
@@ -1482,34 +1509,6 @@ export async function createPaseoDaemon(
     readAllowScheduledAutomation: () => daemonConfigStore.get().allowScheduledAutomation,
   });
   await scheduleService.start();
-  const teamPacks = new PackRegistry();
-  const loadedPacks = await teamPacks.loadFrom(path.join(config.paseoHome, "packs"));
-  for (const failure of loadedPacks.failed) {
-    logger.warn(failure, "Workflow pack failed to load");
-  }
-  const teamService = new TeamService({
-    storageRoot: config.paseoHome,
-    logger,
-    agentManager,
-    agentStorage,
-    createAgent,
-    packs: teamPacks,
-    getUsage: getProviderUsageForRouting,
-    listFallbackProviders: () =>
-      (daemonConfigStore.get().agentProfiles ?? []).map((profile) => profile.provider),
-    decide: (cwd) =>
-      daemonConfigStore.get().systemOne?.enabled === true &&
-      !isSystemOneExcluded(config.paseoHome, cwd)
-        ? createConfiguredSystemOneDecisionSource(
-            config.paseoHome,
-            daemonConfigStore,
-            () => cwd,
-            "team",
-          )
-        : null,
-    minConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
-  });
-  await teamService.start();
   daemonConfigStore.onFieldChange("resourcePolicy", (value) => {
     if (value === "economy" || value === "balanced" || value === "deep") {
       agentManager.setResourcePolicy(value);
@@ -1567,7 +1566,6 @@ export async function createPaseoDaemon(
       terminalManager,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       scheduleService,
-      teamService,
       providerSnapshotManager,
       daemonConfigStore,
       resourcePolicyRuntime,
@@ -1729,14 +1727,7 @@ export async function createPaseoDaemon(
       if (sorted > 0) logger.info({ sorted }, "handoff backfill sorted open sessions");
     })().catch((error: unknown) => logger.warn({ err: error }, "handoff backfill failed"));
   }, HANDOFF_BACKFILL_DELAY_MS).unref();
-  agentManager.setUsageSource(getProviderUsageForRouting);
-  agentManager.setTurnRouter(
-    createSystemOneTurnRouter({
-      paseoHome: config.paseoHome,
-      daemonConfigStore,
-      getUsage: getProviderUsageForRouting,
-    }),
-  );
+  agentManager.setTurnRouter(createSystemOneTurnRouter({ profileRouter }));
   agentManager.setBlockedMcpServers(() =>
     browserToolsPolicy.isEnabled() ? COMPETING_BROWSER_MCP_SERVERS : [],
   );
@@ -2040,7 +2031,13 @@ export async function createPaseoDaemon(
               resourcePolicyRuntime,
               browserActivity,
               providerUsageService,
-              teamService,
+              new DeviceAccess({
+                paseoHome: config.paseoHome,
+                isLocked: () =>
+                  readPersistedConfig(config.paseoHome).daemon?.relay?.requireDeviceCredential ===
+                  true,
+                logger,
+              }),
             );
             // Sorted handbacks ping when System One sorts them; a plain finish then stays quiet.
             wsServer.setHandoffPingsActive(

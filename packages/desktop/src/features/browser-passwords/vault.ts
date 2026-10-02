@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { z } from "zod";
+import type { BrowserImportLogin } from "@getpaseo/server/browser-import";
 
 export interface PasswordCrypto {
   isAvailable(): boolean;
@@ -58,7 +59,6 @@ export class PasswordVault {
     return this.input.crypto.isAvailable();
   }
 
-  /** Returns false when no OS-backed encryption exists; the password is then never written. */
   public save(origin: string, username: string, password: string): boolean {
     if (!this.isAvailable()) {
       return false;
@@ -114,6 +114,41 @@ export class PasswordVault {
     );
   }
 
+  public exportLogins(): BrowserImportLogin[] {
+    if (!this.isAvailable())
+      throw new Error("Unlock the system keychain to access saved passwords.");
+    return Object.entries(this.load().entries).flatMap(([origin, entries]) =>
+      entries.map((entry) => ({ origin, username: entry.username, password: this.decrypt(entry) })),
+    );
+  }
+
+  public importLogins(logins: BrowserImportLogin[]): {
+    passwordCount: number;
+    skippedPasswords: number;
+  } {
+    if (!this.isAvailable())
+      throw new Error("Unlock the system keychain before importing passwords.");
+    const file = structuredClone(this.load());
+    let passwordCount = 0;
+    for (const login of logins) {
+      const entries = file.entries[login.origin] ?? [];
+
+      if (entries.some((entry) => entry.username === login.username)) continue;
+      const now = this.now();
+      entries.push({
+        username: login.username,
+        password: this.input.crypto.encrypt(login.password).toString("base64"),
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+      file.entries[login.origin] = entries;
+      passwordCount += 1;
+    }
+    this.write(file);
+    this.file = file;
+    return { passwordCount, skippedPasswords: logins.length - passwordCount };
+  }
+
   public remove(origin: string, username: string): void {
     const file = this.load();
     const entries = file.entries[origin];
@@ -161,7 +196,6 @@ export class PasswordVault {
     try {
       this.file = vaultFileSchema.parse(JSON.parse(readFileSync(filePath, "utf8")));
     } catch (error) {
-      // Refuse to continue on a corrupt file: treating it as empty would overwrite saved logins.
       throw new PasswordVaultFileError(filePath, error);
     }
     return this.file;

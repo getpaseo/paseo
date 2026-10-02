@@ -104,8 +104,6 @@ import type {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
-import type { TeamService } from "../../team/service.js";
-import { isToolAllowedForTeamRole, registerTeamTools, resolveTeamRole } from "../../team/tools.js";
 import { buildTerminalRunMarker, readTerminalRun, terminalRunPollDelayMs } from "./terminal-run.js";
 import type { ResourcePolicyRuntime } from "../../resource-policy.js";
 import { applyPullRequestCurationChange } from "../../workspace-pull-request-curation.js";
@@ -116,7 +114,6 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
-  teamService?: TeamService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">;
@@ -630,7 +627,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
 
   const tools = new Map<string, PaseoToolDefinition>();
-  const teamRole = resolveTeamRole(agentManager, callerAgentId, options.callerLabels);
   const registerTool = (
     name: string,
     config: PaseoToolConfig,
@@ -638,9 +634,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
-      return;
-    }
-    if (!isToolAllowedForTeamRole(teamRole, name)) {
       return;
     }
     tools.set(name, {
@@ -2095,6 +2088,44 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "dismiss_questions",
+    {
+      title: "Withdraw obsolete questions",
+      description:
+        "Withdraw your own pending request_user_input_async questions that no longer need an answer. Give the reason shown in their history. Specify requestIds to withdraw only selected questions; omit to withdraw all your pending async questions. Never use this for questions that still need user input or approval.",
+      inputSchema: {
+        reason: z.string().trim().min(1),
+        requestIds: z.array(z.string().min(1)).min(1).optional(),
+      },
+      outputSchema: { dismissedRequestIds: z.array(z.string()) },
+    },
+    async ({ reason, requestIds }) => {
+      if (!callerAgentId) throw new Error("Only an agent can withdraw its own questions");
+      const selected = requestIds ? new Set<string>(requestIds) : undefined;
+      const dismissedRequestIds: string[] = [];
+      for (const request of agentManager.getPendingPermissions(callerAgentId)) {
+        if (
+          request.kind !== "question" ||
+          request.name !== "request_user_input_async" ||
+          !agentManager
+            .getPendingPermissions(callerAgentId)
+            .some((pending) => pending.id === request.id) ||
+          (selected && !selected.has(request.id))
+        ) {
+          continue;
+        }
+        await agentManager.respondToPermission(callerAgentId, request.id, {
+          behavior: "deny",
+          interrupt: false,
+          message: reason,
+        });
+        dismissedRequestIds.push(request.id);
+      }
+      return { content: [], structuredContent: ensureValidJson({ dismissedRequestIds }) };
+    },
+  );
+
+  registerTool(
     "get_agent_status",
     {
       title: "Get agent status",
@@ -3536,12 +3567,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       };
     },
   );
-
-  registerTeamTools(registerTool, {
-    teamService: options.teamService,
-    callerAgentId,
-    teamRole,
-  });
 
   return toCatalog();
 }

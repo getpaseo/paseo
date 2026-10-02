@@ -98,12 +98,8 @@ const ThemedKeyboard = withUnistyles(Keyboard);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function isGoogleAccountPage(url: string): boolean {
-  return /^https:\/\/accounts\.google\.com(?:[/:?#]|$)/i.test(url);
-}
-
 function websiteUrl(url: string | null | undefined): string | null {
-  return url && isHttpUrl(url) && !isGoogleAccountPage(url) ? url : null;
+  return url && isHttpUrl(url) ? url : null;
 }
 
 function useExternalBrowserLink(
@@ -115,8 +111,7 @@ function useExternalBrowserLink(
   useEffect(() => {
     setLastWebsiteUrl((previous) => websiteUrl(url) ?? previous);
   }, [url]);
-  const isGoogleAccount = isGoogleAccountPage(url ?? "");
-  const externalUrl = isGoogleAccount ? lastWebsiteUrl : websiteUrl(url);
+  const externalUrl = websiteUrl(url) ?? lastWebsiteUrl;
   const open = useCallback(() => {
     if (!externalUrl) return;
     void openExternalUrl(externalUrl).catch((caught: unknown) => {

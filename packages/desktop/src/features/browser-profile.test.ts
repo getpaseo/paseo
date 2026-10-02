@@ -1,5 +1,15 @@
 import { describe, expect, test } from "vitest";
 import {
+  encryptBrowserBackup,
+  decryptBrowserBackup,
+  readBrowserSessionCookies,
+  writeBrowserSessionCookies,
+} from "./browser-backup.js";
+import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
@@ -28,6 +38,75 @@ class FakeProfileSession {
     return Promise.resolve();
   }
 }
+
+describe("encrypted browser backup", () => {
+  const data = {
+    version: 1 as const,
+    cookies: [
+      {
+        name: "sid",
+        value: "synthetic-session",
+        domain: "example.test",
+        path: "/",
+        expires: -1,
+        httpOnly: true,
+        secure: true,
+      },
+    ],
+    logins: [
+      { origin: "https://example.test", username: "fixture-user", password: "synthetic-login" },
+    ],
+  };
+  test("roundtrips cookies and credentials and rejects a wrong passphrase, tampering and a short passphrase", async () => {
+    const encrypted = await encryptBrowserBackup(data, "a synthetic passphrase");
+    expect(encrypted).not.toContain("synthetic-session");
+    expect(encrypted).not.toContain("synthetic-login");
+    expect(await decryptBrowserBackup(encrypted, "a synthetic passphrase")).toEqual(data);
+    await expect(decryptBrowserBackup(encrypted, "wrong synthetic passphrase")).rejects.toThrow(
+      /No data was restored/,
+    );
+    const tampered = JSON.parse(encrypted);
+    tampered.tag = Buffer.alloc(16).toString("base64");
+    await expect(
+      decryptBrowserBackup(JSON.stringify(tampered), "a synthetic passphrase"),
+    ).rejects.toThrow(/No data was restored/);
+    await expect(encryptBrowserBackup(data, "short")).rejects.toThrow(/12–1024/);
+  });
+  test("keeps session cookies encrypted across instances with POSIX-private permissions and fails closed without OS encryption", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "paseo-session-fixture-"));
+    const file = join(dir, "session.enc");
+    const key = randomBytes(32);
+    const crypto = {
+      isAvailable: () => true,
+      encrypt: (plain: string) => {
+        const iv = randomBytes(12);
+        const cipher = createCipheriv("aes-256-gcm", key, iv);
+        const encrypted = Buffer.concat([cipher.update(plain), cipher.final()]);
+        return Buffer.concat([iv, cipher.getAuthTag(), encrypted]);
+      },
+      decrypt: (encrypted: Buffer) => {
+        const decipher = createDecipheriv("aes-256-gcm", key, encrypted.subarray(0, 12));
+        decipher.setAuthTag(encrypted.subarray(12, 28));
+        return Buffer.concat([
+          decipher.update(encrypted.subarray(28)),
+          decipher.final(),
+        ]).toString();
+      },
+    };
+    try {
+      await writeBrowserSessionCookies(file, data.cookies, crypto);
+      expect(readFileSync(file).includes(Buffer.from("synthetic-session"))).toBe(false);
+      if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(await readBrowserSessionCookies(file, crypto)).toEqual(data.cookies);
+      await expect(
+        writeBrowserSessionCookies(file, [], { ...crypto, isAvailable: () => false }),
+      ).rejects.toThrow(/Unlock/);
+      expect(await readBrowserSessionCookies(file, crypto)).toEqual(data.cookies);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 class FakeLiveGuest {
   public reloads = 0;

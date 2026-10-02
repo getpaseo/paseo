@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
+import { createPairingInvite } from "./device-access.js";
 import { renderPairingQr } from "./pairing-qr.js";
 import { getOrCreateServerId } from "./server-id.js";
 
@@ -43,6 +44,7 @@ export async function generateLocalPairingOffer(args: {
     serverId,
     daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
     relay: { endpoint: relayPublicEndpoint, useTls: relayPublicUseTls },
+    invite: createPairingInvite(args.paseoHome),
   });
   const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
 

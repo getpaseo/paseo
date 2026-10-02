@@ -8,6 +8,22 @@ export type { PushPayload };
 
 const PUSH_TOKEN_LEASE_MS = 48 * 60 * 60 * 1000;
 
+export function contentFreePayload(payload: PushPayload): PushPayload {
+  return {
+    title: "PandaOS",
+    body: "Something is waiting for you.",
+    ...(payload.data
+      ? {
+          data: Object.fromEntries(
+            ["serverId", "workspaceId", "agentId", "terminalId"].flatMap((key) =>
+              typeof payload.data?.[key] === "string" ? [[key, payload.data[key]]] : [],
+            ),
+          ),
+        }
+      : {}),
+  };
+}
+
 export interface PushNotifications {
   renew(token: string): void;
   revoke(token: string): void;
@@ -52,7 +68,7 @@ export function createPushNotifications(options: {
       const tokens = store.getActiveTokens();
       options.logger.info({ tokenCount: tokens.length }, "Sending push notification");
       if (tokens.length === 0) return;
-      await deliver(tokens, payload);
+      await deliver(tokens, contentFreePayload(payload));
     },
   };
 }

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createPairingInvite, DeviceAccess, type PairedDeviceManagement } from "./device-access.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
@@ -1329,5 +1333,109 @@ describe("relay external socket reconnect behavior", () => {
     expect(new TextDecoder().decode(frame.payload ?? new Uint8Array())).toBe("ok");
 
     await server.close();
+  });
+});
+
+describe("paired relay devices", () => {
+  const homes: string[] = [];
+  beforeEach(() => {
+    sessionMock.instances.length = 0;
+  });
+  afterEach(() => {
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  });
+  function pairedServer(locked = true) {
+    const home = mkdtempSync(path.join(os.tmpdir(), "paseo-paired-relay-"));
+    homes.push(home);
+    const server = createServer();
+    let isLocked = locked;
+    const access = new DeviceAccess({
+      paseoHome: home,
+      isLocked: () => isLocked,
+      logger: createStub<pino.Logger>(createLogger()),
+    });
+    access.setLocked = (next) => {
+      isLocked = next;
+    };
+    asInternals<{ deviceAccess: DeviceAccess | null }>(server).deviceAccess = access;
+    return { server, home, access };
+  }
+  test("rejects an unpaired relay hello when locked", async () => {
+    const { server } = pairedServer();
+    const socket = new MockSocket();
+    try {
+      await server.attachExternalSocket(socket, { transport: "relay" });
+      socket.emit("message", JSON.stringify(createHelloMessage("unpaired")));
+      await vi.waitFor(() => expect(socket.readyState).toBe(3));
+      expect(sessionMock.instances).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+  test("pairs a relay device without widening admission and revokes its active socket", async () => {
+    const { server, home } = pairedServer();
+    const socket = new MockSocket();
+    try {
+      await server.attachExternalSocket(socket, { transport: "relay" });
+      socket.emit(
+        "message",
+        JSON.stringify({
+          ...createHelloMessage("paired"),
+          deviceCredential: "c".repeat(43),
+          pairingInvite: createPairingInvite(home),
+        }),
+      );
+      await vi.waitFor(() => expect(sessionMock.instances).toHaveLength(1));
+      expect(sessionMock.instances[0].args.permissions).toEqual(DAEMON_PERMISSIONS);
+      const management = sessionMock.instances[0].args.pairedDevices as PairedDeviceManagement;
+      const device = management.list()[0]!;
+      expect(device.current).toBe(true);
+      expect(device).not.toHaveProperty("credentialHash");
+      expect(management.revoke(device.id)).toBe(true);
+      expect(socket.readyState).toBe(3);
+    } finally {
+      await server.close();
+    }
+  });
+  test("keeps authenticated service principals and their narrower grants", async () => {
+    const { server } = pairedServer();
+    const socket = new MockSocket();
+    try {
+      await server.attachExternalSocket(
+        socket,
+        { transport: "relay" },
+        { principalId: "service:test", permissions: ["daemon.read"] },
+      );
+      socket.emit("message", JSON.stringify(createHelloMessage("service")));
+      await vi.waitFor(() => expect(sessionMock.instances).toHaveLength(1));
+      expect(sessionMock.instances[0].args.permissions).toEqual(["daemon.read"]);
+      expect(
+        asInternals<{ sessions: Map<MockSocket, { principalId: string }> }>(server).sessions.get(
+          socket,
+        )?.principalId,
+      ).toBe("service:test");
+    } finally {
+      await server.close();
+    }
+  });
+  test("locking closes anonymous relay connections while preserving direct access", async () => {
+    const { server } = pairedServer(false);
+    const relay = new MockSocket();
+    const direct = new MockSocket();
+    try {
+      await attachRelayAndHello({ server, socket: relay, clientId: "legacy" });
+      await asInternals<WebSocketServerInternals>(server).attachSocket(
+        direct,
+        createDirectRequest(),
+      );
+      direct.emit("message", JSON.stringify(createHelloMessage("direct-owner")));
+      await vi.waitFor(() => expect(sessionMock.instances).toHaveLength(2));
+      const management = sessionMock.instances[1].args.pairedDevices as PairedDeviceManagement;
+      management.setLocked(true);
+      expect(relay.readyState).toBe(3);
+      expect(direct.readyState).toBe(1);
+    } finally {
+      await server.close();
+    }
   });
 });

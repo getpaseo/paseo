@@ -64,4 +64,38 @@ describe("push notifications", () => {
 
     expect(deliveries).toEqual([]);
   });
+
+  test("a push carries no agent text, only the ids that open it", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "paseo-push-notifications-"));
+    homes.push(home);
+    const sent: unknown[] = [];
+    const pushNotifications = createPushNotifications({
+      logger: createLogger(),
+      filePath: path.join(home, "push-tokens.json"),
+      deliver: async (_tokens, payload) => {
+        sent.push(payload);
+      },
+    });
+
+    pushNotifications.renew("fcm:device");
+    await pushNotifications.send({
+      title: "RateMyCoworking",
+      body: "Please sign in to Supabase so I can continue.",
+      data: {
+        serverId: "srv",
+        workspaceId: "wks",
+        agentId: "agent",
+        cwd: "/private/project",
+        reply: "Private reply",
+      },
+    });
+
+    expect(sent).toEqual([
+      {
+        title: "PandaOS",
+        body: "Something is waiting for you.",
+        data: { serverId: "srv", workspaceId: "wks", agentId: "agent" },
+      },
+    ]);
+  });
 });

@@ -9,6 +9,8 @@ import { useFetchQuery } from "@/data/query";
 import { getDesktopHost, type DesktopSavedLogin } from "@/desktop/host";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { useHostFeature } from "@/runtime/host-features";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 
 const SAVED_PASSWORDS_QUERY_KEY = ["browser-saved-passwords"] as const;
 
@@ -20,11 +22,36 @@ function getPasswordBridge() {
   return { list: bridge.listSavedPasswords, remove: bridge.removeSavedPassword };
 }
 
-export function SavedPasswordsSection() {
+export function SavedPasswordsSection({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const client = useHostRuntimeClient(serverId);
+  const hostProfile = useHostFeature(serverId, "browserScreencast");
+  const hostPasswords = useHostFeature(serverId, "browserProfileImport");
+  const read = async () => {
+    if (!hostProfile) return getPasswordBridge().list();
+    if (!client || !hostPasswords)
+      throw new Error("Update and connect the host to manage its saved passwords.");
+    const result = await client.manageBrowserPasswords({ action: "list" });
+    if (result.error) throw new Error(result.error);
+    return result;
+  };
+  const remove = useCallback(
+    async (login: DesktopSavedLogin) => {
+      if (!hostProfile) return getPasswordBridge().remove(login);
+      if (!client || !hostPasswords)
+        throw new Error("Update and connect the host to manage its saved passwords.");
+      const result = await client.manageBrowserPasswords({
+        action: "remove",
+        origin: login.origin,
+        username: login.username,
+      });
+      if (result.error) throw new Error(result.error);
+    },
+    [client, hostProfile, hostPasswords],
+  );
   const saved = useFetchQuery({
-    queryKey: SAVED_PASSWORDS_QUERY_KEY,
-    queryFn: () => getPasswordBridge().list(),
+    queryKey: [...SAVED_PASSWORDS_QUERY_KEY, serverId, hostProfile],
+    queryFn: read,
     dataShape: "value",
     staleTimeMs: 0,
   });
@@ -40,6 +67,7 @@ export function SavedPasswordsSection() {
           available={saved.data?.available ?? true}
           logins={saved.data?.logins ?? []}
           loadError={saved.error}
+          remove={remove}
         />
       </SettingsCard>
     </SettingsSection>
@@ -51,11 +79,13 @@ function SavedPasswordsCardBody({
   available,
   logins,
   loadError,
+  remove,
 }: {
   isLoading: boolean;
   available: boolean;
   logins: DesktopSavedLogin[];
   loadError: Error | null;
+  remove: (login: DesktopSavedLogin) => Promise<unknown>;
 }) {
   const { t } = useTranslation();
   if (isLoading) {
@@ -75,11 +105,17 @@ function SavedPasswordsCardBody({
     );
   }
   return logins.map((login) => (
-    <SavedPasswordRow key={`${login.origin}\n${login.username}`} login={login} />
+    <SavedPasswordRow key={`${login.origin}\n${login.username}`} login={login} remove={remove} />
   ));
 }
 
-function SavedPasswordRow({ login }: { login: DesktopSavedLogin }) {
+function SavedPasswordRow({
+  login,
+  remove,
+}: {
+  login: DesktopSavedLogin;
+  remove: (login: DesktopSavedLogin) => Promise<unknown>;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const username = login.username || t("settings.browser.passwords.noUsername");
@@ -98,7 +134,7 @@ function SavedPasswordRow({ login }: { login: DesktopSavedLogin }) {
       if (!confirmed) {
         return;
       }
-      await getPasswordBridge().remove(login);
+      await remove(login);
       await queryClient.invalidateQueries({ queryKey: SAVED_PASSWORDS_QUERY_KEY });
     },
   });

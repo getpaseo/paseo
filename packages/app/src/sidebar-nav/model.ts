@@ -1,15 +1,8 @@
 import type { PluginSidebarGroup } from "@/plugins/sidebar-groups";
 
-export const BUILTIN_SIDEBAR_NAV_IDS = [
-  "new-workspace",
-  "history",
-  "search",
-  "schedules",
-  "teams",
-] as const;
+export const BUILTIN_SIDEBAR_NAV_IDS = ["new-workspace", "history", "search", "schedules"] as const;
 export type BuiltinSidebarNavId = (typeof BUILTIN_SIDEBAR_NAV_IDS)[number];
 
-/** Persisted shape. Array order is the display order. */
 export interface SidebarNavPreference {
   key: string;
   visible: boolean;
@@ -36,24 +29,17 @@ const BUILTIN_LABEL_KEYS: Record<BuiltinSidebarNavId, string> = {
   history: "sidebar.sections.sessions",
   search: "sidebar.sections.search",
   schedules: "sidebar.sections.schedules",
-  teams: "sidebar.sections.teams",
 };
 
 export function builtinSidebarNavLabelKey(id: BuiltinSidebarNavId): string {
   return BUILTIN_LABEL_KEYS[id];
 }
 
-/**
- * Shortcut action ids (`resolveShortcutKeysForAction`) for the builtins that have one.
- * Both the sidebar row and the Appearance settings row read the badge from here so the
- * two never disagree about which shortcut belongs to which item.
- */
 const BUILTIN_SHORTCUT_ACTIONS: Record<BuiltinSidebarNavId, string | null> = {
   "new-workspace": "new-workspace",
   history: null,
   search: "toggle-command-center",
   schedules: null,
-  teams: null,
 };
 
 export function builtinSidebarNavShortcutAction(id: BuiltinSidebarNavId): string | null {
@@ -108,10 +94,6 @@ export function resolveSidebarNavItems(input: {
   return items;
 }
 
-/**
- * Resolved items lead; entries for keys that are not currently available (a plugin that is
- * disconnected right now) follow so an unrelated edit does not erase them.
- */
 function toPreferences(
   items: readonly SidebarNavItem[],
   previous: readonly SidebarNavPreference[],

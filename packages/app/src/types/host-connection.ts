@@ -47,6 +47,10 @@ export interface RelayHostConnection {
   relayEndpoint: string;
   useTls?: boolean;
   daemonPublicKeyB64: string;
+
+  deviceCredential?: string;
+
+  pairingInvite?: string;
 }
 
 export type HostConnection =
@@ -142,7 +146,9 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return (
       left.relayEndpoint === right.relayEndpoint &&
       left.useTls === right.useTls &&
-      left.daemonPublicKeyB64 === right.daemonPublicKeyB64
+      left.daemonPublicKeyB64 === right.daemonPublicKeyB64 &&
+      left.deviceCredential === right.deviceCredential &&
+      left.pairingInvite === right.pairingInvite
     );
   }
 
@@ -414,6 +420,8 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     relayEndpoint: z.string(),
     useTls: z.boolean().optional(),
     daemonPublicKeyB64: z.string(),
+    deviceCredential: z.string().optional(),
+    pairingInvite: z.string().optional(),
   }),
 ]);
 const StoredHostProfileSchema = z.strictObject({
@@ -429,6 +437,16 @@ const StoredHostProfileSchema = z.strictObject({
 });
 export const StoredHostRegistrySchema = z.array(StoredHostProfileSchema);
 type StoredHostConnection = z.infer<typeof StoredHostConnectionSchema>;
+
+export function createDeviceCredential(): string {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  return globalThis
+    .btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 function normalizeStoredConnection(connection: StoredHostConnection): HostConnection | null {
   if (connection.type === "directTcp") {
@@ -476,6 +494,8 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
         relayEndpoint,
         ...(useTls !== undefined ? { useTls } : {}),
         daemonPublicKeyB64,
+        deviceCredential: connection.deviceCredential ?? createDeviceCredential(),
+        ...(connection.pairingInvite ? { pairingInvite: connection.pairingInvite } : {}),
       };
     } catch {
       return null;

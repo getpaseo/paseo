@@ -23,7 +23,7 @@ import {
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
-import { SidebarLeisteHeader } from "@/components/sidebar/sidebar-leiste";
+import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -54,9 +54,6 @@ import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
-
-// The mobile close button floats over the head's right edge: its 32px target plus the rail inset.
-const MOBILE_CLOSE_BUTTON_INSET = 40;
 
 const DEV_BUILD_LABEL = process.env.EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL?.trim() || null;
 
@@ -558,11 +555,7 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <SidebarLeisteHeader
-          style={styles.sidebarHeaderGroup}
-          onBeforeNavigate={closeSidebar}
-          trailingInset={MOBILE_CLOSE_BUTTON_INSET}
-        />
+        <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
         <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
           <Pressable
             style={styles.mobileCloseButton}
@@ -676,9 +669,6 @@ function DesktopSidebar({
         .onBegin(() => {
           scheduleOnRN(showResizeGrip);
         })
-        // Horizontal intent only, so a finger dragging down the touch grip scrolls
-        // the workspace list instead of resizing. Anchoring the start width to the
-        // activation translation keeps the extra threshold from jumping the edge.
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
@@ -686,7 +676,6 @@ function DesktopSidebar({
           resizeWidth.value = visibleSidebarWidth;
         })
         .onUpdate((event) => {
-          // Dragging right (positive translationX) increases width
           const newWidth = startWidthRef.current + event.translationX;
           resizeWidth.value = resolveDesktopSidebarWidth({
             requestedWidth: newWidth,
@@ -758,7 +747,7 @@ function DesktopSidebar({
           ) : (
             <TitlebarDragRegion />
           )}
-          <SidebarLeisteHeader style={sidebarHeaderGroupStyle} />
+          <SidebarNavRows style={sidebarHeaderGroupStyle} />
         </View>
 
         {isInitialLoad && !hasActiveHostFilter ? (
@@ -827,14 +816,7 @@ function WorkspacesSectionHeader() {
     </View>
   );
 }
-
-// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
-// renders (WorkspacesSectionHeader takes no props).
 const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
-
-// Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
-// avoid the "Unable to find node on an unmounted component" crash when Unistyles
-// tries to patch the native node that Reanimated also manages.
 const staticStyles = RNStyleSheet.create({
   desktopSidebar: {
     position: "relative" as const,
@@ -860,15 +842,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
-    // Rendered inside the scroll's listContent (paddingHorizontal spacing[2]). The title
-    // lands at spacing[2] left to align with project icons. Settings2's painted path stops
-    // inside its 14px SVG, so 4px aligns the ink rather than the SVG box to the row rail.
     paddingLeft: theme.spacing[2],
     paddingRight: 4,
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
   },
-  // Small tracked capitals, like every section head in the Leiste: it names a region.
   workspacesSectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
@@ -895,8 +873,6 @@ const styles = StyleSheet.create((theme) => ({
     pointerEvents: "box-none",
   },
   mobileCloseButton: {
-    // The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
-    // This optical inset puts their painted right edges on the same sidebar rail.
     marginRight: theme.spacing[2] + 1.5,
     width: 32,
     height: 32,

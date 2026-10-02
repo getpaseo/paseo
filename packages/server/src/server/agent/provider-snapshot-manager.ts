@@ -291,6 +291,11 @@ export class ProviderSnapshotManager {
     return this.getSnapshotForTarget(target);
   }
 
+  getCachedSnapshot(cwd?: string): ProviderSnapshot {
+    // Routing must not start another account's runtime merely to inspect its catalog.
+    return this.getOrCreateTarget(resolveProviderSnapshotTarget(cwd).snapshotCwd).snapshot;
+  }
+
   async refreshSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {
     const snapshotCwd = resolveSnapshotCwd(options.cwd);
     const target = createWorkspaceSnapshotTarget(snapshotCwd);

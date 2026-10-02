@@ -115,3 +115,22 @@ describe("normalizeAgentSnapshot", () => {
     expect(nonString.parentAgentId).toBeNull();
   });
 });
+
+it("preserves the structured composer routing notice through snapshot normalization and projection", () => {
+  const notice = {
+    fromProfile: "codex-plus",
+    toProfile: "codex-business",
+    fromModel: "gpt-6.1-sol",
+    model: "gpt-6.1-sol",
+    fromEffort: "medium",
+    effort: "medium",
+    resetsAt: "2026-09-30T14:00:00Z",
+    status: "selected" as const,
+    reason: "Jev preserved model and effort",
+    attemptedProfiles: ["codex-plus", "codex-business"],
+  };
+  const snapshot = { ...createSnapshot(), routingNotice: notice };
+  const agent = normalizeAgentSnapshot(snapshot, "server-1");
+  expect(agent.routingNotice).toEqual(notice);
+  expect(projectAgentSnapshot(agent).routingNotice).toEqual(notice);
+});

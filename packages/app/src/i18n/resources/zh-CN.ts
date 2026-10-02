@@ -2638,6 +2638,15 @@ export const zhCN: TranslationResources = {
         title: "配对设备",
         rowTitle: "配对设备",
         rowHint: "扫描二维码或复制链接，将手机连接到这个 Host",
+        devicesTitle: "Paired devices",
+        lock: "仅允许已配对设备",
+        unlock: "允许注册新设备",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         ...en.settings.host.skills,

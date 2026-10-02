@@ -1413,6 +1413,7 @@ export class HubRelationshipHarness {
       relayEnabled: false,
       relayEndpoint: "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",
+      skillSelection: { mode: "custom", skills: [] },
     };
   }
 

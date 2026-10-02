@@ -7,12 +7,15 @@ import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-sect
 import { BrowserStartPageSection } from "@/desktop/browser/settings/browser-start-page-section";
 import { BrowserStreamingSection } from "@/desktop/browser/settings/browser-streaming-section";
 import { SavedPasswordsSection } from "@/desktop/browser/settings/saved-passwords-section";
+import { BrowserBackupSection } from "@/desktop/browser/settings/browser-backup-section";
+import { useHostFeature } from "@/runtime/host-features";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { BrowserImportSection } from "./browser-import-section";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
 
 export function HostBrowserPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const hostBrowser = useHostFeature(serverId, "browserScreencast");
   const isLocalDaemon = useIsLocalDaemon(serverId);
 
   return (
@@ -37,8 +40,9 @@ export function HostBrowserPage({ serverId }: { serverId: string }) {
         </SettingsCard>
       </SettingsSection>
       <BrowserImportSection serverId={serverId} isLocalDaemon={isLocalDaemon} />
-      {getIsElectron() ? <SavedPasswordsSection /> : null}
-      {getIsElectron() && isLocalDaemon ? <BrowserDataSection /> : null}
+      {hostBrowser || getIsElectron() ? <SavedPasswordsSection serverId={serverId} /> : null}
+      {getIsElectron() ? <BrowserBackupSection serverId={serverId} /> : null}
+      {getIsElectron() && isLocalDaemon && !hostBrowser ? <BrowserDataSection /> : null}
     </View>
   );
 }

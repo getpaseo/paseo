@@ -1,8 +1,10 @@
 import {
   BrowserImportError,
   readBrowserImportCookies,
+  readBrowserImportPasswords,
   type BrowserImportCookie,
 } from "@getpaseo/server/browser-import";
+import type { PasswordVault } from "./browser-passwords/vault.js";
 
 export type ReadImportCookiesResult =
   | { ok: true; cookies: BrowserImportCookie[] }
@@ -24,6 +26,56 @@ interface ElectronCookies {
   set(details: ElectronCookieDetails): Promise<void>;
 }
 
+export function fromElectronCookie(cookie: Electron.Cookie): BrowserImportCookie {
+  const sameSite = { strict: "Strict", lax: "Lax", no_restriction: "None" } as const;
+  const domain = cookie.hostOnly ? (cookie.domain ?? "").replace(/^\./, "") : (cookie.domain ?? "");
+  return {
+    name: cookie.name,
+    value: cookie.value,
+    domain,
+    path: cookie.path ?? "/",
+    expires: cookie.expirationDate ?? -1,
+    httpOnly: cookie.httpOnly ?? false,
+    secure: cookie.secure ?? false,
+    ...(cookie.sameSite && cookie.sameSite in sameSite
+      ? { sameSite: sameSite[cookie.sameSite as keyof typeof sameSite] }
+      : {}),
+  };
+}
+
+export async function importBrowserProfile(input: {
+  sourceId: string;
+  primaryPassword: string;
+  cookies: ElectronCookies;
+  vault: PasswordVault;
+}): Promise<{
+  cookieCount: number;
+  domainCount: number;
+  passwordCount: number;
+  skippedPasswords: number;
+}> {
+  if (!input.vault.isAvailable())
+    throw new BrowserImportError("Unlock the system keychain before importing browser logins.");
+
+  const cookies = await readBrowserImportCookies(input.sourceId);
+  const logins = await readBrowserImportPasswords(input.sourceId, undefined, input.primaryPassword);
+  for (const cookie of cookies) {
+    try {
+      await input.cookies.set(toElectronCookie(cookie));
+    } catch {
+      throw new BrowserImportError(
+        "A cookie was rejected by the desktop browser. Some cookies may have been imported; passwords were not changed. Close the source browser and retry.",
+      );
+    }
+  }
+  const result = input.vault.importLogins(logins);
+  return {
+    cookieCount: cookies.length,
+    domainCount: new Set(cookies.map((cookie) => cookie.domain.replace(/^\./, ""))).size,
+    ...result,
+  };
+}
+
 const ELECTRON_SAME_SITE = {
   Strict: "strict",
   Lax: "lax",
@@ -36,7 +88,7 @@ export function toElectronCookie(cookie: BrowserImportCookie): ElectronCookieDet
     url: `${cookie.secure ? "https" : "http"}://${host}${cookie.path}`,
     name: cookie.name,
     value: cookie.value,
-    // Electron treats any domain as a domain cookie; host-only cookies must omit it.
+
     ...(cookie.domain.startsWith(".") ? { domain: cookie.domain } : {}),
     path: cookie.path,
     secure: cookie.secure,
@@ -46,10 +98,6 @@ export function toElectronCookie(cookie: BrowserImportCookie): ElectronCookieDet
   };
 }
 
-/**
- * Reads a local browser profile, copies its cookies into the desktop Paseo browser session,
- * and returns them so the renderer can forward them to the daemon's browser.
- */
 export async function readImportCookiesIntoSession(input: {
   sourceId: unknown;
   cookies: ElectronCookies;
@@ -66,8 +114,10 @@ export async function readImportCookiesIntoSession(input: {
       error: error instanceof BrowserImportError ? error.message : "Browser import failed.",
     };
   }
-  await Promise.all(
-    cookies.map((cookie) => input.cookies.set(toElectronCookie(cookie)).catch(() => undefined)),
-  );
+  try {
+    for (const cookie of cookies) await input.cookies.set(toElectronCookie(cookie));
+  } catch {
+    return { ok: false, error: "A cookie was rejected by the desktop browser. Retry the import." };
+  }
   return { ok: true, cookies };
 }

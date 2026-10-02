@@ -1,11 +1,6 @@
 import type { KeyboardShortcutPayload, MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import {
-  buildDashboardRoute,
-  buildSettingsRoute,
-  isLeitstandPathname,
-  parseHostWorkspaceRouteFromPathname,
-} from "@/utils/host-routes";
+import { buildSettingsRoute, parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import {
   getRelativeSidebarShortcutTarget,
   type SidebarShortcutWorkspaceTarget,
@@ -42,8 +37,6 @@ export type ShortcutAction =
   | { kind: "shortcuts-dialog-toggle"; nextOpen: boolean };
 
 const NONE: ShortcutAction = { kind: "none" };
-
-// Action ids whose routing is a no-payload pass-through to the dispatcher.
 const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "agent.interrupt": { id: "agent.interrupt", scope: "global" },
   "workspace.tab.menu.open": { id: "workspace.tab.menu.open", scope: "workspace" },
@@ -184,28 +177,15 @@ function routeSettingsToggle(ctx: ShortcutRoutingContext): ShortcutAction {
   }
   return { kind: "router-back" };
 }
-
-// Mirrors the settings toggle: away from the Leitstand it opens, on it it returns to your session.
-function routeLeitstandToggle(ctx: ShortcutRoutingContext): ShortcutAction {
-  if (!isLeitstandPathname(ctx.pathname)) {
-    return { kind: "router-push", route: buildDashboardRoute() };
-  }
-  if (!ctx.isMobile) {
-    return { kind: "navigate-last-workspace" };
-  }
-  return { kind: "router-back" };
-}
-
 export function routeKeyboardShortcut(
   input: ShortcutRoutingInput,
   ctx: ShortcutRoutingContext,
 ): ShortcutAction {
   const passthrough = PASSTHROUGH_DISPATCH[input.action];
   if (passthrough) {
-    // Esc leaves the full-screen pages that have no agent to interrupt.
     if (
       input.action === "agent.interrupt" &&
-      (ctx.pathname.startsWith("/settings") || isLeitstandPathname(ctx.pathname)) &&
+      ctx.pathname.startsWith("/settings") &&
       !ctx.isMobile
     ) {
       return { kind: "navigate-last-workspace" };
@@ -235,8 +215,6 @@ export function routeKeyboardShortcut(
       return { kind: "open-project-picker" };
     case "settings.toggle":
       return routeSettingsToggle(ctx);
-    case "leitstand.toggle":
-      return routeLeitstandToggle(ctx);
     case "command-center.toggle":
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
     case "command-center.files":

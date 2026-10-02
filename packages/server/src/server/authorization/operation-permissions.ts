@@ -25,6 +25,8 @@ const INBOUND_PERMISSION = {
   "agent.timeline.append.request": "workspace.write",
   "browser.host.register.request": ["workspace.write"],
   "browser.import.import_cookies.request": "daemon.manage",
+  "browser.profile.backup.request": "daemon.manage",
+  "browser.profile.manage_passwords.request": "daemon.manage",
   "browser.import.list_sources.request": "daemon.read",
   "browser.remote.execute.request": "workspace.write",
   "browser.tunnel.connect.request": "workspace.write",
@@ -79,6 +81,9 @@ const INBOUND_PERMISSION = {
   create_terminal_request: "workspace.write",
   "daemon.config.reload.request": "daemon.manage",
   "daemon.get_pairing_offer.request": "access.manage",
+  "device.list.request": "access.manage",
+  "device.revoke.request": "access.manage",
+  "device.lock.set.request": "access.manage",
   "daemon.get_status.request": "daemon.read",
   "daemon.update.request": "daemon.manage",
   delete_agent_request: "workspace.write",
@@ -323,6 +328,9 @@ const OUTBOUND_PERMISSION = {
   create_terminal_response: "workspace.write",
   "daemon.config.reload.response": "daemon.manage",
   "daemon.get_pairing_offer.response": "access.manage",
+  "device.list.response": "access.manage",
+  "device.revoke.response": "access.manage",
+  "device.lock.set.response": "access.manage",
   "daemon.get_status.response": "daemon.read",
   "daemon.update.progress": "daemon.manage",
   "daemon.update.response": "daemon.manage",
@@ -454,6 +462,8 @@ const OUTBOUND_PERMISSION = {
   voice_input_state: "workspace.write",
   wait_for_finish_response: "workspace.read",
   "browser.import.import_cookies.response": "daemon.manage",
+  "browser.profile.backup.response": "daemon.manage",
+  "browser.profile.manage_passwords.response": "daemon.manage",
   "browser.import.list_sources.response": "daemon.read",
   "browser.activity": "workspace.read",
   "browser.handoff": "workspace.read",
@@ -501,7 +511,6 @@ export function requiredPermissionForInbound(operation: InboundOperation): Permi
 export function requiredPermissionForOutbound(
   message: SessionOutboundMessage,
 ): PermissionRequirement {
-  // The legacy status envelope carries both agent RPC results and daemon configuration.
   if (
     message.type === "status" &&
     (message.payload.status === "agent_created" || message.payload.status === "agent_create_failed")

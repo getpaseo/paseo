@@ -13,7 +13,9 @@ principal -> grants
 
 A principal is the durable identity the daemon authorizes. A credential proves that a device or service represents it. Keep them separate so you can rotate credentials, attach more than one device, and revoke a Hub user without inventing daemon user accounts.
 
-A pairing invitation is neither. It is an expiring, single-use exchange that creates a principal and credential with the permissions selected by its issuer.
+Relay pairing uses an expiring, single-use invitation to register the app's durable device credential. The daemon persists credential hashes and revocations, never the credential itself. Pairing an owner device keeps owner permissions; it does not create selectable grants. Authenticated service principals keep their existing identity and permissions.
+
+Enable **Allow only paired devices** in the host's Pair a device settings to reject unregistered relay apps. While unlocked, current apps register on first connection so previously paired hosts can adopt a device credential. Revoked credentials stay rejected, even while unlocked, until a new valid invitation authorizes them again. Locking closes existing anonymous relay connections. Direct/local password and local-credential authentication remain unchanged; the device gate never substitutes for that authentication. Old apps without device credentials cannot reconnect through a locked relay.
 
 ## Permissions
 

@@ -1,0 +1,63 @@
+{
+  "status": "verified",
+  "pendingRecipe": "evr_cae0799a-04ff-47e3-b371-2ecd5a3f95f5",
+  "reloadRecipe": "evr_fe0956f0-87e3-4b4c-99fe-14ca3ea4903f",
+  "expandedScreenshot": "evr_f4cae28f-f189-4423-88e9-0d407cc8c188",
+  "dismissResult": {
+    "result": {
+      "content": [],
+      "structuredContent": {
+        "dismissedRequestIds": ["permission-obsolete-login"]
+      }
+    },
+    "pending": ["permission-still-needed"],
+    "reason": "Existing credentials worked; browser login is no longer needed."
+  },
+  "persistedAsyncQuestions": [
+    {
+      "item": {
+        "type": "agentMessage",
+        "id": "obsolete-login",
+        "delivery": "async",
+        "questions": [
+          {
+            "title": "Obsolete browser login?",
+            "options": ["Yes", "No"]
+          }
+        ]
+      },
+      "resolution": "dismissed",
+      "dismissalReason": "Existing credentials worked; browser login is no longer needed."
+    },
+    {
+      "item": {
+        "type": "agentMessage",
+        "id": "still-needed",
+        "delivery": "async",
+        "questions": [
+          {
+            "title": "Which delivery format?",
+            "options": ["Yes", "No"]
+          }
+        ]
+      }
+    }
+  ],
+  "routingNotice": {
+    "status": "selected",
+    "fromProfile": "QA primary",
+    "toProfile": "QA secondary",
+    "fromModel": "gpt-5.4",
+    "model": "gpt-5.4",
+    "fromEffort": "high",
+    "effort": "high",
+    "attemptedProfiles": ["QA primary", "QA secondary"],
+    "resetsAt": null,
+    "reason": "Controlled routing UI fixture"
+  },
+  "limitations": [
+    "Routing notice is a synthetic manager-config fixture, no actual quota/provider switch.",
+    "Bounded Jev history expansion was uncertain; own manual browser tools expanded first history card and actual DOM + screenshot were inspected.",
+    "One console error was saved Mac-only ws://localhost:3133/ws unavailable in Linux browser; own Questions host stayed connected."
+  ]
+}

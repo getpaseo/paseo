@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -7,6 +7,7 @@ import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { BrowserToolsBroker } from "../browser-tools/broker.js";
+import { BrowserActivityHub } from "../browser-tools/browser-activity.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
 import { DaemonPlaywrightHost, type ScreencastFrame } from "./playwright-host.js";
@@ -643,7 +644,11 @@ describe.skipIf(!BROWSER_AVAILABLE)(
 
     beforeAll(async () => {
       paseoHome = mkdtempSync(join(tmpdir(), "paseo-cookie-import-test-"));
-      host = new DaemonPlaywrightHost({ paseoHome, logger: pino({ enabled: false }) });
+      host = new DaemonPlaywrightHost({
+        paseoHome,
+        logger: pino({ enabled: false }),
+        profileEncryptionKey: async () => Buffer.alloc(32, 9),
+      });
       app = await startVerifyFixtureApp();
     }, 60_000);
 
@@ -696,6 +701,246 @@ describe.skipIf(!BROWSER_AVAILABLE)(
 
       const late = await openReport("late");
       expect(new URL(late.url).pathname).toBe("/report");
+      const hub = new BrowserActivityHub(() => {});
+      const handoff = {
+        workspaceId: WORKSPACE_ID,
+        browserId: early.browserId,
+        agentId: "first-fixture-agent",
+        reason: "Fixture sign in",
+        onEnd: () => {},
+      };
+      expect(hub.startHandoff(handoff)?.status).toBe("active");
+      expect(
+        hub.refuseHandedOff({ command: "close_tab", args: { browserId: early.browserId } }),
+      ).toMatchObject({ ok: false, error: { code: "browser_denied" } });
+      expect(
+        hub.control({
+          workspaceId: WORKSPACE_ID,
+          browserId: early.browserId,
+          action: "finish_handoff",
+        }),
+      ).toBe(true);
+      expect(hub.startHandoff({ ...handoff, agentId: "second-fixture-agent" })?.status).toBe(
+        "active",
+      );
+      const repeated = await host!.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        profile: "early",
+        command: {
+          command: "navigate",
+          args: { browserId: early.browserId, url: `${app!.url}/report` },
+        },
+      });
+      expect(repeated).toMatchObject({
+        ok: true,
+        result: { command: "navigate", url: `${app!.url}/report` },
+      });
+      expect(
+        hub.control({
+          workspaceId: WORKSPACE_ID,
+          browserId: early.browserId,
+          action: "cancel_handoff",
+        }),
+      ).toBe(true);
+      const anotherWorkspace = await host!.executeLocal({
+        workspaceId: OTHER_WORKSPACE_ID,
+        profile: "early",
+        agentId: "third-fixture-agent",
+        command: { command: "new_tab", args: { url: `${app!.url}/report` } },
+      });
+      expect(anotherWorkspace).toMatchObject({
+        ok: true,
+        result: { command: "new_tab", url: `${app!.url}/report` },
+      });
+      expect(
+        readFileSync(join(paseoHome, "browser-profiles", "imported-cookies.enc")).includes(
+          Buffer.from("verify_auth"),
+        ),
+      ).toBe(false);
+      const rotated = await host!.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        profile: "early",
+        command: {
+          command: "evaluate",
+          args: {
+            browserId: early.browserId,
+            function: "() => { document.cookie = 'rotated_fixture=latest; path=/'; }",
+          },
+        },
+      });
+      expect(rotated.ok).toBe(true);
+      await host!.close();
+      host = new DaemonPlaywrightHost({
+        paseoHome,
+        logger: pino({ enabled: false }),
+        profileEncryptionKey: async () => Buffer.alloc(32, 9),
+      });
+      const restarted = await openReport("early");
+      expect(new URL(restarted.url).pathname).toBe("/report");
+      const cookies = await host.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        profile: "early",
+        command: {
+          command: "evaluate",
+          args: {
+            browserId: restarted.browserId,
+            function: "() => document.cookie.includes('rotated_fixture=latest')",
+          },
+        },
+      });
+      expect(cookies).toMatchObject({
+        ok: true,
+        result: { command: "evaluate", resultJson: "true" },
+      });
+    });
+    it("uses imported passwords for a real sign in and restores a portable backup without replacing existing credentials", async () => {
+      const credentialHome = mkdtempSync(join(tmpdir(), "host-credentials-"));
+      const credentialHost = new DaemonPlaywrightHost({
+        paseoHome: credentialHome,
+        logger: pino({ enabled: false }),
+        profileEncryptionKey: async () => Buffer.alloc(32, 8),
+      });
+      try {
+        const imported = await credentialHost.importProfile(
+          [],
+          [{ origin: app.url, username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD }],
+        );
+        expect(imported.passwordCount).toBe(1);
+        await Promise.all([
+          credentialHost.importProfile(
+            [],
+            [{ origin: "https://one.example", username: "one", password: "synthetic-one" }],
+          ),
+          credentialHost.importProfile(
+            [],
+            [{ origin: "https://two.example", username: "two", password: "synthetic-two" }],
+          ),
+        ]);
+        expect((await credentialHost.manageSavedPasswords({ action: "list" })).length).toBe(3);
+        await credentialHost.manageSavedPasswords({
+          action: "remove",
+          origin: "https://one.example",
+          username: "one",
+        });
+        await credentialHost.manageSavedPasswords({
+          action: "remove",
+          origin: "https://two.example",
+          username: "two",
+        });
+        const created = await credentialHost.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: { command: "new_tab", args: { url: `${app.url}/login` } },
+        });
+        if (!created.ok || created.result.command !== "new_tab") expect.unreachable();
+        const browserId = created.result.browserId;
+        const focused = await credentialHost.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: {
+            command: "evaluate",
+            args: {
+              browserId,
+              function:
+                "() => { document.querySelector('#password').focus(); return typeof window.__pandaosSavedLogin === 'undefined' && document.querySelector('#password').value === ''; }",
+            },
+          },
+        });
+        expect(focused).toMatchObject({ ok: true, result: { resultJson: "true" } });
+        expect(await credentialHost.manageSavedPasswords({ action: "list" })).toEqual([
+          { origin: app.url, username: FIXTURE_USERNAME },
+        ]);
+        await credentialHost.autofillFromUserCommand(OTHER_WORKSPACE_ID, {
+          command: "keypress",
+          args: { browserId, key: "Tab" },
+        });
+        const stillEmpty = await credentialHost.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: {
+            command: "evaluate",
+            args: { browserId, function: "() => document.querySelector('#password').value === ''" },
+          },
+        });
+        expect(stillEmpty).toMatchObject({ ok: true, result: { resultJson: "true" } });
+        await credentialHost.autofillFromUserCommand(WORKSPACE_ID, {
+          command: "keypress",
+          args: { browserId, key: "Tab" },
+        });
+        const submitted = await credentialHost.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: {
+            command: "evaluate",
+            args: { browserId, function: "() => document.querySelector('form').requestSubmit()" },
+          },
+        });
+        expect(submitted.ok).toBe(true);
+        const signedIn = await credentialHost.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: {
+            command: "wait",
+            args: { browserId, text: "Current Report", timeoutMs: 5000 },
+          },
+        });
+        expect(signedIn.ok).toBe(true);
+        const backup = await credentialHost.backupProfile({
+          action: "export",
+          passphrase: "fixture portable backup",
+        });
+        expect(backup.encrypted).not.toContain(FIXTURE_PASSWORD);
+        expect(
+          readFileSync(join(credentialHome, "browser-profiles", "saved-logins.enc")).includes(
+            Buffer.from(FIXTURE_PASSWORD),
+          ),
+        ).toBe(false);
+        await expect(
+          credentialHost.backupProfile({
+            action: "restore",
+            encrypted: backup.encrypted,
+            passphrase: "fixture wrong passphrase",
+          }),
+        ).rejects.toThrow("No data was restored");
+        const restored = await credentialHost.backupProfile({
+          action: "restore",
+          encrypted: backup.encrypted,
+          passphrase: "fixture portable backup",
+        });
+        expect(restored).toMatchObject({ passwordCount: 0, skippedPasswords: 1, cookieCount: 0 });
+        expect(restored.skippedCookies).toBeGreaterThan(0);
+        const freshHome = mkdtempSync(join(tmpdir(), "host-restored-"));
+        const fresh = new DaemonPlaywrightHost({
+          paseoHome: freshHome,
+          logger: pino({ enabled: false }),
+          profileEncryptionKey: async () => Buffer.alloc(32, 7),
+        });
+        try {
+          expect(
+            await fresh.backupProfile({
+              action: "restore",
+              encrypted: backup.encrypted,
+              passphrase: "fixture portable backup",
+            }),
+          ).toMatchObject({ passwordCount: 1, cookieCount: 1 });
+          const reopened = await fresh.executeLocal({
+            workspaceId: WORKSPACE_ID,
+            command: { command: "new_tab", args: { url: `${app.url}/report` } },
+          });
+          expect(reopened).toMatchObject({ ok: true, result: { url: `${app.url}/report` } });
+          await expect(fresh.manageSavedPasswords({ action: "remove" })).rejects.toThrow(
+            "Choose a saved password",
+          );
+          expect(
+            await fresh.manageSavedPasswords({
+              action: "remove",
+              origin: app.url,
+              username: FIXTURE_USERNAME,
+            }),
+          ).toEqual([]);
+        } finally {
+          await fresh.close();
+          rmSync(freshHome, { recursive: true, force: true });
+        }
+      } finally {
+        await credentialHost.close();
+        rmSync(credentialHome, { recursive: true, force: true });
+      }
     });
   },
 );

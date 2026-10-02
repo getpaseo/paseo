@@ -93,6 +93,61 @@ class ResumedPhysicalSocketSession {
 }
 
 test(
+  "advertises native Teams as unavailable and rejects legacy requests over WebSocket",
+  async () => {
+    const daemon = await createTestPaseoDaemon();
+    const socket = new WebSocket(`ws://127.0.0.1:${daemon.port}/ws`);
+    try {
+      await waitForOpen(socket);
+      const hello = await sendAndWait(
+        socket,
+        {
+          type: "hello",
+          clientId: "plugin-first-teams",
+          clientType: "browser",
+          protocolVersion: 1,
+        },
+        (message) =>
+          message.type === "session" &&
+          message.message.type === "status" &&
+          message.message.payload.status === "server_info",
+      );
+      if (
+        hello.type !== "session" ||
+        hello.message.type !== "status" ||
+        hello.message.payload.status !== "server_info"
+      )
+        throw new Error("Missing server information");
+      expect(hello.message.payload.features?.teams).toBe(false);
+      const request = { type: "team.list.request", requestId: "legacy-teams" };
+      const response = await sendAndWait(
+        socket,
+        { type: "session", message: request },
+        (message) =>
+          message.type === "session" &&
+          message.message.type === "rpc_error" &&
+          message.message.payload.requestId === request.requestId,
+      );
+      expect(response).toMatchObject({
+        type: "session",
+        message: {
+          type: "rpc_error",
+          payload: {
+            requestId: request.requestId,
+            requestType: request.type,
+            code: "unsupported_feature",
+          },
+        },
+      });
+    } finally {
+      socket.terminate();
+      await daemon.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
   "a resumed stale socket is bounded and removed without disrupting its replacement",
   async () => {
     const session = await ResumedPhysicalSocketSession.launch();

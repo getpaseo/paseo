@@ -102,6 +102,10 @@ import {
   VerifyRecipeRunResponseSchema,
 } from "./verify/rpc-schemas.js";
 import {
+  BrowserProfilePasswordsRequestSchema,
+  BrowserProfileBackupRequestSchema,
+  BrowserProfilePasswordsResponseSchema,
+  BrowserProfileBackupResponseSchema,
   BrowserImportCookiesRequestSchema,
   BrowserImportCookiesResponseSchema,
   BrowserImportListSourcesRequestSchema,
@@ -898,7 +902,22 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentRoutingNoticeSchema = z.object({
+  attemptedProfiles: z.array(z.string()).optional(),
+  fromProfile: z.string(),
+  toProfile: z.string().nullable(),
+  fromModel: z.string().nullable(),
+  model: z.string().nullable(),
+  fromEffort: z.string().nullable(),
+  effort: z.string().nullable(),
+  resetsAt: z.string().nullable(),
+  reason: z.string(),
+  status: z.enum(["selected", "retrying", "waiting", "exhausted", "unverified"]),
+});
+export type AgentRoutingNotice = z.infer<typeof AgentRoutingNoticeSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
+  routingNotice: AgentRoutingNoticeSchema.optional(),
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -1064,7 +1083,7 @@ export const WorkspacePinSetRequestSchema = z.object({
 });
 
 // COMPAT(agentLastReplies): added in v0.9.3. Gate on server_info.features.agentLastReplies.
-// Reads stored replies only: previews must never load or resume an agent.
+
 export const AgentLastRepliesRequestSchema = z.object({
   type: z.literal("agent.last_replies.request"),
   agentIds: z.array(z.string()).max(100),
@@ -1072,7 +1091,7 @@ export const AgentLastRepliesRequestSchema = z.object({
 });
 
 // COMPAT(workspaceDone): added in v0.9.3. Gate on server_info.features.workspaceDone.
-// Only the person closes a session: finishing a turn hands it back, it never marks it done.
+
 export const WorkspaceDoneSetRequestSchema = z.object({
   type: z.literal("workspace.done.set.request"),
   workspaceId: z.string(),
@@ -1080,10 +1099,37 @@ export const WorkspaceDoneSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// COMPAT(pairedDevices): added in v0.9.2. Gate on server_info.features.pairedDevices.
+
+export const PairedDeviceSchema = z.object({
+  id: z.string(),
+  via: z.enum(["invite", "adopted"]),
+  appVersion: z.string().nullable(),
+  createdAt: z.string(),
+  lastSeenAt: z.string(),
+  current: z.boolean(),
+});
+
+export const DeviceListRequestSchema = z.object({
+  type: z.literal("device.list.request"),
+  requestId: z.string(),
+});
+
+export const DeviceLockSetRequestSchema = z.object({
+  type: z.literal("device.lock.set.request"),
+
+  locked: z.boolean(),
+  requestId: z.string(),
+});
+
+export const DeviceRevokeRequestSchema = z.object({
+  type: z.literal("device.revoke.request"),
+  deviceId: z.string(),
+  requestId: z.string(),
+});
+
 // COMPAT(workspaceTopics): added in v0.9.2. Gate on server_info.features.workspaceTopics.
-// A topic groups workspaces that started apart but belong to one piece of work. It exists
-// only through the workspaces that carry it, so there is no delete verb: detaching the last
-// child dissolves it.
+
 export const WorkspaceTopicSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -1114,20 +1160,14 @@ export const WorkspaceTopicUpdateRequestSchema = z.object({
 });
 
 // COMPAT(workspaceForgeAccount): added in v0.8.1. Gate on
-// server_info.features.workspaceForgeAccount.
-// An empty string clears the pin and returns the workspace to the machine's
-// default account, so the RPC needs no separate "unset" verb.
+
 export const PullRequestCurationSchema = z.object({
   added: z.array(z.number().int().positive()),
   removed: z.array(z.number().int().positive()),
 });
 
 // COMPAT(curatedPullRequestFacts): added in v0.8.1, remove optional after
-// 2027-06-30. What the client resolved for the numbers it added. The daemon
-// stores decisions, and a number alone cannot be drawn: without the title, url
-// and state, a set someone assembled comes back empty after a restart. The
-// client already looked these up to show them, so it hands them over rather
-// than making the daemon repeat the lookup.
+
 export const CuratedPullRequestFactsSchema = z.object({
   number: z.number().int().positive(),
   url: z.string(),
@@ -1153,15 +1193,13 @@ export const WorkspaceForgeAccountSetRequestSchema = z.object({
   workspaceId: z.string(),
   forgeConfigDir: z.string(),
   // COMPAT(forgeAccountScope): added in v0.8.1, remove optional after 2027-06-30.
-  // "project" stores the account on the workspace's project so every worktree
-  // cut from that repository inherits it, which is how someone actually thinks
-  // about a work checkout. Omitted means "workspace", the old behaviour.
+
   scope: ForgeAccountScopeSchema.optional(),
   requestId: z.string(),
 });
 
 // COMPAT(forgeAccountList): added in v0.8.1. A client that does not ask still
-// works; it just cannot offer the picker.
+
 export const ForgeAccountListRequestSchema = z.object({
   type: z.literal("forge.accounts.list.request"),
   requestId: z.string(),
@@ -1228,8 +1266,7 @@ export const SetVoiceModeMessageSchema = z.object({
 });
 
 // COMPAT(githubAttachmentKinds): legacy wire attachment retained when
-// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
-// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
+
 export const GitHubPrAttachmentSchema = z.object({
   type: z.literal("github_pr"),
   mimeType: z.literal("application/github-pr"),
@@ -1255,8 +1292,7 @@ export const ForgeChangeRequestAttachmentSchema = z.object({
 });
 
 // COMPAT(githubAttachmentKinds): legacy wire attachment retained when
-// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
-// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
+
 export const GitHubIssueAttachmentSchema = z.object({
   type: z.literal("github_issue"),
   mimeType: z.literal("application/github-issue"),
@@ -1824,8 +1860,7 @@ const GitSetupOptionsSchema = z.object({
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
   // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
-  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
-  // supported client floor is >= v0.2.0.
+
   githubPrNumber: z.number().int().positive().optional(),
 });
 
@@ -2331,6 +2366,35 @@ export const WorkspaceDoneSetResponseSchema = z.object({
   }),
 });
 
+export const DeviceListResponseSchema = z.object({
+  type: z.literal("device.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    devices: z.array(PairedDeviceSchema),
+    locked: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const DeviceLockSetResponseSchema = z.object({
+  type: z.literal("device.lock.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    locked: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const DeviceRevokeResponseSchema = z.object({
+  type: z.literal("device.revoke.response"),
+  payload: z.object({
+    requestId: z.string(),
+    deviceId: z.string(),
+    revoked: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceTopicCreateResponseSchema = z.object({
   type: z.literal("workspace.topic.create.response"),
   payload: z.object({
@@ -2382,8 +2446,7 @@ export const WorkspaceForgeAccountSetResponsePayloadSchema = z.object({
   accepted: z.boolean(),
   forgeConfigDir: z.string().nullable(),
   // COMPAT(forgeAccountScope): added in v0.8.1, remove optional after 2027-06-30.
-  // Where the value was stored, which is not always what was asked for: an
-  // agent with no project to speak of gets its workspace written instead.
+
   scope: ForgeAccountScopeSchema.optional(),
   error: z.string().nullable(),
 });
@@ -2584,8 +2647,7 @@ export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
 });
 
 // COMPAT(githubAutoMergeRpc): legacy RPC retained when
-// checkout.forge.set_auto_merge.* shipped in v0.2.0-beta.1. Stop serving and
-// consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
+
 export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.request"),
   cwd: z.string(),
@@ -2645,8 +2707,7 @@ export const CheckoutForgeGetCheckDetailsRequestSchema =
   });
 
 // COMPAT(githubCheckDetailsRpc): legacy RPC retained when
-// checkout.forge.get_check_details.* shipped in v0.2.0-beta.1. Stop serving
-// and consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
+
 export const CheckoutGithubGetCheckDetailsRequestSchema =
   CheckoutCheckDetailsRequestPayloadSchema.extend({
     type: z.literal("checkout.github.get_check_details.request"),
@@ -2737,8 +2798,7 @@ export const ForgeSearchItemSchema = GitHubSearchItemSchema.extend({
 });
 
 // COMPAT(githubSearchKind): legacy GitHub kind aliases retained when neutral
-// forge search shipped in v0.2.0-beta.1. Remove after 2027-01-17 together with
-// the legacy github_search_request RPC.
+
 export const ForgeSearchKindSchema = z.enum([
   "issue",
   "change_request",
@@ -2759,8 +2819,7 @@ export const ForgeSearchRequestSchema = z.object({
 });
 
 // COMPAT(githubSearchRpc): legacy RPC retained when forge.search.* shipped in
-// v0.2.0-beta.1. Stop serving and consuming it after 2027-01-17 once client
-// and daemon floors are >= v0.2.0.
+
 export const GitHubSearchRequestSchema = z.object({
   type: z.literal("github_search_request"),
   cwd: z.string(),
@@ -2794,20 +2853,13 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   repoRoot: z.string().optional(),
   branchName: z.string().optional(),
   // COMPAT(worktreeArchiveWorkspaceId): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
-  // Explicit workspace record to archive. A directory can back multiple workspaces
-  // (Model B), so resolving the target by cwd alone picks the wrong record. When
-  // present the daemon archives this exact workspace; when absent it falls back to
-  // resolving by worktreePath, preferring the worktree-kind record on a cwd tie.
+
   workspaceId: z.string().optional(),
   // COMPAT(worktreeArchiveScope): added in v0.1.97, drop the gate when floor >= v0.1.97.
-  // Scope of the archive operation. "workspace" archives a single workspace record
-  // (today's default UI behavior). "worktree" archives every active workspace whose
-  // cwd resolves to the target directory, then removes the directory if it is
-  // Paseo-owned. Omitted/unknown values default to "workspace" for old-client safety.
+
   scope: z.enum(["workspace", "worktree"]).optional().default("workspace"),
   // COMPAT(worktreeDiskDeletion): added in v0.1.97, ignored as of v0.1.97
-  // (disk removal derived from scope + last-reference + ownership); field
-  // retained for wire parse-compat, drop when floor >= v0.1.97.
+
   deleteWorktreeFromDisk: z.boolean().optional().default(false),
   requestId: z.string(),
 });
@@ -2829,8 +2881,7 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
   // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
-  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
-  // supported client floor is >= v0.2.0.
+
   githubPrNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -2944,8 +2995,7 @@ export const WorkspaceCreateRequestSchema = z.object({
       branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
       // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
-      // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once
-      // the supported client floor is >= v0.2.0.
+
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
     }),
@@ -3502,6 +3552,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceDoneSetRequestSchema,
   AgentLastRepliesRequestSchema,
   WorkspaceTopicCreateRequestSchema,
+  DeviceListRequestSchema,
+  DeviceRevokeRequestSchema,
+  DeviceLockSetRequestSchema,
   WorkspaceTopicAssignRequestSchema,
   WorkspaceTopicUpdateRequestSchema,
   WorkspaceForgeAccountSetRequestSchema,
@@ -3672,6 +3725,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   VerifyRecipeListRequestSchema,
   VerifyRecipeRunRequestSchema,
   BrowserImportListSourcesRequestSchema,
+  BrowserProfilePasswordsRequestSchema,
+  BrowserProfileBackupRequestSchema,
   BrowserImportCookiesRequestSchema,
   BrowserActivityControlRequestSchema,
   BrowserMirrorApplyRequestSchema,
@@ -3888,24 +3943,19 @@ export const ServerInfoStatusPayloadSchema = z
         remoteBrowser: z.boolean().optional(),
         moveAgentWorkspace: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
-        // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
-        // once the supported daemon floor is >= v0.2.0.
+
         checkoutForgeSetAutoMerge: z.boolean().optional(),
         // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75 and retained as
-        // the fallback for checkoutForgeSetAutoMerge. Stop advertising and
-        // consuming it after 2027-01-17 once supported floors are >= v0.2.0.
+
         checkoutGithubSetAutoMerge: z.boolean().optional(),
         // COMPAT(githubCheckDetails): added in v0.1.92 and retained as the
-        // fallback for forgeCheckDetails. Stop advertising and consuming it
-        // after 2027-01-17 once supported floors are >= v0.2.0.
+
         githubCheckDetails: z.boolean().optional(),
         // COMPAT(forgeCheckDetails): added in v0.2.0-beta.1. Remove the feature
-        // gate and githubCheckDetails fallback after 2027-01-17 once the
-        // supported daemon floor is >= v0.2.0.
+
         forgeCheckDetails: z.boolean().optional(),
         // COMPAT(forgeSearch): added in v0.2.0-beta.1. Remove the feature gate
-        // and github_search fallback after 2027-01-17 once the supported daemon
-        // floor is >= v0.2.0.
+
         forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
@@ -3928,14 +3978,15 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(pluginSourceUpdates): added in v0.8.0; remove gate after 2027-03-16 once daemon floor supports reviewed updates.
         pluginSourceUpdates: z.boolean().optional(),
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
-        // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
-        // so a theme plugin cannot start there at all.
+
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
         verifyRecipes: z.boolean().optional(),
         // COMPAT(browserCookieImport): added in v0.9.0, remove gate after 2027-03-24.
         browserCookieImport: z.boolean().optional(),
+        // COMPAT(browserProfileImport): added in v0.10.0, remove gate after 2027-04-02.
+        browserProfileImport: z.boolean().optional(),
         // COMPAT(browserActivity): added in v0.9.1, remove gate after 2027-03-25.
         browserActivity: z.boolean().optional(),
         // COMPAT(browserHandoff): added in v0.9.1, remove gate after 2027-03-27.
@@ -3995,7 +4046,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
         // COMPAT(relatedPullRequests): added in v0.8.1, remove gates once the daemon
-        // floor ships githubRuntime.relatedPullRequests; retain wire field.
+
         relatedPullRequests: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: z.boolean().optional(),
@@ -4003,6 +4054,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceTopics): added in v0.9.2, remove gate after 2027-04-01.
         workspaceTopics: z.boolean().optional(),
+        // COMPAT(pairedDevices): added in v0.9.2, remove gate after 2027-04-01.
+        pairedDevices: z.boolean().optional(),
         // COMPAT(systemOneUsage): added in v0.9.2, gates the browser-goal switch and Jev usage.
         systemOneUsage: z.boolean().optional(),
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
@@ -4034,9 +4087,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
         importSessionSearch: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
-        // 2027-01-17 once the supported daemon floor is >= v0.2.0.
-        // Daemon advertises pluggable non-GitHub forge support (the forge registry);
-        // the client gates non-GitHub setup UI on it.
+
         forgeProviders: z.boolean().optional(),
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: z.boolean().optional(),
@@ -4059,9 +4110,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
         checkoutDiscardChanges: z.boolean().optional(),
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
-        // An older daemon parses its persisted config strictly, so writing
-        // agentProfiles to one is silently dropped. The client hides the feature
-        // rather than letting a save appear to succeed.
+
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
@@ -4327,10 +4376,7 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
       .nullable()
       .optional(),
     // COMPAT(relatedPullRequests): added in v0.8.1. Gate consumers on
-    // server_info.features.relatedPullRequests; remove that gate once the supported
-    // daemon floor ships this field. A workspace whose change requests form a GitHub
-    // stack, or whose session opened several, reports every one of them here. The
-    // singular `pullRequest` above stays authoritative for the checked-out branch.
+
     relatedPullRequests: z
       .array(
         z.object({
@@ -4366,37 +4412,31 @@ export const WorkspaceDescriptorPayloadSchema = z
     projectId: z.string(),
     projectDisplayName: z.string(),
     // COMPAT(projectCustomName): added in v0.1.76, drop the optional gate when floor >= v0.1.76.
-    // When the user has renamed a project, projectDisplayName carries the resolved
-    // value (customName) and projectCustomName mirrors the raw override so the
-    // settings UI can prefill its input and offer a "reset" action.
+
     projectCustomName: z.string().nullable().optional(),
     // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
     projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
     // COMPAT(worktreeSlug): added in v0.2.6, remove optional after 2027-01-31.
-    // Present only for Paseo-owned worktrees; this is the basename of their root directory.
+
     worktreeSlug: z.string().optional(),
     projectKind: z.enum(["git", "non_git", "directory"]),
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
     name: z.string(),
     // COMPAT(workspaceTitles): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
-    // When the user has titled a workspace, `name` carries the resolved value
-    // (title) and `title` mirrors the raw override so the rename UI can prefill
-    // its input and offer a "reset to branch name" action. Null means the name
-    // is derived from the branch/directory.
+
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
     // COMPAT(workspaceDone): added in v0.9.3, remove optional after 2027-04-01.
-    // When the person marked the session done. A session that works again after it is open again.
+
     doneAt: z.string().nullable().optional(),
     // COMPAT(workspaceHandoff): added in v0.9.3, remove optional after 2027-04-01.
-    // What the last handed-back turn wants from the person. `kind` stays a string so new
-    // kinds do not break older clients: question, action, aborted, report, unsure.
+
     handoff: z
       .object({
         agentId: z.string(),
@@ -4407,22 +4447,16 @@ export const WorkspaceDescriptorPayloadSchema = z
       .nullable()
       .optional(),
     // COMPAT(workspaceTopics): added in v0.9.2, remove optional after 2027-04-01.
-    // The topic this workspace belongs to. Carried in full on every child so a rename
-    // reaches clients on the workspace channel they already observe.
+
     topic: WorkspaceTopicSchema.nullable().optional(),
     // COMPAT(workspaceForgeAccount): added in v0.8.1, remove optional after 2027-06-30.
-    // Config directory of the forge CLI account this workspace speaks to, so a
-    // work and a private GitHub account can live on one machine. Null means the
-    // machine's default account.
+
     forgeConfigDir: z.string().nullable().optional(),
     // COMPAT(forgeAccountScope): added in v0.8.1, remove optional after 2027-06-30.
-    // The account this workspace's project sets, which applies whenever
-    // forgeConfigDir is null. Sent so the picker can show what a workspace
-    // inherits instead of claiming it uses the machine default.
+
     projectForgeConfigDir: z.string().nullable().optional(),
     // COMPAT(workspacePullRequestCuration): added in v0.8.1, remove optional after 2027-06-30.
-    // Which change requests this workspace was told to keep in its set and
-    // which to drop, so the set survives an app restart.
+
     pullRequestCuration: PullRequestCurationSchema.nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
@@ -4441,13 +4475,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     scripts: z.array(WorkspaceScriptPayloadSchema).default([]),
     gitRuntime: WorkspaceGitRuntimePayloadSchema,
     // COMPAT(githubRuntimeName): legacy wire-field name now carries
-    // forge-neutral runtime data. Introduce and migrate to a neutral
-    // forgeRuntime field before consumers stop using this name. Target cleanup
-    // after 2027-01-17 once the supported client floor is >= v0.2.0.
+
     githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
     // COMPAT(forge): added in v0.2.0-beta.1. Treat an absent forge as GitHub
-    // until 2027-01-17; remove the consumer fallback once the supported daemon
-    // floor is >= v0.2.0.
+
     forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(directorySync): sequence of this latest directory projection.
@@ -4575,9 +4606,7 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
 });
 
 // COMPAT(workspaceProjects): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
-// A project parent that has zero active workspaces. The sidebar renders the
-// project row with a new-workspace child so projects persist after their last
-// workspace is archived.
+
 export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectId: z.string(),
   // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
@@ -4601,8 +4630,7 @@ export const FetchWorkspacesResponseMessageSchema = z.object({
     subscriptionId: z.string().nullable().optional(),
     entries: z.array(WorkspaceDescriptorPayloadSchema),
     // COMPAT(workspaceProjects): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
-    // Project parents with no active workspaces. Old daemons omit it; old clients
-    // ignore it. Only populated on the first page (no cursor).
+
     emptyProjects: z.array(WorkspaceProjectDescriptorPayloadSchema).optional().default([]),
     pageInfo: z.object({
       nextCursor: z.string().nullable(),
@@ -4628,11 +4656,7 @@ export const WorkspaceUpdateMessageSchema = z.object({
       kind: z.literal("remove"),
       id: z.string(),
       // COMPAT(workspaceProjects): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
-      // When archiving this workspace leaves its project with no active
-      // workspaces, the daemon includes the project parent so the sidebar keeps
-      // rendering it without waiting for a full re-hydration. Old daemons omit
-      // it; old clients ignore it and surface the project on their next
-      // workspace fetch instead.
+
       emptyProject: WorkspaceProjectDescriptorPayloadSchema.optional(),
       removedProjectId: z.string().optional(),
       generation: z.string().optional(),
@@ -5670,17 +5694,12 @@ const CheckoutPrGithubStatusObjectSchema = z.object({
 const CheckoutPrGithubStatusSchema = CheckoutPrGithubStatusObjectSchema.optional();
 
 // envelope; see COMPAT(forgeSpecific) in status-projection.ts for the shim.
-//
-// NOTE: `forgeSpecific.forge` is a FACTS-FAMILY tag, not the workspace brand id.
-// The whole Gitea family (gitea, forgejo, codeberg) emits `forge: "gitea"` here
-// because they share one facts shape, while the top-level `forge` above carries
-// the specific brand. Validation of family-specific payloads happens at runtime
-// in the consumer that knows that forge family.
+
 const CheckoutPrForgeSpecificSchema = z.unknown().optional();
 
 export const CheckoutPrStatusSchema = z.object({
   // COMPAT(forge): added in v0.2.0-beta.1. Remove the GitHub default after
-  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
+
   forge: z.string().optional().default("github"),
   projectPath: z.string().optional(),
   number: z.number().optional(),
@@ -5733,11 +5752,10 @@ const CheckoutPrStatusPayloadSchema = z.object({
   status: CheckoutPrStatusSchema.nullable(),
   githubFeaturesEnabled: z.boolean(),
   // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy
-  // githubFeaturesEnabled normalization after 2027-01-17 once the supported
-  // daemon floor is >= v0.2.0.
+
   authState: ForgeAuthStateSchema,
   // COMPAT(forge): added in v0.2.0-beta.1. Remove the GitHub default after
-  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
+
   forge: z.string().optional().default("github"),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
@@ -5880,8 +5898,7 @@ export const CheckoutForgeSetAutoMergeResponseSchema = z.object({
 });
 
 // COMPAT(githubAutoMergeRpc): legacy RPC retained when
-// checkout.forge.set_auto_merge.* shipped in v0.2.0-beta.1. Stop serving and
-// consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
+
 export const CheckoutGithubSetAutoMergeResponseSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.response"),
   payload: z.object({
@@ -5952,9 +5969,7 @@ const CheckoutPipelineJobSchema = z.object({
   stage: z.string(),
   status: z.string(),
   // COMPAT(pipelineRawStatus): no client reads this, but peers <= v0.2.0-rc.1
-  // validate it as required, so daemons must keep emitting it. Optional since
-  // this schema so future daemons may omit it; delete the field and its
-  // emission after 2027-01-17 once the supported client floor is >= v0.2.0.
+
   rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   allowFailure: z.boolean().optional().default(false),
@@ -6014,8 +6029,7 @@ export const CheckoutForgeGetCheckDetailsResponseSchema = z.object({
 });
 
 // COMPAT(githubCheckDetailsRpc): legacy RPC retained when
-// checkout.forge.get_check_details.* shipped in v0.2.0-beta.1. Stop serving
-// and consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
+
 export const CheckoutGithubGetCheckDetailsResponseSchema = z.object({
   type: z.literal("checkout.github.get_check_details.response"),
   payload: z.object({
@@ -6126,8 +6140,7 @@ export const PullRequestTimelineResponseSchema = z.object({
       requestId: z.string().optional().default(""),
       githubFeaturesEnabled: z.boolean().optional().default(true),
       // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy
-      // githubFeaturesEnabled normalization after 2027-01-17 once the supported
-      // daemon floor is >= v0.2.0.
+
       authState: ForgeAuthStateSchema,
     })
     .optional()
@@ -6248,8 +6261,7 @@ export const ForgeSearchResponseSchema = z.object({
 });
 
 // COMPAT(githubSearchRpc): legacy RPC retained when forge.search.* shipped in
-// v0.2.0-beta.1. Stop serving and consuming it after 2027-01-17 once client
-// and daemon floors are >= v0.2.0.
+
 export const GitHubSearchResponseSchema = z.object({
   type: z.literal("github_search_response"),
   payload: GitHubSearchResponsePayloadSchema,
@@ -7257,6 +7269,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   VerifyRecipeListResponseSchema,
   VerifyRecipeRunResponseSchema,
   BrowserImportListSourcesResponseSchema,
+  BrowserProfilePasswordsResponseSchema,
+  BrowserProfileBackupResponseSchema,
   BrowserImportCookiesResponseSchema,
   BrowserActivityMessageSchema,
   BrowserHandoffMessageSchema,
@@ -7318,6 +7332,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceDoneSetResponseSchema,
   AgentLastRepliesResponseSchema,
   WorkspaceTopicCreateResponseSchema,
+  DeviceListResponseSchema,
+  DeviceRevokeResponseSchema,
+  DeviceLockSetResponseSchema,
   WorkspaceTopicAssignResponseSchema,
   WorkspaceTopicUpdateResponseSchema,
   WorkspaceForgeAccountSetResponseSchema,
@@ -7713,6 +7730,9 @@ export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema
 export type WorkspaceDoneSetRequest = z.infer<typeof WorkspaceDoneSetRequestSchema>;
 export type WorkspaceDoneSetResponse = z.infer<typeof WorkspaceDoneSetResponseSchema>;
 export type WorkspaceTopic = z.infer<typeof WorkspaceTopicSchema>;
+export type PairedDevice = z.infer<typeof PairedDeviceSchema>;
+export type DeviceListResponse = z.infer<typeof DeviceListResponseSchema>;
+export type DeviceRevokeResponse = z.infer<typeof DeviceRevokeResponseSchema>;
 export type WorkspaceTopicCreateRequest = z.infer<typeof WorkspaceTopicCreateRequestSchema>;
 export type WorkspaceTopicAssignRequest = z.infer<typeof WorkspaceTopicAssignRequestSchema>;
 export type WorkspaceTopicUpdateRequest = z.infer<typeof WorkspaceTopicUpdateRequestSchema>;
@@ -7942,6 +7962,10 @@ export const WSHelloMessageSchema = z.object({
     ])
     .optional(),
   appVersion: z.string().optional(),
+  // COMPAT(pairedDevices): added in v0.9.2. Relay clients prove the device with a secret they
+  // registered once; the invitation from a pairing link registers it the first time.
+  deviceCredential: z.string().optional(),
+  pairingInvite: z.string().optional(),
   capabilities: z
     .object({
       voice: z.boolean().optional(),

@@ -7,9 +7,31 @@ import {
   syncRemoteBrowserTabs,
   whileCreatingRemoteTab,
 } from "./remote-tab-sync";
-import { duplicateRemoteBrowserRecordIds } from "./remote-tab-records";
+import { duplicateRemoteBrowserRecordIds, getBrowserPaneKind } from "./remote-tab-records";
 
 describe("duplicateRemoteBrowserRecordIds", () => {
+  it("keeps host tabs on the host in Electron, including before a new tab is attached", () => {
+    expect(
+      getBrowserPaneKind({ isElectron: true, supportsHostBrowser: true, remoteBrowserId: null }),
+    ).toBe("host");
+    expect(
+      getBrowserPaneKind({
+        isElectron: true,
+        supportsHostBrowser: true,
+        remoteBrowserId: "host-tab",
+      }),
+    ).toBe("host");
+    expect(
+      getBrowserPaneKind({
+        isElectron: true,
+        supportsHostBrowser: false,
+        remoteBrowserId: "host-tab",
+      }),
+    ).toBe("host");
+    expect(
+      getBrowserPaneKind({ isElectron: true, supportsHostBrowser: false, remoteBrowserId: null }),
+    ).toBe("desktop");
+  });
   it("drops the record adopted from a listing when the requesting record owns the same tab", () => {
     expect(
       duplicateRemoteBrowserRecordIds([

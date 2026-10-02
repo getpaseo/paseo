@@ -16,7 +16,7 @@ import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
-import type { TeamService } from "./team/service.js";
+import type { DeviceAccess, PairedDeviceManagement } from "./device-access.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import { ResourcePolicyRuntime } from "./resource-policy.js";
@@ -130,6 +130,8 @@ export interface ExternalSocketMetadata {
 
 export interface SessionAdmission {
   principalId: string;
+
+  viaRelay?: boolean;
   permissions: readonly DaemonPermission[];
   hubExecutionAgents?: HubExecutionAgents;
 }
@@ -494,6 +496,7 @@ interface SocketSessionOptions {
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
+  pairedDevices?: PairedDeviceManagement;
 }
 
 interface ClosePhysicalSocketParams {
@@ -606,7 +609,7 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
-  private readonly teamService: TeamService | undefined;
+  private readonly deviceAccess: DeviceAccess | undefined;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private browserToolsBroker: BrowserToolsBroker | null = null;
   private readonly browserActivity: BrowserActivityHub | undefined;
@@ -690,7 +693,7 @@ export class VoiceAssistantWebSocketServer {
     resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">,
     browserActivity?: BrowserActivityHub,
     providerUsageService?: ProviderUsageService,
-    teamService?: TeamService,
+    deviceAccess?: DeviceAccess,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -795,7 +798,7 @@ export class VoiceAssistantWebSocketServer {
     });
 
     this.providerUsageService = resolveProviderUsageService(providerUsageService, this.logger);
-    this.teamService = teamService;
+    this.deviceAccess = deviceAccess;
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();
@@ -1348,9 +1351,7 @@ export class VoiceAssistantWebSocketServer {
     ) {
       try {
         ws.close(WS_CLOSE_SERVER_SHUTDOWN, "Server shutting down");
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
       return;
     }
 
@@ -1378,9 +1379,7 @@ export class VoiceAssistantWebSocketServer {
       );
       try {
         ws.close(WS_CLOSE_HELLO_TIMEOUT, "Hello timeout");
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
     }, HELLO_TIMEOUT_MS);
     pending.helloTimeout = timeout;
     (timeout as unknown as { unref?: () => void }).unref?.();
@@ -1463,6 +1462,7 @@ export class VoiceAssistantWebSocketServer {
       },
       hubExecutionAgents: admission.hubExecutionAgents,
       hubRelationships: this.hubRelationships ?? undefined,
+      pairedDevices: this.pairedDevicesFor(admission),
     });
 
     const base: SessionConnectionBase = {
@@ -1521,7 +1521,6 @@ export class VoiceAssistantWebSocketServer {
       workspaceLabelService: this.workspaceLabelService ?? undefined,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
-      teamService: this.teamService,
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
@@ -1539,6 +1538,7 @@ export class VoiceAssistantWebSocketServer {
       providerUsageService: this.providerUsageService,
       hubExecutionAgents: options.hubExecutionAgents,
       hubRelationships: options.hubRelationships,
+      pairedDevices: options.pairedDevices,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
@@ -1596,6 +1596,91 @@ export class VoiceAssistantWebSocketServer {
     return pending;
   }
 
+  private admitRelayDevice(
+    ws: WebSocketLike,
+    message: WSHelloMessage,
+    pending: PendingConnection,
+  ): boolean {
+    if (
+      pending.identity.transport !== "relay" ||
+      !this.deviceAccess ||
+      pending.admission?.principalId !== "owner"
+    )
+      return true;
+    const admitted = this.deviceAccess.admit({
+      deviceCredential: message.deviceCredential,
+      pairingInvite: message.pairingInvite,
+      appVersion: message.appVersion,
+    });
+    if (!admitted.ok) {
+      this.clearPendingConnection(ws);
+      pending.connectionLogger.warn({ reason: admitted.reason }, "Rejected relay hello");
+      try {
+        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Device not paired");
+      } catch {}
+      return false;
+    }
+    pending.admission = {
+      ...pending.admission,
+      viaRelay: true,
+      ...(admitted.deviceId ? { principalId: devicePrincipalId(admitted.deviceId) } : {}),
+    };
+    return true;
+  }
+
+  private pairedDevicesFor(admission: SessionAdmission): PairedDeviceManagement | undefined {
+    const access = this.deviceAccess;
+    if (!access) return undefined;
+    const { principalId } = admission;
+    return {
+      list: () =>
+        access.list().map((device) => ({
+          id: device.id,
+          via: device.via,
+          appVersion: device.appVersion,
+          createdAt: device.createdAt,
+          lastSeenAt: device.lastSeenAt,
+          current: devicePrincipalId(device.id) === principalId,
+        })),
+      revoke: (deviceId) => {
+        if (!access.revoke(deviceId)) return false;
+        this.closePrincipalConnections(devicePrincipalId(deviceId));
+        return true;
+      },
+      isLocked: () => access.isLocked(),
+      setLocked: (locked) => {
+        if (locked && admission.viaRelay && !principalId.startsWith("device:")) {
+          throw new Error(
+            "Update this app and reconnect before locking, or it would lock itself out",
+          );
+        }
+        access.setLocked(locked);
+        if (locked) {
+          for (const [socket, connection] of this.sessions) {
+            if (
+              connection.principalId === "owner" &&
+              this.socketIdentities.get(socket)?.transport === "relay"
+            ) {
+              socket.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Device not paired");
+            }
+          }
+        }
+      },
+    };
+  }
+
+  private closePrincipalConnections(principalId: string): void {
+    for (const [ws, connection] of this.sessions) {
+      if (connection.principalId !== principalId) continue;
+      try {
+        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Device revoked");
+      } catch {}
+    }
+    for (const [key, connection] of this.externalSessionsByKey) {
+      if (connection.principalId === principalId) this.externalSessionsByKey.delete(key);
+    }
+  }
+
   private async handleHello(params: {
     ws: WebSocketLike;
     message: WSHelloMessage;
@@ -1617,7 +1702,10 @@ export class VoiceAssistantWebSocketServer {
     }
 
     pending.authenticating = true;
-    if (!pending.admission && !(await this.admitPendingHello(ws, message, pending))) return;
+    const admittedHello = pending.admission
+      ? this.admitRelayDevice(ws, message, pending)
+      : await this.admitPendingHello(ws, message, pending);
+    if (!admittedHello) return;
 
     const clientId = message.clientId.trim();
     if (clientId.length === 0) {
@@ -1625,9 +1713,7 @@ export class VoiceAssistantWebSocketServer {
       pending.connectionLogger.warn("Rejected hello with empty clientId");
       try {
         ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
       return;
     }
 
@@ -1699,13 +1785,10 @@ export class VoiceAssistantWebSocketServer {
           log: params.pending.connectionLogger,
         });
       } catch {
-        // The error reporter must not turn a connection failure into a process failure.
       } finally {
         try {
           params.ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
-        } catch {
-          // The transport may already be closed.
-        }
+        } catch {}
       }
     });
   }
@@ -1715,7 +1798,7 @@ export class VoiceAssistantWebSocketServer {
     message: WSHelloMessage,
     pending: PendingConnection,
   ): Promise<boolean> {
-    if (pending.admission) return true;
+    if (pending.admission) return this.admitRelayDevice(ws, message, pending);
     try {
       const resolved = await resolveSessionAdmission({
         credential: message.auth,
@@ -1730,7 +1813,7 @@ export class VoiceAssistantWebSocketServer {
         return false;
       }
       pending.admission = resolved.admission;
-      return true;
+      return this.admitRelayDevice(ws, message, pending);
     } catch (error) {
       pending.connectionLogger.error({ err: error }, "Failed to resolve hello credential");
       if (this.pendingConnections.get(ws) === pending) {
@@ -1749,9 +1832,7 @@ export class VoiceAssistantWebSocketServer {
     if (hello.auth || hello.capabilities?.[CLIENT_CAPS.helloRejection] === true) {
       try {
         await ws.send(JSON.stringify({ type: "hello.rejected", reason, accepts: ["password"] }));
-      } catch {
-        // The close reason remains the compatibility signal.
-      }
+      } catch {}
     }
     const closeReason = {
       password_required: "Password required",
@@ -1765,9 +1846,7 @@ export class VoiceAssistantWebSocketServer {
           : WS_CLOSE_DAEMON_AUTH_FAILED,
         closeReason,
       );
-    } catch {
-      // Ignore a transport that closed while the rejection was sent.
-    }
+    } catch {}
   }
 
   private resumeSession(params: {
@@ -1875,7 +1954,9 @@ export class VoiceAssistantWebSocketServer {
         verifyRecipes: true,
         // COMPAT(agentHistory): added in v0.9.1, remove gate after 2027-03-29.
         agentHistory: true,
-        ...(this.verifyHost ? { browserCookieImport: true, browserScreencast: true } : {}),
+        ...(this.verifyHost
+          ? { browserCookieImport: true, browserProfileImport: true, browserScreencast: true }
+          : {}),
         ...(this.browserActivity
           ? {
               browserActivity: true,
@@ -1949,7 +2030,8 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
         workspaceDone: true,
         // COMPAT(teams): added in v0.9.4, remove gate after 2027-04-01.
-        teams: this.teamService !== undefined,
+        teams: false,
+        pairedDevices: this.deviceAccess !== undefined,
         // COMPAT(agentLastReplies): added in v0.9.3, remove gate after 2027-04-01.
         agentLastReplies: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
@@ -2227,9 +2309,7 @@ export class VoiceAssistantWebSocketServer {
       this.clearPendingConnection(ws);
       try {
         ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
       return;
     }
 
@@ -2281,9 +2361,7 @@ export class VoiceAssistantWebSocketServer {
       this.clearPendingConnection(ws);
       try {
         ws.close(WS_CLOSE_INVALID_HELLO, "Session message before hello");
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
       return true;
     }
     void Promise.resolve(activeConnection.session.handleBinaryFrame(decodedFrame, ws)).catch(
@@ -2324,9 +2402,7 @@ export class VoiceAssistantWebSocketServer {
     this.clearPendingConnection(ws);
     try {
       ws.close(WS_CLOSE_INVALID_HELLO, "Session message before hello");
-    } catch {
-      // ignore close errors
-    }
+    } catch {}
   }
 
   private handleRawMessage(
@@ -2408,9 +2484,7 @@ export class VoiceAssistantWebSocketServer {
         activeConnection.connectionLogger.warn("Received hello on active connection");
         try {
           ws.close(WS_CLOSE_INVALID_HELLO, "Unexpected hello");
-        } catch {
-          // ignore close errors
-        }
+        } catch {}
         return;
       }
 
@@ -2479,9 +2553,7 @@ export class VoiceAssistantWebSocketServer {
       this.clearPendingConnection(ws);
       try {
         ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
-      } catch {
-        // ignore close errors
-      }
+      } catch {}
       return;
     }
 
@@ -2869,6 +2941,10 @@ function createWebSocketConnectionIdentity(
     ...(metadata?.relayConnectionId ? { relayConnectionId: metadata.relayConnectionId } : {}),
     ...(metadata?.hubDaemonId ? { hubDaemonId: metadata.hubDaemonId } : {}),
   };
+}
+
+function devicePrincipalId(deviceId: string): string {
+  return `device:${deviceId}`;
 }
 
 function sessionConnectionKey(principalId: string, clientId: string): string {

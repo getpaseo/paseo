@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
@@ -17,6 +17,68 @@ import type {
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { PluginRuntime } from "../plugins/runtime.js";
+
+test.each([
+  { status: "selected", resume: true },
+  { status: "selected", resume: false },
+  { status: "retrying", resume: true },
+  { status: "retrying", resume: false },
+  { status: "waiting", resume: true },
+  { status: "waiting", resume: false },
+] as const)(
+  "stored $status routing notice survives loading only when selected (resume $resume)",
+  async ({ status, resume }) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agent-loading-routing-notice-"));
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const manager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger,
+      pluginLifecycle: new PluginRuntime(logger, "0.9.1"),
+    });
+    const agentId = "00000000-0000-4000-8000-000000000601";
+    const notice = {
+      fromProfile: "codex-plus",
+      toProfile: "codex",
+      fromModel: "gpt-6.1-sol",
+      model: "gpt-6.1-sol",
+      fromEffort: "high",
+      effort: "high",
+      resetsAt: null,
+      reason: "Preserved model and effort",
+      status,
+    };
+    try {
+      await manager.createAgent({ provider: "codex", cwd: root, routingNotice: notice }, agentId, {
+        workspaceId: "workspace-a",
+      });
+      await manager.closeAgent(agentId);
+      await manager.flush();
+      await storage.flush();
+      const record = await storage.get(agentId);
+      if (!record) throw new Error("expected stored agent");
+      expect(record.config?.routingNotice).toEqual(notice);
+      if (!resume) await storage.upsert({ ...record, persistence: null });
+      const loaded = await ensureAgentLoaded(agentId, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+      });
+      await manager.flush();
+      await storage.flush();
+      const expected = status === "selected" ? notice : undefined;
+      expect(loaded.config.routingNotice).toEqual(expected);
+      expect((await storage.get(agentId))?.config?.routingNotice).toEqual(expected);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("loads archived records for history and active records with the interactive default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-loading-purpose-"));
@@ -165,8 +227,7 @@ test("loads an archived agent's history after its working directory is removed",
     // history afterwards, and the turn is finalized only once that append lands.
     // Archive after the turn is finalized so the transcript this test reads back is
     // already on disk when the worktree goes away.
-    const finished = await manager.waitForAgentEvent(agent.id);
-    expect(finished.status).toBe("idle");
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
     await manager.archiveAgent(agent.id);
     await manager.closeAgent(agent.id);
     await manager.flush();

@@ -70,6 +70,9 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     modeId: record.config?.modeId ?? undefined,
     model: record.config?.model ?? undefined,
     thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
+    // Recovery jobs do not survive a daemon restart; only the completed selection is history.
+    routingNotice:
+      record.config?.routingNotice?.status === "selected" ? record.config.routingNotice : undefined,
     featureValues: record.config?.featureValues ?? undefined,
     providerOptions: record.config?.providerOptions ?? undefined,
     toolPolicy: record.config?.toolPolicy ?? undefined,
@@ -92,6 +95,7 @@ export function buildSessionConfig(
     modeId: overrides.modeId,
     model: overrides.model,
     thinkingOptionId: overrides.thinkingOptionId,
+    routingNotice: overrides.routingNotice,
     featureValues: overrides.featureValues,
     providerOptions: overrides.providerOptions,
     toolPolicy: overrides.toolPolicy,

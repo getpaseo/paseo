@@ -265,6 +265,8 @@ test("legacy Hub wire behavior immediately enters the common Session bootstrap",
 
   expect(launched.observedTrustedLifecycleMessages()).toEqual(["server_info"]);
   expect(launched.serverInfoPermissions()).toEqual([["hub.execute"]]);
+  expect(await launched.deniedBrowserDispatch()).toMatchObject({ code: "access_denied" });
+  expect(launched.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
 
 test("Hub binary frames enter the standard active-session path", async () => {

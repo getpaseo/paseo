@@ -39,11 +39,10 @@ describe("resolveSidebarNavItems", () => {
       { key: "history", visible: true },
       { key: "search", visible: true },
       { key: "schedules", visible: true },
-      { key: "teams", visible: true },
       { key: kanbanKey, visible: true },
       { key: notesKey, visible: true },
     ]);
-    expect(items[5]).toEqual({ kind: "plugin", key: kanbanKey, group: kanban, visible: true });
+    expect(items[4]).toEqual({ kind: "plugin", key: kanbanKey, group: kanban, visible: true });
     expect(items[0]).toEqual({
       kind: "builtin",
       key: "new-workspace",
@@ -68,7 +67,6 @@ describe("resolveSidebarNavItems", () => {
       { key: "new-workspace", visible: false },
       { key: "history", visible: true },
       { key: "search", visible: true },
-      { key: "teams", visible: true },
       { key: notesKey, visible: true },
     ]);
   });
@@ -79,6 +77,7 @@ describe("resolveSidebarNavItems", () => {
       preferences: [
         { key: notesKey, visible: false },
         { key: "bogus", visible: true },
+        { key: "teams", visible: true },
         { key: "history", visible: true },
       ],
     });
@@ -88,7 +87,6 @@ describe("resolveSidebarNavItems", () => {
       "new-workspace",
       "search",
       "schedules",
-      "teams",
     ]);
   });
 
@@ -106,7 +104,6 @@ describe("resolveSidebarNavItems", () => {
       { key: "new-workspace", visible: true },
       { key: "search", visible: true },
       { key: "schedules", visible: true },
-      { key: "teams", visible: true },
     ]);
   });
 });
@@ -122,7 +119,6 @@ describe("setSidebarNavItemVisible", () => {
       { key: "history", visible: true },
       { key: "search", visible: false },
       { key: "schedules", visible: true },
-      { key: "teams", visible: true },
       { key: kanbanKey, visible: true },
     ]);
   });
@@ -142,7 +138,6 @@ describe("setSidebarNavItemVisible", () => {
       { key: "new-workspace", visible: true },
       { key: "search", visible: true },
       { key: "schedules", visible: true },
-      { key: "teams", visible: true },
     ]);
   });
 
@@ -164,7 +159,6 @@ describe("setSidebarNavItemVisible", () => {
       { key: "history", visible: false },
       { key: "search", visible: true },
       { key: "schedules", visible: true },
-      { key: "teams", visible: true },
     ]);
     expect(summarize(resolveSidebarNavItems({ pluginGroups: [notes], preferences: next }))).toEqual(
       next,
@@ -191,7 +185,6 @@ describe("moveSidebarNavItem", () => {
       "search",
       "history",
       "schedules",
-      "teams",
       kanbanKey,
     ]);
   });
@@ -203,9 +196,8 @@ describe("moveSidebarNavItem", () => {
       "new-workspace",
       "history",
       "search",
-      "teams",
-      "schedules",
       kanbanKey,
+      "schedules",
     ]);
   });
 

@@ -10,6 +10,7 @@ import {
 } from "@getpaseo/client/internal/daemon-client";
 import {
   connectionFromListen,
+  createDeviceCredential,
   createRemoteSshHostConnection,
   normalizeStoredHostProfile,
   upsertHostConnectionInProfiles,
@@ -571,6 +572,14 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
           enabled: true,
           daemonPublicKeyB64: connection.daemonPublicKeyB64,
         },
+        ...(connection.deviceCredential
+          ? {
+              device: {
+                credential: connection.deviceCredential,
+                ...(connection.pairingInvite ? { pairingInvite: connection.pairingInvite } : {}),
+              },
+            }
+          : {}),
       });
     },
     connectToDaemon: ({ host, connection, timeoutMs }) =>
@@ -1581,6 +1590,13 @@ export class HostRuntimeStore {
           normalizedProfiles.push(profile);
         }
         profiles = normalizedProfiles.filter((entry) => !isPlaceholderServerId(entry.serverId));
+        if (
+          stored.some((entry) =>
+            entry.connections.some((c) => c.type === "relay" && !c.deviceCredential),
+          )
+        ) {
+          shouldPersistHosts = true;
+        }
         if (profiles.length !== normalizedProfiles.length) {
           shouldPersistHosts = true;
         }
@@ -1883,6 +1899,8 @@ export class HostRuntimeStore {
     relayEndpoint: string;
     useTls?: boolean;
     daemonPublicKeyB64: string;
+    pairingInvite?: string;
+    deviceCredential?: string;
     label?: string;
     password?: string;
   }): Promise<HostProfile> {
@@ -1902,6 +1920,11 @@ export class HostRuntimeStore {
         relayEndpoint,
         ...(explicitUseTls ? { useTls } : {}),
         daemonPublicKeyB64,
+        deviceCredential:
+          input.deviceCredential ??
+          this.relayDeviceCredential(input.serverId) ??
+          createDeviceCredential(),
+        ...(input.pairingInvite ? { pairingInvite: input.pairingInvite } : {}),
       },
     });
     if (input.password) {
@@ -1911,10 +1934,20 @@ export class HostRuntimeStore {
     return profile;
   }
 
+  private relayDeviceCredential(serverId: string): string | undefined {
+    const profile = this.hosts.find((host) => host.serverId === serverId);
+    for (const connection of profile?.connections ?? []) {
+      if (connection.type === "relay" && connection.deviceCredential)
+        return connection.deviceCredential;
+    }
+    return undefined;
+  }
+
   async upsertConnectionFromOffer(
     offer: ConnectionOffer,
     label?: string,
     password?: string,
+    deviceCredential?: string,
   ): Promise<HostProfile> {
     // COMPAT(oldRelayOfferTls): added in v0.1.73, remove after 2026-11-10.
     const useTls = offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint);
@@ -1923,6 +1956,8 @@ export class HostRuntimeStore {
       relayEndpoint: offer.relay.endpoint,
       useTls,
       daemonPublicKeyB64: offer.daemonPublicKeyB64,
+      ...(offer.invite ? { pairingInvite: offer.invite } : {}),
+      ...(deviceCredential ? { deviceCredential } : {}),
       label,
       password,
     });
@@ -1946,12 +1981,15 @@ export class HostRuntimeStore {
     const credential = password ?? parsed.password;
     const useTls = offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint);
     const relayEndpoint = normalizeHostPort(offer.relay.endpoint);
+    const deviceCredential = this.relayDeviceCredential(offer.serverId) ?? createDeviceCredential();
     const connection: HostConnection = {
       id: useTls ? `relay:wss:${relayEndpoint}` : `relay:${relayEndpoint}`,
       type: "relay",
       relayEndpoint,
       useTls,
       daemonPublicKeyB64: offer.daemonPublicKeyB64,
+      deviceCredential,
+      ...(offer.invite ? { pairingInvite: offer.invite } : {}),
     };
     const probeHost: HostProfile = {
       serverId: offer.serverId,
@@ -1966,7 +2004,12 @@ export class HostRuntimeStore {
     };
     const { client, hostname } = await this.deps.connectToDaemon({ host: probeHost, connection });
     await client.close().catch(() => undefined);
-    const profile = await this.upsertConnectionFromOffer(offer, hostname ?? undefined, credential);
+    const profile = await this.upsertConnectionFromOffer(
+      offer,
+      hostname ?? undefined,
+      credential,
+      deviceCredential,
+    );
     return { profile, serverId: offer.serverId, hostname };
   }
 

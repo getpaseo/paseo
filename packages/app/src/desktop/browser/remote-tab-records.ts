@@ -1,7 +1,3 @@
-/**
- * Records that duplicate another record's daemon tab. The record that asked for
- * the tab is kept; the one adopted from a tab listing goes.
- */
 export function duplicateRemoteBrowserRecordIds(
   records: readonly { browserId: string; remoteBrowserId: string | null }[],
 ): string[] {
@@ -20,4 +16,13 @@ export function duplicateRemoteBrowserRecordIds(
     duplicates.push(...browserIds.filter((id) => id !== keep));
   }
   return duplicates;
+}
+export function getBrowserPaneKind(input: {
+  isElectron: boolean;
+  supportsHostBrowser: boolean;
+  remoteBrowserId: string | null;
+}): "desktop" | "host" {
+  return input.isElectron && !input.supportsHostBrowser && !input.remoteBrowserId
+    ? "desktop"
+    : "host";
 }

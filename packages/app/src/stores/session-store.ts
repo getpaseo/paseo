@@ -34,6 +34,7 @@ import type {
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentRoutingNotice,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -85,6 +86,7 @@ export interface Agent {
   availableModes: AgentMode[];
   pendingPermissions: AgentPermissionRequest[];
   persistence: AgentPersistenceHandle | null;
+  routingNotice?: AgentRoutingNotice;
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
   lastError?: string | null;

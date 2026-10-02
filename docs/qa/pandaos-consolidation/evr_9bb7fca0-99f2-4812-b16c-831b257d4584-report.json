@@ -1,0 +1,71 @@
+{
+  "status": "pass",
+  "recipe": "ad-hoc",
+  "workspaceId": "wks_1792a1281cbd8fa6",
+  "profile": "default",
+  "authReused": null,
+  "route": "http://127.0.0.1:4033/settings/sidebar",
+  "checks": [
+    {
+      "name": "screenshot integrated-kitchen-complete-form",
+      "ok": true
+    },
+    {
+      "name": "goal \"In the Sidebar settings on this owned QA app, move Schedules up twice using the Schedules row controls so it appears above History. Turn History off. Leave Settings and confirm History hidden, Schedules above Search. Then return Sidebar settings, restore History visible and restore default order New workspace, History, Search, Schedules. Plugins Kitchen and Dashboard remain separate sidebar contributions; never create/start an agent.\"",
+      "ok": true,
+      "detail": "passed after 1 Jev steps (Jev: 1 decision, 3890 input + 413 output tokens): Goal completed and verified."
+    },
+    {
+      "name": "screenshot integrated-sidebar-settings-restored",
+      "ok": true
+    }
+  ],
+  "trace": [
+    {
+      "action": "navigate",
+      "ok": true,
+      "ms": 546
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 176
+    },
+    {
+      "action": "click",
+      "ok": true,
+      "ms": 204
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 7
+    },
+    {
+      "action": "screenshot",
+      "ok": true,
+      "ms": 81
+    },
+    {
+      "action": "navigate",
+      "ok": true,
+      "ms": 63
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 299
+    },
+    {
+      "action": "goal",
+      "ok": true,
+      "ms": 439
+    },
+    {
+      "action": "screenshot",
+      "ok": true,
+      "ms": 76
+    }
+  ],
+  "durationMs": 1894
+}

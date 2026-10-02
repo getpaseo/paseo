@@ -82,3 +82,23 @@ describe("buildAgentHandoffNote", () => {
     expect(text.length).toBeLessThan(3000);
   });
 });
+
+test("interrupted provider handoff carries completed tool result data", () => {
+  const text = note(
+    [
+      { type: "user_message", text: "Write once" },
+      {
+        type: "tool_call",
+        callId: "write",
+        name: "write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: "/result", content: "recorded-write-result" },
+      },
+    ],
+    { interrupted: true },
+  );
+  expect(text).toContain("Recorded tool checkpoints");
+  expect(text).toContain("recorded-write-result");
+  expect(text).toContain("do not repeat completed side effects");
+});

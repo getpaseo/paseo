@@ -1,0 +1,25 @@
+{
+  "status": "verified",
+  "sourceHead": "4f8197f9c",
+  "paidProviderTurns": 0,
+  "snoozeUiRun": "evr_1a8ed2de-e234-4cef-9436-75b57f0be0eb",
+  "snoozeUiRunStatus": "failed later at an uncertain automation goal; explicit Snooze and its screenshot passed",
+  "doneUiRun": "evr_01bf4979-4624-4a46-aae4-69072c3155ec",
+  "reopenUiRun": "evr_a41700dd-5ecf-4f5a-9a9c-cd888f8f0251",
+  "nativeWorkspaceDoneAt": null,
+  "dashboardDoneOverrideAfterReopen": null,
+  "snoozedCount": 1,
+  "schedule": {
+    "id": "f8b82f83",
+    "status": "completed",
+    "lastRun": {
+      "id": "8967c2eb-544a-460d-81f4-78ac7a88c531",
+      "scheduledFor": "2026-10-02T13:47:09.177Z",
+      "startedAt": "2026-10-02T13:47:09.177Z",
+      "endedAt": "2026-10-02T13:47:09.179Z",
+      "status": "failed",
+      "agentId": null,
+      "error": "Working directory /home/admin/projects/pandaos-consolidation/.dev/plugin-first-qa/missing-cwd no longer exists"
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { openCommandCenter } from "../support/helpers/command-center";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
 async function startTestPages(): Promise<{ url: string; server: Server }> {
   const server = createServer((request, response) => {
@@ -40,7 +41,22 @@ test("a new daemon browser tab opens once, even while its page is still loading"
   test.setTimeout(90_000);
   const slow = await startTestPages();
   const seeded = await seedWorkspace({ repoPrefix: "remote-browser-tabs-" });
+  const client = await connectDaemonClient<DaemonClient>({
+    clientIdPrefix: "remote-browser-warmup",
+  });
   try {
+    const warmup = await client.executeRemoteBrowserCommand({
+      workspaceId: seeded.workspaceId,
+      command: { command: "new_tab", args: { url: "about:blank" } },
+    });
+    if (!warmup.ok || warmup.result.command !== "new_tab") {
+      throw new Error("The daemon did not initialize the browser context");
+    }
+    const closed = await client.executeRemoteBrowserCommand({
+      workspaceId: seeded.workspaceId,
+      command: { command: "close_tab", args: { browserId: warmup.result.browserId } },
+    });
+    expect(closed.ok).toBe(true);
     await page.addInitScript((startUrl) => {
       localStorage.setItem(
         "workspace-browser-store",
@@ -48,6 +64,7 @@ test("a new daemon browser tab opens once, even while its page is still loading"
       );
     }, slow.url);
     await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+    await waitForWorkspaceTabsVisible(page);
     const panel = await openCommandCenter(page);
     await panel.getByRole("textbox").fill("New browser");
     await page.keyboard.press("Enter");
@@ -62,6 +79,7 @@ test("a new daemon browser tab opens once, even while its page is still loading"
     expect(Math.max(...counts)).toBe(1);
     await expect(browserTabs.first()).toContainText("Slow page", { timeout: 60_000 });
   } finally {
+    await client.close();
     await seeded.cleanup();
     slow.server.close();
   }

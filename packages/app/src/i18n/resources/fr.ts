@@ -2733,6 +2733,15 @@ export const fr: TranslationResources = {
         title: "Associer des appareils",
         rowTitle: "Associer un appareil",
         rowHint: "Scannez un codeQRou copiez un lien pour connecter votre téléphone à cet hôte",
+        devicesTitle: "Paired devices",
+        lock: "Autoriser uniquement les appareils associés",
+        unlock: "Autoriser de nouveaux appareils",
+        locked: "Locked: only these devices can connect through the relay.",
+        unlocked:
+          "Up-to-date apps register here when they connect. Turn on the lock to admit only these devices.",
+        thisDevice: "This device",
+        lastSeen: "Last seen {{when}} · app {{version}}",
+        revoke: "Remove",
       },
       skills: {
         ...en.settings.host.skills,

@@ -17,6 +17,7 @@ import {
   BrowserWindow,
   ClipboardItem,
   clipboard,
+  dialog,
   Menu,
   ipcMain,
   nativeImage,
@@ -54,7 +55,21 @@ import {
 import { createExternalUrlOpener } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
 import { BrowserTunnelHost } from "./features/browser-tunnel.js";
-import { readImportCookiesIntoSession } from "./features/browser-cookie-import.js";
+import {
+  fromElectronCookie,
+  importBrowserProfile,
+  readImportCookiesIntoSession,
+  toElectronCookie,
+} from "./features/browser-cookie-import.js";
+import {
+  BrowserBackupError,
+  decryptBrowserBackup,
+  encryptBrowserBackup,
+  readBrowserSessionCookies,
+  writeBrowserSessionCookies,
+} from "./features/browser-backup.js";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { z } from "zod";
 import { listBrowserImportSources } from "@getpaseo/server/browser-import";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
 import { resolveAppIconPath } from "./features/stamped-icon.js";
@@ -107,7 +122,7 @@ import {
   BrowserPasswords,
   registerBrowserPasswordsIpc,
 } from "./features/browser-passwords/index.js";
-import { PasswordVault } from "./features/browser-passwords/vault.js";
+import { PasswordVault, type PasswordCrypto } from "./features/browser-passwords/vault.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
@@ -553,16 +568,273 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
       log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
     },
   });
+  await rm(browserSessionFile, { force: true });
+  browserSessionRestoreFailed = false;
+  browserSessionError = null;
 });
 
-ipcMain.handle("paseo:browser:list-import-sources", () => listBrowserImportSources());
+function assertBrowserSettingsSender(event: Electron.IpcMainInvokeEvent): void {
+  const host = BrowserWindow.fromWebContents(event.sender);
+  if (
+    !host ||
+    event.sender.session === session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION) ||
+    event.senderFrame !== event.sender.mainFrame
+  ) {
+    throw new Error("Browser settings are only available to PandaOS windows.");
+  }
+}
 
-ipcMain.handle("paseo:browser:read-import-cookies", (_event, sourceId: unknown) =>
-  readImportCookiesIntoSession({
+const browserCrypto: PasswordCrypto = {
+  isAvailable: () =>
+    safeStorage.isEncryptionAvailable() &&
+    (process.platform !== "linux" ||
+      !["basic_text", "unknown"].includes(safeStorage.getSelectedStorageBackend())),
+  encrypt: (plainText) => safeStorage.encryptString(plainText),
+  decrypt: (cipherText) => safeStorage.decryptString(cipherText),
+};
+const browserPasswordVault = new PasswordVault({
+  filePath: path.join(app.getPath("userData"), "browser-passwords.json"),
+  crypto: browserCrypto,
+});
+const browserSessionFile = path.join(app.getPath("userData"), "browser-session.enc");
+let browserSessionError: string | null = null;
+let browserSessionRestoreFailed = false;
+let browserSessionWrites = Promise.resolve();
+function saveBrowserSession(): Promise<void> {
+  browserSessionWrites = browserSessionWrites
+    .catch(() => undefined)
+    .then(async () => {
+      if (browserSessionRestoreFailed)
+        throw new Error(
+          "The previous session could not be unlocked; its encrypted file was preserved.",
+        );
+      const profile = session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
+      const cookies = (await profile.cookies.get({}))
+        .map(fromElectronCookie)
+        .filter((cookie) => cookie.expires === -1);
+      await writeBrowserSessionCookies(browserSessionFile, cookies, browserCrypto);
+      await profile.cookies.flushStore();
+      profile.flushStorageData();
+      browserSessionError = null;
+      return undefined;
+    });
+  return browserSessionWrites;
+}
+
+ipcMain.handle("paseo:browser:profile-status", (event) => {
+  assertBrowserSettingsSender(event);
+  return { available: browserCrypto.isAvailable(), error: browserSessionError };
+});
+ipcMain.handle("paseo:browser:list-import-sources", (event) => {
+  assertBrowserSettingsSender(event);
+  return listBrowserImportSources();
+});
+
+ipcMain.handle("paseo:browser:read-import-cookies", (event, sourceId: unknown) => {
+  assertBrowserSettingsSender(event);
+  return readImportCookiesIntoSession({
     sourceId,
     cookies: session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION).cookies,
-  }),
-);
+  });
+});
+
+ipcMain.handle("paseo:browser:read-import-profile", async (event, raw: unknown) => {
+  assertBrowserSettingsSender(event);
+  const input = localImportSchema.safeParse(raw);
+  if (!input.success) return { ok: false, error: "Invalid browser import request." };
+  try {
+    const { readBrowserImportCookies, readBrowserImportPasswords, BrowserImportError } =
+      await import("@getpaseo/server/browser-import");
+    try {
+      return {
+        ok: true,
+        cookies: await readBrowserImportCookies(input.data.sourceId),
+        logins: await readBrowserImportPasswords(
+          input.data.sourceId,
+          undefined,
+          input.data.primaryPassword,
+        ),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof BrowserImportError
+            ? error.message
+            : "Could not read the browser profile. Unlock its original keyring and retry.",
+      };
+    }
+  } catch {
+    return { ok: false, error: "Browser profile import is unavailable." };
+  }
+});
+
+ipcMain.handle("paseo:browser:backup-file", async (event, raw: unknown) => {
+  assertBrowserSettingsSender(event);
+  const input = z
+    .discriminatedUnion("action", [
+      z.object({ action: z.literal("save"), encrypted: z.string().max(32 * 1024 * 1024) }).strict(),
+      z.object({ action: z.literal("read") }).strict(),
+    ])
+    .safeParse(raw);
+  if (!input.success) return { ok: false, error: "Invalid backup file request." };
+  try {
+    if (input.data.action === "read") {
+      const selected = await dialog.showOpenDialog({
+        title: "Restore host browser backup",
+        properties: ["openFile"],
+      });
+      if (selected.canceled || !selected.filePaths[0]) return { ok: true, cancelled: true };
+      const file = selected.filePaths[0];
+      if ((await stat(file)).size > 32 * 1024 * 1024)
+        return { ok: false, error: "Browser backup is too large." };
+      return { ok: true, encrypted: await readFile(file, "utf8") };
+    }
+    const selected = await dialog.showSaveDialog({
+      title: "Save host browser backup",
+      defaultPath: "pandaos-host-browser-backup.json",
+    });
+    if (selected.canceled || !selected.filePath) return { ok: true, cancelled: true };
+    const temporary = `${selected.filePath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, input.data.encrypted, { mode: 0o600, flag: "wx" });
+      await rename(temporary, selected.filePath);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not open or save the encrypted backup file." };
+  }
+});
+
+const localImportSchema = z
+  .object({ sourceId: z.string().min(1).max(2048), primaryPassword: z.string().max(1024) })
+  .strict();
+ipcMain.handle("paseo:browser:import-profile", async (event, raw: unknown) => {
+  assertBrowserSettingsSender(event);
+  const input = localImportSchema.safeParse(raw);
+  if (!input.success) return { ok: false, error: "Invalid browser import request." };
+  try {
+    const result = await importBrowserProfile({
+      ...input.data,
+      cookies: session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION).cookies,
+      vault: browserPasswordVault,
+    });
+    await saveBrowserSession();
+    return { ok: true, ...result };
+  } catch (error) {
+    const { BrowserImportError } = await import("@getpaseo/server/browser-import");
+    return {
+      ok: false,
+      error:
+        error instanceof BrowserImportError
+          ? error.message
+          : "Browser import failed. Unlock the system keychain and retry; existing saved passwords were preserved.",
+    };
+  }
+});
+
+let browserBackupBusy = false;
+ipcMain.handle("paseo:browser:backup", async (event, raw: unknown) => {
+  assertBrowserSettingsSender(event);
+  const input = z
+    .object({ action: z.enum(["export", "restore"]), passphrase: z.string().min(12).max(1024) })
+    .strict()
+    .safeParse(raw);
+  if (!input.success)
+    return { ok: false, error: "Use a backup passphrase with 12–1024 characters." };
+  if (browserBackupBusy)
+    return { ok: false, error: "A browser backup operation is already running." };
+  browserBackupBusy = true;
+  try {
+    const profile = session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
+    if (!browserCrypto.isAvailable())
+      throw new BrowserBackupError(
+        "Unlock the system keychain before backing up or restoring browser logins.",
+      );
+    if (input.data.action === "export") {
+      const selected = await dialog.showSaveDialog({
+        title: "Save encrypted browser backup",
+        defaultPath: "pandaos-browser-backup.json",
+        filters: [{ name: "Encrypted browser backup", extensions: ["json"] }],
+      });
+      if (selected.canceled || !selected.filePath) return { ok: true, cancelled: true };
+      const cookies = (await profile.cookies.get({})).map(fromElectronCookie);
+      const logins = browserPasswordVault.exportLogins();
+      const encrypted = await encryptBrowserBackup(
+        { version: 1, cookies, logins },
+        input.data.passphrase,
+      );
+      const temporary = `${selected.filePath}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporary, encrypted, { mode: 0o600, flag: "wx" });
+        await rename(temporary, selected.filePath);
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      return {
+        ok: true,
+        cookieCount: cookies.length,
+        passwordCount: logins.length,
+        skippedCookies: 0,
+        skippedPasswords: 0,
+      };
+    }
+    const selected = await dialog.showOpenDialog({
+      title: "Restore encrypted browser backup",
+      properties: ["openFile"],
+      filters: [{ name: "Encrypted browser backup", extensions: ["json"] }],
+    });
+    const file = selected.filePaths[0];
+    if (selected.canceled || !file) return { ok: true, cancelled: true };
+    if ((await stat(file)).size > 32 * 1024 * 1024)
+      throw new BrowserBackupError("Browser backup is too large.");
+    const data = await decryptBrowserBackup(await readFile(file, "utf8"), input.data.passphrase);
+    const cookieKey = (cookie: { domain: string; path: string; name: string }) =>
+      JSON.stringify([cookie.domain, cookie.path, cookie.name]);
+    const existing = new Set(
+      (await profile.cookies.get({})).map(fromElectronCookie).map(cookieKey),
+    );
+    const added = [];
+    try {
+      for (const cookie of data.cookies) {
+        if (
+          existing.has(cookieKey(cookie)) ||
+          (cookie.expires !== -1 && cookie.expires <= Date.now() / 1000)
+        )
+          continue;
+        await profile.cookies.set(toElectronCookie(cookie));
+        existing.add(cookieKey(cookie));
+        added.push(cookie);
+      }
+      const result = browserPasswordVault.importLogins(data.logins);
+      await saveBrowserSession();
+      return {
+        ok: true,
+        cookieCount: added.length,
+        skippedCookies: data.cookies.length - added.length,
+        ...result,
+      };
+    } catch {
+      for (const cookie of added)
+        await profile.cookies.remove(toElectronCookie(cookie).url, cookie.name);
+      throw new BrowserBackupError(
+        "Restore could not finish. Existing logins were preserved; some new passwords may already have been restored. Unlock the system keychain and retry.",
+      );
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof BrowserBackupError
+          ? error.message
+          : "Browser backup failed. Existing profile data was preserved; unlock the system keychain and retry.",
+    };
+  } finally {
+    browserBackupBusy = false;
+  }
+});
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
   findGuest: getPaseoBrowserWebContentsForHostWindow,
@@ -594,17 +866,7 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown) =>
 registerBrowserPasswordsIpc(
   ipcMain,
   new BrowserPasswords({
-    vault: new PasswordVault({
-      filePath: path.join(app.getPath("userData"), "browser-passwords.json"),
-      crypto: {
-        isAvailable: () =>
-          safeStorage.isEncryptionAvailable() &&
-          (process.platform !== "linux" ||
-            !["basic_text", "unknown"].includes(safeStorage.getSelectedStorageBackend())),
-        encrypt: (plainText) => safeStorage.encryptString(plainText),
-        decrypt: (cipherText) => safeStorage.decryptString(cipherText),
-      },
-    }),
+    vault: browserPasswordVault,
     registry: getPaseoBrowserWebviewRegistry(),
     isHostSender: (sender) => {
       const contents = webContents.fromId(sender.id);
@@ -973,6 +1235,38 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+  const profileSession = session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
+  try {
+    const restored = await readBrowserSessionCookies(browserSessionFile, browserCrypto);
+    const existing = await profileSession.cookies.get({});
+    for (const cookie of restored) {
+      if (
+        existing.some(
+          (current) =>
+            current.name === cookie.name &&
+            current.domain === cookie.domain &&
+            current.path === cookie.path,
+        )
+      )
+        continue;
+      await profileSession.cookies.set(toElectronCookie(cookie));
+    }
+  } catch {
+    browserSessionRestoreFailed = true;
+    browserSessionError =
+      "Browser session logins could not be restored. Unlock the system keychain, then restart PandaOS. Existing browser data was preserved.";
+  }
+  let cookieSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  profileSession.cookies.on("changed", () => {
+    if (cookieSaveTimer) clearTimeout(cookieSaveTimer);
+    cookieSaveTimer = setTimeout(() => {
+      cookieSaveTimer = null;
+      void saveBrowserSession().catch(() => {
+        browserSessionError =
+          "Session logins could not be saved. Unlock the system keychain before restarting PandaOS.";
+      });
+    }, 250);
+  });
 
   const appDistDir = getAppDistDir();
   const handleAppProtocol = (request: Request) => {
@@ -1073,13 +1367,17 @@ function showDaemonShutdownDialog(): void {
 const quitLifecycle = createQuitLifecycle({
   app,
   closeTransportSessions: closeAllTransportSessions,
-  stopDesktopManagedDaemonIfNeeded: () =>
-    stopDesktopManagedDaemonOnQuitIfNeeded({
+  stopDesktopManagedDaemonIfNeeded: async () => {
+    await saveBrowserSession().catch(() => {
+      log.warn("[browser-profile] session checkpoint failed; unlock the system keychain");
+    });
+    return stopDesktopManagedDaemonOnQuitIfNeeded({
       settingsStore: getDesktopSettingsStore(),
       isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
-    }),
+    });
+  },
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();
     return installAppUpdateOnQuit({
