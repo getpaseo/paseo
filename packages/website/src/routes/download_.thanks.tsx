@@ -3,21 +3,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DiscordIcon, GitHubIcon, RedditIcon } from "~/components/brand-icons";
 import { SiteShell } from "~/components/site-shell";
 import { SponsorSection } from "~/components/sponsorship";
-import { downloadUrls, isDownloadAsset, type DownloadAsset } from "~/downloads";
+import { parseReleaseAssetUrl } from "~/downloads";
 import { pageMeta } from "~/meta";
-import { useBetaRelease, useRelease } from "~/routes/__root";
 import "~/styles.css";
 
 interface ThanksSearch {
-  asset?: DownloadAsset;
-  channel?: "beta";
+  file?: string;
 }
 
 export const Route = createFileRoute("/download_/thanks")({
-  validateSearch: (search: Record<string, unknown>): ThanksSearch => ({
-    ...(isDownloadAsset(search.asset) ? { asset: search.asset } : {}),
-    ...(search.channel === "beta" ? { channel: "beta" } : {}),
-  }),
+  validateSearch: (search: Record<string, unknown>): ThanksSearch => {
+    const file = parseReleaseAssetUrl(search.file);
+    return file ? { file } : {};
+  },
   head: () =>
     pageMeta(
       "Thanks for downloading Paseo",
@@ -49,15 +47,11 @@ const COMMUNITY = [
 ];
 
 function DownloadThanks() {
-  const { asset, channel } = Route.useSearch();
-  const stable = useRelease();
-  const beta = useBetaRelease();
-  const release = channel === "beta" && beta ? beta : stable;
-  const url = asset ? downloadUrls(release)[asset] : null;
+  const { file } = Route.useSearch();
 
   useEffect(() => {
-    if (url) window.location.assign(url);
-  }, [url]);
+    if (file) window.location.assign(file);
+  }, [file]);
 
   return (
     <SiteShell width="default">
@@ -65,10 +59,10 @@ function DownloadThanks() {
       <p className="text-lg text-white/70 leading-relaxed max-w-2xl">
         Get help, share feedback, and follow along.
       </p>
-      {url && (
+      {file && (
         <p className="text-white/40 text-sm mt-3">
           Download didn&apos;t start?{" "}
-          <a href={url} className="underline hover:text-white/80">
+          <a href={file} className="underline hover:text-white/80">
             Try again
           </a>
         </p>

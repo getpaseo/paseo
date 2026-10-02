@@ -27,28 +27,25 @@ export function downloadUrls(release: ReleaseAssetInfo) {
   };
 }
 
-export type DownloadAsset = keyof ReturnType<typeof downloadUrls>;
+const RELEASE_ASSETS_ORIGIN = "https://github.com";
+const RELEASE_ASSETS_PATH = "/getpaseo/paseo/releases/download/";
 
-const DOWNLOAD_ASSETS: ReadonlySet<string> = new Set<DownloadAsset>([
-  "macAppleSilicon",
-  "macIntel",
-  "linuxAppImage",
-  "linuxDeb",
-  "linuxRpm",
-  "windowsExeX64",
-  "windowsExeArm64",
-  "androidApk",
-]);
-
-export function isDownloadAsset(value: unknown): value is DownloadAsset {
-  return typeof value === "string" && DOWNLOAD_ASSETS.has(value);
+/**
+ * The release file a thanks-page link asks for, or null when it is not one of
+ * ours. Parsing normalizes `..` segments, so a link cannot climb out of this
+ * repo's releases into another repo's.
+ */
+export function parseReleaseAssetUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  if (url.origin !== RELEASE_ASSETS_ORIGIN) return null;
+  if (!url.pathname.startsWith(RELEASE_ASSETS_PATH)) return null;
+  return url.href;
 }
 
 /** Download buttons link here; the thanks page starts the download itself. */
-export function thanksPageHref(asset: DownloadAsset, channel?: "beta"): string {
-  const params = new URLSearchParams({ asset });
-  if (channel) params.set("channel", channel);
-  return `/download/thanks?${params}`;
+export function thanksPageHref(fileUrl: string): string {
+  return `/download/thanks?${new URLSearchParams({ file: fileUrl })}`;
 }
 
 export const appStoreUrl = "https://apps.apple.com/app/paseo-pocket-engineer/id6758887924";
@@ -61,14 +58,18 @@ export interface PrimaryDownload {
   icon: (props: React.SVGProps<SVGSVGElement>) => React.ReactElement;
 }
 
-export function getDesktopDownload(platform: DesktopPlatform): PrimaryDownload {
+export function getDesktopDownload(
+  release: ReleaseAssetInfo,
+  platform: DesktopPlatform,
+): PrimaryDownload {
+  const urls = downloadUrls(release);
   switch (platform) {
     case "windows":
-      return { label: "Windows", href: thanksPageHref("windowsExeX64"), icon: WindowsIcon };
+      return { label: "Windows", href: thanksPageHref(urls.windowsExeX64), icon: WindowsIcon };
     case "linux":
-      return { label: "Linux", href: thanksPageHref("linuxAppImage"), icon: LinuxIcon };
+      return { label: "Linux", href: thanksPageHref(urls.linuxAppImage), icon: LinuxIcon };
     case "mac":
-      return { label: "Mac", href: thanksPageHref("macAppleSilicon"), icon: AppleIcon };
+      return { label: "Mac", href: thanksPageHref(urls.macAppleSilicon), icon: AppleIcon };
   }
 }
 

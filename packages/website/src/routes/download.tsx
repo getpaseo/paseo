@@ -42,13 +42,12 @@ export const Route = createFileRoute("/download")({
 function Download() {
   const stable = useRelease();
   const beta = useBetaRelease();
-  const search = Route.useSearch();
+  const { channel } = Route.useSearch();
 
   // A ?channel=beta link outlives the beta it was shared for, so the release
   // decides the channel, not the URL.
-  const activeBeta = search.channel === "beta" ? beta : null;
+  const activeBeta = channel === "beta" ? beta : null;
   const onBeta = activeBeta !== null;
-  const channel = onBeta ? "beta" : undefined;
   const release = activeBeta ?? stable;
   const { version } = release;
   const urls = downloadUrls(release);
@@ -90,11 +89,8 @@ function Download() {
           <PlatformRow icon={AppleIcon} label="macOS">
             <div className="flex flex-col items-start gap-2 sm:items-end">
               <PillGroup>
-                <DownloadPill
-                  href={thanksPageHref("macAppleSilicon", channel)}
-                  label="Apple Silicon"
-                />
-                <DownloadPill href={thanksPageHref("macIntel", channel)} label="Intel" />
+                <DownloadPill href={thanksPageHref(urls.macAppleSilicon)} label="Apple Silicon" />
+                <DownloadPill href={thanksPageHref(urls.macIntel)} label="Intel" />
               </PillGroup>
               <span className="text-xs text-muted-foreground">Requires macOS 13 or newer</span>
             </div>
@@ -109,20 +105,20 @@ function Download() {
           <PlatformRow icon={WindowsIcon} label="Windows">
             <PillGroup>
               <DownloadPill
-                href={thanksPageHref("windowsExeX64", channel)}
+                href={thanksPageHref(urls.windowsExeX64)}
                 label={urls.windowsExeArm64 ? "Intel / x64" : "Download"}
               />
               {urls.windowsExeArm64 && (
-                <DownloadPill href={thanksPageHref("windowsExeArm64", channel)} label="ARM64" />
+                <DownloadPill href={thanksPageHref(urls.windowsExeArm64)} label="ARM64" />
               )}
             </PillGroup>
           </PlatformRow>
 
           <PlatformRow icon={LinuxIcon} label="Linux">
             <PillGroup>
-              <DownloadPill href={thanksPageHref("linuxAppImage", channel)} label="AppImage" />
-              <DownloadPill href={thanksPageHref("linuxDeb", channel)} label="DEB" />
-              <DownloadPill href={thanksPageHref("linuxRpm", channel)} label="RPM" />
+              <DownloadPill href={thanksPageHref(urls.linuxAppImage)} label="AppImage" />
+              <DownloadPill href={thanksPageHref(urls.linuxDeb)} label="DEB" />
+              <DownloadPill href={thanksPageHref(urls.linuxRpm)} label="RPM" />
             </PillGroup>
           </PlatformRow>
         </div>
@@ -139,7 +135,7 @@ function Download() {
           <PlatformRow icon={AndroidIcon} label="Android">
             <PillGroup>
               {!onBeta && <DownloadPill href={playStoreUrl} label="Play Store" external />}
-              <DownloadPill href={thanksPageHref("androidApk", channel)} label="APK" />
+              <DownloadPill href={thanksPageHref(urls.androidApk)} label="APK" />
             </PillGroup>
           </PlatformRow>
 
