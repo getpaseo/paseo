@@ -26,17 +26,6 @@ export const uk: TranslationResources = {
     total: "Збігів: {{total}}",
   },
   common: {
-    links: {
-      title: "Відкрити посилання",
-      systemHandler: "Відкрити в застосунку, встановленому на цьому пристрої.",
-      unsupported:
-        "Це посилання не можна відкрити тут. Скопіюйте адресу, щоб відкрити її в іншому застосунку.",
-      open: "Відкрити в застосунку",
-      copy: "Копіювати адресу",
-      failed:
-        "Не вдалося відкрити або скопіювати посилання. Перевірте, чи встановлено застосунок для такого типу посилань, або скопіюйте адресу.",
-      opened: "Посилання передано системі. У браузері дозвольте запит на відкриття застосунку.",
-    },
     bottomSheetBackdrop: "Тло нижньої панелі",
     back: "Назад",
     loading: "Завантаження...",
@@ -1867,12 +1856,6 @@ export const uk: TranslationResources = {
     externalBrowser: "Зовнішній браузер",
     dontAskAgain: "Більше не питати",
   },
-  chatLink: {
-    title: "Відкрити URL",
-    message: "Відкрити {{url}} у Paseo чи в зовнішньому браузері?",
-    internalTab: "Вбудований браузер — вкладка",
-    externalBrowser: "Зовнішній браузер",
-  },
   downloads: {
     requestTokenFailed: "Не вдалося запитати токен завантаження.",
     hostUnavailable: "Хост завантаження недоступний.",
@@ -1911,8 +1894,6 @@ export const uk: TranslationResources = {
       noPreview: "Попередній перегляд недоступний",
       binaryPreviewUnavailable: "Перегляд двійкових файлів недоступний",
       tooLargeToDisplay: "Цей файл завеликий для відображення",
-      showDirectory: "Показати папку з файлом",
-      resourceActions: "Дії з файлом",
       failedToLoad: "Не вдалося завантажити файл",
       failedToLoadPreview: "Не вдалося завантажити попередній перегляд файлу",
       editor: {
@@ -2081,14 +2062,10 @@ export const uk: TranslationResources = {
             description:
               "Відкривати посилання на файли та файли з викликів інструментів поруч із розмовою",
           },
-          chatLinks: {
-            label: "Клік на URL у чаті агента",
-          },
           diffFiles: {
             label: "Клік на файл у diff",
             description: "Відкривати вихідні файли, вибрані в diff, поруч із ним",
           },
-          terminals: { label: "Відкриття терміналу" },
           subagents: {
             label: "Клік на субагента в чаті агента",
             description: "Відкривати субагентів поруч із батьківським агентом",
@@ -2184,14 +2161,6 @@ export const uk: TranslationResources = {
         options: {
           ask: "Запитувати",
           inApp: "У Paseo",
-          external: "Зовнішній браузер",
-        },
-      },
-      chatLinks: {
-        options: {
-          ask: "Запитувати",
-          internalSide: "Вбудований браузер — збоку",
-          internalTab: "Вбудований браузер — вкладка",
           external: "Зовнішній браузер",
         },
       },
