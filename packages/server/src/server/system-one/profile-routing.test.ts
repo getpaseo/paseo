@@ -217,6 +217,123 @@ it.each(["off", "unreachable", "low confidence"])(
   },
 );
 
+it.each(["off", "unreachable", "low confidence"])(
+  "uses an available default model instead of waiting for an exhausted origin when Jev is %s",
+  async (state) => {
+    const catalog: RoutingProfile[] = [
+      {
+        ...profiles[0],
+        models: [{ provider: "codex-plus", id: "gpt-6-luna", label: "Luna" }],
+      },
+      ...profiles.slice(1).map((profile) =>
+        Object.assign({}, profile, {
+          models: [
+            {
+              ...profile.models[0],
+              thinkingOptions: [
+                { id: "xhigh", label: "Xhigh" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        }),
+      ),
+    ];
+    const f = fixture(
+      [
+        usage("codex-plus", 100, "2026-10-04T12:00:00Z"),
+        usage("codex-work", 30),
+        usage("codex-business", 10),
+      ],
+      catalog,
+      state !== "off",
+    );
+    if (state === "unreachable") f.decide.mockRejectedValue(new Error("timeout"));
+    if (state === "low confidence")
+      f.decide.mockImplementation(async (request) => {
+        const question = request.questions.route;
+        if (question.type !== "choice") throw new Error("expected choice");
+        return {
+          model: "jev",
+          latencyMs: 1,
+          answers: {
+            route: {
+              choice: "route0",
+              confidence: 0.25,
+              probabilities: Object.fromEntries(
+                Object.keys(question.criteria).map((key) => [key, 0.25]),
+              ),
+            },
+            reason: {
+              choice: "implementation",
+              confidence: 0.34,
+              probabilities: {
+                mechanical: 0.33,
+                implementation: 0.34,
+                complex: 0.33,
+              },
+            },
+          },
+        };
+      });
+    expect(
+      await f.router({ ...f.input, model: "gpt-6-luna", thinkingOptionId: "high" }),
+    ).toMatchObject({
+      profile: { provider: "codex-business", thinkingOptionId: "high" },
+      model: "gpt-6.1-sol",
+      reason: expect.stringContaining("Available default route"),
+    });
+    await expect(f.router({ ...f.input, currentRetry: true })).rejects.toThrow(
+      "still quota-limited",
+    );
+  },
+);
+
+it("does not block a confident route on an uncertain task classification", async () => {
+  const f = fixture();
+  const original = f.decide.getMockImplementation()!;
+  f.decide.mockImplementation(async (request) => {
+    const result = await original(request);
+    result.answers.reason = {
+      choice: "implementation",
+      confidence: 0.34,
+      probabilities: { mechanical: 0.33, implementation: 0.34, complex: 0.33 },
+    };
+    return result;
+  });
+  expect(await f.router(f.input)).toMatchObject({
+    profile: { provider: "codex-plus" },
+    reason: expect.stringContaining("task classification uncertain"),
+  });
+});
+
+it("deduplicates repeated configured model and effort choices before asking Jev", async () => {
+  const f = fixture();
+  const router = createProfileRouter({
+    getProfiles: () => profiles,
+    getRouting: () => ({
+      codex: {
+        models: ["gpt-6.1-sol", "gpt-6.1-sol"],
+        thinking: ["medium", "medium"],
+      },
+    }),
+    getUsage: f.getUsage,
+    decisionSource: () => ({ decide: f.decide }),
+    enabled: () => true,
+    minimumConfidence: () => 0.5,
+  });
+  await router(f.input);
+  const question = f.decide.mock.calls[0][0].questions.route;
+  if (question.type !== "choice") throw new Error("expected choice");
+  expect(Object.values(question.criteria)).toHaveLength(profiles.length);
+});
+
+it("retains the selected healthy route when Jev is unavailable", async () => {
+  const f = fixture();
+  f.decide.mockRejectedValue(new Error("timeout"));
+  await expect(f.router(f.input)).resolves.toBeNull();
+});
+
 it("preserves an already selected supported Opus xhigh while forbidding automatic xhigh", async () => {
   const catalog = ["claude", "claude-extra"].map((id) => ({
     id,

@@ -12400,6 +12400,7 @@ async function createCapacityFixture(
     throwTransient?: boolean;
     quotaReset?: string;
     onlyOrigin?: boolean;
+    uncertainRouting?: boolean;
   } = {},
 ) {
   const workdir = mkdtempSync(join(tmpdir(), "capacity-recovery-"));
@@ -12489,7 +12490,14 @@ async function createCapacityFixture(
         provider: id,
         id: id === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol",
         label: id,
-        thinkingOptions: [{ id: "medium", label: "Medium" }],
+        thinkingOptions:
+          options.uncertainRouting && id === "claude"
+            ? [
+                { id: "medium", label: "Medium" },
+                { id: "high", label: "High" },
+                { id: "low", label: "Low" },
+              ]
+            : [{ id: "medium", label: "Medium" }],
       },
     ],
   }));
@@ -12529,9 +12537,12 @@ async function createCapacityFixture(
           answers: {
             route: {
               choice: keys[0],
-              confidence: 1,
+              confidence: options.uncertainRouting ? 1 / keys.length : 1,
               probabilities: Object.fromEntries(
-                keys.map((key, index) => [key, index === 0 ? 1 : 0]),
+                keys.map((key, index) => [
+                  key,
+                  options.uncertainRouting ? 1 / keys.length : Number(index === 0),
+                ]),
               ),
             },
             reason: {
@@ -12662,6 +12673,48 @@ test("persistent native capacity tries same-model accounts before Jev model reas
       model: "claude-opus-5-5",
       reason: expect.stringContaining("Jev reassessed: complex"),
     });
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("uncertain reassessment resumes the logical turn on an available default after account retries", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ persistent: true, uncertainRouting: true });
+  try {
+    const events = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Implement the task", {
+        clientMessageId: "uncertain-reassessment",
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(3_010);
+    await fixture.started.business.promise;
+    await vi.advanceTimersByTimeAsync(3_010);
+    await fixture.started.claude.promise;
+    await vi.advanceTimersByTimeAsync(0);
+    await events;
+    expect(fixture.attempts.map(({ profile }) => profile)).toEqual([
+      "codex-plus",
+      "codex-plus",
+      "codex-plus",
+      "codex-business",
+      "codex-business",
+      "codex-business",
+      "claude",
+    ]);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+    expect(fixture.manager.getAgent(fixture.agent.id)!.config.routingNotice).toMatchObject({
+      status: "selected",
+      toProfile: "claude",
+      effort: "high",
+      reason: expect.stringContaining("Available default route"),
+    });
+    expect(
+      fixture.manager
+        .fetchTimeline(fixture.agent.id, { projection: "canonical" })
+        .rows.filter(({ item }) => item.type === "user_message"),
+    ).toHaveLength(1);
   } finally {
     await fixture.cleanup();
     vi.useRealTimers();

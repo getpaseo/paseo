@@ -164,8 +164,31 @@ async function selectAvailableRoute(
     preserving
       ? candidateRoute(candidates[0], reset, `Preserved model and effort; ${reason}`)
       : null;
+  const fallback = (reason: string) => {
+    const route = preserved(reason);
+    if (route || !input.fallback || !candidates.length) return route;
+    const model = candidates[0].model.id;
+    const effortPriority = (candidate: RoutingCandidate) => {
+      const preferred = ["high", candidate.model.defaultThinkingOptionId, "medium", "low"];
+      const index = preferred.indexOf(candidate.effort);
+      return index < 0 ? preferred.length : index;
+    };
+    const candidate = candidates
+      .filter((entry) => entry.model.id === model)
+      .toSorted(
+        (left, right) =>
+          effortPriority(left) - effortPriority(right) ||
+          Math.max(
+            ...(usage.get(left.profile.id)?.windows.map((window) => window.usedPct ?? 0) ?? [0]),
+          ) -
+            Math.max(
+              ...(usage.get(right.profile.id)?.windows.map((window) => window.usedPct ?? 0) ?? [0]),
+            ),
+      )[0];
+    return candidateRoute(candidate, reset, `Available default route; ${reason}`);
+  };
   if (!options.enabled(input.cwd)) {
-    const route = preserved("Jev routing is disabled.");
+    const route = fallback("Jev routing is disabled.");
     if (route) return route;
     if (input.fallback) return unavailable("Jev routing is disabled; reassessment is unavailable.");
     return null;
@@ -179,9 +202,13 @@ async function selectAvailableRoute(
   }
   try {
     const route = await decideRoute(options, input, candidates, preserving, usage, reset);
-    return route ?? preserved("Jev produced no route.");
+    return route ?? fallback("Jev produced no route.");
   } catch (error) {
-    const route = preserved("Jev reassessment evidence is unavailable.");
+    const route = fallback(
+      error instanceof ProfileRoutingUnavailableError
+        ? error.message
+        : "Jev reassessment evidence is unavailable.",
+    );
     if (route) return route;
     if (error instanceof ProfileRoutingUnavailableError) return unavailable(error.message);
     if (input.fallback)
@@ -252,9 +279,14 @@ function routingCandidates(eligible: RoutingProfile[], input: ProfileRouteInput)
           ),
       );
   return {
-    candidates: candidates.toSorted(
-      (left, right) => modelPriority(left.model.id) - modelPriority(right.model.id),
-    ),
+    candidates: [
+      ...new Map(
+        candidates.map((candidate) => [
+          JSON.stringify([candidate.profile.id, candidate.model.id, candidate.effort]),
+          candidate,
+        ]),
+      ).values(),
+    ].toSorted((left, right) => modelPriority(left.model.id) - modelPriority(right.model.id)),
     preserving: preserving.length > 0,
   };
 }
@@ -317,11 +349,8 @@ async function decideRoute(
     "implementation",
     "complex",
   ]);
-  if (
-    selected.confidence < options.minimumConfidence() ||
-    rationale.confidence < options.minimumConfidence()
-  )
-    return unavailable("Jev did not produce a confident route and reassessment reason.");
+  if (selected.confidence < options.minimumConfidence())
+    return unavailable("Jev did not produce a confident route.");
   const candidate = candidates[Number(selected.choice.slice(5))];
   if (!candidate) return unavailable("Jev selected an unknown route.");
   return candidateRoute(
@@ -329,7 +358,7 @@ async function decideRoute(
     reset,
     preserving
       ? `Jev preserved model and effort (${selected.confidence})`
-      : `Jev reassessed: ${rationale.choice} (${selected.confidence})`,
+      : `Jev reassessed: ${rationale.confidence >= options.minimumConfidence() ? rationale.choice : "task classification uncertain"} (${selected.confidence})`,
   );
 }
 
