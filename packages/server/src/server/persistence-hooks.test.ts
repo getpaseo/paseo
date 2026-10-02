@@ -27,6 +27,27 @@ function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord
 }
 
 describe("persistence hooks", () => {
+  test.each(["selected", "retrying", "waiting", "exhausted", "unverified"] as const)(
+    "stored %s routing notice is restored only for a completed selection",
+    (status) => {
+      const notice = {
+        fromProfile: "codex-plus",
+        toProfile: "codex-business",
+        fromModel: "gpt-6.1-sol",
+        model: "gpt-6.1-sol",
+        fromEffort: "high",
+        effort: "high",
+        resetsAt: "2026-09-30T20:00:00Z",
+        reason: "Preserved model and effort",
+        status,
+      };
+      const record = createRecord({ config: { routingNotice: notice } });
+      const expected = status === "selected" ? notice : undefined;
+      expect(buildConfigOverrides(record).routingNotice).toEqual(expected);
+      expect(buildSessionConfig(record)?.routingNotice).toEqual(expected);
+    },
+  );
+
   test("buildConfigOverrides preserves the complete private launch config", () => {
     const record = createRecord({
       title: "Voice agent (current)",

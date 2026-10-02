@@ -1950,3 +1950,40 @@ describe("KimiQuotaProvider usage windows", () => {
     ]);
   });
 });
+
+it("keeps concurrent profile-filtered quota fetches isolated and cached by actual account identity", async () => {
+  const first: ProviderUsage = {
+    providerId: "codex-plus",
+    displayName: "Plus",
+    status: "available",
+    planLabel: null,
+    windows: [],
+    balances: [],
+    details: [],
+    error: null,
+  };
+  const second = { ...first, providerId: "codex-business", displayName: "Business" };
+  let release: (value: ProviderUsage) => void = () => {};
+  const firstFetch = vi.fn(
+    () =>
+      new Promise<ProviderUsage>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const secondFetch = vi.fn(async () => second);
+  const service = new ProviderUsageService({
+    logger: createLogger(),
+    fetchers: [
+      { providerId: first.providerId, displayName: first.displayName, fetchUsage: firstFetch },
+      { providerId: second.providerId, displayName: second.displayName, fetchUsage: secondFetch },
+    ],
+  });
+  const pending = service.listUsage({ profileIds: [first.providerId] });
+  const result = await service.listUsage({ profileIds: [second.providerId] });
+  expect(result.providers.map(({ providerId }) => providerId)).toEqual([second.providerId]);
+  release(first);
+  expect((await pending).providers.map(({ providerId }) => providerId)).toEqual([first.providerId]);
+  await service.listUsage({ profileIds: [first.providerId] });
+  expect(firstFetch).toHaveBeenCalledTimes(1);
+  expect(secondFetch).toHaveBeenCalledTimes(1);
+});

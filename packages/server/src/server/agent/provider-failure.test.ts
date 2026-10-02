@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   describeProviderFailure,
+  isModelCapacityError,
   providerRetryDelayMs,
   shouldRetryProviderFailure,
 } from "./provider-failure.js";
@@ -115,4 +116,29 @@ describe("providerRetryDelayMs", () => {
     expect(providerRetryDelayMs(3)).toBe(4000);
     expect(providerRetryDelayMs(10)).toBe(15000);
   });
+});
+
+test("quota fallback exhaustion outranks an upstream retryable flag", () => {
+  expect(
+    describeProviderFailure(
+      JSON.stringify({ data: { message: "quota exceeded", statusCode: 429, isRetryable: true } }),
+      "quota_fallback_exhausted",
+    ).retryable,
+  ).toBe(false);
+  expect(
+    describeProviderFailure(
+      JSON.stringify({ data: { message: "overloaded", statusCode: 503, isRetryable: true } }),
+    ).retryable,
+  ).toBe(true);
+});
+
+test("classifies exact model capacity separately from quota and transient 503", () => {
+  expect(
+    isModelCapacityError({
+      message: "Selected model is at capacity. Please try a different model.",
+    }),
+  ).toBe(true);
+  expect(isModelCapacityError({ diagnostic: "Selected model is at capacity" })).toBe(true);
+  expect(isModelCapacityError({ message: "quota limit reached (429)" })).toBe(false);
+  expect(isModelCapacityError({ message: "Our servers are overloaded (503)" })).toBe(false);
 });

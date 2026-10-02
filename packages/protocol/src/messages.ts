@@ -898,7 +898,22 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentRoutingNoticeSchema = z.object({
+  attemptedProfiles: z.array(z.string()).optional(),
+  fromProfile: z.string(),
+  toProfile: z.string().nullable(),
+  fromModel: z.string().nullable(),
+  model: z.string().nullable(),
+  fromEffort: z.string().nullable(),
+  effort: z.string().nullable(),
+  resetsAt: z.string().nullable(),
+  reason: z.string(),
+  status: z.enum(["selected", "retrying", "waiting", "exhausted", "unverified"]),
+});
+export type AgentRoutingNotice = z.infer<typeof AgentRoutingNoticeSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
+  routingNotice: AgentRoutingNoticeSchema.optional(),
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),

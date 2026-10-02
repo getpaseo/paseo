@@ -10,6 +10,7 @@ import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import {
+  MAX_PROVIDER_ATTEMPTS,
   describeProviderFailure,
   providerRetryDelayMs,
   shouldRetryProviderFailure,
@@ -82,10 +83,6 @@ async function startOrReplaceRun(
   replaced: boolean;
 }> {
   const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const systemPrompt = typeof prompt === "string" && isSystemInjectedEnvelope(prompt);
-  if (!agentManager.hasInFlightRun(agentId) && !systemPrompt) {
-    await agentManager.routeNextTurn?.(agentId, prompt);
-  }
   const iterator = replaced
     ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
     : agentManager.streamAgent(agentId, prompt, options?.runOptions);
@@ -103,9 +100,6 @@ interface AgentRunOutcome {
   failure: ProviderFailure | null;
   producedSideEffects: boolean;
 }
-
-/** How many times one prompt may be sent before a passing failure is treated as real. */
-const MAX_PROVIDER_ATTEMPTS = 3;
 
 async function drainAgentRunIterator(
   iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>,

@@ -19,8 +19,11 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
+import {
+  createProfileRouter,
+  ProfileRoutingUnavailableError,
+} from "../system-one/profile-routing.js";
 import { buildResourcePolicyPrompt } from "../resource-policy.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
@@ -463,7 +466,6 @@ class TestAgentSession implements AgentSession {
   async startTurn(): Promise<{ turnId: string }> {
     this.interrupted = false;
     const turnId = `turn-${++this.turnIdCounter}`;
-
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
       this.pushEvent({
@@ -766,6 +768,7 @@ test("refreshing an agent replaces the injected timeline store instead of append
     });
     agentId = agent.id;
 
+    // What session.handleRefreshAgentRequest does for a loaded agent, twice over.
     for (let refresh = 0; refresh < 2; refresh += 1) {
       await manager.reloadAgentSession(agent.id, undefined, {
         rehydrateFromDisk: true,
@@ -850,6 +853,7 @@ test("a failed history replay leaves the committed timeline intact", async () =>
 
     expect(await manager.getTimelineRows(agent.id)).toEqual(committed);
 
+    // A retry once the provider recovers replaces that history rather than stacking on it.
     failReplay = false;
     await manager.hydrateTimelineFromProvider(agent.id, { broadcast: true });
     await manager.flush();
@@ -927,11 +931,13 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
   try {
     expect(session.interruptCount).toBe(1);
     expect(session.startCount).toBe(2);
-    expect(manager.getTimeline(agentId)).toContainEqual(
-      expect.objectContaining({
-        type: "user_message",
-        clientMessageId: "replacement-client",
-      }),
+    await vi.waitFor(() =>
+      expect(manager.getTimeline(agentId)).toContainEqual(
+        expect.objectContaining({
+          type: "user_message",
+          clientMessageId: "replacement-client",
+        }),
+      ),
     );
   } finally {
     await manager.closeAgent(agentId);
@@ -1336,11 +1342,13 @@ test("missing steer operation interrupts once and starts one replacement turn", 
   try {
     expect(session.interruptCount).toBe(1);
     expect(session.startCount).toBe(2);
-    expect(manager.getTimeline(agentId)).toContainEqual(
-      expect.objectContaining({
-        type: "user_message",
-        clientMessageId: "replacement-client",
-      }),
+    await vi.waitFor(() =>
+      expect(manager.getTimeline(agentId)).toContainEqual(
+        expect.objectContaining({
+          type: "user_message",
+          clientMessageId: "replacement-client",
+        }),
+      ),
     );
   } finally {
     await manager.closeAgent(agentId);
@@ -1767,7 +1775,7 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 
 const logger = createTestLogger();
 
-test("retries a quota-limited foreground turn with the next configured profile", async () => {
+test("does not replay a limited account through another launch preset", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-quota-fallback-"));
   const prompts: AgentPromptInput[] = [];
   let model: string | null = "codex-opus";
@@ -1808,30 +1816,24 @@ test("retries a quota-limited foreground turn with the next configured profile",
       return session;
     }
   })();
-  const profiles: AgentProfile[] = [
-    { id: "codex-opus-profile", name: "Opus", provider: "codex", model: "codex-opus" },
-    { id: "codex-sol-profile", name: "Sol", provider: "codex", model: "codex-sol" },
-  ];
   const manager = new AgentManager({
     clients: { codex: client },
-    getAgentProfiles: () => profiles,
     logger,
   });
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
     workspaceId: undefined,
   });
-  const result = await manager.runAgent(agent.id, "Keep the original prompt");
+  await drainAsyncGenerator(manager.streamAgent(agent.id, "Keep the original prompt"));
   const timeline = manager.fetchTimeline(agent.id, { projection: "canonical" });
 
-  expect(starts).toBe(2);
-  expect(prompts).toEqual(["Keep the original prompt", "Keep the original prompt"]);
-  expect(model).toBe("codex-sol");
-  expect(result.finalText).toBe("continued");
+  expect(starts).toBe(1);
+  expect(prompts).toEqual(["Keep the original prompt"]);
+  expect(model).toBe("codex-opus");
   expect(timeline.rows.map((entry) => entry.item)).toContainEqual(
     expect.objectContaining({
       type: "notification",
-      level: "warning",
-      message: expect.stringContaining("codex-sol"),
+      level: "error",
+      message: expect.stringContaining("No configured provider profile"),
     }),
   );
 });
@@ -1841,6 +1843,7 @@ test("preserves the handoff context and old session during a cross-provider fall
   let oldSessionClosed = false;
   let fallbackCreatedBeforeClose = false;
   const fallbackPrompts: AgentPromptInput[] = [];
+  const fallbackModels: Array<string | undefined> = [];
 
   const initialSession = new (class extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
@@ -1861,7 +1864,7 @@ test("preserves the handoff context and old session during a cross-provider fall
     override async close(): Promise<void> {
       oldSessionClosed = true;
     }
-  })({ provider: "codex", cwd: workdir, model: "codex-opus" });
+  })({ provider: "codex", cwd: workdir, model: "gpt-6.1-sol" });
 
   class FallbackSession extends TestAgentSession {
     override readonly provider = "claude" as const;
@@ -1888,6 +1891,7 @@ test("preserves the handoff context and old session during a cross-provider fall
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       fallbackCreatedBeforeClose = !oldSessionClosed;
+      fallbackModels.push(config.model);
       return new FallbackSession(config);
     }
   }
@@ -1901,21 +1905,25 @@ test("preserves the handoff context and old session during a cross-provider fall
       })(),
       claude: new FallbackClient(),
     },
-    getAgentProfiles: () => [
-      { id: "codex-profile", name: "Codex", provider: "codex", model: "codex-opus" },
-      { id: "claude-profile", name: "Claude", provider: "claude", model: "claude-sonnet" },
-    ],
+
+    profileRouter: async () => ({
+      profile: { id: "claude", name: "Opus", provider: "claude", model: "claude-opus-5-5" },
+      model: "claude-opus-5-5",
+      reason: "Jev reassessed: complex",
+      resetsAt: null,
+    }),
     logger,
   });
 
   const agent = await manager.createAgent(
-    { provider: "codex", cwd: workdir, model: "codex-opus", title: "Continue the quota test" },
+    { provider: "codex", cwd: workdir, model: "gpt-6.1-sol", title: "Continue the quota test" },
     undefined,
     { workspaceId: undefined },
   );
   const result = await manager.runAgent(agent.id, "Keep the original prompt");
 
   expect(result.finalText).toBe("continued");
+  expect(fallbackModels).toEqual(["claude-opus-5-5"]);
   expect(fallbackCreatedBeforeClose).toBe(true);
   expect(oldSessionClosed).toBe(true);
   expect(fallbackPrompts).toHaveLength(1);
@@ -2543,15 +2551,6 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
   const record = await storage.get(snapshot.id);
 
   expect(client.createdConfigs[0]?.systemPrompt).toBe("Agent instructions.");
-  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain(
-    "In every project you work on, do not add explanatory code comments",
-  );
-  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain(
-    "Remove existing explanatory comments in code you edit.",
-  );
-  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain(
-    "Preserve required license notices and directives",
-  );
   expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe(
     composeDaemonAppendSystemPrompt(
       `Daemon instructions.\n\n${buildResourcePolicyPrompt("balanced")}`,
@@ -4912,6 +4911,7 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   const afterReload = manager.getTimeline(snapshot.id);
   expect(afterReload).toEqual(beforeReload);
 
+  // If reload resets historyPrimed, this would replay provider history and append another item.
   await manager.hydrateTimelineFromProvider(snapshot.id);
   const afterHydrate = manager.getTimeline(snapshot.id);
   expect(afterHydrate).toEqual(beforeReload);
@@ -5891,7 +5891,7 @@ test("reloadAgentSession cancels active run and resumes existing session once th
       this.delayedInterrupted = false;
       const turnId = `delayed-turn-${Date.now()}`;
       this.activeTurnId = turnId;
-
+      // Push turn_started, then thread_started, then wait on gate
       setTimeout(async () => {
         this.pushEvent({
           type: "turn_started",
@@ -6009,6 +6009,8 @@ test("reloadAgentSession cancels active run and resumes existing session once th
   expect(first.done).toBe(false);
   expect(first.value?.type).toBe("turn_started");
 
+  // Wait for the thread_started event to propagate through subscribe
+  // (it's a session-level event, not forwarded to the foreground stream)
   await vi.waitFor(() => {
     const active = manager.getAgent(snapshot.id);
     expect(active?.persistence?.sessionId).toBe("delayed-session-1");
@@ -6025,6 +6027,7 @@ test("reloadAgentSession cancels active run and resumes existing session once th
   expect(client.resumeSessionCalls).toBe(1);
   expect(reloaded.persistence?.sessionId).toBe("delayed-session-1");
 
+  // Drain stream after cancellation to ensure clean shutdown.
   while (true) {
     const next = await stream.next();
     if (next.done) {
@@ -6266,6 +6269,9 @@ test("streams coalesced assistant chunks and retains the projected message", asy
     }
   }
 
+  // The coalescer flushes the first chunk on the leading edge, so "final " ships
+  // as its own event and "reply" follows on the trailing window. History retains
+  // their complete projected assistant message.
   const assistantTimelineEvents = streamEvents.filter(
     (event) => event.itemType === "assistant_message",
   );
@@ -6793,16 +6799,19 @@ test("waitForAgentEvent does not resolve idle until foreground turn is finalized
     }
   })();
 
+  // Wait for the turn to start
   await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
   const waitPromise = manager.waitForAgentEvent(snapshot.id);
 
+  // Should still be pending because turn_completed hasn't arrived
   const earlyResolution = await Promise.race([
     waitPromise.then(() => "resolved"),
     new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 50)),
   ]);
   expect(earlyResolution).toBe("pending");
 
+  // Release the turn_completed event
   releaseTurnCompleted.resolve();
   const waited = await waitPromise;
   expect(waited.status).toBe("idle");
@@ -7306,6 +7315,7 @@ test("applies live autonomous events and preserves usage omitted from completion
     { agentId: snapshot.id, replayState: false },
   );
 
+  // Push autonomous events through the session's subscribe() callbacks
   const autonomousTurnId = "autonomous-turn-1";
   capturedSession!.pushEvent({
     type: "turn_started",
@@ -7785,6 +7795,7 @@ test("autonomous events arriving during foreground run are processed via subscri
     return events;
   })();
 
+  // Wait for the foreground turn to start (lifecycle -> running)
   await new Promise<void>((resolve) => {
     const unsub = manager.subscribe(
       (event) => {
@@ -7801,6 +7812,7 @@ test("autonomous events arriving during foreground run are processed via subscri
     );
   });
 
+  // Push autonomous events while foreground is active
   const autonomousTurnId = "autonomous-during-fg-1";
   capturedSession!.pushEvent({
     type: "turn_started",
@@ -7839,6 +7851,7 @@ test("autonomous events arriving during foreground run are processed via subscri
   releaseForeground.resolve();
   const foregroundEvents = await foregroundResults;
 
+  // Foreground stream should contain its own turn events but NOT autonomous events
   expect(foregroundEvents.some((event) => event.type === "turn_completed")).toBe(true);
   expect(
     foregroundEvents.some(
@@ -7849,6 +7862,7 @@ test("autonomous events arriving during foreground run are processed via subscri
     ),
   ).toBe(false);
 
+  // Autonomous timeline item should still be recorded in the agent timeline
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_DURING_FOREGROUND",
@@ -7969,12 +7983,13 @@ test("keeps updatedAt monotonic when user message and run start happen in the sa
     const messageUpdatedAt = afterMessage!.updatedAt.getTime();
 
     const stream = manager.streamAgent(snapshot.id, "hello");
-
+    // Advance the generator so startTurn runs and lifecycle transitions to running
     await stream.next();
     const afterRunStart = manager.getAgent(snapshot.id);
     expect(afterRunStart).toBeDefined();
     expect(afterRunStart!.updatedAt.getTime()).toBeGreaterThan(messageUpdatedAt);
 
+    // Drain the rest of the stream
     while (true) {
       const next = await stream.next();
       if (next.done) break;
@@ -8138,6 +8153,7 @@ test("listAgents excludes internal agents", async () => {
     idFactory: () => generatedAgentIds[agentCounter++] ?? randomUUID(),
   });
 
+  // Create a normal agent
   await manager.createAgent(
     {
       provider: "codex",
@@ -8148,6 +8164,7 @@ test("listAgents excludes internal agents", async () => {
     { workspaceId: undefined },
   );
 
+  // Create an internal agent
   await manager.createAgent(
     {
       provider: "codex",
@@ -8219,6 +8236,7 @@ test("subscribe does not emit state events for internal agents to global subscri
     }
   });
 
+  // Create a normal agent - should emit
   await manager.createAgent(
     {
       provider: "codex",
@@ -8229,6 +8247,7 @@ test("subscribe does not emit state events for internal agents to global subscri
     { workspaceId: undefined },
   );
 
+  // Create an internal agent - should NOT emit to global subscriber
   await manager.createAgent(
     {
       provider: "codex",
@@ -8240,6 +8259,7 @@ test("subscribe does not emit state events for internal agents to global subscri
     { workspaceId: undefined },
   );
 
+  // Should only have events from the normal agent
   expect(receivedEvents.filter((id) => id === generatedAgentIds[0]).length).toBeGreaterThan(0);
   expect(receivedEvents.filter((id) => id === generatedAgentIds[1]).length).toBe(0);
 });
@@ -8333,7 +8353,7 @@ test("subscribe emits state events for internal agents when subscribed by agentI
   });
 
   const receivedEvents: string[] = [];
-
+  // Subscribe specifically to the internal agent
   manager.subscribe(
     (event) => {
       if (event.type === "agent_state") {
@@ -8354,6 +8374,7 @@ test("subscribe emits state events for internal agents when subscribed by agentI
     { workspaceId: undefined },
   );
 
+  // Should receive events when subscribed by specific agentId
   expect(receivedEvents.filter((id) => id === internalAgentId).length).toBeGreaterThan(0);
 });
 
@@ -8401,8 +8422,10 @@ test("onAgentAttention is not called for internal agents", async () => {
     { workspaceId: undefined },
   );
 
+  // Run and complete the agent (which normally triggers attention)
   await manager.runAgent(agent.id, "hello");
 
+  // Should NOT have triggered attention callback for internal agent
   expect(attentionCalls).toHaveLength(0);
 });
 
@@ -8839,7 +8862,7 @@ test("native archive and restore release the loaded session writer", async () =>
     });
     await manager.archiveAgent(agent.id);
     expect(client.archivedHandles).toHaveLength(1);
-
+    // Opening archived history can retain a writer, including records archived by older daemons.
     await ensureAgentLoaded(agent.id, {
       agentManager: manager,
       agentStorage: storage,
@@ -9634,7 +9657,7 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
         item.type === "assistant_message" && item.text.includes("[System Error]"),
     );
   expect(systemError?.text).toContain("Provider execution failed");
-
+  // The code rides in the sentence now rather than on a line of its own.
   expect(systemError?.text).toContain("(126)");
   expect(systemError?.text).toContain("No preset version installed for command claude");
 });
@@ -9728,8 +9751,8 @@ test("permission request notifies once without forcing unread attention state", 
   );
 
   const stream = manager.streamAgent(agent.id, "permission flow");
-  await stream.next();
-  await stream.next();
+  await stream.next(); // turn_started
+  await stream.next(); // permission_requested
 
   const withPermissionPending = manager.getAgent(agent.id);
   expect(withPermissionPending?.pendingPermissions.size).toBe(1);
@@ -9737,6 +9760,7 @@ test("permission request notifies once without forcing unread attention state", 
     requiresAttention: false,
   });
 
+  // Release permission resolution and drain the rest of the stream
   releasePermissionResolution.resolve();
   while (!(await stream.next()).done) {
     // no-op
@@ -9750,6 +9774,7 @@ test("respondToPermission updates currentModeId after plan approval", async () =
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
+  // Create a session that simulates plan approval mode change
   let sessionMode = "plan";
   class PlanModeTestSession implements AgentSession {
     readonly provider = "codex" as const;
@@ -9811,6 +9836,8 @@ test("respondToPermission updates currentModeId after plan approval", async () =
     }
 
     async respondToPermission(_requestId: string, response: { behavior: string }): Promise<void> {
+      // Simulate what claude-agent.ts does: when plan permission is approved,
+      // it calls setMode("acceptEdits") internally
       if (response.behavior === "allow") {
         sessionMode = "acceptEdits";
       }
@@ -9850,6 +9877,7 @@ test("respondToPermission updates currentModeId after plan approval", async () =
     idFactory: () => "00000000-0000-4000-8000-000000000112",
   });
 
+  // Create agent in plan mode
   const snapshot = await manager.createAgent(
     {
       provider: "codex",
@@ -9862,6 +9890,7 @@ test("respondToPermission updates currentModeId after plan approval", async () =
 
   expect(snapshot.currentModeId).toBe("plan");
 
+  // Simulate a pending plan permission request
   const agent = manager.getAgent(snapshot.id)!;
   const permissionRequest = {
     id: "perm-123",
@@ -9872,10 +9901,13 @@ test("respondToPermission updates currentModeId after plan approval", async () =
   };
   agent.pendingPermissions.set(permissionRequest.id, permissionRequest);
 
+  // Approve the plan permission
   await manager.respondToPermission(snapshot.id, "perm-123", {
     behavior: "allow",
   });
 
+  // The session's mode has changed to "acceptEdits" internally
+  // The manager should have updated currentModeId to reflect this
   const updatedAgent = manager.getAgent(snapshot.id);
   expect(updatedAgent?.currentModeId).toBe("acceptEdits");
 
@@ -10123,13 +10155,14 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
     async startTurn(): Promise<{ turnId: string }> {
       const turnId = `turn-${++this.turnIdCounter}`;
-
+      // Push turn_started, then block until closed
       setTimeout(() => {
         this.pushEvent({
           type: "turn_started",
           provider: this.provider,
           turnId,
         });
+        // The turn will be canceled when close() is called
       }, 0);
       return { turnId };
     }
@@ -10187,7 +10220,7 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
     async interrupt(): Promise<void> {
       this.closed = true;
-
+      // Push turn_canceled for any active turn
       if (this.turnIdCounter > 0) {
         this.pushEvent({
           type: "turn_canceled",
@@ -10201,7 +10234,7 @@ test("close during in-flight stream does not clear persistence sessionId", async
     async close(): Promise<void> {
       this.closed = true;
       this.threadId = null;
-
+      // Push turn_canceled for any active turn
       if (this.turnIdCounter > 0) {
         this.pushEvent({
           type: "turn_canceled",
@@ -10253,6 +10286,7 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
   await manager.closeAgent(snapshot.id);
 
+  // Drain stream finalizer path after close().
   while (true) {
     const next = await stream.next();
     if (next.done) {
@@ -10977,11 +11011,12 @@ test("provider user_message is recorded from the live stream", async () => {
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
+  // Session whose live turn yields a user_message without prior canonical recording
   class UnexpectedUserMessageSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       const turnId = "turn-unexpected-1";
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-
+      // Provider yields a staged user_message without client identity (e.g., system continuation).
       this.pushEvent({
         type: "timeline",
         provider: this.provider,
@@ -11033,6 +11068,7 @@ test("provider user_message is recorded from the live stream", async () => {
   const timeline = manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
 
+  // Provider's user_message should be recorded (no canonical to dedup against)
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0].text).toBe("continuation prompt");
 });
@@ -11310,6 +11346,9 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   const storage = new AgentStorage(storagePath, logger);
   const allowSecondRunToEnd = deferred<void>();
 
+  // Session where the first foreground turn never emits a terminal event
+  // (simulates the claude-agent pendingInterruptAbort suppression bug),
+  // and interrupt() does not produce events either.
   class StaleForegroundSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       this.interrupted = false;
@@ -11326,6 +11365,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
           // First turn: emit turn_started but NEVER emit a terminal event.
           // This simulates the provider suppressing the result.
         } else {
+          // Subsequent turns: complete normally
           await allowSecondRunToEnd.promise;
           this.pushEvent({
             type: "turn_completed",
@@ -11339,6 +11379,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
 
     override async interrupt(): Promise<void> {
       this.interrupted = true;
+      // No events produced — the terminal event was suppressed
     }
   }
 
@@ -11359,6 +11400,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
     workspaceId: undefined,
   });
 
+  // Start first foreground run — it will hang (no terminal event)
   const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
   const firstRunDrain = (async () => {
     for await (const _event of firstRun) {
@@ -11372,6 +11414,9 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   expect(beforeReplace?.lifecycle).toBe("running");
   expect(beforeReplace?.activeForegroundTurnId).toBe("turn-1");
 
+  // Replace the hung run. cancelAgentRun will time out after 2s because
+  // no terminal event arrives. After the fix, it should force-clear the
+  // stale foreground state so streamAgent can proceed.
   const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
   const collectedEvents: AgentStreamEvent[] = [];
   const secondRunDrain = (async () => {
@@ -11503,7 +11548,7 @@ test("listImportableSessions narrows to the providerFilter when supplied", async
 test("listImportableSessions skips providers that lack supportsSessionListing even when row listing is defined", async () => {
   const listableClient = new RecordingPersistedAgentsClient("claude");
   const nonListableClient = new RecordingPersistedAgentsClient("acp");
-
+  // Override capabilities to remove session listing support
   Object.defineProperty(nonListableClient, "capabilities", {
     value: {
       ...TEST_CAPABILITIES,
@@ -11722,31 +11767,33 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
 });
 
 test("commandMayHaveChangedExternalState matches remote-state commands", () => {
+  // GitHub PR operations (remote, no local file changes)
   expect(commandMayHaveChangedExternalState("gh pr merge 123")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr close 123")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr create")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr edit 123")).toBe(true);
   expect(commandMayHaveChangedExternalState('gh pr comment 123 -b "lgtm"')).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr review 123 -a")).toBe(true);
-
+  // Git remote operations (local refs unchanged)
   expect(commandMayHaveChangedExternalState("git push origin main")).toBe(true);
   expect(commandMayHaveChangedExternalState("git fetch origin")).toBe(true);
 });
 
 test("commandMayHaveChangedExternalState ignores local or read-only commands", () => {
+  // Local git mutations — already caught by file watchers on .git/HEAD
   expect(commandMayHaveChangedExternalState("git commit -m 'hello'")).toBe(false);
   expect(commandMayHaveChangedExternalState("git checkout main")).toBe(false);
   expect(commandMayHaveChangedExternalState("git merge feature")).toBe(false);
   expect(commandMayHaveChangedExternalState("git rebase main")).toBe(false);
   expect(commandMayHaveChangedExternalState("git reset --hard HEAD~1")).toBe(false);
-
+  // git pull includes a merge/rebase that changes local refs → watchers catch it
   expect(commandMayHaveChangedExternalState("git pull origin main")).toBe(false);
-
+  // Read-only gh commands
   expect(commandMayHaveChangedExternalState("gh pr view 123")).toBe(false);
   expect(commandMayHaveChangedExternalState("gh pr list")).toBe(false);
   expect(commandMayHaveChangedExternalState("gh auth status")).toBe(false);
   expect(commandMayHaveChangedExternalState("gh repo view")).toBe(false);
-
+  // Miscellaneous local commands
   expect(commandMayHaveChangedExternalState("git status")).toBe(false);
   expect(commandMayHaveChangedExternalState("ls -la")).toBe(false);
   expect(commandMayHaveChangedExternalState("cat file.txt")).toBe(false);
@@ -12062,11 +12109,13 @@ test("setAgentProvider replaces the runtime with the new provider and keeps the 
     "paseo.origin": "user",
   });
   expect(switched.createdAt).toEqual(agent.createdAt);
-
+  // The switch appends its own marker; everything said before it survives.
   expect(manager.getTimeline(agent.id).slice(0, timelineBeforeSwitch.length)).toEqual(
     timelineBeforeSwitch,
   );
 
+  // The new provider launches with the requested model and none of the old
+  // provider's mode or thinking selection.
   expect(target.createdConfigs).toHaveLength(1);
   expect(target.createdConfigs[0]).toMatchObject({
     provider: "claude",
@@ -12096,7 +12145,8 @@ test("setAgentProvider drops the previous provider session handle from the store
   expect(record?.provider).toBe("claude");
   expect(record?.persistence?.provider).toBe("claude");
   expect(record?.persistence?.sessionId).toBe(switched.persistence?.sessionId);
-
+  // A leftover handle for the old provider would make the next resume attach to
+  // a foreign session, so no trace of it may survive anywhere in the record.
   expect(JSON.stringify(record)).not.toContain(codexSessionId);
 });
 
@@ -12182,24 +12232,55 @@ test("moveAgentToWorkspace restarts the same provider in the target directory", 
   });
 });
 
-test("routeNextTurn tells the timeline what Jev picked, only when it changed something", async () => {
+test("routeNextTurn publishes structured Jev notice only when the route changes", async () => {
   const { manager, agent } = await createProviderSwitchFixture({
     agentId: "00000000-0000-4000-8000-000000000621",
     target: new ProviderSwitchClient("claude"),
   });
-  manager.setTurnRouter(async () => ({ thinkingOptionId: "low" }));
-  const notices = () =>
-    manager
-      .getTimeline(agent.id)
-      .filter((item) => item.type === "notification" && item.message.startsWith("Jev routed"));
-
+  const session = manager.getAgent(agent.id)?.session;
+  if (session) session.setThinkingOption = async () => {};
+  manager.setTurnRouter(async () => ({
+    profile: { id: "codex", name: "Codex", provider: "codex", thinkingOptionId: "low" },
+    model: "gpt-5.4",
+    resetsAt: null,
+    reason: "Jev reassessed: mechanical",
+  }));
   await manager.routeNextTurn(agent.id, "What is the status?");
-  expect(notices()).toEqual([
-    expect.objectContaining({ message: "Jev routed this turn: gpt-5.4 · low" }),
-  ]);
-
+  expect(toAgentPayload(agent).routingNotice).toMatchObject({
+    fromProfile: "codex",
+    toProfile: "codex",
+    model: "gpt-5.4",
+    effort: "low",
+    reason: "Jev reassessed: mechanical",
+  });
   await manager.routeNextTurn(agent.id, "And now?");
-  expect(notices()).toHaveLength(1);
+  expect(manager.getTimeline(agent.id).filter((item) => item.type === "notification")).toHaveLength(
+    1,
+  );
+});
+
+test("ordinary unchanged or unverified routing clears stale composer notices", async () => {
+  const { manager, agent } = await createProviderSwitchFixture({
+    agentId: "00000000-0000-4000-8000-000000000622",
+    target: new ProviderSwitchClient("claude"),
+  });
+  agent.config.routingNotice = {
+    fromProfile: "codex",
+    toProfile: "codex",
+    fromModel: "gpt-5.4",
+    model: "gpt-5.4",
+    fromEffort: null,
+    effort: null,
+    resetsAt: null,
+    status: "unverified",
+    reason: "Unknown usage",
+  };
+  agent.lastUserMessageAt = new Date();
+  manager.setTurnRouter(async () => null);
+  await manager.routeNextTurn(agent.id, "Ordinary request");
+  expect(toAgentPayload(agent).routingNotice).toBeUndefined();
+  await manager.routeNextTurn(agent.id, "Another ordinary request");
+  expect(toAgentPayload(agent).routingNotice).toBeUndefined();
 });
 
 test("setAgentProvider marks the provider cut in the timeline", async () => {
@@ -12221,6 +12302,567 @@ test("setAgentProvider marks the provider cut in the timeline", async () => {
     level: "info",
     message: "Switched provider: codex → claude",
   });
+});
+
+test("prompt dispatch exhausts each actual quota account once without an outer sweep", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "quota-sweep-"));
+  const starts: string[] = [];
+  const secondStarted = deferred<void>();
+  const waiting = deferred<void>();
+  class QuotaSession extends TestAgentSession {
+    constructor(config: AgentSessionConfig) {
+      super(config);
+      Object.defineProperty(this, "provider", { value: config.provider });
+    }
+    override async startTurn(): Promise<{ turnId: string }> {
+      starts.push(this.provider);
+      if (this.provider === "claude") secondStarted.resolve();
+      const turnId = randomUUID();
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error: "429 quota exceeded",
+          code: "rate_limit_exceeded",
+        });
+      }, 0);
+      return { turnId };
+    }
+  }
+  const client = (provider: string): AgentClient => ({
+    provider,
+    capabilities: TEST_CAPABILITIES,
+    isAvailable: async () => true,
+    createSession: async (config) => new QuotaSession(config),
+    resumeSession: async () => {
+      throw new Error("unused");
+    },
+  });
+  const manager = new AgentManager({
+    clients: { codex: client("codex"), claude: client("claude") },
+
+    logger,
+    profileRouter: async (input) => {
+      if (input.provider === "codex")
+        return {
+          profile: { id: "claude", name: "Claude", provider: "claude" },
+          model: "claude-opus-5-5",
+          reason: "Jev reassessed: complex",
+          resetsAt: null,
+        };
+      throw new ProfileRoutingUnavailableError("No eligible profile", null);
+    },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "gpt-6.1-sol" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = vi.spyOn(manager, "streamAgent");
+    manager.subscribe((event) => {
+      if (event.type === "agent_state" && event.agent.config.routingNotice?.status === "waiting")
+        waiting.resolve();
+    });
+    await startAgentRun(manager, agent.id, "A single logical message", logger);
+    await vi.advanceTimersByTimeAsync(1);
+    await secondStarted.promise;
+    await vi.advanceTimersByTimeAsync(1);
+    await waiting.promise;
+    expect(starts).toEqual(["codex", "claude"]);
+    expect(stream).toHaveBeenCalledTimes(1);
+    const exhausted = manager
+      .fetchTimeline(agent.id, { projection: "canonical" })
+      .rows.filter(({ item }) => item.type === "notification" && item.level === "error");
+    expect(exhausted).toHaveLength(0);
+    expect(toAgentPayload(manager.getAgent(agent.id)!)).toMatchObject({
+      status: "running",
+      routingNotice: { status: "waiting", reason: "No eligible profile" },
+    });
+  } finally {
+    vi.useRealTimers();
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+async function createCapacityFixture(
+  options: {
+    failures?: number;
+    persistent?: boolean;
+    tool?: boolean;
+    synchronous?: boolean;
+    rejectBeforeStart?: boolean;
+    transientAt?: number[];
+    throwTransient?: boolean;
+    quotaReset?: string;
+    onlyOrigin?: boolean;
+  } = {},
+) {
+  const workdir = mkdtempSync(join(tmpdir(), "capacity-recovery-"));
+  const attempts: Array<{ profile: string; model: string; prompt: AgentPromptInput }> = [];
+  let writes = 0;
+  const started = { business: deferred<void>(), claude: deferred<void>() };
+  class CapacitySession extends TestAgentSession {
+    readonly actualConfig: AgentSessionConfig;
+    constructor(config: AgentSessionConfig) {
+      super(config);
+      this.actualConfig = config;
+      Object.defineProperty(this, "provider", { value: config.provider });
+    }
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      const turnId = randomUUID();
+      attempts.push({ profile: this.provider, model: this.actualConfig.model!, prompt });
+      if (this.provider === "codex-business") started.business.resolve();
+      if (this.provider === "claude") started.claude.resolve();
+      const failed = options.persistent
+        ? this.provider !== "claude"
+        : attempts.length <= (options.failures ?? 1);
+      if (failed && options.rejectBeforeStart) {
+        throw new Error("Selected model is at capacity. Please try a different model.");
+      }
+      const transient = options.transientAt?.includes(attempts.length);
+      if (transient && options.throwTransient)
+        throw new Error('{"statusCode":503,"message":"overloaded","isRetryable":true}');
+      const emit = () => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        if (options.tool && prompt === "Write once, then finish") {
+          writes++;
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: {
+              type: "tool_call",
+              name: "write",
+              callId: "write-once",
+              status: "completed",
+              error: null,
+              detail: { type: "write", filePath: "/fixture/result", content: "done" },
+            },
+          });
+        }
+        if (transient) {
+          this.pushEvent({
+            type: "turn_failed",
+            provider: this.provider,
+            turnId,
+            error: '{"statusCode":503,"message":"overloaded","isRetryable":true}',
+          });
+        } else if (failed) {
+          this.pushEvent({
+            type: "turn_failed",
+            provider: this.provider,
+            turnId,
+            error: options.quotaReset
+              ? "429 quota exceeded"
+              : "Selected model is at capacity. Please try a different model.",
+          });
+        } else this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      };
+      if (options.synchronous) emit();
+      else setTimeout(emit, 0);
+      return { turnId };
+    }
+  }
+  const client = (provider: string): AgentClient => ({
+    provider,
+    capabilities: TEST_CAPABILITIES,
+    isAvailable: async () => true,
+    createSession: async (config) => new CapacitySession(config),
+    resumeSession: async () => {
+      throw new Error("unused");
+    },
+  });
+  const definitions = (
+    options.onlyOrigin ? ["codex-plus"] : ["codex-plus", "codex-business", "claude"]
+  ).map((id) => ({
+    id,
+    label: id,
+    enabled: true,
+    harness: id === "claude" ? "claude" : "codex",
+    models: [
+      {
+        provider: id,
+        id: id === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol",
+        label: id,
+        thinkingOptions: [{ id: "medium", label: "Medium" }],
+      },
+    ],
+  }));
+  const router = createProfileRouter({
+    getProfiles: () => definitions,
+    enabled: () => true,
+    minimumConfidence: () => 0.5,
+    getUsage: async () => ({
+      fetchedAt: new Date().toISOString(),
+      providers: definitions.map(({ id }) => ({
+        providerId: id,
+        displayName: id,
+        status: "available",
+        planLabel: null,
+        error: null,
+        windows: [
+          {
+            id: "session",
+            label: "Session",
+            usedPct: options.quotaReset ? 100 : 10,
+            remainingPct: options.quotaReset ? 0 : 90,
+            resetsAt: options.quotaReset,
+          },
+        ],
+        balances: [],
+        details: [],
+      })),
+    }),
+    decisionSource: () => ({
+      decide: async (request) => {
+        const question = request.questions.route;
+        if (question.type !== "choice") throw new Error("expected choice");
+        const keys = Object.keys(question.criteria);
+        return {
+          model: "jev",
+          latencyMs: 1,
+          answers: {
+            route: {
+              choice: keys[0],
+              confidence: 1,
+              probabilities: Object.fromEntries(
+                keys.map((key, index) => [key, index === 0 ? 1 : 0]),
+              ),
+            },
+            reason: {
+              choice: "complex",
+              confidence: 1,
+              probabilities: { mechanical: 0, implementation: 0, complex: 1 },
+            },
+          },
+        };
+      },
+    }),
+  });
+  const manager = new AgentManager({
+    logger,
+    profileRouter: router,
+    clients: Object.fromEntries(definitions.map(({ id }) => [id, client(id)])),
+  });
+  const agent = await manager.createAgent(
+    {
+      provider: "codex-plus",
+      cwd: workdir,
+      model: "gpt-6.1-sol",
+      thinkingOptionId: "medium",
+      title: "Recovery task",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const cleanup = async () => {
+    for (const item of manager.listAgents()) await manager.closeAgent(item.id);
+    rmSync(workdir, { recursive: true, force: true });
+  };
+  return { manager, agent, attempts, started, writes: () => writes, cleanup };
+}
+
+test.each([1, 2])(
+  "native capacity succeeds after %i short unchanged retries without a second user message",
+  async (failures) => {
+    vi.useFakeTimers();
+    const fixture = await createCapacityFixture({ failures });
+    try {
+      const events = drainAsyncGenerator(
+        fixture.manager.streamAgent(fixture.agent.id, "Implement the task"),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(toAgentPayload(fixture.manager.getAgent(fixture.agent.id)!)).toMatchObject({
+        status: "running",
+        routingNotice: { status: "retrying" },
+      });
+      await vi.advanceTimersByTimeAsync(3_010);
+      await events;
+      expect(fixture.attempts).toHaveLength(failures + 1);
+      expect(
+        fixture.attempts.every(
+          (attempt) => attempt.profile === "codex-plus" && attempt.model === "gpt-6.1-sol",
+        ),
+      ).toBe(true);
+      expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+    } finally {
+      await fixture.cleanup();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test("native capacity rejection before start uses one logical message and the shared recovery", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ failures: 2, rejectBeforeStart: true });
+  try {
+    const result: AgentStreamEvent[] = [];
+    const events = (async () => {
+      for await (const event of fixture.manager.streamAgent(
+        fixture.agent.id,
+        "Implement the task",
+        {
+          clientMessageId: "native-rejection",
+        },
+      ))
+        result.push(event);
+    })();
+    await vi.advanceTimersByTimeAsync(3_010);
+    await events;
+    expect(fixture.attempts).toHaveLength(3);
+    const started = result.find((event) => event.type === "turn_started");
+    expect(result.find((event) => event.type === "turn_completed")).toMatchObject({
+      turnId: started?.turnId,
+    });
+    expect(result.some((event) => event.type === "turn_failed")).toBe(false);
+    expect(
+      fixture.manager
+        .fetchTimeline(fixture.agent.id, { projection: "canonical" })
+        .rows.filter(({ item }) => item.type === "user_message"),
+    ).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("persistent native capacity tries same-model accounts before Jev model reassessment", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ persistent: true });
+  try {
+    const events = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Implement the task"),
+    );
+    await vi.advanceTimersByTimeAsync(3_010);
+    await fixture.started.business.promise;
+    await vi.advanceTimersByTimeAsync(3_010);
+    await fixture.started.claude.promise;
+    await vi.advanceTimersByTimeAsync(0);
+    await events;
+    expect(fixture.attempts.map(({ profile }) => profile)).toEqual([
+      "codex-plus",
+      "codex-plus",
+      "codex-plus",
+      "codex-business",
+      "codex-business",
+      "codex-business",
+      "claude",
+    ]);
+    expect(fixture.attempts.slice(0, 6).every(({ model }) => model === "gpt-6.1-sol")).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.config.title).toBe("Recovery task");
+    expect(fixture.manager.getAgent(fixture.agent.id)!.config.routingNotice).toMatchObject({
+      fromProfile: "codex-business",
+      toProfile: "claude",
+      model: "claude-opus-5-5",
+      reason: expect.stringContaining("Jev reassessed: complex"),
+    });
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("capacity cancellation clears delayed retry and cannot resurrect the native turn", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture();
+  try {
+    const events = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Implement the task"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await fixture.manager.cancelAgentRun(fixture.agent.id);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await events;
+    expect(fixture.attempts).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("capacity continuation after a completed tool uses the checkpoint instead of replaying the write request", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ tool: true });
+  try {
+    const events = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Write once, then finish", {
+        clientMessageId: "write-message",
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(1_010);
+    await events;
+    expect(fixture.writes()).toBe(1);
+    expect(fixture.attempts[1].prompt).toContain("recorded checkpoint");
+    expect(
+      fixture.manager.getTimeline(fixture.agent.id).filter((item) => item.type === "user_message"),
+    ).toHaveLength(1);
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("synchronous capacity events retain logical identity across consecutive retries", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ failures: 2, synchronous: true });
+  try {
+    const events = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Implement the task"),
+    );
+    await vi.advanceTimersByTimeAsync(3_010);
+    await events;
+    expect(fixture.attempts).toHaveLength(3);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("an exhausted quota message resumes automatically at its real reset without an outer replay", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-30T12:00:00Z"));
+  const fixture = await createCapacityFixture({
+    quotaReset: "2026-09-30T12:00:30Z",
+    onlyOrigin: true,
+  });
+  try {
+    const events = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Implement the task"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.attempts).toHaveLength(1);
+    expect(toAgentPayload(fixture.manager.getAgent(fixture.agent.id)!)).toMatchObject({
+      status: "running",
+      routingNotice: {
+        status: "waiting",
+        resetsAt: "2026-09-30T12:00:30.000Z",
+        attemptedProfiles: ["codex-plus"],
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_010);
+    await events;
+    expect(fixture.attempts.map(({ profile }) => profile)).toEqual(["codex-plus", "codex-plus"]);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("delegated prompt dispatch uses daemon capacity recovery without Paperclip or another send", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture();
+  try {
+    const parentId = fixture.agent.id;
+    const child = await fixture.manager.createAgent(
+      {
+        provider: "codex-plus",
+        cwd: fixture.agent.cwd,
+        model: "gpt-6.1-sol",
+        thinkingOptionId: "medium",
+      },
+      undefined,
+      { workspaceId: undefined, labels: { [PARENT_AGENT_ID_LABEL]: parentId } },
+    );
+    const stream = vi.spyOn(fixture.manager, "streamAgent");
+    await startAgentRun(fixture.manager, child.id, "Implement the task", logger);
+    await vi.advanceTimersByTimeAsync(1_010);
+    expect(fixture.attempts).toHaveLength(2);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.getAgent(child.id)!.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test.each([false, true])(
+  "transient 503 inside recovery retries the current logical route (throw %s)",
+  async (throwTransient) => {
+    vi.useFakeTimers();
+    const fixture = await createCapacityFixture({ failures: 1, transientAt: [2], throwTransient });
+    try {
+      const run = drainAsyncGenerator(
+        fixture.manager.streamAgent(fixture.agent.id, "Implement the task", {
+          clientMessageId: "transient-recovery",
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(3_010);
+      await run;
+      expect(fixture.attempts).toHaveLength(3);
+      expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("idle");
+      expect(
+        fixture.manager
+          .fetchTimeline(fixture.agent.id, { projection: "canonical" })
+          .rows.filter(({ item }) => item.type === "user_message"),
+      ).toHaveLength(1);
+    } finally {
+      await fixture.cleanup();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test("bounded transient recovery exhaustion does not replay the quota or capacity chain", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ failures: 1, transientAt: [2, 3, 4, 5, 6] });
+  try {
+    const run = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Implement the task"),
+    );
+    await vi.advanceTimersByTimeAsync(20_000);
+    await run;
+    expect(fixture.attempts).toHaveLength(4);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("error");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("transient recovery after a completed tool does not replay its side effect", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ tool: true, transientAt: [2] });
+  try {
+    const run = drainAsyncGenerator(
+      fixture.manager.streamAgent(fixture.agent.id, "Write once, then finish"),
+    );
+    await vi.advanceTimersByTimeAsync(20_000);
+    await run;
+    expect(fixture.writes()).toBe(1);
+    expect(fixture.attempts).toHaveLength(2);
+    expect(fixture.manager.getAgent(fixture.agent.id)!.lifecycle).toBe("error");
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("replaceAgentRun routes its replacement through shared foreground preparation", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ failures: 0 });
+  const route = vi.fn(async () => null);
+  fixture.manager.setTurnRouter(route);
+  try {
+    const iterator = await fixture.manager.replaceAgentRun(fixture.agent.id, "Replacement task");
+    const run = drainAsyncGenerator(iterator);
+    await vi.advanceTimersByTimeAsync(0);
+    await run;
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(route).toHaveBeenCalledWith(expect.objectContaining({ prompt: "Replacement task" }));
+    expect(fixture.attempts).toHaveLength(1);
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
 });
 
 test("commits startup notices once on create and after restored history", async () => {

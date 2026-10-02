@@ -119,6 +119,7 @@ export function toAgentPayload(
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: agent.config.model ?? null,
+    routingNotice: agent.config.routingNotice,
     thinkingOptionId,
     effectiveThinkingOptionId,
     ...(runtimeInfo ? { runtimeInfo } : {}),
@@ -233,6 +234,7 @@ export function buildStoredAgentPayload(
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
+    routingNotice: record.config?.routingNotice,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
       runtimeInfo,
       configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
@@ -298,6 +300,7 @@ export function toRecentProviderSessionDescriptorPayload(
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
+  if (config.routingNotice) serializable.routingNotice = config.routingNotice;
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

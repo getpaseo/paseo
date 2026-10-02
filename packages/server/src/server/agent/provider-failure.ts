@@ -1,3 +1,5 @@
+export const MAX_PROVIDER_ATTEMPTS = 3;
+
 /**
  * What a provider says when a turn dies, in a form the rest of the daemon can act on.
  *
@@ -38,7 +40,9 @@ export function describeProviderFailure(raw: string, code?: string): ProviderFai
   return {
     message,
     ...(statusCode === undefined ? {} : { statusCode }),
-    retryable: decideRetryable(parsed, trimmed),
+    retryable:
+      !["quota_fallback_exhausted", "provider_retry_exhausted"].includes(code ?? "") &&
+      decideRetryable(parsed, trimmed),
   };
 }
 
@@ -124,4 +128,16 @@ export function shouldRetryProviderFailure(input: RetryDecisionInput): boolean {
 export function providerRetryDelayMs(attempt: number): number {
   const base = 1000 * 2 ** Math.max(0, attempt - 1);
   return Math.min(base, 15000);
+}
+
+export function isModelCapacityError(input: {
+  message?: string;
+  diagnostic?: string;
+  code?: string;
+}): boolean {
+  return [input.message, input.diagnostic, input.code].some(
+    (value) =>
+      typeof value === "string" &&
+      /selected model is at capacity|model[_ -]at[_ -]capacity/i.test(value),
+  );
 }

@@ -290,6 +290,8 @@ Example: two different Anthropic accounts as separate profiles:
 
 Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
 
+System One routing uses these registered provider entries as account identities. `daemon.agentProfiles` remains a launch bundle; it does not define quota accounts. Existing `daemon.systemOne.routing` lists restrict automatic model/effort choices to supported catalog entries. A provider-specific list overrides its harness list; unlisted providers use their supported catalog. Changing accounts can preserve an explicitly chosen effort even when that effort is excluded from automatic escalation. Model or effort changes require Jev reassessment.
+
 You can also combine profiles with model overrides to pin specific models per profile:
 
 ```json

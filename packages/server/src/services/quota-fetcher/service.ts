@@ -24,6 +24,7 @@ export interface ProviderUsageServiceOptions {
   now?: () => number;
   /** Read on every fresh fetch, so enabling a profile or adding one shows up without restart. */
   listProfiles?: () => UsageProviderProfile[];
+  onFreshUsage?: () => void;
 }
 
 export interface ProviderUsageListResult {
@@ -39,13 +40,14 @@ export class ProviderUsageService {
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private readonly listProfiles: (() => UsageProviderProfile[]) | null;
+  private readonly onFreshUsage?: () => void;
   private readonly fetchApi: ProviderApiFetch | undefined;
   private cached: {
     fetchedAtMs: number;
     profilesKey: string;
     result: ProviderUsageListResult;
   } | null = null;
-  private inFlight: Promise<ProviderUsageListResult> | null = null;
+  private readonly inFlight = new Map<string, Promise<ProviderUsageListResult>>();
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
@@ -59,6 +61,7 @@ export class ProviderUsageService {
     this.now = options.now ?? Date.now;
     this.listProfiles = options.listProfiles ?? null;
     this.fetchApi = options.fetch;
+    this.onFreshUsage = options.onFreshUsage;
   }
 
   // One card per account: disabled providers drop out, and every enabled Codex or Claude
@@ -98,10 +101,16 @@ export class ProviderUsageService {
     return fetchers;
   }
 
-  async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
+  async listUsage(options?: {
+    forceRefresh?: boolean;
+    profileIds?: readonly string[];
+  }): Promise<ProviderUsageListResult> {
     const nowMs = this.now();
     // An added, removed or toggled account must show at once, not after the cache expires.
-    const profilesKey = JSON.stringify(this.listProfiles?.() ?? null);
+    const profilesKey = JSON.stringify([
+      this.listProfiles?.() ?? null,
+      options?.profileIds?.toSorted() ?? null,
+    ]);
     if (
       !options?.forceRefresh &&
       this.cached &&
@@ -111,26 +120,26 @@ export class ProviderUsageService {
       return this.cached.result;
     }
 
-    if (this.inFlight) {
-      return this.inFlight;
-    }
+    const pending = this.inFlight.get(profilesKey);
+    if (pending) return pending;
 
-    const request = this.fetchFreshUsage(nowMs, profilesKey);
-    this.inFlight = request;
+    const request = this.fetchFreshUsage(nowMs, profilesKey, options?.profileIds);
+    this.inFlight.set(profilesKey, request);
     try {
       return await request;
     } finally {
-      if (this.inFlight === request) {
-        this.inFlight = null;
-      }
+      this.inFlight.delete(profilesKey);
     }
   }
 
   private async fetchFreshUsage(
     nowMs: number,
     profilesKey: string,
+    profileIds?: readonly string[],
   ): Promise<ProviderUsageListResult> {
-    const fetchers = this.resolveFetchers();
+    const fetchers = this.resolveFetchers().filter(
+      (fetcher) => !profileIds || profileIds.includes(fetcher.providerId),
+    );
     const baseById = new Map(
       (this.listProfiles?.() ?? []).flatMap((profile) =>
         profile.extends ? [[profile.id, profile.extends] as const] : [],
@@ -146,6 +155,7 @@ export class ProviderUsageService {
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
     this.cached = { fetchedAtMs: nowMs, profilesKey, result };
+    this.onFreshUsage?.();
     return result;
   }
 
