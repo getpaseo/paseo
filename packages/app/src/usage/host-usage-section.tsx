@@ -6,7 +6,7 @@ import { UsageSection } from "./usage-section";
 /** A host's usage reports, for its settings page. */
 export function HostUsageSection({ serverId }: { serverId: string }) {
   const { view, refresh } = useHostUsage(serverId);
-  const { display } = useUsagePreferences();
+  const { display } = useUsagePreferences(serverId);
   return (
     <UsageSection
       serverId={serverId}

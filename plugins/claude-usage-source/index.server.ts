@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { inputSchema } from "./shared/input.js";
-import { discover, fetchUsage, identify } from "./server/usage.js";
+import { discover, fetchUsage } from "./server/usage.js";
 
 export default function contribute(server: PluginServerContext) {
   server.registerUsageSource({
@@ -9,7 +9,6 @@ export default function contribute(server: PluginServerContext) {
     icon: "icon.svg",
     input: inputSchema,
     discover: () => discover(),
-    identify,
     fetch: fetchUsage,
   });
   return () => {};

@@ -46,10 +46,10 @@ function windows(reports: UsageReportEntry[], prefs: UsagePreferences): PinnedUs
 }
 
 function preferences(
-  pinned: UsagePreferences["pinned"],
+  pinned: UsagePreferences["pins"],
   displayAs: UsagePreferences["displayAs"] = "used",
 ): UsagePreferences {
-  return { displayAs, pinned, serverId: null };
+  return { displayAs, pins: pinned, serverId: null };
 }
 
 describe("choosePinnedUsageLayout", () => {
@@ -73,7 +73,7 @@ describe("choosePinnedUsageLayout", () => {
 });
 
 describe("resolvePinnedUsage", () => {
-  it("defaults to the first window with a percent for each source account", () => {
+  it("defaults to source-wide pins collected from each account", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -89,12 +89,13 @@ describe("resolvePinnedUsage", () => {
       windows: [{ id: "empty", label: "Empty" }],
     });
     expect(
-      windows([claude, codex, work, empty], preferences([])).map((item) => [
+      windows([claude, codex, work, empty], preferences(null)).map((item) => [
         item.key,
         item.percentText,
       ]),
     ).toEqual([
       ["claude:default/five-hour", "31%"],
+      ["claude:default/weekly", "80%"],
       ["claude:work/weekly", "90%"],
       ["codex:default/weekly", "12%"],
     ]);
@@ -107,7 +108,7 @@ describe("resolvePinnedUsage", () => {
         (item) => item.key,
       ),
     ).toEqual(["claude:default/weekly"]);
-    expect(windows(reports, preferences([])).map((item) => item.key)).toEqual([
+    expect(windows(reports, preferences(null)).map((item) => item.key)).toEqual([
       "claude:default/five-hour",
       "codex:default/weekly",
     ]);
@@ -176,7 +177,7 @@ describe("resolvePinnedUsage", () => {
       ],
     });
 
-    expect(windows([marked, codex], preferences([])).map((item) => item.key)).toEqual([
+    expect(windows([marked, codex], preferences(null)).map((item) => item.key)).toEqual([
       "claude:default/five-hour",
       "claude:default/weekly",
       "codex:default/weekly",
@@ -189,7 +190,7 @@ describe("resolvePinnedUsage", () => {
       sourceLabel: "OpenCode Go",
       windows: [{ id: "rolling", label: "Rolling", shortLabel: "", usedPct: 21 }],
     });
-    const items = windows([opencode], preferences([]));
+    const items = windows([opencode], preferences(null));
 
     expect(items.map((item) => item.shortLabel)).toEqual([""]);
   });
@@ -254,4 +255,19 @@ describe("resolvePinnedUsage", () => {
       ["Claude (work) 5-hour 90% used", "90%"],
     ]);
   });
+});
+
+it("keeps unavailable and error reports out of the sidebar summary", () => {
+  const expired: UsageReportEntry = {
+    ...claude,
+    report: {
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "2026-10-01T00:00:00.000Z", refreshedBy: "claude" },
+    },
+  };
+  const failed: UsageReportEntry = {
+    ...codex,
+    report: { status: "error", error: "Store deleted" },
+  };
+  expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
 });
