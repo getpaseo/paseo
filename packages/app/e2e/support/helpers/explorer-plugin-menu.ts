@@ -130,11 +130,19 @@ export async function expectIndependentExplorerPanelTabs(
   await expect(tabs.getByRole("button", { name: "Review", exact: true })).toHaveCount(0);
   await expect(tabs.getByRole("button", { name: "Other review", exact: true })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "Review summary", exact: true })).toBeVisible();
+  const files = tabs.getByRole("button", { name: "Browse workspace files", exact: true });
+  await expect(files).toHaveCount(1);
+  const menu = await openExplorerMenu(page);
+  await expect(menu.getByRole("menuitem", { name: /^Files/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await files.click({ button: "right", position: { x: 12, y: 13 } });
+  await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+  await expect(files).toHaveCount(0);
   await launchExplorerView(page, /^Files/);
-  await launchExplorerView(page, /^Files/);
-  await expect(
-    tabs.getByRole("button", { name: "Browse workspace files", exact: true }),
-  ).toHaveCount(3);
+  await expect(files).toHaveCount(1);
+  const restoredMenu = await openExplorerMenu(page);
+  await expect(restoredMenu.getByRole("menuitem", { name: /^Files/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 }
 
 export async function expectExplorerPanelWithFocusedAgent(
