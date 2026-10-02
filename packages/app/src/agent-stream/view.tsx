@@ -1032,12 +1032,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         bottomTurnFooterHost ? (
           <TurnFooter
             isRunning={isTurnActive || workingSubagentCount > 0}
+            isWaiting={effectiveTurnPresentation.isWaiting === true && workingSubagentCount === 0}
             workingLabel={workingLabel}
             subagentsControl={subagentsControl}
             needsInput={pendingPermissionItems.length > 0}
             hasError={context.status === "error"}
             inFlightTurnStartedAt={
-              isTurnActive ? baseRenderModel.turnTiming.runningStartedAt : null
+              isTurnActive && !effectiveTurnPresentation.isWaiting
+                ? baseRenderModel.turnTiming.runningStartedAt
+                : null
             }
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
@@ -1051,6 +1054,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         handleForkInFlightTurn,
         readOnly,
         isTurnActive,
+        effectiveTurnPresentation.isWaiting,
         context.status,
         workingLabel,
         subagentsControl,

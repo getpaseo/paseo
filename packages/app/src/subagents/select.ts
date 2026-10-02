@@ -11,11 +11,11 @@ export interface PaseoSubagentRow {
   id: Agent["id"];
   provider: Agent["provider"];
   title: Agent["title"];
-  /** Managed agents have a real title, so the union's task line is always absent for them. */
   description: null;
   subtitle: null;
   status: Agent["status"];
   turn: Agent["turn"];
+  routingNotice?: Agent["routingNotice"];
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
 }
@@ -25,12 +25,8 @@ export interface ProviderSubagentRow {
   id: string;
   parentAgentId: string;
   provider: ProviderSubagentDescriptorPayload["provider"];
-  // `title` is the subagent type ("Explore", "general-purpose") and repeats across a fan-out;
-  // `description` is the task it was given. Both are carried so presentation can choose which
-  // one names the row — collapsing them here is what makes every row read alike.
   title: string | null;
   description: string | null;
-  /** Compact provider-owned context. The app displays it without interpreting its contents. */
   subtitle: string | null;
   status: ProviderSubagentDescriptorPayload["status"];
   requiresAttention: boolean;
@@ -45,7 +41,6 @@ type ProviderSubagentStoreSnapshot = ReturnType<typeof useProviderSubagentStore.
 interface SelectSubagentsParams {
   serverId: string;
   parentAgentId: string;
-  /** Select children of this provider subagent instead of children of the managed agent. */
   providerParentSubagentId?: string;
 }
 
@@ -62,6 +57,7 @@ function toSubagentRow(agent: Agent): SubagentRow {
     subtitle: null,
     status: agent.status,
     turn: agent.turn,
+    routingNotice: agent.routingNotice,
     requiresAttention: agent.requiresAttention,
     createdAt: agent.createdAt,
   };

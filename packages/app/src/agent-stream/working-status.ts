@@ -12,6 +12,7 @@ export function buildWorkingLabel(
   const labels: string[] = [];
   if (needsInput) labels.push(t("sidebar.status.needsInput"));
   else if (turn.isCancelling) labels.push(t("composer.cancel.cancelingAgent"));
+  else if (turn.isWaiting) labels.push(t("sidebar.status.done"));
   else if (turn.isActive) {
     labels.push(t("sidebar.status.running"));
     if (tool) labels.push(tool);
@@ -28,7 +29,7 @@ export function resolveWorkingTool(
   items: readonly StreamItem[],
   turn: TurnPresentation,
 ): string | null {
-  if (!turn.isActive || turn.isCancelling) return null;
+  if (!turn.isActive || turn.isCancelling || turn.isWaiting) return null;
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index]!;
     if (item.kind === "user_message" && !turn.turnId && !turn.startedAt) break;

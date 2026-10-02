@@ -6,6 +6,7 @@ function agent(input: {
   id: string;
   workspaceId?: string;
   status?: Agent["status"];
+  routingNotice?: Agent["routingNotice"];
   turn?: Agent["turn"];
   updatedAt: string;
   attentionTimestamp?: string | null;
@@ -20,6 +21,7 @@ function agent(input: {
     id: input.id,
     provider: "codex",
     status: input.status ?? "idle",
+    routingNotice: input.routingNotice,
     turn:
       input.turn ??
       (input.status === "running"
@@ -66,6 +68,23 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("does not animate a workspace while its open turn waits for provider capacity", () => {
+    const waiting = agent({
+      id: "waiting",
+      workspaceId: "quota",
+      status: "running",
+      updatedAt: "2026-01-01T00:00:00Z",
+    });
+    waiting.routingNotice = { status: "waiting" } as Agent["routingNotice"];
+    expect(
+      buildWorkspaceAgentActivityIndex(new Map([[waiting.id, waiting]])).get("quota")?.status,
+    ).toBe("done");
+    waiting.routingNotice = undefined;
+    expect(
+      buildWorkspaceAgentActivityIndex(new Map([[waiting.id, waiting]])).get("quota")?.status,
+    ).toBe("running");
+  });
+
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {
     const result = buildWorkspaceAgentActivityIndex(
       new Map([

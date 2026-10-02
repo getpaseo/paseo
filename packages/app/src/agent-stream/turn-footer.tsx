@@ -39,6 +39,7 @@ export const TurnFooter = memo(function TurnFooter({
   subagentsControl,
   needsInput = false,
   hasError = false,
+  isWaiting = false,
   inFlightTurnStartedAt,
   host,
   strategy,
@@ -51,6 +52,7 @@ export const TurnFooter = memo(function TurnFooter({
   subagentsControl?: ReactNode;
   needsInput?: boolean;
   hasError?: boolean;
+  isWaiting?: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
@@ -66,6 +68,7 @@ export const TurnFooter = memo(function TurnFooter({
           subagentsControl={subagentsControl}
           needsInput={needsInput}
           hasError={hasError}
+          isWaiting={isWaiting}
           inFlightTurnStartedAt={inFlightTurnStartedAt}
           onFork={resolveTurnFooterForkHandler({
             hasError,
@@ -135,6 +138,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
   subagentsControl,
   needsInput,
   hasError,
+  isWaiting = false,
   inFlightTurnStartedAt = null,
   onFork,
 }: {
@@ -142,11 +146,13 @@ const WorkingIndicator = memo(function WorkingIndicator({
   subagentsControl?: ReactNode;
   needsInput: boolean;
   hasError: boolean;
+  isWaiting?: boolean;
   inFlightTurnStartedAt?: Date | null;
   onFork?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
-  const activityMood = hasError ? "err" : "run";
+  const restingMood = isWaiting ? "sleep" : "run";
+  const activityMood = hasError ? "err" : restingMood;
   return (
     <View style={stylesheet.turnFooterContent}>
       <View style={stylesheet.activityStatus}>
@@ -156,7 +162,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
             size="small"
             pixelScale={2}
             testID="turn-status-panda"
-            animate={active}
+            animate={active && !isWaiting}
           />
         </View>
         {workingLabel ? (
@@ -189,6 +195,7 @@ function RunningTurnFooter({
   subagentsControl,
   needsInput,
   hasError,
+  isWaiting = false,
   inFlightTurnStartedAt,
   onFork,
 }: {
@@ -196,6 +203,7 @@ function RunningTurnFooter({
   subagentsControl?: ReactNode;
   needsInput: boolean;
   hasError: boolean;
+  isWaiting?: boolean;
   inFlightTurnStartedAt: Date | null;
   onFork?: InFlightTurnForkHandler;
 }) {
@@ -206,6 +214,7 @@ function RunningTurnFooter({
         subagentsControl={subagentsControl}
         needsInput={needsInput}
         hasError={hasError}
+        isWaiting={isWaiting}
         inFlightTurnStartedAt={inFlightTurnStartedAt}
         onFork={onFork}
       />

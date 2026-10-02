@@ -35,6 +35,8 @@ describe("working footer activity", () => {
     const i18n = createInstance();
     await i18n.init({ lng: "en", resources: { en: { translation: en } } });
     const t = i18n.getFixedT("en");
+    expect(buildWorkingLabel(t, { ...turn, isWaiting: true }, false, "Browser", 0)).toBe("Waiting");
+    expect(resolveWorkingTool([tool], { ...turn, isWaiting: true })).toBeNull();
     expect(buildWorkingLabel(t, turn, false, "Browser", 2)).toBe(
       "Working · Browser · Subagents: 2 working",
     );

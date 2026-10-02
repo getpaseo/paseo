@@ -342,6 +342,7 @@ function useAgentPanelDescriptor(
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
         isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
+        routingNotice: agent?.routingNotice,
       };
     }),
   );
@@ -358,6 +359,7 @@ function useAgentPanelDescriptor(
     statusBucket: descriptorState.status
       ? deriveSidebarStateBucket({
           status: descriptorState.isTurnActive ? "running" : descriptorState.status,
+          routingNotice: descriptorState.routingNotice,
           pendingPermissionCount: descriptorState.pendingPermissionCount,
           requiresAttention: descriptorState.requiresAttention,
           attentionReason: descriptorState.attentionReason,

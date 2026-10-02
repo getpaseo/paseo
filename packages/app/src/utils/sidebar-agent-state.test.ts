@@ -6,6 +6,21 @@ import {
 } from "./sidebar-agent-state";
 
 describe("deriveSidebarStateBucket", () => {
+  it("shows a quota parked open turn as waiting without masking errors or permissions", () => {
+    const parked = {
+      status: "running" as const,
+      routingNotice: { status: "waiting" },
+      requiresAttention: true,
+      attentionReason: "finished" as const,
+    };
+    expect(deriveSidebarStateBucket(parked)).toBe("done");
+    expect(deriveSidebarStateBucket({ ...parked, pendingPermissionCount: 1 })).toBe("needs_input");
+    expect(deriveSidebarStateBucket({ ...parked, status: "error" })).toBe("failed");
+    expect(deriveSidebarStateBucket({ ...parked, routingNotice: { status: "selected" } })).toBe(
+      "running",
+    );
+  });
+
   it("prioritizes pending permissions as needs_input", () => {
     expect(
       deriveSidebarStateBucket({
@@ -83,7 +98,6 @@ describe("aggregateSidebarStateBuckets", () => {
   });
 
   it("follows the full needs_input > failed > running > attention > done ordering", () => {
-    // Each pair of adjacent buckets: the more urgent one wins when both are present.
     expect(aggregateSidebarStateBuckets(["failed", "needs_input"])).toBe("needs_input");
     expect(aggregateSidebarStateBuckets(["running", "failed"])).toBe("failed");
     expect(aggregateSidebarStateBuckets(["attention", "running"])).toBe("running");

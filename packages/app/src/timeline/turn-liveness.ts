@@ -49,6 +49,7 @@ export function applyTurnLivenessTransition(
 
 export interface TurnPresentation {
   isActive: boolean;
+  isWaiting?: boolean;
   isCancelling: boolean;
   startedAt: Date | null;
   turnId: string | null;

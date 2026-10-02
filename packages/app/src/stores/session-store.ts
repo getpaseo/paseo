@@ -357,12 +357,14 @@ export function selectAgentTurnPresentation(
   session: SessionState | undefined,
   agentId: string,
 ): TurnPresentation {
-  return resolveTurnPresentation(
-    session?.agents.get(agentId)?.turn ??
-      session?.agentDetails.get(agentId)?.turn ??
-      TURN_LIVENESS_IDLE,
+  const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+  const presentation = resolveTurnPresentation(
+    agent?.turn ?? TURN_LIVENESS_IDLE,
     getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)).length > 0,
   );
+  return agent?.routingNotice?.status === "waiting"
+    ? { ...presentation, isWaiting: true }
+    : presentation;
 }
 
 function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
