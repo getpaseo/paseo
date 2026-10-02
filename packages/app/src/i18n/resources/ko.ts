@@ -75,6 +75,18 @@ export const ko: TranslationResources = {
       error: "오류",
       idle: "대기 중",
     },
+    time: {
+      justNow: "방금",
+      now: "지금",
+      ago: "{{time}} 전",
+      minutes: "{{count}}분",
+      hours: "{{count}}시간",
+      days: "{{count}}일",
+      seconds: "{{count}}초",
+      minutesSeconds: "{{minutes}}분 {{seconds}}초",
+      hoursMinutes: "{{hours}}시간 {{minutes}}분",
+      milliseconds: "{{count}}ms",
+    },
   },
   shell: {
     menu: {
@@ -2768,6 +2780,15 @@ export const ko: TranslationResources = {
         saving: "저장하는 중...",
         cancel: "취소",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} 남음",
+      resettingNow: "지금 재설정 중",
+      resets: "{{time}} 후 재설정",
+      runsOutNow: "지금 소진",
+      runsOut: "{{time}} 후 소진",
     },
   },
 };

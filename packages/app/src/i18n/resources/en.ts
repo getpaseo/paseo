@@ -71,6 +71,18 @@ export const en = {
       error: "Error",
       idle: "Idle",
     },
+    time: {
+      justNow: "just now",
+      now: "now",
+      ago: "{{time}} ago",
+      minutes: "{{count}}m",
+      hours: "{{count}}h",
+      days: "{{count}}d",
+      seconds: "{{count}}s",
+      minutesSeconds: "{{minutes}}m {{seconds}}s",
+      hoursMinutes: "{{hours}}h {{minutes}}m",
+      milliseconds: "{{count}}ms",
+    },
   },
   shell: {
     menu: {
@@ -2882,6 +2894,15 @@ export const en = {
         saving: "Saving...",
         cancel: "Cancel",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} left",
+      resettingNow: "resetting now",
+      resets: "resets {{time}}",
+      runsOutNow: "runs out now",
+      runsOut: "runs out {{time}}",
     },
   },
 } as const;

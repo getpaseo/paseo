@@ -86,6 +86,18 @@ export const uk: TranslationResources = {
       error: "Помилка",
       idle: "Неактивно",
     },
+    time: {
+      justNow: "щойно",
+      now: "зараз",
+      ago: "{{time}} тому",
+      minutes: "{{count}} хв",
+      hours: "{{count}} год",
+      days: "{{count}} д",
+      seconds: "{{count}} с",
+      minutesSeconds: "{{minutes}} хв {{seconds}} с",
+      hoursMinutes: "{{hours}} год {{minutes}} хв",
+      milliseconds: "{{count}} мс",
+    },
   },
   shell: {
     menu: {
@@ -2876,6 +2888,15 @@ export const uk: TranslationResources = {
         saving: "Збереження...",
         cancel: "Скасувати",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} залишилось",
+      resettingNow: "оновлюється зараз",
+      resets: "оновиться через {{time}}",
+      runsOutNow: "вичерпано",
+      runsOut: "вичерпається через {{time}}",
     },
   },
 };

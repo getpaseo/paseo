@@ -76,6 +76,18 @@ export const ja: TranslationResources = {
       error: "エラー",
       idle: "アイドル",
     },
+    time: {
+      justNow: "たった今",
+      now: "今",
+      ago: "{{time}}前",
+      minutes: "{{count}}分",
+      hours: "{{count}}時間",
+      days: "{{count}}日",
+      seconds: "{{count}}秒",
+      minutesSeconds: "{{minutes}}分{{seconds}}秒",
+      hoursMinutes: "{{hours}}時間{{minutes}}分",
+      milliseconds: "{{count}}ミリ秒",
+    },
   },
   shell: {
     menu: {
@@ -2782,6 +2794,15 @@ export const ja: TranslationResources = {
         saving: "保存中...",
         cancel: "キャンセル",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} 残り",
+      resettingNow: "リセット中",
+      resets: "{{time}}でリセット",
+      runsOutNow: "まもなく終了",
+      runsOut: "{{time}}で終了",
     },
   },
 } as const;

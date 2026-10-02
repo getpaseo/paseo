@@ -75,6 +75,18 @@ export const ar: TranslationResources = {
       error: "خطأ",
       idle: "عاطل",
     },
+    time: {
+      justNow: "منذ لحظات",
+      now: "الآن",
+      ago: "منذ {{time}}",
+      minutes: "{{count}} د",
+      hours: "{{count}} س",
+      days: "{{count}} ي",
+      seconds: "{{count}} ث",
+      minutesSeconds: "{{minutes}} د {{seconds}} ث",
+      hoursMinutes: "{{hours}} س {{minutes}} د",
+      milliseconds: "{{count}} ms",
+    },
   },
   shell: {
     menu: {
@@ -2753,6 +2765,15 @@ export const ar: TranslationResources = {
         saving: "جارٍ الحفظ...",
         cancel: "يلغي",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} متبقي",
+      resettingNow: "إعادة التعيين الآن",
+      resets: "إعادة التعيين خلال {{time}}",
+      runsOutNow: "ينفد الآن",
+      runsOut: "ينفد خلال {{time}}",
     },
   },
 };

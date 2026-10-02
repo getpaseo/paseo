@@ -75,6 +75,18 @@ export const zhCN: TranslationResources = {
       error: "错误",
       idle: "空闲",
     },
+    time: {
+      justNow: "刚刚",
+      now: "现在",
+      ago: "{{time}}前",
+      minutes: "{{count}} 分钟",
+      hours: "{{count}} 小时",
+      days: "{{count}} 天",
+      seconds: "{{count}} 秒",
+      minutesSeconds: "{{minutes}} 分 {{seconds}} 秒",
+      hoursMinutes: "{{hours}} 小时 {{minutes}} 分",
+      milliseconds: "{{count}} 毫秒",
+    },
   },
   shell: {
     menu: {
@@ -2719,6 +2731,15 @@ export const zhCN: TranslationResources = {
         saving: "正在保存...",
         cancel: "取消",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "剩余 {{percent}}",
+      resettingNow: "正在重置",
+      resets: "{{time}}后重置",
+      runsOutNow: "即将用尽",
+      runsOut: "{{time}}后用尽",
     },
   },
 };

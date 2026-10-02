@@ -76,6 +76,18 @@ export const ru: TranslationResources = {
       error: "Ошибка",
       idle: "Ожидание",
     },
+    time: {
+      justNow: "только что",
+      now: "сейчас",
+      ago: "{{time}} назад",
+      minutes: "{{count}} мин",
+      hours: "{{count}} ч",
+      days: "{{count}} д",
+      seconds: "{{count}} с",
+      minutesSeconds: "{{minutes}} мин {{seconds}} с",
+      hoursMinutes: "{{hours}} ч {{minutes}} мин",
+      milliseconds: "{{count}} мс",
+    },
   },
   shell: {
     menu: {
@@ -2807,6 +2819,15 @@ export const ru: TranslationResources = {
         saving: "Сохранение...",
         cancel: "Отмена",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} осталось",
+      resettingNow: "сбрасывается сейчас",
+      resets: "сбросится через {{time}}",
+      runsOutNow: "исчерпано",
+      runsOut: "исчерпается через {{time}}",
     },
   },
 };
