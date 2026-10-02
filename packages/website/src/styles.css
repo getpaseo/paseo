@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
 
 * {
   scrollbar-color: var(--color-scrollbar-handle) transparent;
@@ -660,6 +661,8 @@
 }
 
 @theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+
   --color-background: #101615;
   --color-foreground: #fafafa;
   --color-muted: #1a1f1e;

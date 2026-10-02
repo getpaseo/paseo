@@ -72,17 +72,9 @@ import type { DesktopPlatform, MobilePlatform } from "~/platform";
 import { isMobilePlatform } from "~/platform";
 import { useRelease, useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
-import {
-  ClaudeCodeIcon,
-  CodexIcon,
-  CursorIcon,
-  OpenCodeIcon,
-  PiIcon,
-  MuseCodeIcon,
-  AntigravityIcon,
-} from "~/components/agent-icons";
+import { AgentPageIcon } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
-import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
+import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
 import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
@@ -161,16 +153,18 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.Rea
   );
 }
 
-const CLAUDE_CODE_BADGE_ICON = <ClaudeCodeIcon className="h-6 w-6" />;
-const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
-const ANTIGRAVITY_BADGE_ICON = <AntigravityIcon className="h-6 w-6" />;
-const MUSE_CODE_BADGE_ICON = <MuseCodeIcon className="h-6 w-6" />;
-const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
-const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
-const CURSOR_BADGE_ICON = <CursorIcon className="h-6 w-6" />;
+const FEATURED_AGENTS = [
+  { slug: "claude-code", name: "Claude Code" },
+  { slug: "codex", name: "Codex" },
+  { slug: "opencode", name: "OpenCode" },
+  { slug: "pi", name: "Pi" },
+  { slug: "omp", name: "OMP" },
+  { slug: "cursor", name: "Cursor" },
+  { slug: "muse-code", name: "Muse Code" },
+  { slug: "antigravity", name: "Antigravity" },
+] as const;
 
-const FEATURED_AGENT_COUNT = 5;
-const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENT_COUNT;
+const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENTS.length;
 
 const SOCIAL_PROOF_TWEETS = [
   {
@@ -254,7 +248,7 @@ const SOCIAL_PROOF_ROWS = [
 
 type SocialProofTweet = (typeof SOCIAL_PROOF_TWEETS)[number];
 
-function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
+function AgentBadge({ slug, name }: { slug: string; name: string }) {
   const [hovered, setHovered] = React.useState(false);
   const handleMouseEnter = React.useCallback(() => setHovered(true), []);
   const handleMouseLeave = React.useCallback(() => setHovered(false), []);
@@ -265,7 +259,7 @@ function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {icon}
+      <AgentPageIcon slug={slug} className="h-6 w-6" />
       <AnimatePresence>
         {hovered && (
           <motion.span
@@ -429,32 +423,22 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
   );
 }
 
-const PROVIDER_ICON_CLASS = "h-5 w-5 sm:h-7 sm:w-7";
-
 function MultiProviderSection() {
-  const providers = [
-    { name: "Claude Code", icon: <ClaudeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Codex", icon: <CodexIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "OpenCode", icon: <OpenCodeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Antigravity", icon: <AntigravityIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Muse Code", icon: <MuseCodeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Pi", icon: <PiIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Cursor", icon: <CursorIcon className={PROVIDER_ICON_CLASS} /> },
-  ];
-
   return (
     <FeatureSection
       title="Works with your tools"
       description="Bring your subscriptions, skills and configuration"
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
-        {providers.map((p) => (
+        {FEATURED_AGENTS.map((agent) => (
           <div
-            key={p.name}
+            key={agent.slug}
             className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:gap-3 sm:px-5 sm:py-4"
           >
-            <span className="shrink-0 text-white/80">{p.icon}</span>
-            <span className="truncate text-sm font-medium sm:text-base">{p.name}</span>
+            <span className="shrink-0 text-white/80">
+              <AgentPageIcon slug={agent.slug} className="h-5 w-5 sm:h-7 sm:w-7" />
+            </span>
+            <span className="truncate text-sm font-medium sm:text-base">{agent.name}</span>
           </div>
         ))}
         <a
@@ -966,13 +950,9 @@ function GetStarted() {
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pt-6">
         <span className="text-xs text-muted-foreground">Supports</span>
         <div className="flex items-center gap-1">
-          <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
-          <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
-          <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
-          <AgentBadge name="Antigravity" icon={ANTIGRAVITY_BADGE_ICON} />
-          <AgentBadge name="Muse Code" icon={MUSE_CODE_BADGE_ICON} />
-          <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
-          <AgentBadge name="Cursor" icon={CURSOR_BADGE_ICON} />
+          {FEATURED_AGENTS.map((agent) => (
+            <AgentBadge key={agent.slug} slug={agent.slug} name={agent.name} />
+          ))}
         </div>
         <a
           href="/agents"
