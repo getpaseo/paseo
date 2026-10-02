@@ -2,7 +2,10 @@ import { expect, test } from "playwright/test";
 
 const APPLE_SILICON_DMG = /\/getpaseo\/paseo\/releases\/download\/v[^/]+\/Paseo-[^/]+-arm64\.dmg$/;
 
-test("a download button opens the thanks page and starts the download", async ({ page }) => {
+test("a download button opens the thanks page and starts the download", async ({
+  page,
+  browserName,
+}) => {
   // Serve a stand-in file so the test never downloads a real release.
   await page.route(APPLE_SILICON_DMG, (route) =>
     route.fulfill({
@@ -16,12 +19,14 @@ test("a download button opens the thanks page and starts the download", async ({
   );
   await page.goto("/download");
 
-  // WebKit does not report a download event for a stubbed response, so the
-  // request for the file is what proves the download started.
+  // WebKit does not report a download event for a stubbed response, so there
+  // the request for the file is what proves the download started.
   const fileRequest = page.waitForRequest(APPLE_SILICON_DMG);
+  const download = browserName === "webkit" ? null : page.waitForEvent("download");
   await page.getByRole("link", { name: "Apple Silicon", exact: true }).click();
 
   await fileRequest;
+  if (download) expect((await download).url()).toMatch(APPLE_SILICON_DMG);
   await expect(page).toHaveURL(/\/download\/thanks\?file=/);
   await expect(page.getByRole("heading", { name: "Thanks for downloading Paseo" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Try again" })).toHaveAttribute(
