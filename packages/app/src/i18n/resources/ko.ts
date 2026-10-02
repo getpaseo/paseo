@@ -26,6 +26,7 @@ export const ko: TranslationResources = {
     total: "일치 항목 {{total}}개",
   },
   common: {
+    bottomSheetBackdrop: "하단 시트 배경",
     back: "뒤로",
     loading: "불러오는 중...",
     actions: {
@@ -440,7 +441,9 @@ export const ko: TranslationResources = {
       recovery: {
         archivedTitle: "워크스페이스가 보관되었습니다",
         restoreDescription:
-          "{{workspaceName}}가 보관되고 워크트리가 제거되었습니다. 다시 열려면 {{branch}} 브랜치를 복원하세요.",
+          "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 워크트리는 {{branch}} 브랜치를 사용합니다.",
+        restoreWithoutBranchDescription:
+          "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 저장된 기반 브랜치 또는 저장소 기본 브랜치에서 새 브랜치를 만듭니다.",
         unarchiveDescription: "{{workspaceName}}가 보관되었습니다. 다시 열려면 보관을 취소하세요.",
         restoreAction: "복원",
         unarchiveAction: "보관 취소",
@@ -1152,6 +1155,9 @@ export const ko: TranslationResources = {
       settings: "설정",
       closeSidebar: "사이드바 닫기",
     },
+    footer: {
+      usage: "사용량",
+    },
     help: {
       trigger: "도움말 및 지원",
       sectionHelp: "도움말",
@@ -1532,6 +1538,8 @@ export const ko: TranslationResources = {
     noFiles: "파일 또는 디렉터리를 찾을 수 없습니다",
     noCommands: "명령을 찾을 수 없습니다",
     failedToLoad: "불러오지 못했습니다",
+    chooseProjectForCommands: "명령을 보려면 프로젝트를 선택하세요",
+    chooseModelForCommands: "명령을 보려면 모델을 선택하세요",
   },
   loadOlderHistory: {
     failed: "이전 기록을 불러올 수 없습니다",
@@ -1626,6 +1634,17 @@ export const ko: TranslationResources = {
     hostPassword: {
       title: "{{host}}의 비밀번호",
       label: "호스트 비밀번호",
+    },
+    hostConfirmation: {
+      title: "이 호스트에 연결할까요?",
+      description:
+        "이 호스트는 이 앱에서 코드를 실행하고 연결된 다른 호스트에 접근할 수 있게 됩니다. 알고 있는 호스트인 경우에만 연결하세요.",
+      descriptionChanged:
+        "이 링크는 이 호스트에 연결하는 방식을 변경합니다. 호스트는 이 앱에서 코드를 실행하고 연결된 다른 호스트에 접근할 수 있게 됩니다. 알고 있는 호스트인 경우에만 연결하세요.",
+      hostLabel: "호스트",
+      fingerprintLabel: "키 지문",
+      relayLabel: "릴레이",
+      connect: "연결",
     },
     connectionMethods: {
       title: "연결 추가",
@@ -2176,8 +2195,15 @@ export const ko: TranslationResources = {
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
       },
       sidebar: {
-        title: "사이드바",
-        description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        header: {
+          title: "헤더",
+          description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        },
+        footer: {
+          title: "푸터",
+          description:
+            "사이드바 하단에 표시할 행과 순서를 선택하세요. 프로젝트 추가와 아이콘 행은 항상 표시됩니다",
+        },
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
       },
@@ -2200,6 +2226,14 @@ export const ko: TranslationResources = {
         codeSize: "코드 크기",
         codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
+      },
+      layout: {
+        title: "레이아웃",
+        contentWidth: "콘텐츠 너비",
+        contentWidthHint: "와이드 화면에서 채팅과 Markdown 파일의 최대 너비",
+        contentWidthAccessibility: "콘텐츠 너비(픽셀)",
+        reset: "재설정",
+        resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
       },
       syntax: {
         title: "구문",

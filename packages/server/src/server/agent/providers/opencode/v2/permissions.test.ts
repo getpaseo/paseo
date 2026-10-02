@@ -66,6 +66,71 @@ describe("OpenCode v2 questions", () => {
   });
 });
 
+describe("OpenCode v2 question tool", () => {
+  test("shows the question text and accepts a typed answer", async () => {
+    const harness = new V2Harness();
+    harness.api.session.form.list = async () => [
+      {
+        id: "question",
+        sessionID: "session",
+        title: "Questions",
+        fields: [
+          {
+            key: "q0",
+            title: "Next task",
+            description: "What would you like me to work on next?",
+            type: "string",
+            options: [
+              { value: "Explore", label: "Explore", description: "Map the codebase" },
+              { value: "Fix a bug", label: "Fix a bug", description: "Track down a bug" },
+            ],
+            custom: true,
+          },
+        ],
+      },
+    ];
+    const answers: Parameters<V2Api["session"]["form"]["reply"]>[0][] = [];
+    harness.api.session.form.reply = async (input) => {
+      answers.push(input);
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      const [request] = session.getPendingPermissions();
+      expect(request.input).toEqual({
+        questions: [
+          {
+            header: "Next task",
+            question: "What would you like me to work on next?",
+            options: [
+              { value: "Explore", label: "Explore", description: "Map the codebase" },
+              { value: "Fix a bug", label: "Fix a bug", description: "Track down a bug" },
+            ],
+            multiple: false,
+            allowOther: true,
+          },
+        ],
+      });
+      await session.respondToPermission("question", {
+        behavior: "allow",
+        updatedInput: { answers: { "Next task": "Write the release notes" } },
+      });
+      expect(answers).toEqual([
+        {
+          sessionID: "session",
+          formID: "question",
+          answer: { q0: "Write the release notes" },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe("OpenCode v2 permission routing", () => {
   test("routes a child approval back to its owning session", async () => {
     const harness = new V2Harness();

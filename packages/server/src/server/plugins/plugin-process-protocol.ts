@@ -3,12 +3,19 @@ import type {
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
+  ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
-import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
+import {
+  ProviderEventSchema,
+  ProviderInputSchema,
+  ProviderLaunchSchema,
+} from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
+  hasStatus?: boolean;
+  command?: readonly [string, ...string[]];
   id: string;
   label: string;
   description?: string;
@@ -19,10 +26,15 @@ export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
   icon?: string;
-  discover: boolean;
 }
 
 export type PluginProcessRequest =
+  | {
+      type: "provider.status";
+      requestId: string;
+      providerId: string;
+      request: ProviderStatusRequest;
+    }
   | {
       type: "initialize";
       pluginId: string;
@@ -39,7 +51,6 @@ export type PluginProcessRequest =
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
-  | { type: "usage.identify"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
@@ -101,6 +112,8 @@ const providerMetadataSchema = z
     description: z.string().optional(),
     iconPath: z.string().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
+    hasStatus: z.boolean().optional(),
+    command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
 const usageSourceMetadataSchema = z
@@ -108,11 +121,11 @@ const usageSourceMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     icon: z.string().optional(),
-    discover: z.boolean(),
   })
   .strict();
 const providerConnectRequestSchema = z
   .object({
+    launch: ProviderLaunchSchema.optional(),
     versions: z.array(z.number().int().positive()),
     capabilities: z.array(z.string()),
   })
@@ -125,6 +138,14 @@ const frameFields = {
 export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.discriminatedUnion(
   "type",
   [
+    z
+      .object({
+        type: z.literal("provider.status"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("initialize"),
@@ -141,12 +162,19 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         options: z.discriminatedUnion("scope", [
-          z.object({ scope: z.literal("global"), force: z.boolean().optional() }).strict(),
+          z
+            .object({
+              scope: z.literal("global"),
+              force: z.boolean().optional(),
+              launch: ProviderLaunchSchema.optional(),
+            })
+            .strict(),
           z
             .object({
               scope: z.literal("workspace"),
               cwd: z.string(),
               force: z.boolean().optional(),
+              launch: ProviderLaunchSchema.optional(),
             })
             .strict(),
         ]),
@@ -162,14 +190,6 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),
-    z
-      .object({
-        type: z.literal("usage.identify"),
-        requestId: z.string(),
-        sourceId: z.string(),
-        input: z.unknown(),
-      })
-      .strict(),
     z
       .object({
         type: z.literal("usage.fetch"),

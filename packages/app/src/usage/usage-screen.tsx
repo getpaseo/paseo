@@ -1,11 +1,15 @@
-import { useCallback } from "react";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
+import { useMemo, type ReactNode } from "react";
+import { View } from "react-native";
 import { PageLayout } from "@/components/page-layout";
+import { useHostUsageWithControls } from "./controls";
 import { usageCopy } from "./copy";
-import type { UsageHostGroup } from "./model";
-import { useUsageByHost } from "./queries";
-import { UsageMessage, UsageSection } from "./usage-section";
+import { useUsagePreferences } from "./display";
+import { useUsageHostSelection } from "./hosts";
+import type { UsageHost } from "./model";
+import { UsageOptions } from "./options";
+import { UsageBody, UsageMessage } from "./usage-section";
 
 // The screen is reachable by URL, so there may be no history to go back to.
 function leaveUsage(): void {
@@ -18,40 +22,53 @@ function leaveUsage(): void {
 
 export function UsageScreen() {
   const isFocused = useIsFocused();
+  if (!isFocused) return <UsagePage>{null}</UsagePage>;
+  return <FocusedUsageScreen />;
+}
+
+function UsagePage({ actions, children }: { actions?: ReactNode; children: ReactNode }) {
   return (
-    <PageLayout title={usageCopy.title} onBack={leaveUsage} testID="usage-screen">
-      {isFocused ? <UsageScreenContent /> : null}
+    <PageLayout title={usageCopy.title} onBack={leaveUsage} actions={actions} testID="usage-screen">
+      {children}
     </PageLayout>
   );
 }
 
-function UsageScreenContent() {
-  const { groups, refresh } = useUsageByHost();
+function FocusedUsageScreen() {
+  const { serverId, connectedHosts, select } = useUsageHostSelection();
+  if (!serverId) {
+    return (
+      <UsagePage>
+        <UsageMessage text={usageCopy.noHosts} />
+      </UsagePage>
+    );
+  }
   return (
-    <>
-      {groups.length === 0 ? <UsageMessage text={usageCopy.noHosts} /> : null}
-      {groups.map((group) => (
-        <HostUsageGroup key={group.serverId} group={group} onRefresh={refresh} />
-      ))}
-    </>
+    <HostUsage key={serverId} serverId={serverId} hosts={connectedHosts} onSelectHost={select} />
   );
 }
 
-function HostUsageGroup({
-  group,
-  onRefresh,
+function HostUsage({
+  serverId,
+  hosts,
+  onSelectHost,
 }: {
-  group: UsageHostGroup;
-  onRefresh: (serverId: string) => void;
+  serverId: string;
+  hosts: UsageHost[];
+  onSelectHost: (serverId: string) => void;
 }) {
-  const handleRefresh = useCallback(() => onRefresh(group.serverId), [group.serverId, onRefresh]);
+  const { display } = useUsagePreferences();
+  const hostSelection = useMemo(
+    () => ({ hosts, serverId, onSelect: onSelectHost }),
+    [hosts, onSelectHost, serverId],
+  );
+  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
   return (
-    <UsageSection
-      serverId={group.serverId}
-      title={group.label}
-      view={group.view}
-      onRefresh={handleRefresh}
-      testID={`usage-host-${group.serverId}`}
-    />
+    <UsagePage actions={controls}>
+      <View testID={`usage-host-${serverId}`}>
+        {view.kind === "unavailable" ? null : <UsageOptions display={display} />}
+        <UsageBody serverId={serverId} view={view} display={display} onRefresh={refresh} />
+      </View>
+    </UsagePage>
   );
 }

@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
-import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
   PROVIDER_PROTOCOL_VERSION,
   ProviderEventSchema,
   ProviderInputSchema,
+  ProviderStatusSchema,
+  type ProviderStatus,
+  type ProviderLaunch,
   requireProviderCapabilities,
   type ProviderCapability,
   type ProviderConfigChanges,
@@ -51,13 +55,14 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
-  UsageReference,
 } from "./agent-sdk-types.js";
 import {
-  isDefaultAgentCreateConfigUnattended,
-  resolveDefaultAgentCreateConfig,
-} from "./create-agent-mode.js";
-import type { ProviderDefinition } from "./provider-registry.js";
+  resolveProviderLaunch,
+  checkProviderLaunchAvailable,
+  createProviderEnv,
+  type ProviderRuntimeSettings,
+} from "./provider-launch-config.js";
+import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 
@@ -108,15 +113,9 @@ function providerError(error: ProviderError): Error {
 
 function isProviderRequestReply(
   event: ProviderEvent,
-): event is Extract<
-  ProviderEvent,
-  { type: "request.completed" | "catalog" | "sessions" | "usage_reference" }
-> {
+): event is Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }> {
   return (
-    event.type === "request.completed" ||
-    event.type === "catalog" ||
-    event.type === "sessions" ||
-    event.type === "usage_reference"
+    event.type === "request.completed" || event.type === "catalog" || event.type === "sessions"
   );
 }
 
@@ -143,7 +142,46 @@ class ProviderRuntime {
     PendingOpenDescendantState
   >();
 
-  constructor(private readonly registration: ProviderRegistration) {}
+  constructor(
+    private readonly registration: ProviderRegistration,
+    private readonly runtimeSettings?: ProviderRuntimeSettings,
+  ) {}
+
+  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+    const command = this.registration.command;
+    if (!command) return undefined;
+    const launch = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: command[0],
+    });
+    if (launch.source !== "override") launch.args.unshift(...command.slice(1));
+    const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
+    launch.env = env;
+    const availability = await checkProviderLaunchAvailable(launch);
+    if (!availability.resolvedPath) throw new Error(`${launch.command} not found on PATH`);
+    return { command: resolvePath(availability.resolvedPath), args: launch.args, env };
+  }
+
+  async status(): Promise<ProviderStatus> {
+    try {
+      const launch = await this.resolveLaunch();
+      if (this.registration.status)
+        return ProviderStatusSchema.parse(await this.registration.status({ launch }));
+      if (!this.registration.command) await this.getConnection();
+      return { available: true };
+    } catch (error) {
+      return {
+        available: false,
+        diagnostic: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async catalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
+    const callback = this.registration.getCatalogCacheKey;
+    if (!callback) return undefined;
+    return callback({ ...options, launch: await this.resolveLaunch() });
+  }
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
@@ -154,8 +192,7 @@ class ProviderRuntime {
   }
 
   async isAvailable(): Promise<boolean> {
-    await this.getConnection();
-    return true;
+    return (await this.status()).available;
   }
 
   async catalog(
@@ -335,6 +372,7 @@ class ProviderRuntime {
 
   private async establishConnection(generation: number): Promise<ProviderConnection> {
     const rawConnection = await this.registration.connect({
+      launch: await this.resolveLaunch(),
       versions: [PROVIDER_PROTOCOL_VERSION],
       capabilities: PROVIDER_CAPABILITIES,
     });
@@ -526,10 +564,7 @@ class ProviderRuntime {
   }
 
   private finishRequest(
-    event: Extract<
-      ProviderEvent,
-      { type: "request.completed" | "catalog" | "sessions" | "usage_reference" }
-    >,
+    event: Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }>,
   ): void {
     const request = this.requests.get(event.requestId);
     if (!request) return;
@@ -567,17 +602,6 @@ class ProviderRuntimeSession {
 
   get negotiatedCapabilities(): readonly string[] {
     return this.capabilities;
-  }
-
-  async getUsageReference(): Promise<UsageReference | null> {
-    if (!this.capabilities.includes("session.usage_reference")) return null;
-    const event = await this.runtime.complete({
-      type: "session.usage_reference",
-      requestId: randomUUID(),
-      sessionId: this.providerSessionId,
-    });
-    if (event.type !== "usage_reference") throw new Error("Invalid usage reference response");
-    return event.reference;
   }
 
   onEvent(listener: (event: ProviderEvent) => void): () => void {
@@ -786,7 +810,8 @@ function normalizeConnection(connection: ProviderConnection): ProviderConnection
 interface AdaptedPluginProvider {
   registration: ProviderRegistration;
   client: PluginAgentClient;
-  definition: ProviderDefinition;
+  definition: RegisteredProviderDefinition;
+  clients: Set<PluginAgentClient>;
 }
 
 /** Owns the complete plugin-provider adaptation behind the existing core provider boundary. */
@@ -807,7 +832,7 @@ export class PluginAgentClientRegistry {
     for (const [id, adapted] of this.providers) {
       if (incoming.get(id) === adapted.registration) continue;
       this.providers.delete(id);
-      void adapted.client.shutdown().catch((error) => {
+      void Promise.all([...adapted.clients].map((client) => client.shutdown())).catch((error) => {
         this.logger.warn({ err: error, provider: id }, "Failed to stop plugin provider");
       });
     }
@@ -815,15 +840,20 @@ export class PluginAgentClientRegistry {
     for (const [id, registration] of incoming) {
       if (this.providers.has(id)) continue;
       const client = new PluginAgentClient(registration);
-      this.providers.set(id, {
+      const clients = new Set([client]);
+      const definition = createPluginProviderDefinition(
         registration,
-        client,
-        definition: createPluginProviderDefinition(registration, client),
-      });
+        (_logger, runtimeSettings) => {
+          const configuredClient = new PluginAgentClient(registration, runtimeSettings);
+          clients.add(configuredClient);
+          return configuredClient;
+        },
+      );
+      this.providers.set(id, { registration, client, definition, clients });
     }
   }
 
-  definitions(): Record<string, ProviderDefinition> {
+  definitions(): Record<string, RegisteredProviderDefinition> {
     return Object.fromEntries(
       [...this.providers].map(([id, provider]) => [id, provider.definition]),
     );
@@ -840,36 +870,25 @@ export class PluginAgentClientRegistry {
   async shutdown(): Promise<void> {
     const providers = [...this.providers.values()];
     this.providers.clear();
-    await Promise.all(providers.map(({ client }) => client.shutdown()));
+    await Promise.all(
+      providers.flatMap(({ clients }) => [...clients].map((client) => client.shutdown())),
+    );
   }
 }
 
-const PluginProviderOptionsSchema: z.ZodType<ProviderOptions> = z.record(z.string(), z.json());
-
 function createPluginProviderDefinition(
   registration: ProviderRegistration,
-  client: PluginAgentClient,
-): ProviderDefinition {
+  createClient: RegisteredProviderDefinition["createClient"],
+): RegisteredProviderDefinition {
   return {
     id: registration.id,
-    configuration: null,
     label: registration.label,
     description: registration.description ?? `Plugin provider ${registration.label}`,
     iconSvg: registration.icon,
     defaultModeId: null,
     modes: [],
-    enabled: true,
-    derivedFromProviderId: null,
-    optionsSchema: PluginProviderOptionsSchema,
     supportsExactMcpPreapproval: true,
-    validateOptions: (options) =>
-      options === undefined ? undefined : PluginProviderOptionsSchema.parse(options),
-    applyOptions: (config, options) => ({ ...config, providerOptions: options }),
-    applyToolPolicy: (config, toolPolicy) => ({ ...config, toolPolicy }),
-    createClient: () => client,
-    resolveCreateConfig: resolveDefaultAgentCreateConfig,
-    isCreateConfigUnattended: isDefaultAgentCreateConfigUnattended,
-    fetchCatalog: (options, _client, context) => client.fetchCatalog(options, context),
+    createClient,
   };
 }
 
@@ -886,10 +905,11 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
-  constructor(registration: ProviderRegistration) {
-    this.getCatalogCacheKey = registration.getCatalogCacheKey?.bind(registration);
+  constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
-    this.runtime = new ProviderRuntime(registration);
+    this.runtime = new ProviderRuntime(registration, runtimeSettings);
+    if (registration.getCatalogCacheKey)
+      this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
   }
 
@@ -953,6 +973,11 @@ class PluginAgentClient implements AgentClient {
   async isAvailable(signal?: AbortSignal): Promise<boolean> {
     signal?.throwIfAborted();
     return await this.runtime.isAvailable();
+  }
+
+  async getDiagnostic(): Promise<{ diagnostic: string }> {
+    const status = await this.runtime.status();
+    return { diagnostic: status.diagnostic ?? "Provider is available" };
   }
 
   async listImportableSessions(
@@ -1065,6 +1090,7 @@ class PluginAgentClient implements AgentClient {
 }
 
 class PluginAgentSession implements AgentSession {
+  readonly initialTimeline: ImportedProviderSession["timeline"];
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history: AgentStreamEvent[] = [];
   private readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -1085,6 +1111,11 @@ class PluginAgentSession implements AgentSession {
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
+    // Opening notices arrive before the manager subscribes to the session.
+    // Commit them on registration and replay the same timestamps from history.
+    this.initialTimeline = this.timelineHistory().filter(
+      (entry) => entry.item.type === "notification",
+    );
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
   }
 
@@ -1094,10 +1125,6 @@ class PluginAgentSession implements AgentSession {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.bridge.negotiatedCapabilities);
-  }
-
-  getUsageReference(): Promise<UsageReference | null> {
-    return this.bridge.getUsageReference();
   }
 
   get features(): AgentFeature[] {
@@ -1469,6 +1496,7 @@ class PluginAgentSession implements AgentSession {
       {
         type: "timeline",
         provider: this.provider,
+        timestamp: new Date().toISOString(),
         item: {
           type: "notification",
           level: event.notice.severity,
@@ -1591,7 +1619,7 @@ function mapSessionConfig(
 ): ProviderSessionConfig {
   return {
     cwd: config.cwd,
-    env: { ...launchContext?.env },
+    env: createProviderEnv({ baseEnv: {}, overlays: [launchContext?.env] }),
     systemPrompt: combineSystemPrompts(config.systemPrompt, config.daemonAppendSystemPrompt),
     mcpServers: { ...config.mcpServers },
     toolPolicy: config.toolPolicy
@@ -1601,9 +1629,7 @@ function mapSessionConfig(
     mode: config.modeId,
     thinkingOption: config.thinkingOptionId,
     settings: toJsonObject(config.featureValues ?? {}, "provider settings"),
-    providerOptions: config.providerOptions
-      ? toJsonObject(config.providerOptions, "provider options")
-      : undefined,
+    providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,
   };

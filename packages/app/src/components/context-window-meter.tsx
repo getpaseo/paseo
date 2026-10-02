@@ -117,7 +117,6 @@ export function ContextWindowMeter({
           width={geometry.svgSize}
           height={geometry.svgSize}
           viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
-          style={styles.svg}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
@@ -158,7 +157,6 @@ export function ContextWindowMeter({
             width={svgSize}
             height={svgSize}
             viewBox={`0 0 ${svgSize} ${svgSize}`}
-            style={styles.svg}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
           >
@@ -180,6 +178,8 @@ export function ContextWindowMeter({
               strokeLinecap="round"
               strokeDasharray={circumference}
               strokeDashoffset={dashOffset}
+              // SVG strokes start at three o'clock; the ring reads clockwise from twelve.
+              transform={`rotate(-90 ${center} ${center})`}
             />
           </Svg>
           {showPercentage ? (
@@ -187,7 +187,7 @@ export function ContextWindowMeter({
           ) : null}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
+      <TooltipContent side="top" align="center" offset={8} testID="context-window-meter-tooltip">
         <View style={styles.tooltipContent}>
           <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
           <Text style={styles.tooltipText}>
@@ -225,9 +225,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[1],
     borderRadius: theme.borderRadius.full,
-  },
-  svg: {
-    transform: [{ rotate: "-90deg" }],
   },
   percentageLabel: {
     color: theme.colors.foregroundMuted,

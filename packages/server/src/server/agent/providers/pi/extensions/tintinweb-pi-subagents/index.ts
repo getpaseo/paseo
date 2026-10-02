@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { extractTextFromToolResult } from "../../tool-call-mapper.js";
+import { outputFileFromToolResult } from "../child-session.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
 
 const SpawnArgs = z
@@ -18,7 +19,7 @@ const Details = z
     description: z.string().optional(),
   })
   .passthrough();
-const Notification = z
+const NotificationEntry = z
   .object({
     id: z.string().trim().min(1),
     status: z.string(),
@@ -26,6 +27,11 @@ const Notification = z
     outputFile: z.string().trim().min(1).optional(),
   })
   .passthrough();
+// Completions that land close together arrive as one notification: the first
+// agent at the top level and the rest in `others`.
+const Notification = NotificationEntry.extend({
+  others: z.array(NotificationEntry).optional(),
+});
 const status = (value: string): "running" | "completed" | "failed" | "canceled" => {
   if (value === "completed") return "completed";
   if (value === "error") return "failed";
@@ -74,6 +80,9 @@ export const tintinwebPiSubagents: PiExtension = {
             }
           : { detail };
       callsByAgent.set(details.data.agentId, call.callId);
+      const file = outputFileFromToolResult(call.result);
+      const childSessions = file && !readSessions.has(file) ? [{ id: call.callId, file }] : [];
+      if (file) readSessions.add(file);
       return {
         detail,
         subagents: [
@@ -86,6 +95,7 @@ export const tintinwebPiSubagents: PiExtension = {
             status: status(details.data.status),
           },
         ],
+        childSessions,
       };
     };
     const mapFollowup = (call: PiExtensionToolCall) => {
@@ -122,25 +132,25 @@ export const tintinwebPiSubagents: PiExtension = {
           return undefined;
         const details = Notification.safeParse(message.details);
         if (!details.success) return undefined;
-        const id = callsByAgent.get(details.data.id);
-        if (!id) return undefined;
-        const file = details.data.outputFile;
-        const childSessions =
-          file && status(details.data.status) !== "running" && !readSessions.has(file)
-            ? [{ id, file }]
-            : [];
-        if (childSessions.length && file) readSessions.add(file);
-        return {
-          subagents: [
-            {
-              type: "upsert",
-              id,
-              description: details.data.description,
-              status: status(details.data.status),
-            },
-          ],
-          childSessions,
-        };
+        const subagents = [];
+        const childSessions = [];
+        for (const entry of [details.data, ...(details.data.others ?? [])]) {
+          const id = callsByAgent.get(entry.id);
+          if (!id) continue;
+          const file = entry.outputFile;
+          if (file && !readSessions.has(file)) {
+            readSessions.add(file);
+            childSessions.push({ id, file });
+          }
+          subagents.push({
+            type: "upsert" as const,
+            id,
+            description: entry.description,
+            status: status(entry.status),
+          });
+        }
+        if (subagents.length === 0) return undefined;
+        return { subagents, childSessions };
       },
     };
   },

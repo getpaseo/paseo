@@ -1,3 +1,4 @@
+import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
@@ -95,7 +96,6 @@ import type {
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
   UsageListReportsResponseMessage,
-  AgentResolveUsageReportResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
@@ -425,6 +425,7 @@ export interface DaemonClientTrace {
 
 export interface SendMessageOptions {
   messageId?: string;
+  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
@@ -562,7 +563,6 @@ type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type UsageListReportsPayload = UsageListReportsResponseMessage["payload"];
-type AgentResolveUsageReportPayload = AgentResolveUsageReportResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -1169,7 +1169,7 @@ function toReasonCode(reason: string | null | undefined): string | null {
 }
 
 interface PendingSend {
-  message: SessionInboundMessage;
+  send: () => void;
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -1185,6 +1185,11 @@ interface PingProbe {
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
   drivesLivenessFailure: boolean;
+}
+
+// COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+export function supportsUsageReports(features: ServerInfoStatusPayload["features"]): boolean {
+  return features?.usageSources === true || features?.providerUsageList === true;
 }
 
 export class DaemonClient {
@@ -1797,12 +1802,23 @@ export class DaemonClient {
    * This prevents waiters from hanging forever when called during connection.
    */
   private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
+    return this.sendWhenConnected(() => {
+      const payload = SessionInboundMessageSchema.parse(message);
+      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+    });
+  }
+
+  /** Resolves once connected, waiting out a connection that is still being established. */
+  private whenConnected(): Promise<void> {
+    return this.sendWhenConnected(() => undefined);
+  }
+
+  private sendWhenConnected(send: () => void): Promise<void> {
     const status = this.connectionState.status;
 
     // If connected, send immediately
     if (this.transport && status === "connected") {
-      const payload = SessionInboundMessageSchema.parse(message);
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+      send();
       return Promise.resolve();
     }
 
@@ -1823,7 +1839,7 @@ export class DaemonClient {
           );
         }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
 
-        this.pendingSendQueue.push({ message, resolve, reject, timeoutHandle });
+        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle });
       });
     }
 
@@ -1842,8 +1858,7 @@ export class DaemonClient {
       clearTimeout(pending.timeoutHandle);
       try {
         if (this.transport && this.connectionState.status === "connected") {
-          const payload = SessionInboundMessageSchema.parse(pending.message);
-          this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+          pending.send();
           pending.resolve();
         } else {
           pending.reject(new DaemonConnectionError("Connection lost before message could be sent"));
@@ -4846,6 +4861,8 @@ export class DaemonClient {
     if (!bytes) {
       throw new Error("File bytes are required.");
     }
+    // The file frames bypass the send queue, so start only on an open connection.
+    await this.whenConnected();
     const uploadTransport = this.transport;
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
@@ -5247,25 +5264,58 @@ export class DaemonClient {
     forceRefresh?: boolean;
     reportIds?: string[];
   }): Promise<UsageListReportsPayload> {
+    const features = this.getLastServerInfoMessage()?.features;
+    if (!supportsUsageReports(features)) {
+      throw new Error("Update the host to see usage.");
+    }
+    // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+    if (features?.usageSources !== true) {
+      // Released hosts serve a five-minute cache and have no forceRefresh option.
+      const payload = await this.listProviderUsage({ requestId: options?.requestId });
+      return {
+        requestId: payload.requestId,
+        reports: payload.providers
+          .filter(
+            (provider) => !options?.reportIds || options.reportIds.includes(provider.providerId),
+          )
+          .map((provider) => {
+            // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+            // 0.10 reports have no typed problems; preserve their unavailable badge and error text.
+            let report: UsageListReportsPayload["reports"][number]["report"];
+            if (provider.status === "available") {
+              report = {
+                status: "available",
+                windows: provider.windows,
+                balances: provider.balances ?? undefined,
+                details: provider.details ?? undefined,
+                planLabel: provider.planLabel ?? undefined,
+              };
+            } else if (provider.status === "error") {
+              report = { status: "error", error: provider.error ?? "" };
+            } else {
+              report = {
+                status: "unavailable",
+                problem: { kind: "no_quota", detail: provider.error ?? "" },
+              };
+            }
+            return {
+              id: provider.providerId,
+              sourceId: provider.providerId,
+              sourceLabel: provider.displayName,
+              icon: legacyUsageIcon(provider.providerId),
+              account: {},
+              fetchedAt: provider.fetchedAt ?? payload.fetchedAt,
+              report,
+            };
+          }),
+      };
+    }
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "usage.list_reports.request",
         forceRefresh: options?.forceRefresh,
         reportIds: options?.reportIds,
-      },
-    });
-  }
-
-  async resolveAgentUsageReport(options: {
-    agentId: string;
-    requestId?: string;
-  }): Promise<AgentResolveUsageReportPayload> {
-    return this.sendNamespacedCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "agent.resolve_usage_report.request",
-        agentId: options.agentId,
       },
     });
   }

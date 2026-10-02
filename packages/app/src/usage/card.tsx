@@ -1,24 +1,25 @@
-import { RefreshCw } from "lucide-react-native";
-import { useMemo } from "react";
+import { RotateCw } from "lucide-react-native";
+import { useCallback, useMemo } from "react";
 import { Text, View, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  extraMutedIconColorMapping,
   iconButtonChromeGlyphSize,
-  mutedIconColorMapping,
   smallIconButtonChromeFrameSize,
 } from "@/components/ui/icon-button-chrome";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
+import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { useCompactTimeAgo } from "@/hooks/use-time-ago";
 import { UsageBalanceBar } from "./balance-bar";
 import { usageCopy } from "./copy";
+import type { UsageDisplay } from "./display";
 import { formatUsageFreshness, type UsageRefresh } from "./model";
 import { useReportRefresh } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
-import type { UsageReport, UsageReportEntry } from "./types";
+import type { UsageReport, UsageReportEntry, UsageWindow } from "./types";
 import { UsageWindowBar } from "./window-bar";
 
 function statusText(report: UsageReport): string | null {
@@ -26,16 +27,31 @@ function statusText(report: UsageReport): string | null {
   return report.status === "error" ? "Error" : "Unavailable";
 }
 
-const ThemedRefreshIcon = withUnistyles(RefreshCw);
+function reportContent(report: UsageReport) {
+  if (report.status === "available")
+    return {
+      windows: report.windows,
+      balances: report.balances ?? [],
+      details: report.details ?? [],
+      message: undefined,
+    };
+  const message =
+    report.status === "unavailable" ? usageCopy.problem(report.problem) : report.error;
+  return { windows: [], balances: [], details: [], message };
+}
+
+const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 export function UsageCard({
   serverId,
   entry,
+  display,
   compact = false,
 }: {
   serverId: string;
   entry: UsageReportEntry;
+  display: UsageDisplay;
   compact?: boolean;
 }) {
   const isCompact = useIsCompactFormFactor();
@@ -45,8 +61,7 @@ export function UsageCard({
   const usage = entry.report;
   const status = statusText(usage);
   const footer = entry.account.label ?? null;
-  const balances = usage.balances ?? [];
-  const details = usage.details ?? [];
+  const { windows, balances, details, message } = reportContent(usage);
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -62,13 +77,15 @@ export function UsageCard({
   );
 
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} testID={`usage-report-${entry.id}`}>
       <View style={styles.header}>
         <UsageSourceIcon svg={entry.icon ?? null} size={14} />
         <Text style={styles.name} numberOfLines={1}>
           {entry.sourceLabel}
         </Text>
-        {usage.planLabel ? <StatusBadge label={usage.planLabel} variant="muted" /> : null}
+        {usage.status === "available" && usage.planLabel ? (
+          <StatusBadge label={usage.planLabel} variant="muted" size="xs" />
+        ) : null}
         <View style={styles.headerSpacer} />
         {status ? (
           <View style={styles.statusRow}>
@@ -85,16 +102,16 @@ export function UsageCard({
         />
       </View>
 
-      {usage.error ? (
+      {message ? (
         <Text style={styles.error} numberOfLines={3}>
-          {usage.error}
+          {message}
         </Text>
       ) : null}
 
-      {usage.windows.length > 0 || balances.length > 0 ? (
+      {windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
-          {usage.windows.map((window) => (
-            <UsageWindowBar key={window.id} window={window} />
+          {windows.map((window) => (
+            <PinnableWindowBar key={window.id} entry={entry} window={window} display={display} />
           ))}
           {balances.map((balance) => (
             <UsageBalanceBar key={balance.id} balance={balance} />
@@ -141,6 +158,33 @@ export function UsageCard({
   );
 }
 
+function PinnableWindowBar({
+  entry,
+  window,
+  display,
+}: {
+  entry: UsageReportEntry;
+  window: UsageWindow;
+  display: UsageDisplay;
+}) {
+  const pin = useMemo(
+    () => ({ sourceId: entry.sourceId, windowId: window.id }),
+    [entry.sourceId, window.id],
+  );
+  const { togglePin } = display;
+  const toggle = useCallback(() => togglePin(pin), [pin, togglePin]);
+  return (
+    <UsageWindowBar
+      window={window}
+      displayAs={display.displayAs}
+      pinned={display.isPinned(pin)}
+      onTogglePin={toggle}
+      pinLabel={`${usageCopy.pin} ${entry.sourceLabel} ${window.label}`}
+      pinTestID={`usage-pin-${entry.sourceId}-${window.id}`}
+    />
+  );
+}
+
 /** Refreshes this one report. Its tooltip says when the report on screen was fetched. */
 function UsageRefreshButton({
   sourceLabel,
@@ -156,7 +200,7 @@ function UsageRefreshButton({
   compact: boolean;
 }) {
   const isPending = refreshState === "pending";
-  const iconSize = iconButtonChromeGlyphSize("small", compact);
+  const iconSize = paneContentToolbarIconSize(compact);
   const freshness = useMemo(
     () => (
       <UsageFreshness
@@ -179,9 +223,9 @@ function UsageRefreshButton({
       testID="usage-refresh"
     >
       {isPending ? (
-        <ThemedLoadingSpinner size={iconSize} uniProps={mutedIconColorMapping} />
+        <ThemedLoadingSpinner size={iconSize} uniProps={extraMutedIconColorMapping} />
       ) : (
-        <ThemedRefreshIcon size={iconSize} uniProps={mutedIconColorMapping} />
+        <ThemedRotateCw size={iconSize} uniProps={extraMutedIconColorMapping} />
       )}
     </ToolbarButton>
   );
@@ -217,8 +261,9 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     gap: theme.spacing[3],
   },
+  // The gap is one step under the card padding: window rows add their own vertical padding.
   containerPadded: {
-    gap: theme.spacing[4],
+    gap: theme.spacing[3],
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
   },
@@ -259,8 +304,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
+  // Window rows carry their own vertical padding, which already separates them.
   bars: {
-    gap: theme.spacing[3],
+    gap: theme.spacing[1],
   },
   details: {
     gap: theme.spacing[1],

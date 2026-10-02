@@ -2,8 +2,13 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchUsage } from "./usage.js";
-import type { UsageReport } from "@getpaseo/plugin/server/usage";
+import { fetchUsage, discover } from "./usage.js";
+import { inputSchema, type UsageInput } from "../shared/input.js";
+import { hashAccountKey, type UsageReport } from "@getpaseo/plugin/server/usage";
+
+function credentialInput(directory: string): UsageInput {
+  return { route: { store: "claude", path: join(directory, ".credentials.json") } };
+}
 
 function writeClaudeCredentials(
   dir: string,
@@ -62,7 +67,7 @@ describe("claude usage source", () => {
     originalEnv = { ...process.env };
     process.env["HOME"] = homeDir;
     process.env["USERPROFILE"] = homeDir;
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     for (const key of [
       "APPDATA",
       "COPILOT_TOKEN",
@@ -99,7 +104,9 @@ describe("claude usage source", () => {
   ) {
     return {
       listUsage: async () => {
-        const report = await fetchUsage({}, (url, init) => fetchApi(url, init));
+        const report = await fetchUsage(credentialInput(claudeHome), (url, init) =>
+          fetchApi(url, init),
+        );
         return {
           providers: [
             {
@@ -182,15 +189,13 @@ describe("claude usage source", () => {
     });
   });
 
-  it("returns unavailable Claude usage when credentials are missing", async () => {
-    fetchApi = vi.fn() as never;
-
-    const result = await service().listUsage();
-    const claude = findProvider(result, "claude");
-
-    expect(claude.status).toBe("unavailable");
-    expect(fetchApi).not.toHaveBeenCalled();
-  });
+  it.each(["empty home", "unrelated files"])(
+    "discovers no Claude logins in %s",
+    async (scenario) => {
+      if (scenario === "unrelated files") writeFileSync(join(homeDir, "unrelated.json"), "{}");
+      expect(await discover({ home: homeDir, env: {}, platform: "linux" })).toEqual([]);
+    },
+  );
 
   it("returns unavailable on 401 without refreshing or rewriting credentials", async () => {
     writeClaudeCredentials(claudeHome, "at_expired", "rt_valid");
@@ -229,9 +234,9 @@ describe("usage bars escalate as they fill", () => {
 
   function claudeAt(utilization: number) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     return fetchUsage(
-      {},
+      credentialInput(claudeHome),
       mockFetch(
         new Map([
           [
@@ -285,11 +290,11 @@ describe("Claude usage source scoped weekly limits", () => {
 
   function claudeProvider(body: unknown) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     const fetchApi = mockFetch(
       new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]]),
     );
-    return { provider: { fetchUsage: () => fetchUsage({}, fetchApi) } };
+    return { provider: { fetchUsage: () => fetchUsage(credentialInput(claudeHome), fetchApi) } };
   }
 
   it("renders a scoped weekly limit as its own window", async () => {
@@ -304,6 +309,38 @@ describe("Claude usage source scoped weekly limits", () => {
     expect(usage.windows).toContainEqual(
       expect.objectContaining({ id: "weekly_model_fable", label: "Weekly · Fable" }),
     );
+  });
+
+  it("summarizes the session and weekly windows by default, not scoped ones", async () => {
+    const { provider } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit()],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => [window.id, window.summary ?? false])).toEqual([
+      ["five_hour", true],
+      ["weekly", true],
+      ["weekly_model_fable", false],
+    ]);
+  });
+
+  it("gives every window a short label for tight spaces", async () => {
+    const { provider } = claudeProvider({
+      five_hour: { utilization: 6, resets_at: "2026-06-01T21:00:00Z" },
+      seven_day: { utilization: 23, resets_at: "2026-06-04T00:00:00Z" },
+      limits: [fableLimit()],
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => [window.id, window.shortLabel])).toEqual([
+      ["five_hour", "5h"],
+      ["weekly", "wk"],
+      ["weekly_model_fable", "wk Fable"],
+    ]);
   });
 
   it("renders a scoped window that is at zero and inactive", async () => {
@@ -434,9 +471,9 @@ describe("Claude usage source scoped limit reconciliation", () => {
 
   async function windowsFor(body: Record<string, unknown>) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    process.env["CLAUDE_HOME"] = claudeHome;
+    process.env["CLAUDE_CONFIG_DIR"] = claudeHome;
     const usage = await fetchUsage(
-      {},
+      credentialInput(claudeHome),
       mockFetch(new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]])),
     );
     return usage.windows;
@@ -600,9 +637,8 @@ describe("Claude usage source scoped limit reconciliation", () => {
   });
 });
 
-it("identify reads account and organization from the selected Claude config", async () => {
+it("discovery uses the credential token profile instead of stale Claude config", async () => {
   const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
-  const { identify } = await import("./usage.js");
   const directory = await mkdtemp(join(tmpdir(), "claude-identity-"));
   try {
     await writeFile(
@@ -615,17 +651,28 @@ it("identify reads account and organization from the selected Claude config", as
         },
       }),
     );
-    expect(await identify({ configDir: directory })).toEqual({
-      key: "account-uuid.org-uuid",
-      label: "test@example.com",
+    writeClaudeCredentials(directory, "fixture-local-account");
+    expect(
+      await accountFor(
+        credentialInput(directory),
+        async () =>
+          jsonResponse({
+            account: { uuid: "token-account", email: "token@example.test" },
+            organization: { uuid: "token-org" },
+          }),
+        Date.now,
+        { home: directory, claudeHome: directory },
+      ),
+    ).toEqual({
+      key: "token-account.token-org",
+      label: "token@example.test",
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-it("token-only Claude inputs use a cached OAuth profile identity", async () => {
-  const { identify } = await import("./usage.js");
+it("Claude credentials without account metadata use a cached OAuth profile identity", async () => {
   let calls = 0;
   const fetchProfile: typeof fetch = async () => {
     calls++;
@@ -637,37 +684,50 @@ it("token-only Claude inputs use a cached OAuth profile identity", async () => {
       { status: 200 },
     );
   };
-  expect(await identify({ accessToken: "fixture-claude-token" }, fetchProfile)).toEqual({
+  const lookup = tokenLookup("fixture-claude-token");
+  expect(
+    await accountFor(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup),
+  ).toEqual({
     key: "account-uuid.org-uuid",
     label: "test@example.com",
   });
-  expect(await identify({ accessToken: "fixture-claude-token" }, fetchProfile)).toEqual({
+  expect(
+    await accountFor(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup),
+  ).toEqual({
     key: "account-uuid.org-uuid",
     label: "test@example.com",
   });
   expect(calls).toBe(1);
 });
 
-it("identifies the same configDir credentials that fetch uses when oauthAccount is absent", async () => {
-  const { identify } = await import("./usage.js");
+it("identifies the same credential route that fetch uses when oauthAccount is absent", async () => {
   const directory = mkdtempSync(join(tmpdir(), "claude-credential-identity-"));
   try {
     writeClaudeCredentials(directory, "fixture-credential-token");
     writeFileSync(join(directory, ".claude.json"), JSON.stringify({}));
     let usageRequested = false;
-    await fetchUsage({ configDir: directory }, async () => {
-      usageRequested = true;
-      return new Response(null, { status: 401 });
-    });
+    await fetchUsage(
+      credentialInput(directory),
+      async () => {
+        usageRequested = true;
+        return new Response(null, { status: 401 });
+      },
+      { claudeHome: directory },
+    );
     expect(usageRequested).toBe(true);
     let profileRequested = false;
-    const account = await identify({ configDir: directory }, async () => {
-      profileRequested = true;
-      return jsonResponse({
-        account: { uuid: "account-uuid", email: "owner@example.test" },
-        organization: { uuid: "org-uuid" },
-      });
-    });
+    const account = await accountFor(
+      credentialInput(directory),
+      async () => {
+        profileRequested = true;
+        return jsonResponse({
+          account: { uuid: "account-uuid", email: "owner@example.test" },
+          organization: { uuid: "org-uuid" },
+        });
+      },
+      Date.now,
+      { claudeHome: directory, home: directory },
+    );
     expect(profileRequested).toBe(true);
     expect(account).toEqual({ key: "account-uuid.org-uuid", label: "owner@example.test" });
   } finally {
@@ -676,37 +736,36 @@ it("identifies the same configDir credentials that fetch uses when oauthAccount 
 });
 
 it("expires cached token profiles after five minutes", async () => {
-  const { identify } = await import("./usage.js");
   let now = 0;
   let calls = 0;
   const fetchProfile: typeof fetch = async () => {
     calls++;
     return jsonResponse({ account: { uuid: "account-uuid" }, organization: { uuid: "org-uuid" } });
   };
-  const input = { accessToken: "ttl-fixture-token" };
-  await identify(input, fetchProfile, () => now);
-  await identify(input, fetchProfile, () => now);
+  const lookup = tokenLookup("ttl-fixture-token");
+  const input = credentialInput(lookup.claudeHome);
+  await accountFor(input, fetchProfile, () => now, lookup);
+  await accountFor(input, fetchProfile, () => now, lookup);
   expect(calls).toBe(1);
   now = 300_001;
-  await identify(input, fetchProfile, () => now);
+  await accountFor(input, fetchProfile, () => now, lookup);
   expect(calls).toBe(2);
 });
 
-it("identify and fetch share the macOS keychain credential fallback", async () => {
-  const { identify } = await import("./usage.js");
+it("discovery and fetch share the explicit macOS keychain route", async () => {
   const directory = mkdtempSync(join(tmpdir(), "claude-keychain-identity-"));
   try {
     const lookup = {
       platform: "darwin" as const,
       claudeHome: directory,
-      accountHome: directory,
+      home: directory,
       readKeychainCredentials: async () => ({
         claudeAiOauth: { accessToken: "keychain-fixture-token" },
       }),
     };
     let usageRequested = false;
     await fetchUsage(
-      {},
+      { route: { store: "keychain" } },
       async () => {
         usageRequested = true;
         return new Response(null, { status: 401 });
@@ -714,8 +773,8 @@ it("identify and fetch share the macOS keychain credential fallback", async () =
       lookup,
     );
     expect(usageRequested).toBe(true);
-    const account = await identify(
-      {},
+    const account = await accountFor(
+      { route: { store: "keychain" } },
       async () =>
         jsonResponse({
           account: { uuid: "keychain-account" },
@@ -730,15 +789,14 @@ it("identify and fetch share the macOS keychain credential fallback", async () =
   }
 });
 
-it("identify and fetch share the default Claude home credentials", async () => {
-  const { identify } = await import("./usage.js");
+it("discovery and fetch share the explicit Claude credential route", async () => {
   const directory = mkdtempSync(join(tmpdir(), "claude-home-identity-"));
   try {
     writeClaudeCredentials(directory, "home-fixture-token");
-    const lookup = { claudeHome: directory, accountHome: directory };
+    const lookup = { claudeHome: directory, home: directory };
     let usageRequested = false;
     await fetchUsage(
-      {},
+      credentialInput(directory),
       async () => {
         usageRequested = true;
         return new Response(null, { status: 401 });
@@ -746,8 +804,8 @@ it("identify and fetch share the default Claude home credentials", async () => {
       lookup,
     );
     expect(usageRequested).toBe(true);
-    const identity = await identify(
-      {},
+    const identity = await accountFor(
+      credentialInput(directory),
       async () =>
         jsonResponse({
           account: { uuid: "home-account" },
@@ -763,15 +821,181 @@ it("identify and fetch share the default Claude home credentials", async () => {
 });
 
 it("bounds cached profiles across many token rotations", async () => {
-  const { identify } = await import("./usage.js");
   let calls = 0;
   const fetchProfile: typeof fetch = async () => {
     calls++;
     return jsonResponse({ account: { uuid: "account" }, organization: { uuid: "org" } });
   };
   for (let index = 0; index < 129; index++) {
-    await identify({ accessToken: `rotation-fixture-${index}` }, fetchProfile);
+    const lookup = tokenLookup(`rotation-fixture-${index}`);
+    await accountFor(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup);
   }
-  await identify({ accessToken: "rotation-fixture-0" }, fetchProfile);
+  const lookup = tokenLookup("rotation-fixture-0");
+  await accountFor(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup);
   expect(calls).toBe(130);
+});
+
+it("discovery input requires a route and rejects raw credentials", () => {
+  expect(inputSchema.safeParse({ accessToken: "unused" }).success).toBe(false);
+  expect(inputSchema.safeParse({ configDir: "/unused" }).success).toBe(false);
+  expect(() => inputSchema.parse({})).toThrow();
+});
+
+const tokenDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of tokenDirectories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
+});
+function tokenLookup(accessToken: string) {
+  const directory = mkdtempSync(join(tmpdir(), "claude-profile-token-"));
+  tokenDirectories.push(directory);
+  writeClaudeCredentials(directory, accessToken);
+  return { claudeHome: directory, home: directory };
+}
+
+it("discovers a Pi OAuth login independently of the CLI login", async () => {
+  const { mkdir, mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const directory = await mkdtemp(join(tmpdir(), "usage-pi-discovery-"));
+  try {
+    await mkdir(join(directory, ".pi", "agent"), { recursive: true });
+    await writeFile(
+      join(directory, ".pi", "agent", "auth.json"),
+      JSON.stringify({
+        anthropic: { type: "oauth", access: "fixture-pi", accountId: "pi-account" },
+      }),
+    );
+    const inputs = await discover({ home: directory, env: {}, platform: "linux" });
+    expect(inputs.map((account) => account.input)).toContainEqual({
+      route: { store: "pi", path: join(directory, ".pi", "agent", "auth.json") },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps an expired Keychain login without calling the network and prefers Keychain over the fallback file", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "claude-expired-"));
+  try {
+    writeClaudeCredentials(directory, "stale-file");
+    const lookup = {
+      home: directory,
+      claudeHome: directory,
+      env: {},
+      platform: "darwin" as const,
+      now: () => 10_800_000,
+      readKeychainCredentials: async () => ({
+        claudeAiOauth: { accessToken: "expired-keychain", expiresAt: 0 },
+      }),
+    };
+    let calls = 0;
+    const network: typeof fetch = async () => {
+      calls++;
+      throw new Error("must not call network");
+    };
+    const accounts = await discover(lookup, network);
+    expect(accounts).toEqual([
+      { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: { route: { store: "keychain" } } },
+    ]);
+    expect(await fetchUsage(accounts[0]!.input as UsageInput, network, lookup)).toEqual({
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "1970-01-01T00:00:00.000Z", refreshedBy: "claude" },
+    });
+    expect(calls).toBe(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+async function accountFor(
+  input: UsageInput,
+  fetchApi: typeof fetch,
+  now: () => number,
+  lookup: Parameters<typeof discover>[0] = {},
+) {
+  const accounts = await discover({ ...lookup, now }, fetchApi);
+  const account = accounts.find(
+    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
+  );
+  if (!account) throw new Error("Expected discovered login");
+  return { key: account.key, ...(account.label ? { label: account.label } : {}) };
+}
+it.each([401, 403])("fetch reports rejected usage HTTP %i", async (status) => {
+  const lookup = tokenLookup(`usage-rejection-${status}`);
+  expect(
+    await fetchUsage(
+      credentialInput(lookup.claudeHome),
+      async () => new Response(null, { status }),
+      lookup,
+    ),
+  ).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status, refreshedBy: "claude" },
+  });
+});
+
+it.each([401, 403])("a rejected profile HTTP %i keeps a locator-keyed account", async (status) => {
+  const lookup = tokenLookup(`profile-rejection-${status}`);
+  const api: typeof fetch = async () => new Response(null, { status });
+  const accounts = await discover(lookup, api);
+  expect(accounts).toEqual([
+    { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: credentialInput(lookup.claudeHome) },
+  ]);
+  let fetches = 0;
+  expect(
+    await fetchUsage(
+      credentialInput(lookup.claudeHome),
+      async () => {
+        fetches++;
+        throw new Error("profile already rejected");
+      },
+      lookup,
+    ),
+  ).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status, refreshedBy: "claude" },
+  });
+  expect(fetches).toBe(0);
+});
+
+it.each([
+  { failure: "HTTP 500", networkError: false, error: "Claude usage API returned 500" },
+  { failure: "a network error", networkError: true, error: "Network unavailable" },
+])(
+  "keeps a locator-keyed login when the profile fails with $failure",
+  async ({ networkError, error }) => {
+    const lookup = tokenLookup(`profile-failure-${networkError}`);
+    const input = credentialInput(lookup.claudeHome);
+    const api: typeof fetch = async () => {
+      if (networkError) throw new Error(error);
+      return new Response(null, { status: 500 });
+    };
+    const accounts = await discover(lookup, api);
+    expect(accounts).toEqual([{ key: hashAccountKey(JSON.stringify(input.route)), input }]);
+    await expect(fetchUsage(accounts[0]!.input as UsageInput, api, lookup)).rejects.toThrow(error);
+  },
+);
+
+it("re-reads a refreshed login at the original locator", async () => {
+  const lookup = tokenLookup("expiring-token");
+  writeFileSync(
+    join(lookup.claudeHome, ".credentials.json"),
+    JSON.stringify({ claudeAiOauth: { accessToken: "expiring-token", expiresAt: 0 } }),
+  );
+  const [account] = await discover(lookup, async () => {
+    throw new Error("expired token must not fetch");
+  });
+  expect(await fetchUsage(account!.input as UsageInput, fetch, lookup)).toEqual({
+    status: "unavailable",
+    problem: { kind: "expired", expiresAt: "1970-01-01T00:00:00.000Z", refreshedBy: "claude" },
+  });
+  writeClaudeCredentials(lookup.claudeHome, "rotated-token");
+  const report = await fetchUsage(
+    account!.input as UsageInput,
+    async (_url, init) => {
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer rotated-token");
+      return jsonResponse(makeClaudeResponse());
+    },
+    lookup,
+  );
+  expect(report.status).toBe("available");
 });

@@ -1,4 +1,4 @@
-import type { SessionMessageInfo } from "@opencode/client";
+import type { ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
@@ -6,7 +6,372 @@ import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 
+function terminalEvents(events: AgentStreamEvent[]) {
+  return events.filter(
+    (event) =>
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled",
+  );
+}
+
 describe("OpenCode v2 session lifecycle", () => {
+  test("completes from execution events without a long-lived HTTP wait", async () => {
+    const harness = new V2Harness();
+    harness.prompt = async (input) => {
+      harness.prompts.push(input.text);
+      harness.startExecution();
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("long-running work");
+      await expect.poll(() => harness.prompts).toEqual(["long-running work"]);
+      expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+      expect(events.filter((event) => event.type === "turn_completed")).toEqual([]);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+  test.each(["reconnect", "watchdog"])(
+    "recovers a missed completion through %s without reconnecting a quiet stream",
+    async (recovery) => {
+      const harness = new V2Harness();
+      harness.autoComplete = false;
+      let subscriptions = 0;
+      const subscribe = harness.api.event.subscribe;
+      harness.api.event.subscribe = (options) => {
+        subscriptions += 1;
+        return subscribe(options);
+      };
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        await session.startTurn("finish while disconnected");
+        await expect.poll(() => harness.prompts).toHaveLength(1);
+        // Persisted completion without its event, as after an upstream stream gap.
+        harness.finishExecution("succeeded", false);
+        if (recovery === "reconnect")
+          harness.push({ id: "reconnect", created: 3, type: "server.connected", data: {} });
+        await expect.poll(() => terminalEvents(events), { timeout: 7_000 }).toHaveLength(1);
+        expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+        expect(subscriptions).toBe(1);
+      } finally {
+        await session.close();
+      }
+    },
+    10_000,
+  );
+
+  test("does not finish from a previous outcome before prompt admission", async () => {
+    const harness = new V2Harness();
+    let accept!: () => void;
+    harness.prompt = () =>
+      new Promise<void>((resolve) => {
+        accept = resolve;
+      });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("fast execution");
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect", created: 3, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.startExecution();
+      harness.finishExecution();
+      accept();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("follows a queued successor until the session is idle", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("first and queued work");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      harness.finishExecution();
+      harness.startExecution();
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect", created: 3, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("discards an idle snapshot overtaken by a new execution event", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    let readSnapshot!: () => void;
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      readSnapshot = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await session.startTurn("work");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      harness.api.session.get = async () => {
+        const snapshot = { ...harness.info };
+        readSnapshot();
+        await blocked;
+        return snapshot;
+      };
+      harness.finishExecution();
+      await reading;
+      const reads = harness.activeReads;
+      harness.startExecution();
+      release();
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+    } finally {
+      release();
+      await session.close();
+    }
+  });
+
+  test("does not treat shutdown interruption as a completed or canceled turn", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("resumable work");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      harness.active = false;
+      // Shutdown does not project an idle outcome; the preceding run's outcome can remain.
+      harness.info.outcome = "succeeded";
+      harness.push({
+        id: "shutdown",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect", created: 4, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.startExecution();
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("recovers the latest execution from the durable log when shutdown and resume events were missed", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("resumable work");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      harness.active = false;
+      harness.info.outcome = "succeeded";
+      harness.api.session.log = async function* () {
+        yield {
+          id: "shutdown",
+          created: 3,
+          type: "session.execution.interrupted",
+          durable: { aggregateID: "session", seq: 3, version: 1 },
+          data: { sessionID: "session", reason: "shutdown" },
+        };
+      };
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect", created: 4, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.api.session.log = async function* () {
+        yield {
+          id: "done",
+          created: 6,
+          type: "session.execution.succeeded",
+          durable: { aggregateID: "session", seq: 6, version: 1 },
+          data: { sessionID: "session" },
+        };
+      };
+      harness.push({
+        id: "reconnect-after-resume",
+        created: 7,
+        type: "server.connected",
+        data: {},
+      });
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps the turn alive through an observation transport failure", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const active = harness.api.session.active;
+    let attempted = false;
+    harness.api.session.active = async () => {
+      attempted = true;
+      throw new Error("fetch failed");
+    };
+    try {
+      await session.startTurn("work");
+      await expect.poll(() => attempted).toBe(true);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.api.session.active = active;
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    { variants: ["medium", "custom"], selected: "medium", expected: "medium" },
+    { variants: ["custom"], selected: "custom", expected: "custom" },
+    { variants: ["high"], selected: "medium", expected: undefined },
+    { variants: [], selected: "medium", expected: undefined },
+    { variants: ["medium"], selected: "default", expected: undefined },
+  ])(
+    "model switches retain only supported variants: $selected / $variants",
+    async ({ variants, selected, expected }) => {
+      const harness = new V2Harness();
+      const target: ModelInfo = {
+        id: "target",
+        modelID: "target",
+        providerID: "test",
+        name: "Target",
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        variants: variants.map((id) => ({ id })),
+        time: { released: 1 },
+        cost: [],
+        status: "active",
+        enabled: true,
+        limit: { context: 200000, output: 10000 },
+      };
+      harness.info.model = { providerID: "test", id: "source", variant: selected };
+      harness.api.model.list = async () => ({ location: harness.info.location, data: [target] });
+      harness.api.session.switchModel = async ({ model }) => {
+        harness.info.model = model;
+      };
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd: "/tmp/project",
+        model: "test/source",
+        thinkingOptionId: selected,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        await session.setModel!("test/target");
+        expect(await session.getRuntimeInfo()).toMatchObject({
+          model: "test/target",
+          thinkingOptionId: expected ?? null,
+        });
+        expect(session.describePersistence().metadata?.thinkingOptionId).toBe(expected);
+        expect(events).toContainEqual({
+          type: "thinking_option_changed",
+          provider: "opencode",
+          thinkingOptionId: expected ?? null,
+        });
+        await expect(session.setModel!("test/missing")).rejects.toThrow(
+          "OpenCode model unavailable",
+        );
+        harness.api.session.switchModel = async () => {
+          throw new Error("Switch failed");
+        };
+        await expect(session.setModel!("test/target")).rejects.toThrow("Switch failed");
+        expect(session.describePersistence().metadata?.thinkingOptionId).toBe(expected);
+        expect(harness.info.model).toEqual({
+          providerID: "test",
+          id: "target",
+          ...(expected ? { variant: expected } : {}),
+        });
+        harness.api.session.switchModel = async ({ model }) => {
+          harness.info.model = model;
+        };
+        harness.api.model.default = async () => ({ location: harness.info.location, data: target });
+        await session.setThinkingOption!("unsupported");
+        await session.setModel!(null);
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBeNull();
+        harness.api.model.list = async () => {
+          throw new Error("Catalog unavailable");
+        };
+        await expect(session.setModel!("test/source")).rejects.toThrow("Catalog unavailable");
+        expect((await session.getRuntimeInfo()).model).toBe("test/target");
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("restores each same-directory agent environment on reconnect and resume", async () => {
     const first = new V2Harness();
     const second = new V2Harness();
@@ -86,7 +451,7 @@ describe("OpenCode v2 session lifecycle", () => {
 
   test("reconnects after a helper exits and restores session configuration on the next turn", async () => {
     const first = new V2Harness();
-    const second = new V2Harness();
+    const second = new V2Harness(1);
     let exit!: (error: Error) => void;
     const exited = new Promise<Error>((resolve) => {
       exit = resolve;
@@ -102,7 +467,7 @@ describe("OpenCode v2 session lifecycle", () => {
         shutdown: async () => undefined,
       },
     });
-    first.wait = () => new Promise<void>(() => undefined);
+    first.autoComplete = false;
     second.prompt = async (input) => {
       second.history.push({
         id: "answer",
@@ -278,11 +643,8 @@ describe("OpenCode v2 session lifecycle", () => {
 
   test("reconciles reconnect snapshots without replaying text or losing repeated chunks", async () => {
     const harness = new V2Harness();
-    let finish!: () => void;
-    harness.wait = () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      });
+    harness.autoComplete = false;
+    const finish = () => harness.finishExecution();
     const client = new OpenCodeV2AgentClient({
       logger: createTestLogger(),
       runtime: harness.runtime,
@@ -295,7 +657,7 @@ describe("OpenCode v2 session lifecycle", () => {
     });
     try {
       const running = session.run("laugh");
-      await expect.poll(() => typeof finish).toBe("function");
+      await expect.poll(() => harness.prompts).toEqual(["laugh"]);
       const answer = {
         id: "answer",
         type: "assistant",
@@ -318,7 +680,7 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
-  test("reports a terminal failure when reading the execution error fails", async () => {
+  test("retries observation failures without replacing the execution error", async () => {
     const harness = new V2Harness();
     harness.info.outcome = "failed";
     const client = new OpenCodeV2AgentClient({
@@ -329,9 +691,27 @@ describe("OpenCode v2 session lifecycle", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
     try {
+      let attempted = false;
+      harness.api.session.log = () => {
+        attempted = true;
+        throw new Error("log unavailable");
+      };
       await session.startTurn("hello");
       const failures = () => events.filter((event) => event.type === "turn_failed");
+      await expect.poll(() => attempted).toBe(true);
+      expect(failures()).toEqual([]);
+      harness.api.session.log = async function* () {
+        yield {
+          id: "failure",
+          created: 2,
+          durable: { aggregateID: "session", seq: 2, version: 1 },
+          type: "session.execution.failed",
+          data: { sessionID: "session", error: { type: "provider", message: "quota exhausted" } },
+        };
+      };
+      harness.push({ id: "reconnect", created: 3, type: "server.connected", data: {} });
       await expect.poll(failures).toHaveLength(1);
+      expect(failures()[0]).toMatchObject({ error: "quota exhausted" });
       expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
     } finally {
       await session.close();
@@ -341,16 +721,13 @@ describe("OpenCode v2 session lifecycle", () => {
   test("waits for prompt acceptance before interrupting", async () => {
     const harness = new V2Harness();
     let accept!: () => void;
-    let settle!: () => void;
+    const settle = () => harness.finishExecution("interrupted");
     let interruptions = 0;
     harness.prompt = () =>
       new Promise<void>((resolve) => {
         accept = resolve;
       });
-    harness.wait = () =>
-      new Promise<void>((resolve) => {
-        settle = resolve;
-      });
+
     harness.interrupt = async () => {
       interruptions += 1;
       harness.info.outcome = "interrupted";
@@ -411,12 +788,9 @@ describe("OpenCode v2 session lifecycle", () => {
 
   test("waits for interruption settlement before submitting replacement work", async () => {
     const harness = new V2Harness();
-    let finishFirst!: () => void;
+    harness.autoComplete = false;
+    const finishFirst = () => harness.finishExecution("interrupted");
     let finishStop!: () => void;
-    harness.wait = () =>
-      new Promise<void>((resolve) => {
-        finishFirst = resolve;
-      });
     harness.interrupt = () =>
       new Promise((resolve) => {
         finishStop = () => {
@@ -432,12 +806,12 @@ describe("OpenCode v2 session lifecycle", () => {
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
     try {
       await session.startTurn("first");
-      await expect.poll(() => typeof finishFirst).toBe("function");
+      await expect.poll(() => harness.prompts).toEqual(["first"]);
       const stopping = session.interrupt();
       const replacement = session.startTurn("second");
       await Promise.resolve();
       expect(harness.prompts).toEqual(["first"]);
-      harness.wait = async () => undefined;
+      harness.autoComplete = true;
       finishStop();
       await stopping;
       await replacement;
@@ -504,11 +878,8 @@ describe("OpenCode v2 session lifecycle", () => {
 
   test("refuses replacement work after a failed stop until Stop succeeds", async () => {
     const harness = new V2Harness();
-    let finishFirst!: () => void;
-    harness.wait = () =>
-      new Promise<void>((resolve) => {
-        finishFirst = resolve;
-      });
+    harness.autoComplete = false;
+    const finishFirst = () => harness.finishExecution("interrupted");
     harness.interrupt = async () => {
       throw new Error("stop failed");
     };
@@ -519,7 +890,7 @@ describe("OpenCode v2 session lifecycle", () => {
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
     try {
       await session.startTurn("first");
-      await expect.poll(() => typeof finishFirst).toBe("function");
+      await expect.poll(() => harness.prompts).toEqual(["first"]);
       await expect(session.interrupt()).rejects.toThrow("stop failed");
       await expect(session.startTurn("unsafe replacement")).rejects.toThrow("stop failed");
       expect(harness.prompts).toEqual(["first"]);
@@ -528,7 +899,7 @@ describe("OpenCode v2 session lifecycle", () => {
         return { interrupted: true };
       };
       await session.interrupt();
-      harness.wait = async () => undefined;
+      harness.autoComplete = true;
       await session.startTurn("retry");
       await expect.poll(() => harness.prompts).toEqual(["first", "retry"]);
     } finally {

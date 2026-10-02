@@ -22,6 +22,7 @@ import { Route as PiRouteImport } from "./routes/pi";
 import { Route as OpencodeRouteImport } from "./routes/opencode";
 import { Route as OmpRouteImport } from "./routes/omp";
 import { Route as NovaRouteImport } from "./routes/nova";
+import { Route as MuseCodeRouteImport } from "./routes/muse-code";
 import { Route as MistralVibeRouteImport } from "./routes/mistral-vibe";
 import { Route as MinionCodeRouteImport } from "./routes/minion-code";
 import { Route as KimiRouteImport } from "./routes/kimi";
@@ -54,12 +55,14 @@ import { Route as ChangelogRouteImport } from "./routes/changelog";
 import { Route as BlogRouteImport } from "./routes/blog";
 import { Route as AutohandRouteImport } from "./routes/autohand";
 import { Route as AuggieRouteImport } from "./routes/auggie";
+import { Route as AntigravityRouteImport } from "./routes/antigravity";
 import { Route as AmpRouteImport } from "./routes/amp";
 import { Route as AgoragenticRouteImport } from "./routes/agoragentic";
 import { Route as AgentsRouteImport } from "./routes/agents";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DocsIndexRouteImport } from "./routes/docs/index";
 import { Route as BlogIndexRouteImport } from "./routes/blog/index";
+import { Route as DownloadThanksRouteImport } from "./routes/download_.thanks";
 import { Route as DocsSplatRouteImport } from "./routes/docs/$";
 import { Route as BlogSplatRouteImport } from "./routes/blog/$";
 import { Route as AlternativesSupersetRouteImport } from "./routes/alternatives/superset";
@@ -134,6 +137,11 @@ const OmpRoute = OmpRouteImport.update({
 const NovaRoute = NovaRouteImport.update({
   id: "/nova",
   path: "/nova",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const MuseCodeRoute = MuseCodeRouteImport.update({
+  id: "/muse-code",
+  path: "/muse-code",
   getParentRoute: () => rootRouteImport,
 } as any);
 const MistralVibeRoute = MistralVibeRouteImport.update({
@@ -296,6 +304,11 @@ const AuggieRoute = AuggieRouteImport.update({
   path: "/auggie",
   getParentRoute: () => rootRouteImport,
 } as any);
+const AntigravityRoute = AntigravityRouteImport.update({
+  id: "/antigravity",
+  path: "/antigravity",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const AmpRoute = AmpRouteImport.update({
   id: "/amp",
   path: "/amp",
@@ -325,6 +338,11 @@ const BlogIndexRoute = BlogIndexRouteImport.update({
   id: "/",
   path: "/",
   getParentRoute: () => BlogRoute,
+} as any);
+const DownloadThanksRoute = DownloadThanksRouteImport.update({
+  id: "/download_/thanks",
+  path: "/download/thanks",
+  getParentRoute: () => rootRouteImport,
 } as any);
 const DocsSplatRoute = DocsSplatRouteImport.update({
   id: "/$",
@@ -384,6 +402,7 @@ export interface FileRoutesByFullPath {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/blog": typeof BlogRouteWithChildren;
@@ -416,6 +435,7 @@ export interface FileRoutesByFullPath {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/muse-code": typeof MuseCodeRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -439,6 +459,7 @@ export interface FileRoutesByFullPath {
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
+  "/download/thanks": typeof DownloadThanksRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
 }
@@ -447,6 +468,7 @@ export interface FileRoutesByTo {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/changelog": typeof ChangelogRoute;
@@ -477,6 +499,7 @@ export interface FileRoutesByTo {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/muse-code": typeof MuseCodeRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -500,6 +523,7 @@ export interface FileRoutesByTo {
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
+  "/download/thanks": typeof DownloadThanksRoute;
   "/blog": typeof BlogIndexRoute;
   "/docs": typeof DocsIndexRoute;
 }
@@ -509,6 +533,7 @@ export interface FileRoutesById {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/blog": typeof BlogRouteWithChildren;
@@ -541,6 +566,7 @@ export interface FileRoutesById {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/muse-code": typeof MuseCodeRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -564,6 +590,7 @@ export interface FileRoutesById {
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
+  "/download_/thanks": typeof DownloadThanksRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
 }
@@ -574,6 +601,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/blog"
@@ -606,6 +634,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/muse-code"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -629,6 +658,7 @@ export interface FileRouteTypes {
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
+    | "/download/thanks"
     | "/blog/"
     | "/docs/";
   fileRoutesByTo: FileRoutesByTo;
@@ -637,6 +667,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/changelog"
@@ -667,6 +698,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/muse-code"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -690,6 +722,7 @@ export interface FileRouteTypes {
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
+    | "/download/thanks"
     | "/blog"
     | "/docs";
   id:
@@ -698,6 +731,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/blog"
@@ -730,6 +764,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/muse-code"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -753,6 +788,7 @@ export interface FileRouteTypes {
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
+    | "/download_/thanks"
     | "/blog/"
     | "/docs/";
   fileRoutesById: FileRoutesById;
@@ -762,6 +798,7 @@ export interface RootRouteChildren {
   AgentsRoute: typeof AgentsRoute;
   AgoragenticRoute: typeof AgoragenticRoute;
   AmpRoute: typeof AmpRoute;
+  AntigravityRoute: typeof AntigravityRoute;
   AuggieRoute: typeof AuggieRoute;
   AutohandRoute: typeof AutohandRoute;
   BlogRoute: typeof BlogRouteWithChildren;
@@ -794,6 +831,7 @@ export interface RootRouteChildren {
   KimiRoute: typeof KimiRoute;
   MinionCodeRoute: typeof MinionCodeRoute;
   MistralVibeRoute: typeof MistralVibeRoute;
+  MuseCodeRoute: typeof MuseCodeRoute;
   NovaRoute: typeof NovaRoute;
   OmpRoute: typeof OmpRoute;
   OpencodeRoute: typeof OpencodeRoute;
@@ -815,6 +853,7 @@ export interface RootRouteChildren {
   AlternativesOpencodeDesktopRoute: typeof AlternativesOpencodeDesktopRoute;
   AlternativesOrcaRoute: typeof AlternativesOrcaRoute;
   AlternativesSupersetRoute: typeof AlternativesSupersetRoute;
+  DownloadThanksRoute: typeof DownloadThanksRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -908,6 +947,13 @@ declare module "@tanstack/react-router" {
       path: "/nova";
       fullPath: "/nova";
       preLoaderRoute: typeof NovaRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/muse-code": {
+      id: "/muse-code";
+      path: "/muse-code";
+      fullPath: "/muse-code";
+      preLoaderRoute: typeof MuseCodeRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/mistral-vibe": {
@@ -1134,6 +1180,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AuggieRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/antigravity": {
+      id: "/antigravity";
+      path: "/antigravity";
+      fullPath: "/antigravity";
+      preLoaderRoute: typeof AntigravityRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/amp": {
       id: "/amp";
       path: "/amp";
@@ -1175,6 +1228,13 @@ declare module "@tanstack/react-router" {
       fullPath: "/blog/";
       preLoaderRoute: typeof BlogIndexRouteImport;
       parentRoute: typeof BlogRoute;
+    };
+    "/download_/thanks": {
+      id: "/download_/thanks";
+      path: "/download/thanks";
+      fullPath: "/download/thanks";
+      preLoaderRoute: typeof DownloadThanksRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
     "/docs/$": {
       id: "/docs/$";
@@ -1278,6 +1338,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsRoute: AgentsRoute,
   AgoragenticRoute: AgoragenticRoute,
   AmpRoute: AmpRoute,
+  AntigravityRoute: AntigravityRoute,
   AuggieRoute: AuggieRoute,
   AutohandRoute: AutohandRoute,
   BlogRoute: BlogRouteWithChildren,
@@ -1310,6 +1371,7 @@ const rootRouteChildren: RootRouteChildren = {
   KimiRoute: KimiRoute,
   MinionCodeRoute: MinionCodeRoute,
   MistralVibeRoute: MistralVibeRoute,
+  MuseCodeRoute: MuseCodeRoute,
   NovaRoute: NovaRoute,
   OmpRoute: OmpRoute,
   OpencodeRoute: OpencodeRoute,
@@ -1331,6 +1393,7 @@ const rootRouteChildren: RootRouteChildren = {
   AlternativesOpencodeDesktopRoute: AlternativesOpencodeDesktopRoute,
   AlternativesOrcaRoute: AlternativesOrcaRoute,
   AlternativesSupersetRoute: AlternativesSupersetRoute,
+  DownloadThanksRoute: DownloadThanksRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

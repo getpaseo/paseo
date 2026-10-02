@@ -25,7 +25,6 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { buildAgentPrompt, renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { buildProviderRegistry } from "../../provider-registry.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
@@ -497,7 +496,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
-        resolveVersion: async () => "2.1.219",
+        resolveVersion: async () => "2.1.284",
         runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
@@ -516,6 +515,8 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-5")).toContain("xhigh");
       expect(getThinkingIds("claude-sonnet-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-sonnet-5-5")).toContain("xhigh");
+      expect(getThinkingIds("claude-sonnet-5-5")).not.toContain("off");
       expect(getThinkingIds("claude-opus-4-7[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-7")).toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
@@ -527,56 +528,6 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
 describe("ClaudeAgentClient binary resolution", () => {
   const logger = createTestLogger();
-
-  test("Claude usage reference follows CLAUDE_CONFIG_DIR and excludes API overrides", async () => {
-    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
-    const session = await client.createSession(
-      { provider: "claude", cwd: process.cwd() },
-      { env: { CLAUDE_CONFIG_DIR: "/accounts/second" } },
-    );
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "claude",
-      input: { configDir: "/accounts/second" },
-    });
-    await session.close();
-  });
-
-  test.each(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"])(
-    "Claude usage reference is null with %s override",
-    async (name) => {
-      const client = new ClaudeAgentClient({
-        logger,
-        resolveBinary: async () => "/test/claude/bin",
-      });
-      const session = await client.createSession(
-        { provider: "claude", cwd: process.cwd() },
-        { env: { [name]: "override" } },
-      );
-      expect(await session.getUsageReference?.()).toBeNull();
-      await session.close();
-    },
-  );
-
-  test("Claude custom alias keeps its CLAUDE_CONFIG_DIR usage reference", async () => {
-    const registry = buildProviderRegistry(logger, {
-      providerOverrides: {
-        "work-claude": {
-          extends: "claude",
-          label: "Work Claude",
-          env: { CLAUDE_CONFIG_DIR: "/accounts/work" },
-        },
-      },
-    });
-    const session = await registry["work-claude"].createClient(logger).createSession({
-      provider: "work-claude",
-      cwd: process.cwd(),
-    });
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "claude",
-      input: { configDir: "/accounts/work" },
-    });
-    await session.close();
-  });
 
   test("resolves the installed Claude Code version", async () => {
     await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
@@ -1065,6 +1016,35 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("disables Claude hooks for internal agents only", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const internalSession = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      internal: true,
+    });
+    const userSession = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    await internalSession.startTurn("hello");
+    await userSession.startTurn("hello");
+
+    expect(queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({
+      disableAllHooks: true,
+    });
+    expect(queryFactory.mock.calls[1]?.[0].options.settings).toBeUndefined();
+
+    await internalSession.close();
+    await userSession.close();
+  });
+
   test("turns Claude thinking off without retaining an effort level", async () => {
     const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -1284,6 +1264,26 @@ describe("ClaudeAgentSession features", () => {
 
     await expect(session.setThinkingOption?.("off")).rejects.toThrow(
       "Thinking option 'off' is not available for model 'claude-fable-5'",
+    );
+
+    await session.close();
+  });
+
+  test("rejects disabled thinking on Sonnet 5.5, which only runs with adaptive thinking", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5-5",
+    });
+
+    await expect(session.setThinkingOption?.("off")).rejects.toThrow(
+      "Thinking option 'off' is not available for model 'claude-sonnet-5-5'",
     );
 
     await session.close();

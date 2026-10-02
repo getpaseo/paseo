@@ -9,7 +9,7 @@ category: Plugins
 # Plugin quickstart
 
 A plugin is a TypeScript project installed into one Paseo daemon. It can add
-[surfaces and sidebar items](/docs/plugins/reference#surfaces-and-sidebar-items),
+[screens and sidebar items](/docs/plugins/reference#screens-and-sidebar-items),
 [workspace panels](/docs/plugins/reference#workspace-panels),
 [Command Center items](/docs/plugins/reference#command-center-items),
 [slash commands](/docs/plugins/reference#slash-commands),
@@ -37,7 +37,7 @@ npm install
 development dependencies for typechecking and tests only; Paseo supplies the plugin SDK, React,
 React Native, TanStack Query, and Zod at runtime.
 
-The scaffold is a working plugin: a sidebar surface with a button that asks the daemon for a
+The scaffold is a working plugin: a screen, opened from the sidebar, with a button that asks the daemon for a
 greeting through an RPC.
 
 ```text
@@ -45,7 +45,7 @@ workspace-plugin/
   paseo-plugin.json      # plugin ID and supported Paseo versions
   index.client.tsx       # runs in the Paseo app
   index.server.ts        # runs in a daemon subprocess
-  client/greeting.tsx    # the surface component
+  client/greeting.tsx    # the screen component
   client/web.ts          # the only file allowed to touch browser APIs
   server/greeting.ts     # the RPC handler
   shared/greeting.ts     # the RPC contract, imported by both
@@ -54,20 +54,26 @@ workspace-plugin/
 ```
 
 Each entry default-exports one function that registers contributions and returns a cleanup
-function. `index.client.tsx` registers the surface and the sidebar item that opens it:
+function. `index.client.tsx` registers the screen and the sidebar item that opens it:
 
 ```tsx
-import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { GreetingSurface } from "./client/greeting";
+import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import { GreetingScreen } from "./client/greeting";
+
+function GreetingItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  return (
+    <SidebarRow
+      icon="MessageCircle"
+      active={currentScreen?.screenId === "greeting"}
+      onPress={() => openScreen({ screenId: "greeting" })}
+    />
+  );
+}
 
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("greeting", GreetingSurface);
-  client.addSidebarItem({
-    id: "greeting",
-    title: "Greeting",
-    icon: "MessageCircle",
-    surface: "greeting",
-  });
+  client.addScreen({ id: "greeting", title: "Greeting", Component: GreetingScreen });
+  client.addSidebarHeaderItem({ id: "greeting", title: "Greeting", Component: GreetingItem });
   return () => {};
 }
 ```
