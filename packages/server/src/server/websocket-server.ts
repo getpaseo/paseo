@@ -1702,7 +1702,10 @@ export class VoiceAssistantWebSocketServer {
     }
 
     pending.authenticating = true;
-    if (!(await this.admitPendingHello(ws, message, pending))) return;
+    const admittedHello = pending.admission
+      ? this.admitRelayDevice(ws, message, pending)
+      : await this.admitPendingHello(ws, message, pending);
+    if (!admittedHello) return;
 
     const clientId = message.clientId.trim();
     if (clientId.length === 0) {
