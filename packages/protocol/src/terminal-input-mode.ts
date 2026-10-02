@@ -21,6 +21,33 @@ const ESC = String.fromCharCode(0x1b);
 const APPLICATION_CURSOR_KEYS_MODE = 1;
 const WIN32_INPUT_MODE = 9001;
 const BRACKETED_PASTE_MODE = 2004;
+const FOCUS_REPORTING_MODE = 1004;
+const MOUSE_X10_MODE = 9;
+const MOUSE_VT200_MODE = 1000;
+const MOUSE_DRAG_MODE = 1002;
+const MOUSE_ANY_MODE = 1003;
+const MOUSE_SGR_ENCODING_MODE = 1006;
+const MOUSE_SGR_PIXELS_ENCODING_MODE = 1016;
+
+// Mouse tracking is replayed after a restore because the client resets the
+// terminal (RIS) before repainting the snapshot, which clears these modes. xterm
+// models the tracking protocol as one of {X10, VT200, DRAG, ANY} (last DECSET
+// wins, any DECRST clears it) with a separate encoding of {DEFAULT, SGR,
+// SGR_PIXELS}, so we replay the resolved state rather than the raw sequence.
+type TerminalMouseProtocol = "NONE" | "X10" | "VT200" | "DRAG" | "ANY";
+type TerminalMouseEncoding = "DEFAULT" | "SGR" | "SGR_PIXELS";
+const MOUSE_PROTOCOL_PREAMBLE: Record<TerminalMouseProtocol, string> = {
+  NONE: "",
+  X10: "\x1b[?9h",
+  VT200: "\x1b[?1000h",
+  DRAG: "\x1b[?1002h",
+  ANY: "\x1b[?1003h",
+};
+const MOUSE_ENCODING_PREAMBLE: Record<TerminalMouseEncoding, string> = {
+  DEFAULT: "",
+  SGR: "\x1b[?1006h",
+  SGR_PIXELS: "\x1b[?1016h",
+};
 const CSI_INPUT_MODE_SEQUENCE = new RegExp(
   `${ESC}\\[(?:([<>=?]?)([0-9;]*)u|\\?([0-9;]*)([hl]))`,
   "g",
@@ -43,11 +70,11 @@ function parseSecondParam(params: string): number | null {
   return Number(second);
 }
 
-function parsePrivateModeParams(params: string): Set<number> {
-  const modes = new Set<number>();
+function parsePrivateModeParams(params: string): number[] {
+  const modes: number[] = [];
   for (const param of params.split(";")) {
     if (/^\d+$/.test(param)) {
-      modes.add(Number(param));
+      modes.push(Number(param));
     }
   }
   return modes;
@@ -74,6 +101,9 @@ export class TerminalInputModeTracker {
   private win32InputMode = false;
   private applicationCursorKeys = false;
   private bracketedPaste = false;
+  private mouseProtocol: TerminalMouseProtocol = "NONE";
+  private mouseEncoding: TerminalMouseEncoding = "DEFAULT";
+  private focusReporting = false;
   private readonly kittyKeyboardStack: number[] = [];
   private pending = "";
 
@@ -124,6 +154,9 @@ export class TerminalInputModeTracker {
     this.win32InputMode = false;
     this.applicationCursorKeys = false;
     this.bracketedPaste = false;
+    this.mouseProtocol = "NONE";
+    this.mouseEncoding = "DEFAULT";
+    this.focusReporting = false;
     this.kittyKeyboardStack.length = 0;
     this.pending = "";
   }
@@ -158,6 +191,11 @@ export class TerminalInputModeTracker {
     }
     if (this.bracketedPaste) {
       parts.push("\x1b[?2004h");
+    }
+    parts.push(MOUSE_PROTOCOL_PREAMBLE[this.mouseProtocol]);
+    parts.push(MOUSE_ENCODING_PREAMBLE[this.mouseEncoding]);
+    if (this.focusReporting) {
+      parts.push("\x1b[?1004h");
     }
     return parts.join("");
   }
@@ -202,27 +240,53 @@ export class TerminalInputModeTracker {
   }
 
   private applyPrivateModeSequence(params: string, final: string): boolean {
-    const modes = parsePrivateModeParams(params);
-    let changed = false;
+    const enabled = final === "h";
+    const previousState = this.getState();
 
-    if (modes.has(WIN32_INPUT_MODE)) {
-      const previous = this.win32InputMode;
-      this.win32InputMode = final === "h";
-      changed = this.win32InputMode !== previous || changed;
+    for (const mode of parsePrivateModeParams(params)) {
+      this.applyPrivateMode(mode, enabled);
     }
 
-    if (modes.has(APPLICATION_CURSOR_KEYS_MODE)) {
-      const previous = this.applicationCursorKeys;
-      this.applicationCursorKeys = final === "h";
-      changed = this.applicationCursorKeys !== previous || changed;
-    }
+    return !terminalInputModeStatesEqual(previousState, this.getState());
+  }
 
-    if (modes.has(BRACKETED_PASTE_MODE)) {
-      const previous = this.bracketedPaste;
-      this.bracketedPaste = final === "h";
-      changed = this.bracketedPaste !== previous || changed;
+  // Mouse and focus modes only feed the replay preamble: they are not part of the
+  // public input-mode state because they do not change how keys are translated,
+  // so a mouse-only sequence leaves `changed` false on its own.
+  private applyPrivateMode(mode: number, enabled: boolean): void {
+    switch (mode) {
+      case WIN32_INPUT_MODE:
+        this.win32InputMode = enabled;
+        break;
+      case APPLICATION_CURSOR_KEYS_MODE:
+        this.applicationCursorKeys = enabled;
+        break;
+      case BRACKETED_PASTE_MODE:
+        this.bracketedPaste = enabled;
+        break;
+      case FOCUS_REPORTING_MODE:
+        this.focusReporting = enabled;
+        break;
+      case MOUSE_X10_MODE:
+        this.mouseProtocol = enabled ? "X10" : "NONE";
+        break;
+      case MOUSE_VT200_MODE:
+        this.mouseProtocol = enabled ? "VT200" : "NONE";
+        break;
+      case MOUSE_DRAG_MODE:
+        this.mouseProtocol = enabled ? "DRAG" : "NONE";
+        break;
+      case MOUSE_ANY_MODE:
+        this.mouseProtocol = enabled ? "ANY" : "NONE";
+        break;
+      case MOUSE_SGR_ENCODING_MODE:
+        this.mouseEncoding = enabled ? "SGR" : "DEFAULT";
+        break;
+      case MOUSE_SGR_PIXELS_ENCODING_MODE:
+        this.mouseEncoding = enabled ? "SGR_PIXELS" : "DEFAULT";
+        break;
+      default:
+        break;
     }
-
-    return changed;
   }
 }

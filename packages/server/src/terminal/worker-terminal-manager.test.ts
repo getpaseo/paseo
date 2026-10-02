@@ -298,19 +298,20 @@ it("pulls fresh terminal state from the worker authority", async () => {
 // preamble-caching contract is verified on Linux/macOS; the daemon's input-mode
 // handling runs identically on every platform once the escape is observed.
 it.skipIf(isPlatform("win32"))(
-  "caches the input-mode replay preamble from the worker after getTerminalState",
+  "caches the input-mode replay preamble, including mouse tracking, after getTerminalState",
   async () => {
     const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
     temporaryDirs.push(cwd);
     manager = createWorkerTerminalManager();
-    // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
-    // tracker records and reflects in its replay preamble (\x1b[=1;1u).
+    // \x1b[>1u pushes kitty keyboard flag 1; the mouse DECSETs resolve to the ANY
+    // protocol with SGR encoding. A restore resets the terminal (RIS), so all of
+    // these must survive in the replay preamble to be re-enabled.
     const session = trackTerminal(
       await manager.createTerminal({
         workspaceId: "ws-test",
         cwd,
         ...nodeTerminalCommand(`
-      process.stdout.write("\\u001b[>1u");
+      process.stdout.write("\\u001b[>1u\\u001b[?1000h\\u001b[?1002h\\u001b[?1003h\\u001b[?1006h");
       setInterval(() => {}, 1000);
     `),
       }),
@@ -318,10 +319,12 @@ it.skipIf(isPlatform("win32"))(
 
     await waitForCondition(async () => {
       const snapshot = await manager!.getTerminalState(session.id);
-      return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
+      return (
+        snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u\x1b[?1003h\x1b[?1006h"
+      );
     }, 10000);
 
-    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
+    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u\x1b[?1003h\x1b[?1006h");
   },
 );
 
