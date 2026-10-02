@@ -29,6 +29,7 @@ import {
   type PinnedUsageSource,
 } from "./pinned";
 import type { UsageHost } from "./model";
+import { UsageOptions } from "./options";
 import { UsageBody } from "./usage-section";
 
 /** Each summary window with data on the usage host, under its source; empty while none has. */
@@ -134,7 +135,7 @@ function HostUsageSheet({
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
-  const { view, refresh, controls } = useHostUsageWithControls(hostSelection, display);
+  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
   return (
     <SidebarPopoverSurface
       section="footer"
@@ -143,6 +144,7 @@ function HostUsageSheet({
       testID="sidebar-usage-sheet"
     >
       <View style={styles.sheetBody} testID="usage-expanded">
+        {view.kind === "unavailable" ? null : <UsageOptions display={display} />}
         <UsageBody serverId={serverId} view={view} display={display} onRefresh={refresh} />
       </View>
     </SidebarPopoverSurface>

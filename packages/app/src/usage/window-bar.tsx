@@ -2,8 +2,6 @@ import { Pin } from "lucide-react-native";
 import { useMemo } from "react";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usageCopy } from "./copy";
 import { formatDisplayPct, formatResetLabel } from "./format";
@@ -36,7 +34,6 @@ export function UsageWindowBar({
   pinLabel: string;
   pinTestID: string;
 }) {
-  const isCompact = useIsCompactFormFactor();
   const shownPct = displayPercent(window, displayAs);
   const tone = windowTone(window);
 
@@ -69,7 +66,6 @@ export function UsageWindowBar({
           isAtRisk={isAtRisk}
           percent={shownPct ?? 0}
           tone={tone}
-          pinVisible={Boolean(hovered) || isNative || isCompact}
           pinned={pinned}
         />
       )}
@@ -85,7 +81,6 @@ function WindowRowContent({
   isAtRisk,
   percent,
   tone,
-  pinVisible,
   pinned,
 }: {
   highlight: StyleProp<ViewStyle>;
@@ -95,7 +90,6 @@ function WindowRowContent({
   isAtRisk: boolean;
   percent: number;
   tone: UsageTone;
-  pinVisible: boolean;
   pinned: boolean;
 }) {
   return (
@@ -116,7 +110,7 @@ function WindowRowContent({
           </View>
           <UsageMeter percent={percent} tone={tone} />
         </View>
-        <UsagePinGlyph visible={pinVisible} pinned={pinned} />
+        <UsagePinGlyph pinned={pinned} />
       </View>
     </>
   );
@@ -124,7 +118,7 @@ function WindowRowContent({
 
 const ThemedPin = withUnistyles(Pin);
 
-function UsagePinGlyph({ visible, pinned }: { visible: boolean; pinned: boolean }) {
+function UsagePinGlyph({ pinned }: { pinned: boolean }) {
   const iconMapping = useMemo(
     () => (theme: { colors: { foregroundMuted: string } }) => ({
       color: theme.colors.foregroundMuted,
@@ -136,14 +130,14 @@ function UsagePinGlyph({ visible, pinned }: { visible: boolean; pinned: boolean 
     <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
         <View
-          style={visible ? styles.pin : styles.pinHidden}
+          style={styles.pin}
           testID={pinned ? "usage-pin-glyph-pinned" : "usage-pin-glyph-unpinned"}
         >
           <ThemedPin size={12} uniProps={iconMapping} />
         </View>
       </TooltipTrigger>
       <TooltipContent side="top">
-        <Text style={styles.tooltipText}>{usageCopy.pin}</Text>
+        <Text style={styles.tooltipText}>{pinned ? usageCopy.unpin : usageCopy.pin}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -153,7 +147,6 @@ const styles = StyleSheet.create((theme) => ({
   contentRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   windowContent: { flex: 1, gap: 3 },
   pin: { width: 12, alignItems: "center" },
-  pinHidden: { width: 12, alignItems: "center", opacity: 0 },
   tooltipText: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.sm },
   row: {
     gap: 3,

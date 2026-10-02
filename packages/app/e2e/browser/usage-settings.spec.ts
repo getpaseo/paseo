@@ -95,7 +95,12 @@ test.describe("usage settings", () => {
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
 
+    // Percentages now live on the Usage screen, and still apply to the host section.
+    await expect(card.getByTestId("usage-options-toggle")).toHaveCount(0);
+    const hostUsageUrl = page.url();
+    await page.goto("/usage");
     await showUsageAs(page, "remaining");
+    await page.goto(hostUsageUrl);
     await expect(card.getByText("30% left")).toBeVisible();
     await expect(card.getByText("93% left")).toBeVisible();
   });
