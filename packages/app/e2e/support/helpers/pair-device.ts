@@ -115,7 +115,8 @@ export async function expectPairingOffer(page: Page): Promise<void> {
   await expect(page.getByRole("textbox", { name: "Pairing link" })).toHaveValue(/#offer=/);
   await expect(
     page.getByRole("alert").filter({
-      hasText: "Treat this pairing link like a password. Anyone with it can access this daemon.",
+      hasText:
+        "This link works once and expires after 10 minutes. Whoever uses it first can access this daemon.",
     }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
