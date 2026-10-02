@@ -3,6 +3,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContextWindowUsageTooltip } from "@/usage/context-window-section";
 import { formatContextPercentage, formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -10,6 +11,7 @@ interface ContextWindowMeterProps {
   usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
+  serverId?: string;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
@@ -95,6 +97,7 @@ export function ContextWindowMeter({
   usedTokens,
   totalCostUsd,
   showPercentage = false,
+  serverId,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
@@ -202,6 +205,7 @@ export function ContextWindowMeter({
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
           ) : null}
+          {serverId ? <ContextWindowUsageTooltip serverId={serverId} /> : null}
         </View>
       </TooltipContent>
     </Tooltip>
@@ -238,6 +242,7 @@ const styles = StyleSheet.create((theme) => ({
   tooltipContent: {
     gap: theme.spacing[1.5],
     minWidth: 200,
+    maxWidth: 280,
   },
   tooltipTitle: {
     color: theme.colors.foreground,

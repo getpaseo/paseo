@@ -1,7 +1,27 @@
 import type { Locator } from "@playwright/test";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+
+const USAGE_ICON =
+  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
+
+function contextUsageReport(): UsageReportEntry {
+  return {
+    id: "mock:account",
+    account: { label: "dev@example.com" },
+    fetchedAt: "2026-01-01T00:00:00.000Z",
+    sourceId: "mock",
+    sourceLabel: "Mock plan",
+    icon: USAGE_ICON,
+    report: {
+      status: "available",
+      windows: [{ id: "session", label: "Session", usedPct: 42 }],
+    },
+  };
+}
 
 // Where the progress arc is painted, as its centroid relative to the ring's centre in pixels.
 // Reads the rendered pixels, so any rotation that does not reach the screen counts as none.
@@ -64,6 +84,30 @@ test.describe("context window meter", () => {
       const centroid = await progressArcCentroid(meter);
       expect(centroid.x).toBeGreaterThan(1);
       expect(centroid.y).toBeLessThan(-1);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("shows the host's plan limits in the context tooltip", async ({ page }) => {
+    test.setTimeout(180_000);
+    const usage = await installUsageReportsFixture(page, { lists: [[contextUsageReport()]] });
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "context-window-usage-",
+      title: "Context window usage tooltip",
+      initialPrompt: "emit 32000 byte file agent stream payload",
+    });
+    try {
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      const meter = page.getByTestId("context-window-meter");
+      await expect(meter).toHaveAccessibleName(/25%/, { timeout: 30_000 });
+      await meter.hover();
+      await usage.waitForListRequests(1);
+
+      const tooltip = page.getByTestId("context-window-meter-tooltip");
+      await expect(tooltip.getByText("Mock plan", { exact: true })).toBeVisible();
+      await expect(tooltip.getByText("42% used", { exact: true })).toBeVisible();
     } finally {
       await session.cleanup();
     }

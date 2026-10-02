@@ -64,15 +64,16 @@ export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
         <Text style={styles.label} numberOfLines={1}>
           {formatProviderUsageLabel(balance.id, balance.label)}
         </Text>
-        <Text
-          style={styles.value}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          testID={`provider-usage-balance-${balance.id}-value`}
-        >
-          {amountText}
-          {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
-        </Text>
+        <View style={styles.value} testID={`provider-usage-balance-${balance.id}-value`}>
+          <Text style={styles.amount} numberOfLines={1} ellipsizeMode="tail">
+            {amountText}
+          </Text>
+          {resetLabel ? (
+            <Text style={styles.reset} testID={`provider-usage-balance-${balance.id}-reset`}>
+              {resetLabel}
+            </Text>
+          ) : null}
+        </View>
       </View>
       {usedPct != null ? (
         <View style={styles.track}>
@@ -100,13 +101,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   value: {
     flexShrink: 1,
+    alignItems: "flex-end",
+  },
+  amount: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
   reset: {
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
+    textAlign: "right",
   },
   track: {
     height: 4,

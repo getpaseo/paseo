@@ -283,6 +283,7 @@ function renderContextWindowMeter(
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
   showPercentage: boolean,
+  serverId: string,
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
@@ -296,6 +297,7 @@ function renderContextWindowMeter(
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
+      serverId={serverId}
       pending={pending}
       glyphSize={glyphSize}
     />
@@ -2090,6 +2092,7 @@ function ComposerContentImpl({
         contextWindowUsedTokens,
         agentState.totalCostUsd,
         isCompactLayout,
+        serverId,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -2098,6 +2101,7 @@ function ComposerContentImpl({
       contextWindowUsedTokens,
       agentState.totalCostUsd,
       isCompactLayout,
+      serverId,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],
