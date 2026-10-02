@@ -6,6 +6,30 @@ import { PersistedConfigSchema } from "../persisted-config.js";
 import { resolveSpeechConfig } from "./speech-config-resolver.js";
 
 describe("resolveSpeechConfig", () => {
+  test("selects local Chinese dictation independently of voice STT without API credentials", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { stt: { provider: "local", model: "sensevoice-small-int8" } },
+        voiceMode: { stt: { provider: "local", model: "parakeet-tdt-0.6b-v3-int8" } },
+      },
+    });
+    const result = resolveSpeechConfig({ paseoHome: "/tmp/paseo-home", env: {}, persisted });
+    expect(result.openai).toBeUndefined();
+    expect(result.speech.local?.models.dictationStt).toBe("sensevoice-small-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+
+    const overridden = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {
+        PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
+        PASEO_VOICE_LOCAL_STT_MODEL: "sensevoice-small-int8",
+      },
+      persisted,
+    });
+    expect(overridden.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
+    expect(overridden.speech.local?.models.voiceStt).toBe("sensevoice-small-int8");
+  });
+
   test("resolves local-first defaults without env overrides", () => {
     const paseoHome = "/tmp/paseo-home";
     const persisted = PersistedConfigSchema.parse({});
@@ -55,6 +79,15 @@ describe("resolveSpeechConfig", () => {
       dictation: "en",
       voice: "en",
     });
+  });
+
+  test("rejects unknown local models instead of falling back to English recognition", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: { dictation: { stt: { provider: "local", model: "unknown-chinese-model" } } },
+    });
+    expect(() => resolveSpeechConfig({ paseoHome: "/tmp/paseo-home", env: {}, persisted })).toThrow(
+      "Invalid model id",
+    );
   });
 
   test("resolves feature-scoped local speech settings", () => {

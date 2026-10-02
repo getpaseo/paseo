@@ -1,14 +1,16 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished, test } from "vitest";
+import pino from "pino";
 
 import { parsePcm16MonoWav, wordSimilarity } from "../../../test-utils/dictation-e2e.js";
 import { ensureSherpaOnnxModels } from "./sherpa/model-downloader.js";
+import { getLocalSpeechModelDir } from "./models.js";
 import { applySherpaLoaderEnv } from "./sherpa/sherpa-runtime-env.js";
 import type {
   LocalSpeechWorkerConfig,
@@ -21,6 +23,9 @@ const modelsDir =
   process.env.PASEO_LOCAL_MODELS_DIR ?? path.join(homedir(), ".paseo", "models", "local-speech");
 const shouldDownload = process.env.PASEO_SPEECH_E2E_DOWNLOAD === "1";
 const workerSpeechTest = hasParakeetModel(modelsDir) || shouldDownload ? test : test.skip;
+const senseVoiceDir = getLocalSpeechModelDir(modelsDir, "sensevoice-small-int8");
+const senseVoiceSpeechTest =
+  existsSync(path.join(senseVoiceDir, "model.int8.onnx")) || shouldDownload ? test : test.skip;
 
 function hasParakeetModel(dir: string): boolean {
   return (
@@ -75,6 +80,108 @@ function forkWorker(): ChildProcess {
   return worker;
 }
 
+senseVoiceSpeechTest.each(["dictationStt", "voiceStt"] as const)(
+  "transcribes Mandarin through the real SenseVoice %s worker session",
+  async (kind) => {
+    await ensureSherpaOnnxModels({
+      modelsDir,
+      modelIds: ["sensevoice-small-int8"],
+      logger: pino({ level: "silent" }),
+    });
+    const worker = forkWorker();
+    const messages: LocalSpeechWorkerToParentMessage[] = [];
+    let stderr = "";
+    worker.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    worker.on("message", (message: LocalSpeechWorkerToParentMessage) => messages.push(message));
+    const config: LocalSpeechWorkerConfig = {
+      modelsDir,
+      voiceSttModel: "sensevoice-small-int8",
+      dictationSttModel: "sensevoice-small-int8",
+      voiceTtsModel: "kokoro-en-v0_19",
+    };
+    const sessionId = randomUUID();
+    await sendRequest(
+      worker,
+      messages,
+      { type: "session.create", config, sessionId, kind },
+      () => stderr,
+    );
+    // The upstream model archive includes this recording and its published transcript:
+    // https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html
+    const wav = await readFile(path.join(senseVoiceDir, "test_wavs", "zh.wav"));
+    const { pcm16 } = parsePcm16MonoWav(wav);
+    for (let offset = 0; offset < pcm16.length; offset += 32000) {
+      await sendRequest(
+        worker,
+        messages,
+        {
+          type: "session.append",
+          sessionId,
+          audio: bufferToWorkerBytes(pcm16.subarray(offset, offset + 32000)),
+        },
+        () => stderr,
+      );
+    }
+    await sendRequest(worker, messages, { type: "session.commit", sessionId }, () => stderr);
+    const transcript = await waitForFinalTranscript(worker, messages, sessionId, stderr);
+    expect(transcript).toContain("时间早上9点至下午5点");
+    expect(transcript).not.toContain("<|");
+
+    await sendRequest(worker, messages, { type: "session.close", sessionId }, () => stderr);
+    const englishWav = await readFile(path.join(senseVoiceDir, "test_wavs", "en.wav"));
+    const english = await sendRequest(
+      worker,
+      messages,
+      {
+        type: "stt.transcribe",
+        config,
+        model: "dictation",
+        audio: bufferToWorkerBytes(englishWav),
+        format: "audio/wav",
+      },
+      () => stderr,
+    );
+    expect(english).toEqual(
+      expect.objectContaining({
+        text: expect.stringMatching(/tribal chieftain called for the boy/i),
+      }),
+    );
+  },
+  120_000,
+);
+
+test("reports missing SenseVoice files through the worker without falling back to Parakeet", async () => {
+  const missingModelsDir = mkdtempSync(path.join(tmpdir(), "paseo-missing-sensevoice-"));
+  onTestFinished(() => rmSync(missingModelsDir, { recursive: true, force: true }));
+  const worker = forkWorker();
+  const messages: LocalSpeechWorkerToParentMessage[] = [];
+  let stderr = "";
+  worker.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  worker.on("message", (message: LocalSpeechWorkerToParentMessage) => messages.push(message));
+  await expect(
+    sendRequest(
+      worker,
+      messages,
+      {
+        type: "session.create",
+        config: {
+          modelsDir: missingModelsDir,
+          voiceSttModel: "sensevoice-small-int8",
+          dictationSttModel: "sensevoice-small-int8",
+          voiceTtsModel: "kokoro-en-v0_19",
+        },
+        sessionId: randomUUID(),
+        kind: "dictationStt",
+      },
+      () => stderr,
+    ),
+  ).rejects.toThrow("Missing tokens:");
+});
+
 workerSpeechTest(
   "transcribes PCM through the real local speech worker process",
   async () => {
@@ -82,6 +189,7 @@ workerSpeechTest(
       await ensureSherpaOnnxModels({
         modelsDir,
         modelIds: ["parakeet-tdt-0.6b-v2-int8"],
+        logger: pino({ level: "silent" }),
       });
     }
 
