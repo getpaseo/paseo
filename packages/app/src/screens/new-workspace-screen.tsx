@@ -196,8 +196,6 @@ interface NewWorkspaceScreenProps {
   draftId?: string;
 }
 
-// A terminal launch sends argv, not a message: there is nothing to attach and
-// no draft to persist, so the composer's attachment and draft seams are inert.
 const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
 function noopChangeAttachments() {}
 function noopClearDraft() {}
@@ -206,9 +204,6 @@ const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const chevronExtraMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
 
-// Every picker chip on this screen shares one chevron so they stay a single
-// visual family. Extra-muted: the chevron is an affordance, not information,
-// and it should sit behind the label it belongs to.
 function MetaChevron(): ReactElement {
   return (
     <View style={styles.chevronContainer}>
@@ -219,10 +214,7 @@ function MetaChevron(): ReactElement {
 
 const metaChevron = <MetaChevron />;
 
-// Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
-// Height of a single picker-trigger badge. The Base-row spacer reserves exactly
-// this so toggling Isolation to Local hides the row without shifting the form.
 const BADGE_HEIGHT = 28;
 
 function RefPickerBadgeContent({
@@ -690,9 +682,6 @@ function IsolationPickerTrigger({
   );
 }
 
-// Wraps a single argument control in the mobile vertical stack. On desktop the
-// controls are laid out in one horizontal row, so no per-control wrapper is used.
-// Decorative padding must not block the dock background from iOS hit testing.
 function FormRow({ children }: { children: React.ReactNode }) {
   return (
     <View style={styles.row} pointerEvents="box-none">
@@ -709,16 +698,11 @@ interface WorkspaceIsolationState {
   showRefPicker: boolean;
 }
 
-// Preserve the user's worktree choice while route metadata is provisional. Once
-// the authoritative placement arrives, unsupported projects fall back to local.
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
 }): WorkspaceIsolationState {
   const { supportsMultiplicity, worktreeSupport } = input;
-  // The last isolation choice is remembered alongside the other New Workspace
-  // form preferences (provider, model, mode). A manual in-screen pick overrides
-  // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
   const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
@@ -757,10 +741,6 @@ function normalizeBranchDetails(
   return names.map((name) => ({ name, committerDate: 0 }));
 }
 
-/**
- * "background" means the user left the New workspace screen mid-creation, so nothing navigated
- * and the screen — if still mounted under another route — has to drop its pending state itself.
- */
 type SubmitOutcome = "navigated" | "background";
 
 interface SubmitDraftInput {
@@ -791,6 +771,7 @@ type NewWorkspaceComposerState = NonNullable<
 >;
 
 interface WorkspaceDraftSubmissionConfig {
+  routingMode?: "auto" | "manual";
   cwd: string;
   provider: AgentProvider;
   modeId: string | null;
@@ -896,6 +877,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
   return {
     provider: input.provider,
     cwd: input.cwd,
+    ...(input.composerState.isAuto ? { routingMode: "auto" as const } : {}),
     modeId: input.composerState.selectedMode || null,
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
@@ -980,6 +962,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
       model: composerState.effectiveModelId || undefined,
       thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
       featureValues: composerState.featureValues,
+      ...(composerState.isAuto ? { labels: { "pandaos.routing.mode": "auto" } } : {}),
     },
     initialPrompt: text,
     clientMessageId: `${input.draftId}:initial-message`,
@@ -1088,6 +1071,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   if (initialSetup) {
     return {
       cwd: initialSetup.cwd,
+      ...(initialSetup.routingMode === "auto" ? { routingMode: "auto" as const } : {}),
       provider: initialSetup.provider,
       modeId: initialSetup.modeId,
       model: initialSetup.model,
@@ -1099,6 +1083,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   return {
     cwd: workspaceDirectory,
     provider,
+    ...(composerState.isAuto ? { routingMode: "auto" as const } : {}),
     modeId: composerState.selectedMode || null,
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
@@ -1154,6 +1139,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     text: text.trim(),
     attachments,
     cwd: submission.cwd,
+    ...(submission.routingMode === "auto" ? { routingMode: "auto" as const } : {}),
     provider: submission.provider,
     clientMessageId,
     timestamp,
@@ -1689,11 +1675,6 @@ export function NewWorkspaceScreen({
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
 
-  // Launch target: what the composer submits to (chat agent, or a terminal
-  // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
-  // value reads live from preferences until the user manually picks
-  // something in this screen, so the async preferences load doesn't race a
-  // frozen useState initializer.
   const { preferences: formPreferences, updatePreferences: updateFormPreferences } =
     useFormPreferences();
   const { config: daemonConfig } = useDaemonConfig(selectedServerId);
@@ -1701,10 +1682,6 @@ export function NewWorkspaceScreen({
     () => resolveTerminalProfiles(daemonConfig?.terminalProfiles),
     [daemonConfig?.terminalProfiles],
   );
-  // Manual selection wins once the user picks something; until then the target
-  // reads live from preferences so the async load can't race a frozen
-  // initializer. Both go through `resolveLaunchTarget`, so a profile deleted
-  // daemon-side falls back to chat rather than leaving a dead selection.
   const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
   const launchTarget = useMemo(
     () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
@@ -1925,9 +1902,6 @@ export function NewWorkspaceScreen({
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
-      // selectProjectOption enforces selectability (worktree-only when
-      // multiplicity is off, any project when it's on); don't re-gate here on
-      // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
       setProjectPickerOpen(false);
       clearPickerSelectionForTargetChange(selectedProjectOptionId, id);
@@ -1956,10 +1930,6 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(true);
   }, []);
 
-  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
-  // switch projects from the keyboard. Registered only while this screen is
-  // mounted, so the shortcut doesn't swallow the browser's native print
-  // elsewhere; gated on having projects to pick.
   const handleProjectPick = useCallback(() => {
     openProjectPicker();
     return true;
@@ -1980,8 +1950,6 @@ export function NewWorkspaceScreen({
     setIsolationPickerOpen(nextOpen);
   }, []);
 
-  // "New worktree" is omitted entirely (not disabled) when the project isn't a
-  // git checkout, since worktree isolation is impossible there.
   const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
     const localOption = { id: "local", label: isolationLabel(t, "local") };
     if (!canCreateWorktree) return [localOption];
@@ -2024,9 +1992,7 @@ export function NewWorkspaceScreen({
     [isPending, theme.colors.foregroundMuted, theme.iconSize.sm],
   );
 
-  const handleClearDraft = useCallback(() => {
-    // No-op: screen navigates away on success, text should stay for retry on error
-  }, []);
+  const handleClearDraft = useCallback(() => {}, []);
 
   const handlePickerOpenChange = useCallback((nextOpen: boolean) => {
     setPickerOpen(nextOpen);
@@ -2129,8 +2095,6 @@ export function NewWorkspaceScreen({
               navigateToWorkspace({ serverId: targetServerId, workspaceId });
             },
           });
-          // Nothing navigated, so this screen may still be mounted under another route. Release
-          // the pending lock it would otherwise keep forever.
           if (outcome === "background") {
             setPendingAction(null);
           }
@@ -2224,9 +2188,6 @@ export function NewWorkspaceScreen({
           withConnectedClient().sendTerminalInput(terminalId, { type: "input", data });
         },
         serverId: selectedServerId,
-        // The terminal is spawned and fed its command before this runs, so skipping the
-        // navigation costs nothing: it is standalone, and `reconcileTabs` auto-opens standalone
-        // terminals when the workspace is next visited.
         navigate: (targetServerId, workspaceId, target) => {
           if (!isStillOnCreateScreen()) {
             return;
@@ -2510,10 +2471,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: theme.spacing[8],
-    // The badge adds its own left padding; offset it so the project icon's left
-    // edge lands exactly on the "New workspace" title's left edge. The trailing
-    // inset mirrors it so the launch chip stops on the composer's inner content
-    // rather than running out to the composer's border.
     paddingLeft: theme.spacing[4],
     paddingRight: theme.spacing[4],
     gap: theme.spacing[2],
@@ -2522,9 +2479,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
   },
-  // The row's left inset matches the heading's text x (composerTitleContainer
-  // paddingLeft) so the control aligns with the "New workspace" glyph. The badge
-  // adds its own left padding, so the row inset is reduced by that amount.
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -2534,9 +2488,6 @@ const styles = StyleSheet.create((theme) => ({
   baseSpacer: {
     height: BADGE_HEIGHT,
   },
-  // Pushes the launch control to the trailing edge of the desktop meta row,
-  // next to project/host/branch. The row's own right inset (formStackDesktop)
-  // lands it on the composer's inner content, matching the left chips.
   launchSpacer: {
     flex: 1,
   },
@@ -2586,8 +2537,6 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   projectIconFallbackText: {
-    // Single uppercase initial inside an iconSize.md (16px) square — below the
-    // smallest font-size token, so it stays a literal sized to the box.
     fontSize: PROJECT_ICON_FALLBACK_FONT_SIZE,
     fontWeight: "600",
   },

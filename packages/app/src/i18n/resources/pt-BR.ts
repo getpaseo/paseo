@@ -1762,6 +1762,8 @@ export const ptBR: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "Auto",
+    autoDescription: "Jev escolhe pela cota disponível · até 2 segundos",
     title: "Selecionar provedor",
     selectModel: "Selecionar modelo",
     selectedModel: "Selecionar modelo ({{model}})",

@@ -1709,6 +1709,8 @@ export const zhCN: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "自动",
+    autoDescription: "Jev 根据可用额度选择 · 最长2秒",
     title: "选择 provider",
     selectModel: "选择模型",
     selectedModel: "选择模型（{{model}}）",

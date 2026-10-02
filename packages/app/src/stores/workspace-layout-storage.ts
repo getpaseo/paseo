@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { SplitNode, WorkspaceLayout } from "./workspace-layout-actions";
 
 const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
+  routingMode: z.enum(["auto", "manual"]).optional(),
   provider: z.string(),
   cwd: z.string(),
   modeId: z.string().nullable(),
@@ -105,13 +106,10 @@ export const WorkspaceLayoutPersistedStateSchema = z.strictObject({
   explorerSidebarRatioByWorkspace: z.record(z.string(), z.number()).optional(),
   // COMPAT(explorerSidebarNaming): accepted from builds that called this dock the Side panel.
   sidePanelRatioByWorkspace: z.record(z.string(), z.number()).optional(),
-  // The persisted keys keep their pre-rename spelling: the schema is strict, so a
-  // rename here would fail every existing blob and wipe the layout it describes.
   explorerPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   explorerSidebarPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   sidePaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   pullRequestTabAutoOpenedByWorkspace: z.record(z.string(), z.literal(true)).optional(),
   // COMPAT(pullRequestAutoAdd): PR detection stopped opening a tab in v0.5; accepted
-  // and ignored so upgrading does not discard the layout. Remove after 2027-08-20.
   acknowledgedPullRequestByWorkspace: z.record(z.string(), z.string()).optional(),
 });

@@ -7,10 +7,14 @@ export function buildWorkspaceDraftAgentConfig(input: {
   model?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  routingMode?: "auto" | "manual";
+  isAuto?: boolean;
 }): AgentSessionConfig {
+  const routingMode = input.routingMode ?? (input.isAuto ? "auto" : "manual");
   return {
     provider: input.provider,
     cwd: input.cwd,
+    ...(routingMode === "auto" ? { labels: { "pandaos.routing.mode": "auto" } } : {}),
     ...(input.modeId ? { modeId: input.modeId } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),

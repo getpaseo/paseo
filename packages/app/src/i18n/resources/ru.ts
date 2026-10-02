@@ -1759,6 +1759,8 @@ export const ru: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "Авто",
+    autoDescription: "Jev выбирает по доступной квоте · не более 2 секунд",
     title: "Выберите провайдера",
     selectModel: "Выберите модель",
     selectedModel: "Выберите модель ({{model}})",

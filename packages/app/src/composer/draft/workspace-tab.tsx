@@ -64,6 +64,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 interface AutoSubmitConfig {
+  routingMode?: "auto" | "manual";
   provider: string;
   modeId: string | null;
   model: string | null;
@@ -78,11 +79,13 @@ function resolveAutoSubmitConfig(
     model?: string | null;
     thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
+    routingMode?: "auto" | "manual";
   } | null,
 ): AutoSubmitConfig | null {
   if (!pending) return null;
   return {
     provider: pending.provider,
+    routingMode: pending.routingMode ?? "manual",
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
@@ -90,11 +93,6 @@ function resolveAutoSubmitConfig(
   };
 }
 
-// Reconcile the form's selected mode against the currently discovered modes.
-// The mode picker displays modeOptions[0] when the stored mode isn't in the
-// list (e.g. a globally-remembered "plan" that this workspace's OpenCode config
-// no longer defines), so the submitted mode must match that display — otherwise
-// we'd send a stale mode the provider rejects while the UI showed a valid one.
 function reconcileSelectedMode(modeOptionIds: readonly string[], selectedMode: string): string {
   if (modeOptionIds.length === 0) {
     return "";
@@ -147,6 +145,7 @@ async function submitDraftCreateRequest(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
+    isAuto?: boolean;
     selectedMode: string;
     modeOptions: readonly { id: string }[];
     effectiveModelId: string | null;
@@ -192,6 +191,8 @@ async function submitDraftCreateRequest(input: {
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+    routingMode: autoSubmitConfig?.routingMode,
+    isAuto: composerState.isAuto,
   });
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
@@ -277,6 +278,7 @@ function buildDraftInitialValues(input: {
   if (!input.initialSetup) return undefined;
   return {
     provider: input.initialSetup.provider,
+    routingMode: input.initialSetup.routingMode,
     modeId: input.initialSetup.modeId,
     model: input.initialSetup.model,
     thinkingOptionId: input.initialSetup.thinkingOptionId,

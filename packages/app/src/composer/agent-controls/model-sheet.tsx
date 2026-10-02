@@ -28,6 +28,8 @@ interface CompactModelSheetProps {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
+  autoSelected?: boolean;
+  onSelectAuto?: () => void;
   thinkingLabel: string | null;
   onSelect: (provider: string, modelId: string) => void;
   isLoading: boolean;
@@ -80,6 +82,8 @@ export function CompactModelSheet({
   providers,
   selectedProvider,
   selectedModel,
+  autoSelected,
+  onSelectAuto,
   thinkingLabel,
   onSelect,
   isLoading,
@@ -116,6 +120,7 @@ export function CompactModelSheet({
     providers: availableProviders,
     selectedProvider,
     selectedModel,
+    autoSelected,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
@@ -125,6 +130,7 @@ export function CompactModelSheet({
     providers: availableProviders,
     selectedProvider,
     selectedModel,
+    autoSelected,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
@@ -162,6 +168,11 @@ export function CompactModelSheet({
     modelBrowser.reset();
     onClose?.();
   }, [modelBrowser, onClose, rootBrowser]);
+
+  const handleSelectAuto = useCallback(() => {
+    onSelectAuto?.();
+    close();
+  }, [onSelectAuto, close]);
 
   const handleSearchSelect = useCallback(
     (provider: string, modelId: string) => {
@@ -312,6 +323,8 @@ export function CompactModelSheet({
           testID="agent-controls-model-viewport"
         >
           <ModelBrowser
+            autoSelected={autoSelected}
+            onSelectAuto={onSelectAuto ? handleSelectAuto : undefined}
             state={rootBrowser}
             onSelect={usesBottomSheet ? handleSearchSelect : handleDesktopSelect}
             onApplyProfile={handleApplyProfile}
@@ -358,6 +371,8 @@ export function CompactModelSheet({
             testID="agent-controls-model-browser-viewport"
           >
             <ModelBrowser
+              autoSelected={autoSelected}
+              onSelectAuto={onSelectAuto ? handleSelectAuto : undefined}
               state={modelBrowser}
               onSelect={handleBrowserSelect}
               onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}

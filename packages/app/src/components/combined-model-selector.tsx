@@ -27,6 +27,8 @@ interface CombinedModelSelectorProps {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
+  autoSelected?: boolean;
+  onSelectAuto?: () => void;
   onSelect: (provider: AgentProvider, modelId: string) => void;
   isLoading: boolean;
   profiles?: AgentProfilePicker | null;
@@ -50,14 +52,7 @@ interface CombinedModelSelectorProps {
   serverId?: string | null;
   desktopPlacement?: ComboboxProps["desktopPlacement"];
   desktopMinWidth?: number;
-  /**
-   * Render the custom trigger as a full-width form field: the outer Pressable
-   * becomes a transparent passthrough that stretches its child edge-to-edge and
-   * stops painting its own hover/pressed background and rounded corners. The
-   * trigger itself owns the field visuals and reads hovered/pressed to show its
-   * active state. Without this the trigger stays a content-width toolbar chip
-   * (the composer's layout).
-   */
+
   triggerFill?: boolean;
   toolbar?: {
     glyphSize: number;
@@ -69,6 +64,8 @@ export function CombinedModelSelector({
   providers,
   selectedProvider,
   selectedModel,
+  autoSelected,
+  onSelectAuto,
   onSelect,
   isLoading,
   profiles = null,
@@ -98,6 +95,7 @@ export function CombinedModelSelector({
     providers,
     selectedProvider,
     selectedModel,
+    autoSelected,
     isLoading,
     profiles,
     serverId,
@@ -192,8 +190,15 @@ export function CombinedModelSelector({
     [handleOpenChange, onEditProfile],
   );
 
+  const handleSelectAuto = useCallback(() => {
+    onSelectAuto?.();
+    handleOpenChange(false);
+  }, [onSelectAuto, handleOpenChange]);
+
   const selectorBody = isContentReady ? (
     <ModelBrowser
+      autoSelected={autoSelected}
+      onSelectAuto={onSelectAuto ? handleSelectAuto : undefined}
       state={browser}
       onSelect={handleSelect}
       onApplyProfile={handleApplyProfile}

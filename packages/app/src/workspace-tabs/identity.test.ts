@@ -196,3 +196,26 @@ describe("plugin panel tab identity", () => {
     expect(agent).toBe("plugin_agent_6_review_7_details_7_agent-1");
   });
 });
+
+it("preserves an explicit Auto choice when a draft tab is restored", () => {
+  const target = {
+    kind: "draft",
+    draftId: "auto-draft",
+    setup: {
+      provider: "codex-plus",
+      cwd: "/tmp/project",
+      modeId: null,
+      model: "gpt-6.1-sol",
+      thinkingOptionId: null,
+      featureValues: {},
+      routingMode: "auto",
+    },
+  } as const;
+  expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+  expect(
+    workspaceTabTargetsEqual(target, {
+      ...target,
+      setup: { ...target.setup, routingMode: "manual" },
+    }),
+  ).toBe(false);
+});

@@ -6,7 +6,6 @@ import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 export interface PendingWorkspaceDraftSubmission {
-  /** Already-running creation. Mounting the draft only observes its result. */
   agentCreation?: {
     result: Promise<AgentSnapshotPayload>;
     retry: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
@@ -24,6 +23,7 @@ export interface PendingWorkspaceDraftSubmission {
   model?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  routingMode?: "auto" | "manual";
   allowEmptyText?: boolean;
 }
 
@@ -109,7 +109,6 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
         if (!matchesPendingSubmission(state.pendingByDraftId[input.draftId], input)) {
           return state;
         }
-        // Expo miscompiles computed member-key rest omissions; test the emitted code.
         const pendingByDraftId = { ...state.pendingByDraftId };
         delete pendingByDraftId[input.draftId];
         return { pendingByDraftId };

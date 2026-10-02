@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
   AgentMode,
@@ -54,6 +54,8 @@ export interface UseAgentFormStateResult {
   selectedMode: string;
   setModeFromUser: (modeId: string) => void;
   selectedModel: string;
+  isAuto?: boolean;
+  setAutoFromUser?: () => void;
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
@@ -147,6 +149,8 @@ async function persistProviderPreferences(input: {
 export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFormStateResult {
   const { serverId, initialValues, workingDir, isVisible = true, isCreateFlow = true } = options;
 
+  const [isAuto, setIsAuto] = useState(initialValues?.routingMode === "auto");
+  const setAutoFromUser = useCallback(() => setIsAuto(true), []);
   const { preferences, isLoading: isPreferencesLoading, updatePreferences } = useFormPreferences();
   const preferenceOverlayRef = useRef(new OptimisticFormPreferences(preferences));
 
@@ -280,6 +284,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       if (!selectableProviderDefinitionMap.has(provider)) {
         return;
       }
+      setIsAuto(false);
       const providerDef = selectableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
@@ -318,6 +323,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         return;
       }
 
+      setIsAuto(false);
       const previousProvider = formState.provider;
       const providerDef = selectableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
@@ -386,6 +392,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
 
   const setModelFromUser = useCallback(
     (modelId: string) => {
+      setIsAuto(false);
       const provider = formState.provider;
       const providerPrefs = provider
         ? preferenceOverlayRef.current.current().providerPreferences?.[provider]
@@ -478,6 +485,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       selectedMode: formState.modeId,
       setModeFromUser,
       selectedModel: formState.model,
+      isAuto,
+      setAutoFromUser,
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
@@ -508,6 +517,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       formState.provider,
       formState.modeId,
       formState.model,
+      isAuto,
+      setAutoFromUser,
       formState.thinkingOptionId,
       workingDir,
       setModeFromUser,

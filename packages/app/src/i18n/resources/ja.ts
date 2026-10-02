@@ -1748,6 +1748,8 @@ export const ja: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "自動",
+    autoDescription: "Jev が利用可能な使用枠から選択 · 最大2秒",
     title: "プロバイダーを選択",
     selectModel: "モデルを選択",
     selectedModel: "モデルを選択（{{model}}）",

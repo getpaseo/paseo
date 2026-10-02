@@ -89,6 +89,7 @@ export function normalizeWorkspaceDraftTabSetup(
   return {
     provider,
     cwd,
+    ...(record.routingMode === "auto" ? { routingMode: "auto" as const } : {}),
     modeId: trimOptionalString(typeof record.modeId === "string" ? record.modeId : null),
     model: trimOptionalString(typeof record.model === "string" ? record.model : null),
     thinkingOptionId: trimOptionalString(
@@ -168,6 +169,7 @@ function workspaceDraftTabSetupsEqual(
     return left === right;
   }
   return (
+    (left.routingMode ?? "manual") === (right.routingMode ?? "manual") &&
     left.provider === right.provider &&
     left.cwd === right.cwd &&
     left.modeId === right.modeId &&

@@ -109,6 +109,8 @@ type AgentControlSelector = "provider" | "mode" | "model" | "thinking" | `featur
 const EMPTY_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [];
 
 interface ControlledAgentControlsProps {
+  isAuto?: boolean;
+  onSelectAuto?: () => void;
   provider: string;
   providerOptions?: AgentControlOption[];
   selectedProviderId?: string;
@@ -140,6 +142,8 @@ interface ControlledAgentControlsProps {
 }
 
 export interface DraftAgentControlsProps {
+  isAuto?: boolean;
+  onSelectAuto?: () => void;
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider | null;
   modeOptions: AgentMode[];
@@ -204,11 +208,6 @@ function findOptionLabel(
   return selected?.label ?? fallback;
 }
 
-/**
- * The pill reads the agent's thinking option, so an option the model does not
- * list still has to show up as itself. Falling back to the first entry labelled
- * an agent on "Xhigh" as "Off" and never moved off it.
- */
 function resolveThinkingPillLabel(
   options: AgentControlOption[],
   selectedId: string | undefined,
@@ -294,10 +293,6 @@ function toThinkingControlOptions(options: AgentControlOption[] | undefined): Ag
   }));
 }
 
-/**
- * The picker's edit shortcut. Agent profiles are host config, so it lands on the
- * host settings section that owns the list.
- */
 function useEditAgentProfilesNavigation(
   serverId: string | null,
   isSupported: boolean,
@@ -412,6 +407,7 @@ function pickDesktopModel({
 }
 
 type AgentControlsSlice = {
+  routingMode?: string;
   provider: string;
   cwd: string | null;
   runtimeModelId: string | null;
@@ -431,6 +427,7 @@ function selectAgentControlsSlice(
     return null;
   }
   return {
+    routingMode: currentAgent.labels["pandaos.routing.mode"],
     provider: currentAgent.provider,
     cwd: currentAgent.cwd,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
@@ -507,6 +504,8 @@ function buildOpenChangeHandler(
 }
 
 function ControlledAgentControls({
+  isAuto,
+  onSelectAuto,
   provider,
   providerOptions,
   selectedProviderId,
@@ -818,6 +817,8 @@ function ControlledAgentControls({
             activeSheet={activeSheet}
             handleOpenSheet={handleOpenSheet}
             handleCloseSheet={handleCloseSheet}
+            isAuto={isAuto}
+            onSelectAuto={onSelectAuto}
             modelSelectorServerId={modelSelectorServerId}
           />
         ) : (
@@ -854,6 +855,8 @@ function ControlledAgentControls({
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
             glyphSize={layoutContextValue.glyphSize}
+            isAuto={isAuto}
+            onSelectAuto={onSelectAuto}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
@@ -864,6 +867,8 @@ function ControlledAgentControls({
 }
 
 interface DesktopAgentControlsContentProps {
+  isAuto?: boolean;
+  onSelectAuto?: () => void;
   provider: string;
   providerOptions?: AgentControlOption[];
   selectedProviderId?: string;
@@ -927,6 +932,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const {
+    isAuto,
+    onSelectAuto,
     provider,
     providerOptions,
     selectedProviderId,
@@ -1020,6 +1027,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
           <TooltipTrigger asChild triggerRefProp="ref">
             <View style={styles.modelControl}>
               <CombinedModelSelector
+                autoSelected={isAuto}
+                onSelectAuto={onSelectAuto}
                 providers={modelSelectorProviders}
                 selectedProvider={provider}
                 selectedModel={selectedModelId ?? ""}
@@ -1140,6 +1149,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 }
 
 interface SheetAgentControlsContentProps {
+  isAuto?: boolean;
+  onSelectAuto?: () => void;
   provider: string;
   selectedModelId?: string;
   selectedThinkingOptionId?: string;
@@ -1184,6 +1195,8 @@ interface SheetAgentControlsContentProps {
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
   const { t } = useTranslation();
   const {
+    isAuto,
+    onSelectAuto,
     provider,
     selectedModelId,
     selectedThinkingOptionId,
@@ -1286,6 +1299,8 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
 
   return canSelectModel ? (
     <CompactModelSheet
+      autoSelected={isAuto}
+      onSelectAuto={onSelectAuto}
       providers={modelSelectorProviders}
       selectedProvider={provider}
       selectedModel={selectedModelId ?? ""}
@@ -1617,8 +1632,6 @@ export const AgentControls = memo(function AgentControls({
           providerDefinitions: agentProviderDefinitions,
           modelsByProvider: agentProviderModels,
         });
-    // The other enabled providers are offered too: picking one of their models
-    // moves the agent to that provider instead of changing its model.
     const others = buildSelectableProviderSelectorProviders(
       (snapshotEntries ?? []).filter((entry) => entry.provider !== agent?.provider),
     );
@@ -1667,6 +1680,15 @@ export const AgentControls = memo(function AgentControls({
     pendingThinking,
     confirmedThinkingId,
   );
+
+  const handleSelectAuto = useCallback(async () => {
+    if (!client) return;
+    try {
+      await client.updateAgent(agentId, { labels: { "pandaos.routing.mode": "auto" } });
+    } catch (error) {
+      toast.error(toErrorMessage(error));
+    }
+  }, [agentId, client, toast]);
 
   const handleSelectModel = useCallback(
     async (modelId: string) => {
@@ -1731,8 +1753,6 @@ export const AgentControls = memo(function AgentControls({
     ],
   );
 
-  // A running agent is one provider's process, so only that provider's profiles
-  // can apply to it.
   const profileProviders = useMemo(() => (agentProvider ? [agentProvider] : []), [agentProvider]);
   const profileModeIds = useMemo(
     () => resolveSnapshotModeIds(snapshotSelectedEntry),
@@ -1882,6 +1902,8 @@ export const AgentControls = memo(function AgentControls({
       {commandCenterRegistration}
       {profileEditor.element}
       <ControlledAgentControls
+        isAuto={agent.routingMode === "auto"}
+        onSelectAuto={handleSelectAuto}
         provider={agent.provider}
         modelSelectorProviders={agentModelSelectorProviders}
         modelOptions={modelOptions}
@@ -1913,6 +1935,8 @@ export const AgentControls = memo(function AgentControls({
 });
 
 export function DraftAgentControls({
+  isAuto,
+  onSelectAuto,
   providerDefinitions,
   selectedProvider,
   modeOptions,
@@ -1955,8 +1979,6 @@ export function DraftAgentControls({
     [models],
   );
 
-  // The draft form is the one surface that can switch provider, so every profile
-  // the host can actually run is offered here.
   const profileProviders = useMemo(
     () => modelSelectorProviders.map((entry) => entry.id),
     [modelSelectorProviders],
@@ -2001,6 +2023,8 @@ export function DraftAgentControls({
     <>
       {profileEditor.element}
       <ControlledAgentControls
+        isAuto={isAuto}
+        onSelectAuto={onSelectAuto}
         provider={selectedProvider ?? ""}
         modelSelectorProviders={modelSelectorProviders}
         modelOptions={modelOptions}

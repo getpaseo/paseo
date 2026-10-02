@@ -1777,6 +1777,8 @@ export const es: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "Auto",
+    autoDescription: "Jev elige según la cuota disponible · hasta 2 segundos",
     title: "Seleccionar proveedor",
     selectModel: "Seleccionar modelo",
     selectedModel: "Seleccionar modelo ({{model}})",

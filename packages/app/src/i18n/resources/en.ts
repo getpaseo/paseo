@@ -1761,6 +1761,8 @@ export const en = {
     },
   },
   modelSelector: {
+    auto: "Auto",
+    autoDescription: "Jev chooses using available quota · up to 2 seconds",
     title: "Select provider",
     selectModel: "Select model",
     selectedModel: "Select model ({{model}})",

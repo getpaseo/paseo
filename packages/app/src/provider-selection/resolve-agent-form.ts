@@ -12,6 +12,7 @@ import {
 import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
+  routingMode?: "auto" | "manual";
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
@@ -194,8 +195,6 @@ function resolvePreferredModeId(input: {
   preferredModeId?: string | null;
   providerDef: AgentProviderDefinition | undefined;
 }): string {
-  // Saved modes are user intent. Provider create config validates unknown modes
-  // at submission time, so background form resolution should not erase them.
   const initialModeId = normalizeSelectedModeId(input.initialModeId);
   if (initialModeId) return initialModeId;
 
@@ -266,7 +265,6 @@ function resolveProvider(input: {
   preferences: FormPreferences | null;
 }): AgentProvider | null {
   const { currentProvider, userModified, initialValues, preferences } = input;
-  // Discovery readiness does not change the user's saved or explicit choice.
   if (userModified) return currentProvider;
   return initialValues?.provider ?? preferences?.provider ?? currentProvider;
 }
@@ -305,7 +303,6 @@ function resolveModelField(input: {
   const initialModel = normalizeSelectedModelId(initialValues?.model);
   const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
   // COMPAT(default-model-id): added in v0.7.2, remove after 2026-12-06.
-  // Older drafts used "default" before providers exposed concrete model IDs.
   if ((initialModel || preferredModel) === "default" && availableModels?.length) {
     return (
       findModelByReference(availableModels, "default")?.id || resolveDefaultModelId(availableModels)

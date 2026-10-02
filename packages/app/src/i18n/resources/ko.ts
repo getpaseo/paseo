@@ -1741,6 +1741,8 @@ export const ko: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "자동",
+    autoDescription: "Jev가 사용 가능한 한도로 선택 · 최대 2초",
     title: "프로바이더 선택",
     selectModel: "모델 선택",
     selectedModel: "모델 선택 ({{model}})",

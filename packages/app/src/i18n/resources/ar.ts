@@ -1726,6 +1726,8 @@ export const ar: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "تلقائي",
+    autoDescription: "يختار Jev حسب الحصة المتاحة · خلال ثانيتين",
     title: "حدد المزود",
     selectModel: "حدد النموذج",
     selectedModel: "اختر الموديل ({{model}})",

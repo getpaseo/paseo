@@ -146,12 +146,13 @@ const headerSettingsMapping = (disabled: boolean) => (theme: Theme) => ({
 });
 
 interface ModelBrowserInput {
+  autoSelected?: boolean;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
   autoFocusSearch?: boolean;
-  /** Pinned above the provider list on the root view. `null` hides the section. */
+
   profiles?: AgentProfilePicker | null;
   serverId?: string | null;
 }
@@ -177,9 +178,11 @@ export interface ModelBrowserState {
 }
 
 interface ModelBrowserProps {
+  autoSelected?: boolean;
+  onSelectAuto?: () => void;
   state: ModelBrowserState;
   onSelect: (provider: string, modelId: string) => void;
-  /** Applying a profile resolves the pick and dismisses, exactly like a model row. */
+
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -187,11 +190,11 @@ interface ModelBrowserProps {
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
   scrolling?: "sheet" | "independent";
-  /** Empty focused search shows all model rows instead of the browse root. */
+
   searchAllOnFocus?: boolean;
-  /** Replaces provider rows only while the all-provider search is empty. */
+
   rootBrowseContent?: React.ReactNode;
-  /** Hide the pinned Profiles section while still using rows for model matching. */
+
   showProfilesSection?: boolean;
 }
 
@@ -269,6 +272,7 @@ export function useModelBrowser({
   selectedProvider,
   selectedModel,
   isLoading,
+  autoSelected = false,
   autoFocusSearch = isWeb,
   profiles = null,
   serverId = null,
@@ -379,13 +383,15 @@ export function useModelBrowser({
 
   const selectedModelLabel = useMemo(
     () =>
-      resolveSelectedModelLabel({
-        providers,
-        selectedProvider,
-        selectedModel,
-        isLoading,
-      }),
-    [isLoading, providers, selectedModel, selectedProvider],
+      autoSelected
+        ? t("modelSelector.auto")
+        : resolveSelectedModelLabel({
+            providers,
+            selectedProvider,
+            selectedModel,
+            isLoading,
+          }),
+    [autoSelected, isLoading, providers, selectedModel, selectedProvider, t],
   );
 
   const triggerLabel = useMemo(() => {
@@ -433,7 +439,7 @@ interface ModelBrowserPressableProps {
   onPress: () => void;
   hitSlop?: number;
   accessibilityLabel?: string;
-  /** Only rows that can express selection pass this; the rest stay unannotated. */
+
   accessibilitySelected?: boolean;
   testID?: string;
 }
@@ -449,9 +455,6 @@ function ModelBrowserPressable({
 }: ModelBrowserPressableProps) {
   const independentScrollGesture = useContext(IndependentScrollGestureContext);
   const [pressed, setPressed] = useState(false);
-  // Android's scroll handler must keep the pointer stream until release so a
-  // fling survives leaving the short viewport. A simultaneous Tap keeps rows
-  // interactive, while maxDistance makes a real scroll fail instead of select.
   const tapGesture = useMemo(() => {
     const gesture = Gesture.Tap()
       .maxDistance(8)
@@ -547,7 +550,7 @@ function ModelBrowserRow({
   selected?: boolean;
   selectionIndicator?: boolean;
   tone?: ModelBrowserRowTone;
-  /** For rows that offer an action rather than name a thing you can pick. */
+
   labelMuted?: boolean;
   spacing?: "model" | "provider";
   onPress: () => void;
@@ -573,8 +576,6 @@ function ModelBrowserRow({
     <ModelBrowserPressable
       onPress={onPress}
       style={pressableStyle}
-      // A profile row is an action, not a selection, so it carries no selection
-      // state at all — only rows that draw the checkmark claim one.
       accessibilitySelected={selectionIndicator ? selected : undefined}
       testID={testID}
     >
@@ -885,11 +886,6 @@ function AgentProfilePickerRowView({
   );
 }
 
-/**
- * Pinned above the provider list. Rows are actions, not selections: applying a
- * profile writes its values into the composer and nothing stays bound to it, so
- * there is no checkmark and no active row to show.
- */
 function AgentProfilesPickerSection({
   rows,
   onApplyProfile,
@@ -1055,8 +1051,6 @@ function GroupedProviderRows({
 }
 
 function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
-  // Prevent the parent sheet from cancelling Android's native scroll when the
-  // finger crosses this viewport; receiving ACTION_UP is what preserves fling.
   const nativeScrollGesture = useMemo(
     () =>
       Gesture.Native()
@@ -1507,6 +1501,8 @@ function ModelBrowserContent({
 }
 
 export function ModelBrowser({
+  autoSelected,
+  onSelectAuto,
   state,
   onSelect,
   onApplyProfile,
@@ -1520,29 +1516,47 @@ export function ModelBrowser({
   rootBrowseContent,
   showProfilesSection,
 }: ModelBrowserProps) {
+  const { t } = useTranslation();
+  const autoIcon = useMemo(
+    () => <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />,
+    [],
+  );
   return (
-    <ModelBrowserContent
-      serverId={state.serverId}
-      view={state.view}
-      providers={state.providers}
-      selectedProvider={state.selectedProvider}
-      selectedModel={state.selectedModel}
-      searchQuery={state.searchQuery}
-      isSearchFocused={state.isSearchFocused}
-      profiles={state.profiles}
-      onSelect={onSelect}
-      onApplyProfile={onApplyProfile}
-      onEditProfiles={onEditProfiles}
-      onCreateProfile={onCreateProfile}
-      onEditProfile={onEditProfile}
-      onDrillDown={state.drillDown}
-      onRetryProvider={onRetryProvider}
-      isRetryingProvider={isRetryingProvider}
-      scrolling={scrolling}
-      searchAllOnFocus={searchAllOnFocus}
-      rootBrowseContent={rootBrowseContent}
-      showProfilesSection={showProfilesSection}
-    />
+    <>
+      {onSelectAuto ? (
+        <ModelBrowserRow
+          label={t("modelSelector.auto")}
+          description={t("modelSelector.autoDescription")}
+          leadingSlot={autoIcon}
+          selected={autoSelected}
+          selectionIndicator
+          onPress={onSelectAuto}
+          testID="agent-model-auto"
+        />
+      ) : null}
+      <ModelBrowserContent
+        serverId={state.serverId}
+        view={state.view}
+        providers={state.providers}
+        selectedProvider={state.selectedProvider}
+        selectedModel={state.selectedModel}
+        searchQuery={state.searchQuery}
+        isSearchFocused={state.isSearchFocused}
+        profiles={state.profiles}
+        onSelect={onSelect}
+        onApplyProfile={onApplyProfile}
+        onEditProfiles={onEditProfiles}
+        onCreateProfile={onCreateProfile}
+        onEditProfile={onEditProfile}
+        onDrillDown={state.drillDown}
+        onRetryProvider={onRetryProvider}
+        isRetryingProvider={isRetryingProvider}
+        scrolling={scrolling}
+        searchAllOnFocus={searchAllOnFocus}
+        rootBrowseContent={rootBrowseContent}
+        showProfilesSection={showProfilesSection}
+      />
+    </>
   );
 }
 

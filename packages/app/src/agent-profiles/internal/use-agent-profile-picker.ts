@@ -16,7 +16,6 @@ import {
 import { buildAgentProfileTags } from "./profile-summary";
 import { useAgentProfiles } from "./use-agent-profiles";
 
-/** The draft composer owns profile application as one state transition. */
 export interface DraftAgentProfileControls {
   applyProfile: (profile: MaterializedAgentProfile) => void;
 }
@@ -25,17 +24,16 @@ export type AgentProfileApplyTarget =
   | { kind: "agent"; agentId: string; availableModeIds: readonly string[] | null }
   | { kind: "draft"; controls: DraftAgentProfileControls };
 
-/** Everything the model picker renders for one profile. It never sees the profile itself. */
 export interface AgentProfilePickerRow {
   id: string;
   provider: string;
-  /** Empty when the profile names no model. */
+
   modelId: string;
-  /** Icon registry key and identity colour; either may be empty for the default glyph. */
+
   icon: string;
   color: string;
   name: string;
-  /** "Claude Code · Opus 5 · Plan · Think hard" */
+
   summary: string;
 }
 
@@ -46,22 +44,11 @@ export interface AgentProfilePicker {
 
 export interface UseAgentProfilePickerInput {
   serverId: string | null;
-  /**
-   * Providers this composer can actually run; pass a stable reference. A profile
-   * naming anything else is hidden rather than shown as a row that cannot do
-   * what it says — a live agent is one provider's process and cannot switch, and
-   * the draft form ignores a provider the host does not offer.
-   */
+
   availableProviders: readonly string[];
   target: AgentProfileApplyTarget;
 }
 
-/**
- * The agent-profiles section of the model picker: the rows to draw, and what
- * pressing one does. A supported host returns an empty row list when there is
- * nothing applicable so the picker can retain its settings shortcut without
- * pinning an empty section. Unsupported or still-loading hosts return `null`.
- */
 export function useAgentProfilePicker(
   input: UseAgentProfilePickerInput,
 ): AgentProfilePicker | null {
@@ -150,7 +137,8 @@ export function useAgentProfilePicker(
         return;
       }
       void client
-        .applyAgentConfig(target.agentId, toAgentConfigApply(reconciled))
+        .updateAgent(target.agentId, { labels: { "pandaos.routing.mode": "manual" } })
+        .then(() => client.applyAgentConfig(target.agentId, toAgentConfigApply(reconciled)))
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[useAgentProfilePicker] applyAgentConfig failed", error);

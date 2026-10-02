@@ -1781,6 +1781,8 @@ export const fr: TranslationResources = {
     },
   },
   modelSelector: {
+    auto: "Auto",
+    autoDescription: "Jev choisit selon le quota disponible · 2 secondes maximum",
     title: "Sélectionnez le fournisseur",
     selectModel: "Sélectionnez le modèle",
     selectedModel: "Sélectionnez le modèle ({{model}})",
