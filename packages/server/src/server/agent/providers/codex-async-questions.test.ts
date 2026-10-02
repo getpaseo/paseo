@@ -9,6 +9,10 @@ import {
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import { createPaseoToolCatalog } from "../tools/paseo-tools.js";
+import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
+import { composeDaemonAppendSystemPrompt } from "../writing-block-instruction.js";
 
 const questionItem = {
   type: "agentMessage",
@@ -40,12 +44,12 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
   const started = waitForNextEvent(session, "turn_started");
   appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn" });
   await started;
-  async function ask() {
-    const shown = waitForTimelineToolCall(session, questionItem.id);
+  async function ask(item = questionItem) {
+    const shown = waitForTimelineToolCall(session, item.id);
     appServer.child.stdout.write(
       JSON.stringify({
         method: "item/completed",
-        params: { threadId: "thread-1", turnId: "native-turn", item: questionItem },
+        params: { threadId: "thread-1", turnId: "native-turn", item },
       }) + "\n",
     );
     await shown;
@@ -74,6 +78,92 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
 }
 
 const answer = { behavior: "allow" as const, updatedInput: { answers: { "Question 1": "Green" } } };
+
+test("an agent withdraws only its obsolete async questions with a persisted explanation", async () => {
+  const { session, appServer, ask, events } = await setup();
+  const { manager, agent } = await manage(session);
+  const dependencies = {
+    agentManager: manager,
+    agentStorage: new AgentStorage(tmpdir(), createTestLogger()),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    logger: createTestLogger(),
+  };
+  const catalog = createPaseoToolCatalog({ ...dependencies, callerAgentId: agent.id });
+  const reason = "The existing API key worked; browser login is no longer needed.";
+  let metadata: Record<string, unknown> | undefined;
+  try {
+    await ask();
+    await ask({ ...questionItem, id: "still-needed" });
+    const approvalShown = waitForNextEvent(
+      session,
+      "permission_requested",
+      (event) => event.request.kind !== "question",
+    );
+    appServer.requestCommandApproval({
+      itemId: "approval",
+      threadId: "thread-1",
+      turnId: "native-turn",
+      command: "echo approved",
+      cwd: tmpdir(),
+      reason: "Needs approval",
+    });
+    const approvalId = (await approvalShown).request.id;
+    expect(catalog.getTool("dismiss_questions")).toBeDefined();
+    await expect(
+      createPaseoToolCatalog(dependencies).executeTool("dismiss_questions", { reason }),
+    ).rejects.toThrow("Only an agent");
+    await expect(catalog.executeTool("dismiss_questions", { reason: " " })).rejects.toThrow();
+    expect(manager.getPendingPermissions(agent.id)).toHaveLength(3);
+    const result = await catalog.executeTool("dismiss_questions", {
+      reason,
+      requestIds: ["permission-async-question-1", approvalId, "already-resolved"],
+    });
+    expect(result.structuredContent).toEqual({
+      dismissedRequestIds: ["permission-async-question-1"],
+    });
+    expect(
+      manager
+        .getPendingPermissions(agent.id)
+        .map((request) => request.id)
+        .sort(),
+    ).toEqual(["permission-still-needed", approvalId].sort());
+    expect(events.findLast((event) => event.type === "timeline")).toMatchObject({
+      item: { detail: { text: expect.stringContaining(`Question closed: ${reason}`) } },
+    });
+    metadata = manager.getAgent(agent.id)?.persistence?.metadata;
+    expect(metadata?.asyncQuestions).toEqual([
+      expect.objectContaining({ resolution: "dismissed", dismissalReason: reason }),
+      expect.not.objectContaining({ resolution: expect.anything() }),
+    ]);
+    expect(
+      (
+        await catalog.executeTool("dismiss_questions", {
+          reason,
+          requestIds: ["permission-async-question-1"],
+        })
+      ).structuredContent,
+    ).toEqual({ dismissedRequestIds: [] });
+    expect(
+      appServer
+        .requests()
+        .filter((request) => ["turn/interrupt", "turn/steer"].includes(request.method)),
+    ).toEqual([]);
+    expect(composeDaemonAppendSystemPrompt("")).toContain("dismiss_questions");
+  } finally {
+    await manager.closeAgent(agent.id);
+  }
+  const resumed = await setup(metadata);
+  try {
+    expect(resumed.session.getPendingPermissions().map((request) => request.id)).toEqual([
+      "permission-still-needed",
+    ]);
+    expect(resumed.session.describePersistence()?.metadata?.asyncQuestions).toEqual(
+      metadata?.asyncQuestions,
+    );
+  } finally {
+    await resumed.session.close();
+  }
+});
 
 async function setupRewind(fail = false) {
   const records = [
