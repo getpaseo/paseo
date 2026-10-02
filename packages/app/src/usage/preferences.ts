@@ -77,11 +77,15 @@ export function isUsagePinned(
 }
 
 /** The first edit snapshots the displayed defaults before toggling one window. */
-export function toggleUsagePin(
-  preferences: UsagePreferences,
-  pin: UsagePin,
-  reports: readonly UsageReportEntry[],
-): UsagePreferences {
+export function toggleUsagePin({
+  preferences,
+  pin,
+  reports,
+}: {
+  preferences: UsagePreferences;
+  pin: UsagePin;
+  reports: readonly UsageReportEntry[];
+}): UsagePreferences {
   const selected = effectiveUsagePins(preferences, reports);
   const pins = selected.some((existing) => samePin(existing, pin))
     ? selected.filter((existing) => !samePin(existing, pin))

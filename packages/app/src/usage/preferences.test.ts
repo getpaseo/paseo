@@ -13,11 +13,15 @@ const codexWeekly = { sourceId: "codex", windowId: "weekly" };
 
 describe("usage preferences", () => {
   it("pins windows in the order the user pins them", () => {
-    const pinned = toggleUsagePin(
-      toggleUsagePin(DEFAULT_USAGE_PREFERENCES, codexWeekly, []),
-      claudeFiveHour,
-      [],
-    );
+    const pinned = toggleUsagePin({
+      preferences: toggleUsagePin({
+        preferences: DEFAULT_USAGE_PREFERENCES,
+        pin: codexWeekly,
+        reports: [],
+      }),
+      pin: claudeFiveHour,
+      reports: [],
+    });
 
     expect(pinned.pins).toEqual([codexWeekly, claudeFiveHour]);
     expect(isUsagePinned(pinned, { sourceId: "codex", windowId: "weekly" }, [])).toBe(true);
@@ -26,11 +30,11 @@ describe("usage preferences", () => {
 
   it("unpins a pinned window and keeps the others in order", () => {
     const three = [codexWeekly, claudeFiveHour, { sourceId: "claude", windowId: "weekly" }];
-    const unpinned = toggleUsagePin(
-      { displayAs: "used", pins: three, serverId: null },
-      claudeFiveHour,
-      [],
-    );
+    const unpinned = toggleUsagePin({
+      preferences: { displayAs: "used", pins: three, serverId: null },
+      pin: claudeFiveHour,
+      reports: [],
+    });
 
     expect(unpinned.pins).toEqual([codexWeekly, { sourceId: "claude", windowId: "weekly" }]);
   });
@@ -94,11 +98,19 @@ it("default sidebar windows are pinned on cards and the first toggle removes onl
     { sourceId: "codex", windowId: "five_hour" },
   ];
   for (const pin of pins) expect(isUsagePinned(DEFAULT_USAGE_PREFERENCES, pin, reports)).toBe(true);
-  const changed = toggleUsagePin(DEFAULT_USAGE_PREFERENCES, pins[1]!, reports);
+  const changed = toggleUsagePin({
+    preferences: DEFAULT_USAGE_PREFERENCES,
+    pin: pins[1]!,
+    reports,
+  });
   expect(isUsagePinned(changed, pins[1]!, reports)).toBe(false);
   expect(isUsagePinned(changed, pins[0]!, reports)).toBe(true);
   expect(isUsagePinned(changed, pins[2]!, reports)).toBe(true);
-  const empty = toggleUsagePin(toggleUsagePin(changed, pins[0]!, reports), pins[2]!, reports);
+  const empty = toggleUsagePin({
+    preferences: toggleUsagePin({ preferences: changed, pin: pins[0]!, reports }),
+    pin: pins[2]!,
+    reports,
+  });
   const restored = UsagePreferencesSchema.parse(JSON.parse(JSON.stringify(empty)));
   for (const pin of pins) expect(isUsagePinned(restored, pin, reports)).toBe(false);
 });

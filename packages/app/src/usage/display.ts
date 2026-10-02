@@ -36,7 +36,9 @@ export function useUsagePreferences(serverId?: string): {
   );
   const togglePin = useCallback(
     (pin: UsagePin) => {
-      void updateSettings((current) => ({ usage: toggleUsagePin(current.usage, pin, reports) }));
+      void updateSettings((current) => ({
+        usage: toggleUsagePin({ preferences: current.usage, pin, reports }),
+      }));
     },
     [updateSettings, reports],
   );

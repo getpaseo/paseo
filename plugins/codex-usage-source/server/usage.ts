@@ -105,11 +105,15 @@ export async function readAuth(
   };
 }
 
-function usageWindows(
-  rateLimit: z.infer<typeof rateLimitSchema> | null | undefined,
-  scope?: { id: string; label: string },
+function usageWindows({
+  rateLimit,
+  scope,
   summary = false,
-): UsageWindow[] {
+}: {
+  rateLimit: z.infer<typeof rateLimitSchema> | null | undefined;
+  scope?: { id: string; label: string };
+  summary?: boolean;
+}): UsageWindow[] {
   if (!rateLimit) return [];
   return (["primary_window", "secondary_window"] as const).flatMap((slot) => {
     const value = rateLimit[slot];
@@ -166,16 +170,22 @@ export async function fetchUsage(
   if (text.trim().startsWith("<")) throw new Error("Codex usage API returned HTML");
   const usage = responseSchema.parse(JSON.parse(text));
   const windows = [
-    ...usageWindows(usage.rate_limit, undefined, true),
+    ...usageWindows({ rateLimit: usage.rate_limit, summary: true }),
     ...(usage.additional_rate_limits ?? []).flatMap((limit) => {
       const identity = limit.metered_feature || limit.limit_name;
       if (!identity) return []; // An unnamed limit has no stable quota identity.
-      return usageWindows(limit.rate_limit, {
-        id: `limit:${encodeURIComponent(identity)}`,
-        label: limit.limit_name || identity,
+      return usageWindows({
+        rateLimit: limit.rate_limit,
+        scope: {
+          id: `limit:${encodeURIComponent(identity)}`,
+          label: limit.limit_name || identity,
+        },
       });
     }),
-    ...usageWindows(usage.code_review_rate_limit, { id: "code_review", label: "Code review" }),
+    ...usageWindows({
+      rateLimit: usage.code_review_rate_limit,
+      scope: { id: "code_review", label: "Code review" },
+    }),
   ];
   const balance = usage.credits?.balance;
   return {
