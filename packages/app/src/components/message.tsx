@@ -1513,9 +1513,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   phase,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
-  const markdownParser = useMemo(createAssistantMarkdownParser, []);
+  const markdownParser = useMemo(() => createAssistantMarkdownParser({ fenceIdentity: true }), []);
   const streamingMarkdownParser = useMemo(
-    () => createAssistantMarkdownParser({ streaming: true }),
+    () => createAssistantMarkdownParser({ streaming: true, fenceIdentity: true }),
     [],
   );
   const renderedMessage = useMemo(

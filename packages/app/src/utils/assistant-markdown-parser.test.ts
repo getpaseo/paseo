@@ -171,7 +171,7 @@ describe("createAssistantMarkdownParser", () => {
 it("numbers all fences consistently through streaming and completed parses", () => {
   const source = "```json\n{}\n```\n\n> ```bash\n> echo hello\n> ```\n\n~~~python\nprint(1)\n~~~";
   for (const streaming of [false, true]) {
-    const parser = createAssistantMarkdownParser({ streaming });
+    const parser = createAssistantMarkdownParser({ streaming, fenceIdentity: true });
     for (let render = 0; render < 2; render++) {
       expect(
         parser
@@ -181,4 +181,10 @@ it("numbers all fences consistently through streaming and completed parses", () 
       ).toEqual(["0", "1", "2"]);
     }
   }
+});
+
+it("keeps fence identity out of rendered HTML by default", () => {
+  expect(createAssistantMarkdownParser().render("```bash\necho hi\n```")).toBe(
+    '<pre><code class="language-bash">echo hi\n</code></pre>\n',
+  );
 });

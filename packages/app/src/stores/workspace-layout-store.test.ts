@@ -1103,6 +1103,7 @@ describe("workspace-layout-store actions", () => {
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
       explorerSidebarPaneIdByWorkspace: {},
+      sidePaneIdByWorkspace: {},
     });
   });
 
