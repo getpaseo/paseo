@@ -15,7 +15,7 @@ export interface WorkspaceTabLayoutMetrics {
 
 export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
-  tabLabelWidths: number[];
+  tabLabelWidths: (number | null)[];
   metrics: WorkspaceTabLayoutMetrics;
 }
 
@@ -38,6 +38,21 @@ export function retainWorkspaceTabMeasuredWidth(
     return currentWidth;
   }
   return measuredWidth;
+}
+
+export function scrollOffsetToRevealWorkspaceTab(
+  widths: readonly number[],
+  selectedIndex: number,
+  viewportWidth: number,
+  gap: number,
+  padding: number,
+): number {
+  if (selectedIndex < 0 || selectedIndex >= widths.length || viewportWidth <= 0) return 0;
+  const end =
+    padding +
+    widths.slice(0, selectedIndex + 1).reduce((total, width) => total + width, 0) +
+    gap * selectedIndex;
+  return Math.max(0, end + padding - viewportWidth);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -74,8 +89,13 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  // An unmeasured label starts at the chip's known minimum. The row stays
+  // interactive if native skips the hidden Text onLayout during a fold, and
+  // exact measurements take over whenever they arrive.
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
-    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
+    labelWidth === null
+      ? input.metrics.minTabWidth
+      : clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
   );
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
   const minimumTotalWidth = input.metrics.minTabWidth * tabCount;

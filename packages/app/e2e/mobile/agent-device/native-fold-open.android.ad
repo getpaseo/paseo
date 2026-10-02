@@ -1,0 +1,8 @@
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-tabs-scroll\"" 12000
+wait "label=\"${DRAFT_TEXT}\"" 10000
+wait "label=\"Settings\"" 10000
+close
