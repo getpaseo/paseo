@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { ImportSessionFlow } from "../support/helpers/import-session";
 import {
   connectNewWorkspaceDaemonClient,
@@ -271,6 +272,31 @@ test("captures the desktop import sheet and command-center entry", async ({ page
     await flow.expectCommandCenterMatch();
     await capture(page, testInfo, "12-desktop-command-center-import.png");
   });
+});
+
+test("an active-writer conflict shows specific guidance instead of a generic failure", async ({
+  page,
+}, testInfo) => {
+  const gate = await installDaemonWebSocketGate(page);
+  try {
+    const flow = new ImportSessionFlow(page);
+    await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+    await flow.openGlobally();
+    const row = page.getByTestId("import-session-session-claude-fixture-root-10");
+    await row.scrollIntoViewIfNeeded();
+
+    gate.failNextImportRequest();
+    await row.click();
+
+    const guidance = page.getByText(
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    );
+    await expect(guidance).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("import-session-sheet")).toBeVisible();
+    await capture(page, testInfo, "13-mobile-active-writer-guidance.png");
+  } finally {
+    gate.restore();
+  }
 });
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
