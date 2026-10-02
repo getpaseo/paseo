@@ -3439,6 +3439,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   > | null = null;
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
+  private readOnly = false;
   private currentTurnId: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
@@ -3634,7 +3635,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.loadSkills();
 
       if (this.currentThreadId) {
-        await this.ensureThreadLoaded();
+        await this.ensureThreadLoaded({ allowReadOnly: true });
         await this.loadPersistedHistory(this.client);
         await this.applyDefaultModelAndThinking();
       }
@@ -4044,7 +4045,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private async ensureThreadLoaded(): Promise<void> {
+  private async ensureThreadLoaded(options?: { allowReadOnly?: boolean }): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     const params: Record<string, unknown> = { threadId: this.currentThreadId };
     const developerInstructions = composeSystemPromptParts(
@@ -4062,14 +4063,18 @@ export class CodexAppServerAgentSession implements AgentSession {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
       if (ids.includes(this.currentThreadId)) {
+        this.readOnly = false;
+        this.cachedRuntimeInfo = null;
         return;
       }
-      const response = await this.client.request("thread/resume", params);
-      this.rememberResolvedSandboxPolicy(response);
-    } catch (error) {
-      const threadId = this.currentThreadId;
-      const message = error instanceof Error ? error.message : String(error);
-      if (isArchivedCodexThreadResumeError(error, threadId)) {
+      let response: unknown;
+      try {
+        response = await this.client.request("thread/resume", params);
+      } catch (error) {
+        const threadId = this.currentThreadId;
+        if (!isArchivedCodexThreadResumeError(error, threadId)) {
+          throw error;
+        }
         try {
           await this.client.request("thread/unarchive", { threadId });
         } catch (unarchiveError) {
@@ -4077,10 +4082,31 @@ export class CodexAppServerAgentSession implements AgentSession {
             throw unarchiveError;
           }
         }
-        const response = await this.client.request("thread/resume", params);
-        this.rememberResolvedSandboxPolicy(response);
+        response = await this.client.request("thread/resume", params);
         this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
-        return;
+      }
+      this.rememberResolvedSandboxPolicy(response);
+      this.readOnly = false;
+      this.cachedRuntimeInfo = null;
+    } catch (error) {
+      const threadId = this.currentThreadId;
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("already has an active writer")) {
+        this.readOnly = true;
+        this.cachedRuntimeInfo = null;
+        // A history read needs no writer. Mutating operations call this again
+        // without the fallback so they cannot write through another client.
+        if (options?.allowReadOnly) {
+          this.logger.info(
+            { threadId },
+            "Reading Codex history while another client owns the writer",
+          );
+          return;
+        }
+        throw new Error(
+          "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry. You can still read its history in Paseo.",
+          { cause: error },
+        );
       }
       this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
       throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
@@ -4567,15 +4593,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.currentThreadId) {
       await this.ensureThread();
     }
+    const extra = this.resolvedCollaborationMode
+      ? { collaborationMode: this.resolvedCollaborationMode.name }
+      : undefined;
     const info: AgentRuntimeInfo = {
       provider: CODEX_PROVIDER,
       sessionId: this.currentThreadId,
       model: this.config.model ?? null,
       thinkingOptionId: normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null,
       modeId: this.currentMode ?? null,
-      extra: this.resolvedCollaborationMode
-        ? { collaborationMode: this.resolvedCollaborationMode.name }
-        : undefined,
+      extra: this.readOnly ? { ...extra, readOnly: true } : extra,
     };
     this.cachedRuntimeInfo = info;
     return { ...info };

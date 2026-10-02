@@ -8,6 +8,7 @@ import {
   collectProviderErrorRows,
   computeEmptyState,
   formatDirectoryLabel,
+  getImportErrorMessage,
   getPromptPreview,
   getSessionTitle,
   hasMoreSessions,
@@ -482,5 +483,31 @@ describe("filterSessionEntries", () => {
     ).toEqual(["title", "prompt", "directory"]);
     expect(filterSessionEntries(entries, "missing", ALL_FILTER_VALUE)).toEqual([]);
     expect(filterSessionEntries(entries, "", ALL_FILTER_VALUE)).toEqual(entries);
+  });
+});
+
+describe("getImportErrorMessage", () => {
+  it("explains how to release a Codex session with an active writer", () => {
+    expect(
+      getImportErrorMessage(
+        new Error("Failed to resume Codex thread abc: thread abc already has an active writer"),
+      ),
+    ).toBe(
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    );
+  });
+
+  it("preserves other import failure details", () => {
+    expect(getImportErrorMessage(new Error("Session not found"))).toBe(
+      "Could not import selected session. Session not found",
+    );
+    expect(getImportErrorMessage(new Error("another provider already has an active writer"))).toBe(
+      "Could not import selected session. another provider already has an active writer",
+    );
+  });
+
+  it("uses the generic message when no error details are available", () => {
+    expect(getImportErrorMessage(new Error("  "))).toBe("Could not import selected session.");
+    expect(getImportErrorMessage(null)).toBe("Could not import selected session.");
   });
 });
