@@ -43,7 +43,7 @@ Good uses include routing a task, ranking a short candidate set, checking releva
 
 Never place API keys, passwords, tokens, private keys, or other secrets in the state or questions.
 
-Paseo can also let Jev pick the model and thinking depth for every turn. List supported models and allowed thinking levels per provider in `daemon.systemOne.routing`. A profile-specific entry overrides its provider-family entry:
+Select **Auto** in the model chooser to let Jev pick the model and thinking depth for a session. Selecting a specific provider or model always keeps that choice. Enabling System One by itself does not enable automatic routing. List supported models and allowed thinking levels per provider in `daemon.systemOne.routing`. A profile-specific entry overrides its provider-family entry:
 
 ```json
 "systemOne": {
@@ -55,13 +55,15 @@ Paseo can also let Jev pick the model and thinking depth for every turn. List su
 }
 ```
 
-Jev receives the original task and current request, together with eligible profile/model/effort choices. The default model-family priority is Sol, Opus, Sonnet, then Luna. Astra is excluded; automatic Opus xhigh and non-Luna max are excluded. Internal helper agents are not routed. A manual model change after routing keeps that session's selection until recovery needs another available route.
+Jev receives the original task and current request, together with eligible profile/model/effort choices. The default model-family priority is Sol, Opus, Sonnet, then Luna. Astra is excluded; automatic Opus xhigh and non-Luna max are excluded. Internal helper agents are not routed. An explicit model or provider change leaves Auto mode. Manual sessions keep their provider, model and thinking depth through retries and quota waits; Jev never silently substitutes another route.
 
 Before selecting an alternative, Paseo checks the same provider-usage snapshot shown in Host Usage. A profile at or above 95% in an unexpired window is excluded. Unknown or failed usage is not proof that an alternative account is available. Actual quota failures keep that account excluded until its reset or a newer available usage snapshot.
 
-Recovery first preserves the current model and effort on another verified available account. If none supports them, Jev reassesses the remaining supported routes. An uncertain task label does not block a confident route. If Jev is disabled, unavailable, or uncertain, recovery selects a verified available default using the model-family priority, preferring high effort and lower account usage. Duplicate configured routes are offered only once. Jev uncertainty alone never makes a free alternative wait for an exhausted account's reset.
+In Auto mode, usage lookup and Jev share a two-second deadline before launch. The deadline aborts the actual TypeSafe request. If classification times out or is uncertain, Auto selects a verified available default using the priority below; if usage is unavailable, it starts the current route and reports that availability was unverified.
 
-When no verified available route remains, the task stays pending until the earliest known reset or a fresh usage/catalog change. Cancel stops that pending task. Capacity errors retry the same model briefly before trying alternatives; quota errors skip those capacity retries. Completed tool checkpoints remain in the session history so recovery does not replay finished writes.
+Auto recovery first preserves the current model and effort on another verified available account. If none supports them, Jev reassesses the remaining supported routes. An uncertain task label does not block a confident route. If Jev is disabled, unavailable, or uncertain, recovery selects a verified available default using the model-family priority, preferring high effort and lower account usage. Duplicate configured routes are offered only once. Jev uncertainty alone never makes a free alternative wait for an exhausted account's reset.
+
+Manual quota waits resume the selected route after its provider reset. Choose Auto explicitly to permit other routes. When Auto has no verified available route remaining, the task stays pending until the earliest known reset or a fresh usage/catalog change. Cancel stops that pending task. Capacity errors retry the same model briefly before trying alternatives; quota errors skip those capacity retries. Completed tool checkpoints remain in the session history so recovery does not replay finished writes.
 
 Shadow mode measures whether predicting an agent's next step would pay off before anything acts on a prediction. Set `daemon.systemOne.shadow` to `true`: after every tool call of every provider, Jev predicts the next step (read, search, edit, verify, shell, fetch, subagent, MCP tool, or end of turn), and Paseo scores it against what the agent really did. Nothing is executed. Results go to `$PASEO_HOME/system-one/shadow.jsonl`; `node scripts/shadow-stats.mjs` prints hit and top-2 rates per provider and step, how much of the time the agent's model spent deciding versus running tools, whether predictions were ready in time, the time prefetching could have saved, and an upper bound for model decisions Jev could have made instead (it predicts the kind of step, not its arguments).
 

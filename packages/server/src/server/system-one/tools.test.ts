@@ -115,6 +115,48 @@ describe("registerSystemOneTools", () => {
     expect(JSON.stringify(result)).not.toContain("private-key");
   });
 
+  it("forwards the caller deadline to the actual configured TypeSafe request", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-routing-deadline-"));
+    temporaryDirectories.push(paseoHome);
+    new SystemOneCredentialStore(paseoHome, { env: {}, sharedEnvFile: "/missing" }).set(
+      "fixture-only",
+    );
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_url: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            signal = init!.signal as AbortSignal;
+            signal.addEventListener(
+              "abort",
+              reject.bind(null, new DOMException("deadline", "AbortError")),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const source = createConfiguredSystemOneDecisionSource(paseoHome, {
+      get: () =>
+        ({ systemOne: { enabled: true, model: "jev-latest" } }) as ReturnType<
+          DaemonConfigStore["get"]
+        >,
+    });
+    const controller = new AbortController();
+    const pending = source.decide(
+      {
+        state: { task: "Choose a route" },
+        questions: { route: { type: "choice", criteria: { a: "First" } } },
+      },
+      { signal: controller.signal },
+    );
+    const assertion = expect(pending).rejects.toThrow("timed out");
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    controller.abort();
+    await assertion;
+    expect(signal!.aborted).toBe(true);
+  });
+
   it("falls back to the next key when TypeSafe rejects the saved one", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-system-one-tools-"));
     temporaryDirectories.push(paseoHome);

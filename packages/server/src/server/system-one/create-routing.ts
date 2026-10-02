@@ -9,6 +9,7 @@ export interface CreateRouteInput {
   prompt: AgentPromptInput | string;
   cwd: string;
   isAgentScoped: boolean;
+  routingMode?: "auto" | "manual";
 }
 export interface CreateRoute {
   provider: string;
@@ -23,6 +24,7 @@ export function createSystemOneCreateRouter(options: {
   profileRouter: ProfileRouter;
 }): CreateRouter {
   return async (input) => {
+    if (input.routingMode !== "auto") return null;
     const route = await options.profileRouter({
       provider: input.requestedProvider,
       model: input.requestedModel,
@@ -30,6 +32,7 @@ export function createSystemOneCreateRouter(options: {
       cwd: input.cwd,
       prompt: input.prompt,
       explicitEffort: !input.isAgentScoped && input.requestedThinking === "max",
+      routingMode: input.routingMode,
     });
     return route
       ? {
@@ -49,6 +52,22 @@ export function createSystemOneCreateRouter(options: {
             reason: route.reason,
           },
         }
-      : null;
+      : {
+          provider: input.requestedProvider,
+          model: input.requestedModel,
+          thinkingOptionId: input.requestedThinking,
+          routingNotice: {
+            fromProfile: input.requestedProvider,
+            toProfile: input.requestedProvider,
+            fromModel: input.requestedModel ?? null,
+            model: input.requestedModel ?? null,
+            fromEffort: input.requestedThinking ?? null,
+            effort: input.requestedThinking ?? null,
+            resetsAt: null,
+            status: "unverified",
+            reason:
+              "Auto could not verify another available route within two seconds; starting the current route.",
+          },
+        };
   };
 }

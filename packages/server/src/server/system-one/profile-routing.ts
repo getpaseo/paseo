@@ -24,6 +24,7 @@ export interface ProfileRouteInput {
   explicitEffort?: boolean;
   recordFailure?: boolean;
   currentRetry?: boolean;
+  routingMode?: "auto" | "manual";
 }
 export interface ProfileRoute {
   profile: AgentProfile;
@@ -82,62 +83,114 @@ interface ProfileRouterOptions {
 export function createProfileRouter(options: ProfileRouterOptions): ProfileRouter {
   const limits = new Map<string, { resetsAt: string | null; observedAt: number }>();
   return async (input) => {
-    const now = (options.now ?? Date.now)();
-    const profiles = configuredProfiles(
-      options.getProfiles(input.cwd),
-      options.getRouting?.() ?? {},
+    if (input.routingMode !== "auto" && !input.fallback && !input.currentRetry) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(new DOMException("Routing deadline reached", "AbortError")),
+      2_000,
     );
-    const evidence = await options
-      .getUsage(profiles.map((profile) => profile.id))
-      .catch(() => null);
-    const usage = new Map((evidence?.providers ?? []).map((entry) => [entry.providerId, entry]));
-    const reset = limitedReset(usage.get(input.provider), now);
-    const attempted = new Set(input.attemptedProfileIds ?? []);
-    if (input.fallback === "quota" && input.recordFailure !== false) {
-      limits.set(input.provider, { resetsAt: reset, observedAt: now });
-      attempted.add(input.provider);
-    }
-    const eligible = profiles.filter((profile) => {
-      const cooldown = limits.get(profile.id);
-      if (cooldown) {
-        const expired = cooldown.resetsAt !== null && Date.parse(cooldown.resetsAt) <= now;
-        const refreshed =
-          Date.parse(evidence?.fetchedAt ?? "") > cooldown.observedAt &&
-          profileAvailability(usage.get(profile.id), now) === "available";
-        if (!expired && !refreshed) return false;
-        limits.delete(profile.id);
+    try {
+      const now = (options.now ?? Date.now)();
+      const profiles = configuredProfiles(
+        options.getProfiles(input.cwd),
+        options.getRouting?.() ?? {},
+      );
+      const evidence = await beforeDeadline(
+        options.getUsage(profiles.map((profile) => profile.id)),
+        controller.signal,
+      ).catch(() => null);
+      const usage = new Map((evidence?.providers ?? []).map((entry) => [entry.providerId, entry]));
+      const reset = limitedReset(usage.get(input.provider), now);
+      const attempted = new Set(input.attemptedProfileIds ?? []);
+      if (input.fallback === "quota" && input.recordFailure !== false) {
+        limits.set(input.provider, { resetsAt: reset, observedAt: now });
+        attempted.add(input.provider);
       }
-      if (attempted.has(profile.id)) return false;
-      return profileAvailability(usage.get(profile.id), now) === "available";
-    });
-    const futureResets = profiles
-      .flatMap((profile) => {
-        const value = limits.get(profile.id)?.resetsAt ?? limitedReset(usage.get(profile.id), now);
-        return value && Date.parse(value) > now ? [value] : [];
-      })
-      .sort();
-    const unavailable = (message: string) => {
-      throw new ProfileRoutingUnavailableError(message, futureResets[0] ?? null);
-    };
-    const currentLimited =
-      limits.has(input.provider) ||
-      profileAvailability(usage.get(input.provider), now) === "limited";
-    if (input.currentRetry) {
-      if (currentLimited)
-        return unavailable(
-          "The current profile is still quota-limited; skipping its capacity retry.",
+      const eligible = profiles.filter((profile) => {
+        const cooldown = limits.get(profile.id);
+        if (cooldown) {
+          const expired = cooldown.resetsAt !== null && Date.parse(cooldown.resetsAt) <= now;
+          const refreshed =
+            Date.parse(evidence?.fetchedAt ?? "") > cooldown.observedAt &&
+            profileAvailability(usage.get(profile.id), now) === "available";
+          if (!expired && !refreshed) return false;
+          limits.delete(profile.id);
+        }
+        if (attempted.has(profile.id)) return false;
+        return profileAvailability(usage.get(profile.id), now) === "available";
+      });
+      const futureResets = profiles
+        .flatMap((profile) => {
+          const value =
+            limits.get(profile.id)?.resetsAt ?? limitedReset(usage.get(profile.id), now);
+          return value && Date.parse(value) > now ? [value] : [];
+        })
+        .sort();
+      const unavailable = (message: string) => {
+        throw new ProfileRoutingUnavailableError(
+          message,
+          input.routingMode === "auto"
+            ? (futureResets[0] ?? null)
+            : (limits.get(input.provider)?.resetsAt ?? reset),
         );
-      return null;
+      };
+      const currentLimited =
+        limits.has(input.provider) ||
+        profileAvailability(usage.get(input.provider), now) === "limited";
+      if (input.currentRetry) {
+        if (currentLimited)
+          return unavailable(
+            "The current profile is still quota-limited; skipping its capacity retry.",
+          );
+        return null;
+      }
+      if (input.routingMode !== "auto") {
+        return unavailable(
+          input.fallback === "capacity" && !currentLimited
+            ? "Your selected model is temporarily at capacity. Retrying the same model; choose Auto to allow another available route."
+            : "Your selected provider is quota-limited. Waiting for its reset; choose Auto to allow another available route.",
+        );
+      }
+      return await selectAvailableRoute(
+        options,
+        currentLimited && !input.fallback ? { ...input, fallback: "quota" } : input,
+        eligible,
+        usage,
+        reset,
+        unavailable,
+        controller.signal,
+      );
+    } finally {
+      clearTimeout(timeout);
     }
-    return selectAvailableRoute(
-      options,
-      currentLimited && !input.fallback ? { ...input, fallback: "quota" } : input,
-      eligible,
-      usage,
-      reset,
-      unavailable,
-    );
   };
+}
+
+export function agentRoutingMode(
+  labels: Readonly<Record<string, string>> | undefined,
+): "auto" | "manual" {
+  return labels?.["pandaos.routing.mode"] === "auto" ? "auto" : "manual";
+}
+
+function beforeDeadline<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    void pending.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        return resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        return reject(error);
+      },
+    );
+  });
 }
 
 function configuredProfiles(
@@ -158,6 +211,7 @@ async function selectAvailableRoute(
   usage: Map<string, ProviderUsage>,
   reset: string | null,
   unavailable: (message: string) => never,
+  signal: AbortSignal,
 ): Promise<ProfileRoute | null> {
   const { candidates, preserving } = routingCandidates(eligible, input);
   const preserved = (reason: string) =>
@@ -166,7 +220,7 @@ async function selectAvailableRoute(
       : null;
   const fallback = (reason: string) => {
     const route = preserved(reason);
-    if (route || !input.fallback || !candidates.length) return route;
+    if (route || !candidates.length) return route;
     const model = candidates[0].model.id;
     const effortPriority = (candidate: RoutingCandidate) => {
       const preferred = ["high", candidate.model.defaultThinkingOptionId, "medium", "low"];
@@ -201,14 +255,16 @@ async function selectAvailableRoute(
     return null;
   }
   try {
-    const route = await decideRoute(options, input, candidates, preserving, usage, reset);
+    const route = await beforeDeadline(
+      decideRoute(options, input, candidates, preserving, usage, reset, signal),
+      signal,
+    );
     return route ?? fallback("Jev produced no route.");
   } catch (error) {
-    const route = fallback(
-      error instanceof ProfileRoutingUnavailableError
-        ? error.message
-        : "Jev reassessment evidence is unavailable.",
-    );
+    let reason = "The quick model assessment is unavailable.";
+    if (error instanceof ProfileRoutingUnavailableError) reason = error.message;
+    if (signal.aborted) reason = "The quick model assessment reached its two-second limit.";
+    const route = fallback(reason);
     if (route) return route;
     if (error instanceof ProfileRoutingUnavailableError) return unavailable(error.message);
     if (input.fallback)
@@ -298,6 +354,7 @@ async function decideRoute(
   preserving: boolean,
   usage: Map<string, ProviderUsage>,
   reset: string | null,
+  signal: AbortSignal,
 ): Promise<ProfileRoute | null> {
   const unavailable = (message: string): never => {
     throw new ProfileRoutingUnavailableError(message, null);
@@ -319,30 +376,35 @@ async function decideRoute(
       },
     ]),
   );
-  const decision = await options.decisionSource(input.cwd).decide({
-    state: {
-      task: task.slice(0, 6000),
-      current: { profile: input.provider, model: input.model, effort: input.thinkingOptionId },
-      reassessment: !!input.fallback && !preserving,
-    },
-    questions: {
-      route: {
-        type: "choice",
-        instructions:
-          "Choose the best sufficient existing route for the task. Model-family priority is Sol, then Opus, then Sonnet, then Luna, ahead of provider affinity and catalog order when routes are equally sufficient. GPT-6.1 Sol is the default; Opus 5.5 for complex architecture/debugging; Sonnet 5.5 high for execution. Select sufficient supported effort, never maximum by default. Prefer lower account usage when routes are equally suitable. Preserve model and effort whenever the choices allow it.",
-        criteria,
+  signal.throwIfAborted();
+  const decision = await options.decisionSource(input.cwd).decide(
+    {
+      state: {
+        task: task.slice(0, 6000),
+        current: { profile: input.provider, model: input.model, effort: input.thinkingOptionId },
+        reassessment: !!input.fallback && !preserving,
       },
-      reason: {
-        type: "choice",
-        instructions: "Classify the task requirement that explains the selected model and effort.",
-        criteria: {
-          mechanical: "Lookup or mechanical change",
-          implementation: "Routine implementation or execution",
-          complex: "Architecture, hard debugging or subtle security work",
+      questions: {
+        route: {
+          type: "choice",
+          instructions:
+            "Choose the best sufficient existing route for the task. Model-family priority is Sol, then Opus, then Sonnet, then Luna, ahead of provider affinity and catalog order when routes are equally sufficient. GPT-6.1 Sol is the default; Opus 5.5 for complex architecture/debugging; Sonnet 5.5 high for execution. Select sufficient supported effort, never maximum by default. Prefer lower account usage when routes are equally suitable. Preserve model and effort whenever the choices allow it.",
+          criteria,
+        },
+        reason: {
+          type: "choice",
+          instructions:
+            "Classify the task requirement that explains the selected model and effort.",
+          criteria: {
+            mechanical: "Lookup or mechanical change",
+            implementation: "Routine implementation or execution",
+            complex: "Architecture, hard debugging or subtle security work",
+          },
         },
       },
     },
-  });
+    { signal },
+  );
   const selected = parseChoiceAnswer(decision.answers.route, Object.keys(criteria));
   const rationale = parseChoiceAnswer(decision.answers.reason, [
     "mechanical",

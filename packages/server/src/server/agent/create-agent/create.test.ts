@@ -149,7 +149,7 @@ test.each(["session", "mcp human", "mcp delegated", "session unavailable"] as co
             config,
             workspaceId: "workspace",
             initialPrompt: "Implement the task",
-            labels: {},
+            labels: { "pandaos.routing.mode": "auto" },
             provisionalTitle: null,
             firstAgentContext: { attachments: [] },
             buildSessionConfig: async (value) => ({ sessionConfig: value }),
@@ -164,6 +164,7 @@ test.each(["session", "mcp human", "mcp delegated", "session unavailable"] as co
             initialPrompt: "Implement the task",
             background: true,
             notifyOnFinish: false,
+            labels: { "pandaos.routing.mode": "auto" },
             ...(kind === "mcp delegated" ? { callerAgentId: "parent" } : {}),
           },
     );
@@ -326,16 +327,21 @@ test("mcp create accepts provider-only internal input and leaves model undefined
   );
 });
 
-test.each(["session", "mcp delegated"] as const)(
-  "%s creation keeps the selected route through real plugin validation and the first turn",
-  async (kind) => {
+test.each([
+  ["session", "selected"],
+  ["session", "unverified"],
+  ["mcp delegated", "selected"],
+  ["mcp delegated", "unverified"],
+] as const)(
+  "%s creation keeps its %s route preflight through real plugin validation and the first turn",
+  async (kind, status) => {
     const workdir = mkdtempSync(join(tmpdir(), "create-agent-routing-notice-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const agentManager = createRealAgentManager(storage);
     const turnRouter = vi.fn(async () => null);
     agentManager.setTurnRouter(turnRouter);
     const notice = {
-      status: "selected" as const,
+      status,
       fromProfile: "codex",
       toProfile: "claude",
       fromModel: "gpt-6.1-sol",
@@ -380,7 +386,7 @@ test.each(["session", "mcp delegated"] as const)(
               config,
               workspaceId: "ws-source",
               initialPrompt: "Implement the task",
-              labels: {},
+              labels: { "pandaos.routing.mode": "auto" },
               provisionalTitle: null,
               firstAgentContext: { attachments: [] },
               buildSessionConfig: async (value) => ({ sessionConfig: value }),
@@ -394,6 +400,7 @@ test.each(["session", "mcp delegated"] as const)(
               title: "Task",
               initialPrompt: "Implement the task",
               background: true,
+              labels: { "pandaos.routing.mode": "auto" },
               notifyOnFinish: false,
               callerAgentId: parentId,
             },

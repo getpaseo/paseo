@@ -1,4 +1,7 @@
-import { ProfileRoutingUnavailableError } from "../../system-one/profile-routing.js";
+import {
+  agentRoutingMode,
+  ProfileRoutingUnavailableError,
+} from "../../system-one/profile-routing.js";
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
@@ -250,7 +253,10 @@ async function resolveSessionCreateAgent(
     input.firstAgentContext,
   );
   const route =
-    trimmedPrompt && !builtSessionConfig.internal && dependencies.createRouter
+    trimmedPrompt &&
+    !builtSessionConfig.internal &&
+    dependencies.createRouter &&
+    agentRoutingMode(input.labels) === "auto"
       ? await dependencies
           .createRouter({
             requestedProvider: builtSessionConfig.provider,
@@ -259,6 +265,7 @@ async function resolveSessionCreateAgent(
             cwd: builtSessionConfig.cwd,
             prompt: trimmedPrompt,
             isAgentScoped: false,
+            routingMode: agentRoutingMode(input.labels),
           })
           .catch((error: unknown) => {
             if (!(error instanceof ProfileRoutingUnavailableError)) throw error;
@@ -455,7 +462,7 @@ async function applySubagentCreateRouting(params: {
 }> {
   const { dependencies, input } = params;
   let { provider, requestedModel, requestedThinking } = params;
-  if (!dependencies.createRouter || input.internal) {
+  if (!dependencies.createRouter || input.internal || agentRoutingMode(input.labels) !== "auto") {
     return { provider, requestedModel, requestedThinking };
   }
   let routingNotice: AgentRoutingNotice | undefined;
@@ -467,6 +474,7 @@ async function applySubagentCreateRouting(params: {
       prompt: input.initialPrompt ?? "",
       cwd: params.resolvedCwd,
       isAgentScoped: Boolean(input.callerAgentId),
+      routingMode: agentRoutingMode(input.labels),
     });
     if (route) {
       provider = route.provider;

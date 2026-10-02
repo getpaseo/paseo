@@ -56,7 +56,10 @@ export interface TypeSafeDecisionResponse {
 }
 
 export interface TypeSafeDecisionSource {
-  decide(request: TypeSafeDecisionRequest): Promise<TypeSafeDecisionResponse>;
+  decide(
+    request: TypeSafeDecisionRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<TypeSafeDecisionResponse>;
 }
 
 interface TypeSafeSystemOneClientOptions {
@@ -92,7 +95,11 @@ export class TypeSafeSystemOneClient implements TypeSafeDecisionSource {
     this.options = options;
   }
 
-  public async decide(request: TypeSafeDecisionRequest): Promise<TypeSafeDecisionResponse> {
+  public async decide(
+    request: TypeSafeDecisionRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<TypeSafeDecisionResponse> {
+    options?.signal?.throwIfAborted();
     const apiKey = this.options.apiKey ?? (await loadTypeSafeApiKey(this.options.envFile));
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -114,7 +121,9 @@ export class TypeSafeSystemOneClient implements TypeSafeDecisionSource {
             model: this.options.model ?? process.env.TYPESAFE_MODEL ?? DEFAULT_TYPESAFE_MODEL,
             ...request,
           }),
-          signal: controller.signal,
+          signal: options?.signal
+            ? AbortSignal.any([controller.signal, options.signal])
+            : controller.signal,
         },
       );
 

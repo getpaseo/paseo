@@ -19,10 +19,15 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
+import {
+  formatSystemNotificationPrompt,
+  startAgentRun,
+  waitForAgentRunStartWithTimeout,
+} from "./agent-prompt.js";
 import {
   createProfileRouter,
   ProfileRoutingUnavailableError,
+  type ProfileRoute,
 } from "../system-one/profile-routing.js";
 import { buildResourcePolicyPrompt } from "../resource-policy.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -1918,7 +1923,7 @@ test("preserves the handoff context and old session during a cross-provider fall
   const agent = await manager.createAgent(
     { provider: "codex", cwd: workdir, model: "gpt-6.1-sol", title: "Continue the quota test" },
     undefined,
-    { workspaceId: undefined },
+    { workspaceId: undefined, labels: { "pandaos.routing.mode": "auto" } },
   );
   const result = await manager.runAgent(agent.id, "Keep the original prompt");
 
@@ -12107,6 +12112,7 @@ test("setAgentProvider replaces the runtime with the new provider and keeps the 
   expect(switched.labels).toEqual({
     "paseo.brain-switch": "keep",
     "paseo.origin": "user",
+    "pandaos.routing.mode": "manual",
   });
   expect(switched.createdAt).toEqual(agent.createdAt);
   // The switch appends its own marker; everything said before it survives.
@@ -12360,7 +12366,7 @@ test("prompt dispatch exhausts each actual quota account once without an outer s
     const agent = await manager.createAgent(
       { provider: "codex", cwd: workdir, model: "gpt-6.1-sol" },
       undefined,
-      { workspaceId: undefined },
+      { workspaceId: undefined, labels: { "pandaos.routing.mode": "auto" } },
     );
     const stream = vi.spyOn(manager, "streamAgent");
     manager.subscribe((event) => {
@@ -12401,6 +12407,8 @@ async function createCapacityFixture(
     quotaReset?: string;
     onlyOrigin?: boolean;
     uncertainRouting?: boolean;
+    routingMode?: "manual" | "auto";
+    quotaOnlyOrigin?: boolean;
   } = {},
 ) {
   const workdir = mkdtempSync(join(tmpdir(), "capacity-recovery-"));
@@ -12517,9 +12525,12 @@ async function createCapacityFixture(
           {
             id: "session",
             label: "Session",
-            usedPct: options.quotaReset ? 100 : 10,
-            remainingPct: options.quotaReset ? 0 : 90,
-            resetsAt: options.quotaReset,
+            usedPct:
+              options.quotaReset && (!options.quotaOnlyOrigin || id === "codex-plus") ? 100 : 10,
+            remainingPct:
+              options.quotaReset && (!options.quotaOnlyOrigin || id === "codex-plus") ? 0 : 90,
+            resetsAt:
+              !options.quotaOnlyOrigin || id === "codex-plus" ? options.quotaReset : undefined,
           },
         ],
         balances: [],
@@ -12569,7 +12580,7 @@ async function createCapacityFixture(
       title: "Recovery task",
     },
     undefined,
-    { workspaceId: undefined },
+    { workspaceId: undefined, labels: { "pandaos.routing.mode": options.routingMode ?? "auto" } },
   );
   const cleanup = async () => {
     for (const item of manager.listAgents()) await manager.closeAgent(item.id);
@@ -13041,5 +13052,222 @@ test("failed startup history closes the session without registering an agent", a
     expect({ agents: manager.listAgents(), closed }).toEqual({ agents: [], closed: true });
   } finally {
     for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+  }
+});
+
+test("manual quota waiting never silently selects a free account and resumes the selected model after reset", async () => {
+  vi.useFakeTimers();
+  const reset = new Date(Date.now() + 5000).toISOString();
+  const fixture = await createCapacityFixture({
+    routingMode: "manual",
+    quotaReset: reset,
+    quotaOnlyOrigin: true,
+    failures: 1,
+  });
+  try {
+    const run = fixture.manager.runAgent(fixture.agent.id, "Keep my selection");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.attempts).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice).toMatchObject({
+      status: "waiting",
+      reason: expect.stringContaining("selected provider"),
+      resetsAt: reset,
+    });
+    await vi.advanceTimersByTimeAsync(5001);
+    await run;
+    expect(fixture.attempts.map((a) => [a.profile, a.model])).toEqual([
+      ["codex-plus", "gpt-6.1-sol"],
+      ["codex-plus", "gpt-6.1-sol"],
+    ]);
+  } finally {
+    vi.useRealTimers();
+    await fixture.cleanup();
+  }
+});
+
+test("explicit model selection disables Auto and later turns keep that model", async () => {
+  const fixture = await createCapacityFixture({ failures: 0 });
+  const turnRouter = vi.fn(async () => ({
+    profile: { id: "claude", name: "Claude", provider: "claude" },
+    model: "claude-opus-5-5",
+    reason: "different",
+    resetsAt: null,
+  }));
+  fixture.manager.setTurnRouter(turnRouter);
+  try {
+    await fixture.manager.setAgentModel(fixture.agent.id, "chosen-model");
+    await fixture.manager.routeNextTurn(fixture.agent.id, "Keep the selected model");
+    expect(turnRouter).not.toHaveBeenCalled();
+    expect(fixture.manager.getAgent(fixture.agent.id)).toMatchObject({
+      labels: { "pandaos.routing.mode": "manual" },
+      config: { model: "chosen-model" },
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an explicit Auto metadata patch wakes manual quota waiting and preserves other labels", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({
+    routingMode: "manual",
+    quotaReset: new Date(Date.now() + 60_000).toISOString(),
+    quotaOnlyOrigin: true,
+    failures: 1,
+  });
+  try {
+    await fixture.manager.updateAgentMetadata(fixture.agent.id, {
+      labels: { custom: "preserved" },
+    });
+    const run = fixture.manager.runAgent(
+      fixture.agent.id,
+      "Use the available account after I select Auto",
+    );
+    void run.catch(() => {});
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.attempts).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice?.status).toBe(
+      "waiting",
+    );
+    await fixture.manager.updateAgentMetadata(fixture.agent.id, {
+      labels: { "pandaos.routing.mode": "auto" },
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() =>
+      expect(
+        fixture.attempts.map((a) => a.profile),
+        JSON.stringify(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice),
+      ).toEqual(["codex-plus", "codex-business"]),
+    );
+    await fixture.started.business.promise;
+    await vi.advanceTimersByTimeAsync(0);
+    await run;
+    expect(fixture.manager.getAgent(fixture.agent.id)?.labels).toMatchObject({
+      custom: "preserved",
+      "pandaos.routing.mode": "auto",
+    });
+  } finally {
+    vi.useRealTimers();
+    await fixture.cleanup();
+  }
+});
+
+test("manual capacity recovery continues timed retries on the chosen model without switching accounts", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({ routingMode: "manual", failures: 4 });
+  try {
+    const run = fixture.manager.runAgent(
+      fixture.agent.id,
+      "Keep this model through capacity waits",
+    );
+    await vi.advanceTimersByTimeAsync(3010);
+    expect(fixture.attempts).toHaveLength(3);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice?.status).toBe(
+      "waiting",
+    );
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(fixture.attempts).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(30_001);
+    await run;
+    expect(fixture.attempts).toHaveLength(5);
+    expect(new Set(fixture.attempts.map((a) => a.profile))).toEqual(new Set(["codex-plus"]));
+    expect(new Set(fixture.attempts.map((a) => a.model))).toEqual(new Set(["gpt-6.1-sol"]));
+  } finally {
+    vi.useRealTimers();
+    await fixture.cleanup();
+  }
+});
+
+test("a manual model choice wins over an Auto decision already in flight", async () => {
+  const fixture = await createCapacityFixture({ failures: 0 });
+  const decision = deferred<ProfileRoute | null>();
+  const turnRouter = vi.fn(() => decision.promise);
+  fixture.manager.setTurnRouter(turnRouter);
+  try {
+    const pending = fixture.manager.routeNextTurn(fixture.agent.id, "Choose quickly");
+    expect(turnRouter).toHaveBeenCalledOnce();
+    await fixture.manager.setAgentModel(fixture.agent.id, "chosen-manual-model");
+    decision.resolve({
+      profile: { id: "claude", name: "Claude", provider: "claude" },
+      model: "claude-opus-5-5",
+      reason: "Late Auto choice",
+      resetsAt: null,
+    });
+    await pending;
+    expect(fixture.manager.getAgent(fixture.agent.id)).toMatchObject({
+      provider: "codex-plus",
+      config: { model: "chosen-manual-model" },
+      labels: { "pandaos.routing.mode": "manual" },
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("acknowledges a replacement message parked at quota preflight before the client timeout", async () => {
+  vi.useFakeTimers();
+  const reset = new Date(Date.now() + 60_000).toISOString();
+  const fixture = await createCapacityFixture({ quotaReset: reset, onlyOrigin: true });
+  const abort = new AbortController();
+  try {
+    const original = fixture.manager.runAgent(fixture.agent.id, "Initial quota-bound turn");
+    void original.catch(() => {});
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice?.status).toBe(
+      "waiting",
+    );
+    fixture.manager.setTurnRouter(async () => {
+      throw new ProfileRoutingUnavailableError("Waiting for the provider reset", reset);
+    });
+    await startAgentRun(fixture.manager, fixture.agent.id, "Replace with this request", logger, {
+      replaceRunning: true,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)).toMatchObject({
+      lifecycle: "running",
+      pendingReplacement: true,
+      config: { routingNotice: { status: "waiting" } },
+    });
+    let acknowledged = false;
+    const ack = waitForAgentRunStartWithTimeout(fixture.manager, fixture.agent.id, abort.signal);
+    void ack.then(
+      () => {
+        acknowledged = true;
+        return undefined;
+      },
+      () => {},
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(acknowledged).toBe(true);
+    expect(fixture.attempts).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice?.status).toBe(
+      "waiting",
+    );
+  } finally {
+    abort.abort();
+    vi.useRealTimers();
+    await fixture.cleanup();
+  }
+});
+
+test("records the actual Auto reason when the selected model already matches", async () => {
+  const fixture = await createCapacityFixture({ failures: 0 });
+  fixture.manager.setTurnRouter(async () => ({
+    profile: { id: "codex-plus", name: "Plus", provider: "codex-plus", thinkingOptionId: "medium" },
+    model: "gpt-6.1-sol",
+    reason: "Available default route; the quick assessment reached its two-second limit.",
+    resetsAt: null,
+  }));
+  try {
+    await fixture.manager.routeNextTurn(fixture.agent.id, "Keep working");
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice).toMatchObject({
+      status: "selected",
+      toProfile: "codex-plus",
+      model: "gpt-6.1-sol",
+      reason: expect.stringContaining("two-second"),
+    });
+    expect(fixture.attempts).toHaveLength(0);
+  } finally {
+    await fixture.cleanup();
   }
 });

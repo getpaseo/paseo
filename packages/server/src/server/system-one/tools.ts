@@ -123,7 +123,8 @@ export function createConfiguredSystemOneDecisionSource(
   purpose: SystemOneUsagePurpose = "tool",
 ): TypeSafeDecisionSource {
   return {
-    async decide(request) {
+    async decide(request, options) {
+      options?.signal?.throwIfAborted();
       if (isSystemOneExcluded(paseoHome, resolveCwd())) {
         throw new Error(SYSTEM_ONE_EXCLUDED_MESSAGE);
       }
@@ -143,17 +144,16 @@ export function createConfiguredSystemOneDecisionSource(
       }
       const rejected: string[] = [];
       for (const credential of credentials) {
+        options?.signal?.throwIfAborted();
         try {
           const decision = await new TypeSafeSystemOneClient({
             apiKey: credential.apiKey,
             model: config.model,
             endpoint: config.endpoint,
-          }).decide(request);
-          // Usage stats must never fail or slow a decision.
+          }).decide(request, options);
           void recordSystemOneUsage(paseoHome, purpose, decision.usage).catch(() => {});
           return decision;
         } catch (error) {
-          // A stale saved key must not hide a working key from the environment or env file.
           if (!isTypeSafeAuthError(error)) throw error;
           rejected.push(credential.source);
         }

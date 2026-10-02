@@ -3,6 +3,7 @@ import { projectTimelineRows } from "./timeline-projection.js";
 import type { TurnRouter } from "../system-one/model-routing.js";
 import {
   ProfileRoutingUnavailableError,
+  agentRoutingMode,
   type ProfileRouter,
   type ProfileRoute,
 } from "../system-one/profile-routing.js";
@@ -975,18 +976,15 @@ export class AgentManager {
 
   async routeNextTurn(agentId: string, prompt: AgentPromptInput): Promise<void> {
     const agent = this.agents.get(agentId);
-    if (!this.turnRouter || !agent || agent.config.internal) return;
-    if (typeof prompt === "string" && isSystemInjectedEnvelope(prompt)) return;
     if (
-      agent.lastUserMessageAt === null &&
-      !this.routedModels.has(agent.id) &&
-      agent.config.routingNotice?.status === "selected" &&
-      agent.config.routingNotice.toProfile === agent.provider
-    ) {
-      this.routedModels.set(agent.id, agent.config.model ?? null);
-      this.preparedRoutes.set(agent.id, prompt);
+      !this.turnRouter ||
+      !agent ||
+      agent.config.internal ||
+      agentRoutingMode(agent.labels) !== "auto"
+    )
       return;
-    }
+    if (typeof prompt === "string" && isSystemInjectedEnvelope(prompt)) return;
+    if (this.consumeCreateRouting(agent, prompt)) return;
     if (agent.config.routingNotice) {
       agent.config.routingNotice = undefined;
       this.touchUpdatedAt(agent);
@@ -994,14 +992,24 @@ export class AgentManager {
     }
     const lastRouted = this.routedModels.get(agent.id);
     if (lastRouted !== undefined && lastRouted !== (agent.config.model ?? null)) return;
-    const route = await this.turnRouter({
+    const input = {
       provider: agent.provider,
       cwd: agent.cwd,
       model: agent.config.model,
       thinkingOptionId: agent.config.thinkingOptionId,
       prompt: this.routingTask(agent, prompt),
       isFirstTurn: agent.lastUserMessageAt === null,
-    });
+      routingMode: agentRoutingMode(agent.labels),
+    };
+    const route = await this.turnRouter(input);
+    if (
+      this.agents.get(agentId) !== agent ||
+      agentRoutingMode(agent.labels) !== "auto" ||
+      agent.provider !== input.provider ||
+      agent.config.model !== input.model ||
+      agent.config.thinkingOptionId !== input.thinkingOptionId
+    )
+      return;
     if (route) await this.applyRoute(agent, route);
     else
       this.logger.info(
@@ -1010,6 +1018,21 @@ export class AgentManager {
       );
     this.routedModels.set(agent.id, agent.config.model ?? null);
     this.preparedRoutes.set(agent.id, prompt);
+  }
+
+  private consumeCreateRouting(agent: ActiveManagedAgent, prompt: AgentPromptInput): boolean {
+    if (
+      agent.lastUserMessageAt === null &&
+      !this.routedModels.has(agent.id) &&
+      (agent.config.routingNotice?.status === "selected" ||
+        agent.config.routingNotice?.status === "unverified") &&
+      agent.config.routingNotice.toProfile === agent.provider
+    ) {
+      this.routedModels.set(agent.id, agent.config.model ?? null);
+      this.preparedRoutes.set(agent.id, prompt);
+      return true;
+    }
+    return false;
   }
 
   private routingTask(agent: ActiveManagedAgent, prompt: AgentPromptInput): AgentPromptInput {
@@ -1058,8 +1081,11 @@ export class AgentManager {
       route.profile.provider === agent.provider &&
       route.model === agent.config.model &&
       route.profile.thinkingOptionId === agent.config.thinkingOptionId
-    )
+    ) {
+      this.setRoutingNotice(agent, "selected", route.reason, route.resetsAt, route);
+      await this.persistSnapshot(agent);
       return;
+    }
     this.setRoutingNotice(agent, "retrying", route.reason, route.resetsAt, route);
     const notice = agent.config.routingNotice;
     await this.applyFallbackCandidate(agent, route.profile, route.model);
@@ -1879,13 +1905,17 @@ export class AgentManager {
     if (existing.provider === provider) {
       throw new Error(`Agent ${agentId} already runs on provider '${provider}'`);
     }
-    return this.relaunchAgentSession(agentId, {
+    existing.labels = applyLabelPatch(existing.labels, { "pandaos.routing.mode": "manual" });
+    const agent = await this.relaunchAgentSession(agentId, {
       provider,
       modelId,
       cwd: existing.cwd,
       workspaceId: existing.workspaceId,
       notice: `Switched provider: ${existing.provider} → ${provider}`,
     });
+    agent.config.routingNotice = undefined;
+    await this.writeLabels(agentId, { "pandaos.routing.mode": "manual" });
+    return agent;
   }
 
   /**
@@ -2374,15 +2404,18 @@ export class AgentManager {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
+    agent.labels = applyLabelPatch(agent.labels, { "pandaos.routing.mode": "manual" });
     if (agent.session.setModel) {
       await agent.session.setModel(normalizedModelId);
     }
     await this.drainSessionEvents(agentId);
 
     agent.config.model = normalizedModelId ?? undefined;
+    agent.config.routingNotice = undefined;
     if (agent.runtimeInfo) {
       agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
     }
+    await this.writeLabels(agentId, { "pandaos.routing.mode": "manual" });
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -2464,6 +2497,11 @@ export class AgentManager {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      if (patch["pandaos.routing.mode"] !== undefined) {
+        this.routedModels.delete(agentId);
+        this.preparedRoutes.delete(agentId);
+        this.recoveryWake.get(agentId)?.();
+      }
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
       this.emitState(liveAgent, { persist: false });
@@ -3097,6 +3135,7 @@ export class AgentManager {
           agent.lifecycle = "running";
           this.setRoutingNotice(agent, "waiting", error.message, error.resetsAt);
           await this.persistSnapshot(agent);
+          if (agentRoutingMode(agent.labels) !== "auto") continue;
           if (!(await this.waitForRecovery(agent.id, error.resetsAt)))
             throw new Error("Routing cancelled", { cause: error });
         }
@@ -3378,6 +3417,22 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  private isRunStartAcknowledged(
+    agent: ManagedAgent,
+    pendingRun: PendingForegroundRun | null,
+  ): boolean {
+    if (
+      pendingRun &&
+      agent.lifecycle === "running" &&
+      agent.config.routingNotice?.status === "waiting"
+    )
+      return true;
+    return (
+      (agent.lifecycle === "running" || pendingRun?.start.status === "started") &&
+      !agent.pendingReplacement
+    );
+  }
+
   async waitForAgentRunStart(agentId: string, options?: WaitForAgentStartOptions): Promise<void> {
     const snapshot = this.getAgent(agentId);
     if (!snapshot) {
@@ -3385,10 +3440,7 @@ export class AgentManager {
     }
 
     const pendingRun = this.runs.getPendingRun(agentId);
-    if (
-      (snapshot.lifecycle === "running" || pendingRun?.start.status === "started") &&
-      !snapshot.pendingReplacement
-    ) {
+    if (this.isRunStartAcknowledged(snapshot, pendingRun)) {
       return;
     }
 
@@ -3452,10 +3504,7 @@ export class AgentManager {
         }
 
         const currentPendingRun = this.runs.getPendingRun(agentId);
-        if (
-          (current.lifecycle === "running" || currentPendingRun?.start.status === "started") &&
-          !current.pendingReplacement
-        ) {
+        if (this.isRunStartAcknowledged(current, currentPendingRun)) {
           finishOk();
           return true;
         }
@@ -5194,14 +5243,19 @@ export class AgentManager {
         if (failure === "capacity") routes.add(routeKey);
         else if (recordFailure) attempted.add(agent.provider);
         route = await this.selectRecoveryRoute(agent, activePrompt.prompt, failure, recordFailure);
+        if (controller.signal.aborted) break;
         if (!route) {
           recordFailure = false;
-          continue;
+          if (!(await this.canResumeSelectedRoute(agent, activePrompt.prompt))) continue;
+          this.setRoutingNotice(
+            agent,
+            "retrying",
+            "Resuming your selected model after the provider wait.",
+          );
+        } else {
+          await this.applyRoute(agent, route);
         }
-        if (controller.signal.aborted) break;
-        await this.applyRoute(agent, route);
       }
-      if (controller.signal.aborted) break;
       try {
         if (
           !(await this.startRecoveryTurn(
@@ -5311,6 +5365,16 @@ export class AgentManager {
     return null;
   }
 
+  private async canResumeSelectedRoute(
+    agent: ActiveManagedAgent,
+    prompt: AgentPromptInput,
+  ): Promise<boolean> {
+    return (
+      agentRoutingMode(agent.labels) === "manual" &&
+      (await this.canRetryCurrentProfile(agent, prompt))
+    );
+  }
+
   private async canRetryCurrentProfile(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
@@ -5322,6 +5386,7 @@ export class AgentManager {
         cwd: agent.cwd,
         prompt,
         currentRetry: true,
+        routingMode: agentRoutingMode(agent.labels),
       });
       return true;
     } catch (error) {
@@ -5360,6 +5425,15 @@ export class AgentManager {
     });
   }
 
+  private routingSelection(agent: ActiveManagedAgent): string {
+    return JSON.stringify([
+      agent.provider,
+      agent.config.model,
+      agent.config.thinkingOptionId,
+      agentRoutingMode(agent.labels),
+    ]);
+  }
+
   private async selectRecoveryRoute(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
@@ -5368,6 +5442,7 @@ export class AgentManager {
   ): Promise<ProfileRoute | null> {
     const attempted = this.fallbackAttemptedProfiles.get(agent.id)!;
     const routes = this.attemptedRoutes.get(agent.id)!;
+    const selection = this.routingSelection(agent);
     try {
       const route = await this.profileRouter!({
         provider: agent.provider,
@@ -5380,7 +5455,13 @@ export class AgentManager {
         attemptedRoutes: [...routes],
         recordFailure,
         explicitEffort: agent.config.thinkingOptionId === "max",
+        routingMode: agentRoutingMode(agent.labels),
       });
+      if (agentRoutingMode(agent.labels) !== "auto")
+        throw new ProfileRoutingUnavailableError(
+          "Your selected model will be retained. Choose Auto to allow another available route.",
+          route?.resetsAt ?? null,
+        );
       if (!route)
         throw new ProfileRoutingUnavailableError(
           "Jev reassessment is unavailable; retaining the pending task.",
@@ -5391,14 +5472,15 @@ export class AgentManager {
       if (!(error instanceof ProfileRoutingUnavailableError)) throw error;
       const timer =
         error.resetsAt ??
-        (failure === "capacity" && !this.capacityTimedWait.has(agent.id)
+        (failure === "capacity" &&
+        (!this.capacityTimedWait.has(agent.id) || agentRoutingMode(agent.labels) === "manual")
           ? new Date(Date.now() + 30_000).toISOString()
           : null);
       if (failure === "capacity") this.capacityTimedWait.add(agent.id);
       this.setRoutingNotice(agent, "waiting", error.message, timer);
       await this.persistSnapshot(agent);
+      if (this.routingSelection(agent) !== selection) return null;
       if (await this.waitForRecovery(agent.id, timer)) {
-        // A reset or fresh usage/catalog event starts a new availability epoch.
         attempted.clear();
         routes.clear();
       }

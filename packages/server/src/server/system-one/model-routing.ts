@@ -8,11 +8,14 @@ export interface TurnRouteInput {
   thinkingOptionId: string | undefined;
   prompt: AgentPromptInput;
   isFirstTurn: boolean;
+  routingMode?: "auto" | "manual";
 }
 export type TurnRoute = ProfileRoute;
 export type TurnRouter = (input: TurnRouteInput) => Promise<TurnRoute | null>;
 
 export function createSystemOneTurnRouter(options: { profileRouter: ProfileRouter }): TurnRouter {
   return (input) =>
-    options.profileRouter({ ...input, explicitEffort: input.thinkingOptionId === "max" });
+    input.routingMode === "auto"
+      ? options.profileRouter({ ...input, explicitEffort: input.thinkingOptionId === "max" })
+      : Promise.resolve(null);
 }

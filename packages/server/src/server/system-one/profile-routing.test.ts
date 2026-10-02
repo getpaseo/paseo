@@ -1,11 +1,14 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   createProfileRouter,
   ProfileRoutingUnavailableError,
   type RoutingProfile,
 } from "./profile-routing.js";
 import type { ProviderUsage } from "../messages.js";
-import type { TypeSafeDecisionRequest } from "../browser-tools/jev-client.js";
+import {
+  TypeSafeSystemOneClient,
+  type TypeSafeDecisionRequest,
+} from "../browser-tools/jev-client.js";
 
 function usage(providerId: string, usedPct = 10, resetsAt?: string): ProviderUsage {
   return {
@@ -80,6 +83,7 @@ function fixture(
     thinkingOptionId: "medium",
     cwd: "/private-project",
     prompt: "Implement the task",
+    routingMode: "auto" as const,
   };
   return {
     router,
@@ -328,10 +332,13 @@ it("deduplicates repeated configured model and effort choices before asking Jev"
   expect(Object.values(question.criteria)).toHaveLength(profiles.length);
 });
 
-it("retains the selected healthy route when Jev is unavailable", async () => {
+it("selects a verified available default in Auto when Jev is unavailable", async () => {
   const f = fixture();
   f.decide.mockRejectedValue(new Error("timeout"));
-  await expect(f.router(f.input)).resolves.toBeNull();
+  await expect(f.router(f.input)).resolves.toMatchObject({
+    profile: { provider: "codex-plus" },
+    model: "gpt-6.1-sol",
+  });
 });
 
 it("preserves an already selected supported Opus xhigh while forbidding automatic xhigh", async () => {
@@ -405,7 +412,7 @@ it("applies persisted routing model/effort lists by actual provider and inherite
       "codex-business": { models: ["gpt-6.1-sol", "unsupported"], thinking: ["medium"] },
     }),
   });
-  await router({ provider: "codex-plus", cwd: "/project", prompt: "Lookup" });
+  await router({ provider: "codex-plus", cwd: "/project", prompt: "Lookup", routingMode: "auto" });
   const question = decide.mock.calls[0][0].questions.route;
   if (question.type !== "choice") throw new Error("expected route choice");
   expect(Object.values(question.criteria)).toEqual([
@@ -455,3 +462,83 @@ it.each(["gpt-6.1-sol", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-6-luna"])(
     expect(question.instructions).toContain("Sol, then Opus, then Sonnet, then Luna");
   },
 );
+
+afterEach(() => vi.useRealTimers());
+
+it.each([undefined, "manual"] as const)(
+  "honors manual selection without querying usage or Jev (mode %s)",
+  async (routingMode) => {
+    const f = fixture();
+    await expect(
+      f.router({ ...f.input, routingMode, provider: "opencode", model: "spark" }),
+    ).resolves.toBeNull();
+    expect(f.getUsage).not.toHaveBeenCalled();
+    expect(f.decide).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps a manual quota failure on its selected provider even when another account is free", async () => {
+  const reset = "2026-09-30T13:00:00Z";
+  const f = fixture([
+    usage("codex-plus", 100, reset),
+    usage("codex-work"),
+    usage("codex-business"),
+  ]);
+  await expect(
+    f.router({ ...f.input, routingMode: "manual", fallback: "quota" }),
+  ).rejects.toMatchObject({
+    resetsAt: new Date(reset).toISOString(),
+    message: expect.stringContaining("Your selected provider"),
+  });
+  expect(f.decide).not.toHaveBeenCalled();
+  f.setNow(reset);
+  await expect(
+    f.router({ ...f.input, routingMode: "manual", currentRetry: true }),
+  ).resolves.toBeNull();
+});
+
+it("aborts the actual TypeSafe request at the shared two-second usage and decision deadline", async () => {
+  vi.useFakeTimers();
+  let requestSignal: AbortSignal | undefined;
+  const source = new TypeSafeSystemOneClient({
+    apiKey: "fixture-only",
+    fetchImpl: async (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        requestSignal = init!.signal as AbortSignal;
+        requestSignal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      }),
+  });
+  const router = createProfileRouter({
+    getProfiles: () => profiles,
+    getUsage: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      return { fetchedAt: new Date().toISOString(), providers: profiles.map((p) => usage(p.id)) };
+    },
+    decisionSource: () => source,
+    enabled: () => true,
+    minimumConfidence: () => 0.5,
+  });
+  const pending = router({ ...fixture().input });
+  await vi.advanceTimersByTimeAsync(1999);
+  expect(requestSignal?.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(pending).resolves.toMatchObject({
+    model: "gpt-6.1-sol",
+    reason: expect.stringContaining("two-second"),
+  });
+  expect(requestSignal?.aborted).toBe(true);
+});
+
+it("bounds a stalled usage snapshot and does not call Jev without verified candidates", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  f.getUsage.mockImplementationOnce(() => new Promise(() => {}));
+  const pending = f.router(f.input);
+  await vi.advanceTimersByTimeAsync(2000);
+  await expect(pending).resolves.toBeNull();
+  expect(f.decide).not.toHaveBeenCalled();
+});

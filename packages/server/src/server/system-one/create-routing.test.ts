@@ -24,6 +24,7 @@ it.each([false, true])(
         prompt: "Implement the task",
         cwd: "/project",
         isAgentScoped,
+        routingMode: "auto",
       }),
     ).resolves.toMatchObject({
       provider: "codex-business",
@@ -39,3 +40,41 @@ it.each([false, true])(
     );
   },
 );
+
+it.each([undefined, "manual"] as const)(
+  "keeps explicit create model without invoking routing (mode %s)",
+  async (routingMode) => {
+    const profileRouter = vi.fn(async () => null);
+    const router = createSystemOneCreateRouter({ profileRouter });
+    await expect(
+      router({
+        requestedProvider: "opencode",
+        requestedModel: "spark",
+        requestedThinking: "high",
+        prompt: "Build it",
+        cwd: "/project",
+        isAgentScoped: false,
+        routingMode,
+      }),
+    ).resolves.toBeNull();
+    expect(profileRouter).not.toHaveBeenCalled();
+  },
+);
+
+it("records an unverified creation preflight so the first turn does not wait twice", async () => {
+  const router = createSystemOneCreateRouter({ profileRouter: async () => null });
+  await expect(
+    router({
+      requestedProvider: "opencode",
+      requestedModel: undefined,
+      requestedThinking: undefined,
+      prompt: "Build it",
+      cwd: "/project",
+      isAgentScoped: false,
+      routingMode: "auto",
+    }),
+  ).resolves.toMatchObject({
+    provider: "opencode",
+    routingNotice: { status: "unverified", toProfile: "opencode" },
+  });
+});
