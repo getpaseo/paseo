@@ -35,7 +35,9 @@ function advanceSharedStep(): void {
   if (sharedStep.value !== nextStep) {
     sharedStep.value = nextStep;
   }
-  if (isWeb) {
+  // A hidden page parks on requestAnimationFrame, which the browser pauses until the page is shown;
+  // a timer would keep waking it about once a second.
+  if (isWeb && document.visibilityState === "visible") {
     // Web runs worklets on the page's main thread, where a per-frame loop wakes the renderer on
     // every display refresh to publish about 6 changes a second (#4634). Wake at the next step.
     // Keep this inside the one worklet: two worklets that call each other throw at module load.
