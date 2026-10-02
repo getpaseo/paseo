@@ -163,7 +163,6 @@ async function expectVerticalOrder<Key extends string>(
 
 /** Persisted footer row key -> the testID the app shell renders that row with. */
 function shellFooterTestID(key: string): string {
-  // With nothing pinned the Usage item is the plain Usage row.
   if (key === "usage") return "sidebar-usage";
   const [, pluginId, itemId] = key.split(":");
   return `plugin-sidebar-footer-${pluginId}-${itemId}`;
@@ -220,32 +219,37 @@ export async function expectFooterItemHidden(page: Page, key: string): Promise<v
 
 const FOOTER_ICON_TEST_IDS = [
   "sidebar-add-project",
+  "sidebar-usage-icon",
   "sidebar-hosts-trigger",
-  "sidebar-import-session",
   "sidebar-help",
   "sidebar-settings",
 ];
 
-/** The labeled Add project button on the left, then the four fixed icons on the right. */
+// Browser layout boxes include floating-point rounding, even for whole-pixel styles.
+const FOOTER_GEOMETRY_TOLERANCE = 0.01;
+
+/**
+ * One line of same-size icons: Add project, Usage and Hosts together on the left, Help and
+ * Settings together at the end.
+ */
 export async function expectFooterIconRow(page: Page): Promise<void> {
-  const boxes = await Promise.all(
-    FOOTER_ICON_TEST_IDS.map((testID) =>
-      page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
-    ),
-  );
-  const [first, ...rest] = boxes.map((box) => box!);
-  expect(first.width).toBeGreaterThan(rest[0]!.width);
-  await expect(
-    page
-      .locator('[data-testid="sidebar-add-project"]:visible')
-      .getByText("Add project", { exact: true }),
-  ).toBeVisible();
-  let previous = first;
-  for (const box of rest) {
-    expect(Math.abs(box.y + box.height / 2 - first.y - first.height / 2)).toBeLessThan(2);
-    expect(box.x).toBeGreaterThan(previous.x);
-    previous = box;
+  const boxes = (
+    await Promise.all(
+      FOOTER_ICON_TEST_IDS.map((testID) =>
+        page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
+      ),
+    )
+  ).map((box) => box!);
+  const [first] = boxes;
+  for (const box of boxes) {
+    expect(Math.abs(box.y + box.height / 2 - first!.y - first!.height / 2)).toBeLessThan(2);
+    expect(Math.abs(box.width - first!.width)).toBeLessThan(FOOTER_GEOMETRY_TOLERANCE);
   }
+  const gaps = boxes.slice(1).map((box, index) => box.x - (boxes[index]!.x + boxes[index]!.width));
+  for (const index of [0, 1, 3]) {
+    expect(Math.abs(gaps[index]!)).toBeLessThan(FOOTER_GEOMETRY_TOLERANCE);
+  }
+  expect(gaps[2]).toBeGreaterThan(first!.width);
 }
 
 export async function expectFooterSeparator(page: Page, shown: boolean): Promise<void> {

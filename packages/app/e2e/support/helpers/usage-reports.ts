@@ -165,8 +165,13 @@ export async function installUsageReportsFixture(
                   providerId: entry.sourceId,
                   displayName: entry.sourceLabel,
                   fetchedAt: entry.fetchedAt,
-                  ...entry.report,
-                  planLabel: entry.report.planLabel ?? null,
+                  status: entry.report.status,
+                  windows: entry.report.status === "available" ? entry.report.windows : [],
+                  balances: entry.report.status === "available" ? entry.report.balances : undefined,
+                  details: entry.report.status === "available" ? entry.report.details : undefined,
+                  planLabel:
+                    entry.report.status === "available" ? (entry.report.planLabel ?? null) : null,
+                  error: entry.report.status === "error" ? entry.report.error : null,
                 })),
               },
             }

@@ -191,6 +191,8 @@ its own.
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
+- **Sheet stacking and backdrop dismissal belong to `IsolatedBottomSheetModal`.** Menus only
+  request a backdrop opacity. See [floating-panels.md](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth).
 - **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
   inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
   portal backdrop blocking the destination. On web the chat suspends one commit after it goes

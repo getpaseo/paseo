@@ -13,7 +13,6 @@ import {
   useWebOverlayRegistration,
 } from "../lib/overlay-root";
 import {
-  BottomSheetBackdrop,
   KEYBOARD_STATUS,
   useBottomSheetInternal,
   type BottomSheetBackgroundProps,
@@ -550,13 +549,6 @@ export function AdaptiveModalSheet({
     onDismiss?.();
   }, [handleSheetDismiss, onDismiss]);
 
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
-    ),
-    [],
-  );
-
   const desktopCardStyle = useMemo(
     () => [
       styles.desktopCard,
@@ -649,7 +641,7 @@ export function AdaptiveModalSheet({
         enableDynamicSizing={false}
         onChange={handleSheetChange}
         onDismiss={handleDismiss}
-        backdropComponent={renderBackdrop}
+        backdropOpacity={0.45}
         enablePanDownToClose
         backgroundComponent={SheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
