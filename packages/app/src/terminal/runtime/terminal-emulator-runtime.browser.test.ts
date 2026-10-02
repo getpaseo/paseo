@@ -622,7 +622,11 @@ describe("terminal emulator runtime in a real browser", () => {
 
     const transfer = new DataTransfer();
     transfer.items.add(new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }));
-    mounted.host.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer }));
+    mounted.host
+      .querySelector(".xterm-helper-textarea")!
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+      );
 
     await waitFor({ predicate: () => mounted.images.length > 0 });
     expect(mounted.images).toEqual([{ data: "AQID", mimeType: "image/png" }]);

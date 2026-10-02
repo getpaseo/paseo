@@ -1,429 +1,161 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import type { ChildProcess } from "node:child_process";
-import { basename, join } from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { TerminalImageStore, terminalImageReference } from "./host-clipboard.js";
 
-import * as spawnUtils from "../utils/spawn.js";
-import {
-  materializeClipboardImageToTempFile,
-  writeImageToHostClipboard,
-  writeImageToHostClipboardOnPlatform,
-} from "./host-clipboard.js";
-
-const PNG_BYTES = Buffer.from("89504e470d0a1a0a", "hex");
-const PNG_PAYLOAD = PNG_BYTES.toString("base64");
-
-interface ChildStubOptions {
-  exitCode?: number | null;
-  stderr?: string;
-  spawnError?: Error;
-}
-
-/**
- * A child modelling the real Linux tools: wl-copy and xclip fork a selection
- * owner that inherits our stdout/stderr pipes, so the streams never close on
- * their own and the child only ever reports "exit".
- */
-function createChildStub(options: ChildStubOptions = {}): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  child.kill = (() => true) as ChildProcess["kill"];
-  if (options.spawnError) {
-    queueMicrotask(() => {
-      child.emit("error", options.spawnError);
-    });
-    return child;
-  }
-  queueMicrotask(() => {
-    if (options.stderr) {
-      child.stderr?.write(options.stderr);
-    }
-    child.emit("exit", options.exitCode ?? 0, null);
-  });
-  return child;
-}
-
-interface RecordedCommand {
-  command: string;
-  args: string[];
-}
-
-/**
- * Records every exec invocation; stubs `which` lookups against `available`,
- * while any other command reports success.
- */
-function recordExecCommands(available: Record<string, boolean>): RecordedCommand[] {
-  const calls: RecordedCommand[] = [];
-  vi.spyOn(spawnUtils, "execCommand").mockImplementation(async (command, args) => {
-    calls.push({ command, args });
-    if (command === "which") {
-      const target = args[0] ?? "";
-      if (!available[target]) {
-        throw new Error(`which: no ${target} in (PATH)`);
-      }
-      return { stdout: `/usr/bin/${target}`, stderr: "" };
-    }
-    return { stdout: "", stderr: "" };
-  });
-  return calls;
-}
-
-interface RecordedSpawn extends RecordedCommand {
-  options: { shell?: boolean; stdio?: unknown };
-}
-
-/** Spawns a stub child for every invocation, recording command lines. */
-function recordSpawns(childOptions: ChildStubOptions = {}): RecordedSpawn[] {
-  const calls: RecordedSpawn[] = [];
-  vi.spyOn(spawnUtils, "spawnProcess").mockImplementation((command, args, spawnOptions) => {
-    calls.push({
-      command,
-      args,
-      options: (spawnOptions ?? {}) as RecordedSpawn["options"],
-    });
-    return createChildStub(childOptions);
-  });
-  return calls;
-}
-
-function extractTempPathFromOsascript(script: string): string {
-  const match = /POSIX file "([^"]+)"/.exec(script);
-  expect(match).toBeTruthy();
-  return match![1];
-}
-
-afterEach(() => {
-  vi.restoreAllMocks();
+const roots: string[] = [];
+const PNG = Buffer.from("89504e470d0a1a0a", "hex");
+const payload = (terminalId: string, suffix = "") => ({
+  terminalId,
+  mimeType: "image/png" as const,
+  dataBase64: Buffer.concat([PNG, Buffer.from(suffix)]).toString("base64"),
 });
-
-describe("host clipboard platform dispatch", () => {
-  describe("darwin", () => {
-    test("writes a png through osascript and cleans up the temp file", async () => {
-      recordExecCommands({});
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result).toEqual({ success: true, error: null });
-      expect(spawns).toHaveLength(1);
-      expect(spawns[0]?.command).toBe("osascript");
-      expect(spawns[0]?.args[0]).toBe("-e");
-      const script = spawns[0]?.args[1] ?? "";
-      expect(script).toContain("«class PNGf»");
-      const tempPath = extractTempPathFromOsascript(script);
-      expect(tempPath.startsWith(join(tmpdir(), "paseo-clipboard-"))).toBe(true);
-      expect(existsSync(tempPath)).toBe(false);
-    });
-
-    test("maps jpeg to the JPEG picture clipboard flavor", async () => {
-      recordExecCommands({});
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/jpeg",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result.success).toBe(true);
-      const script = spawns[0]?.args[1] ?? "";
-      expect(script).toContain("«class JPEG picture»");
-    });
-
-    test("surfaces tool failures without throwing", async () => {
-      recordExecCommands({});
-      recordSpawns({ exitCode: 1, stderr: "osascript: clipboards are busy" });
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe("osascript failed: osascript: clipboards are busy");
-    });
-
-    test("surfaces spawn errors without throwing", async () => {
-      recordExecCommands({});
-      recordSpawns({ spawnError: new Error("spawn osascript ENOENT") });
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result).toEqual({
-        success: false,
-        error: "osascript failed: spawn osascript ENOENT",
-      });
-    });
-  });
-
-  describe("linux", () => {
-    test("prefers xclip with the selection argv when no Wayland display is set", async () => {
-      recordExecCommands({ xclip: true });
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "linux",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result).toEqual({ success: true, error: null });
-      expect(spawns).toHaveLength(1);
-      expect(spawns[0]?.command).toBe("xclip");
-      expect(spawns[0]?.args).toEqual([
-        "-selection",
-        "clipboard",
-        "-t",
-        "image/png",
-        "-i",
-        expect.stringMatching(/paseo-clipboard-/),
-      ]);
-      expect(spawns[0]?.options.stdio?.[0]).toBe("ignore");
-    });
-
-    test("pipes the image into wl-copy over an inherited stdin fd on Wayland", async () => {
-      recordExecCommands({ "wl-copy": true });
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "linux",
-        mimeType: "image/jpeg",
-        dataBase64: PNG_PAYLOAD,
-        env: { WAYLAND_DISPLAY: "wayland-0" },
-      });
-
-      expect(result).toEqual({ success: true, error: null });
-      expect(spawns).toHaveLength(1);
-      expect(spawns[0]?.command).toBe("wl-copy");
-      expect(spawns[0]?.args).toEqual(["-t", "image/jpeg"]);
-      // The temp file is handed to the child as its stdin, not as an argument.
-      expect(spawns[0]?.options.stdio?.[0]).toEqual(expect.any(Number));
-    });
-
-    test("falls back to xclip when wl-copy is missing on a Wayland session", async () => {
-      const _execCalls = recordExecCommands({ xclip: true });
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "linux",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-        env: { WAYLAND_DISPLAY: "wayland-0" },
-      });
-
-      expect(result.success).toBe(true);
-      expect(spawns).toHaveLength(1);
-      expect(spawns[0]?.command).toBe("xclip");
-    });
-
-    test("returns an actionable error when no clipboard tool exists", async () => {
-      recordExecCommands({});
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "linux",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-        env: { WAYLAND_DISPLAY: "wayland-0" },
-      });
-
-      expect(result).toEqual({
-        success: false,
-        error: "no clipboard tool available on the host; install wl-clipboard (wl-copy) or xclip",
-      });
-      expect(spawns).toEqual([]);
-    });
-
-    test("reports a tool that exits nonzero instead of throwing", async () => {
-      recordExecCommands({ "wl-copy": true });
-      recordSpawns({ exitCode: 1, stderr: "No compositor on display" });
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "linux",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-        env: { WAYLAND_DISPLAY: "wayland-0" },
-      });
-
-      expect(result).toEqual({
-        success: false,
-        error: "wl-copy failed: No compositor on display",
-      });
-    });
-  });
-
-  describe("win32", () => {
-    test("invokes Set-Clipboard with the quoted temp file path", async () => {
-      recordExecCommands({});
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "win32",
-        mimeType: "image/jpeg",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result).toEqual({ success: true, error: null });
-      expect(spawns).toHaveLength(1);
-      expect(spawns[0]?.command).toBe("powershell");
-      expect(spawns[0]?.args).toEqual([
-        "-NoProfile",
-        "-Command",
-        expect.stringMatching(/^Set-Clipboard -Path '.+\.jpg'$/),
-      ]);
-    });
-  });
-
-  describe("payload guards", () => {
-    test("rejects unsupported platforms before touching the OS", async () => {
-      const execCalls = recordExecCommands({});
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "freebsd",
-        mimeType: "image/png",
-        dataBase64: PNG_PAYLOAD,
-      });
-
-      expect(result).toEqual({
-        success: false,
-        error: "clipboard write unsupported on this platform",
-      });
-      expect(execCalls).toEqual([]);
-      expect(spawns).toEqual([]);
-    });
-
-    test("rejects payloads above the decoded size limit without spawning anything", async () => {
-      const execCalls = recordExecCommands({});
-      const spawns = recordSpawns();
-      const oversized = Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64");
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/png",
-        dataBase64: oversized,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("10 MiB");
-      expect(execCalls).toEqual([]);
-      expect(spawns).toEqual([]);
-    });
-
-    test("accepts payloads at exactly the size limit", async () => {
-      recordExecCommands({});
-      const spawns = recordSpawns();
-      const atLimit = Buffer.alloc(10 * 1024 * 1024).toString("base64");
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/png",
-        dataBase64: atLimit,
-      });
-
-      expect(result.success).toBe(true);
-      expect(spawns[0]?.command).toBe("osascript");
-    });
-
-    test("rejects empty payloads", async () => {
-      const execCalls = recordExecCommands({});
-      const spawns = recordSpawns();
-
-      const result = await writeImageToHostClipboardOnPlatform({
-        platform: "darwin",
-        mimeType: "image/png",
-        dataBase64: "",
-      });
-
-      expect(result).toEqual({ success: false, error: "clipboard image payload is empty" });
-      expect(execCalls).toEqual([]);
-      expect(spawns).toEqual([]);
-    });
-  });
-
-  test("public entry point dispatches the running platform", async () => {
-    recordExecCommands({ xclip: true });
-    const spawns = recordSpawns();
-
-    const result = await writeImageToHostClipboard({
-      mimeType: "image/png",
-      dataBase64: PNG_PAYLOAD,
-    });
-
-    expect(result).toEqual({ success: true, error: null });
-    let expectedCommand = "xclip";
-    if (process.platform === "win32") {
-      expectedCommand = "powershell";
-    } else if (process.platform === "darwin") {
-      expectedCommand = "osascript";
-    }
-    expect(spawns).toHaveLength(1);
-    expect(spawns[0]?.command).toBe(expectedCommand);
-  });
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
+async function root() {
+  const path = await mkdtemp(join(tmpdir(), "terminal image O'Brien-"));
+  roots.push(path);
+  return path;
+}
 
-describe("materializeClipboardImageToTempFile", () => {
-  test("writes a readable png file with the right bytes and leaves it in place", async () => {
-    const result = await materializeClipboardImageToTempFile({
-      mimeType: "image/png",
-      dataBase64: PNG_PAYLOAD,
-    });
-
-    try {
-      expect(basename(result.path)).toMatch(/^paseo-image-paste-\d+-\d+\.png$/);
-      expect(join(tmpdir(), basename(result.path))).toBe(result.path);
-      expect(existsSync(result.path)).toBe(true);
-      expect(readFileSync(result.path).equals(PNG_BYTES)).toBe(true);
-    } finally {
-      unlinkSync(result.path);
-    }
+describe("terminal image storage", () => {
+  test("isolates concurrent terminals and retains bytes across reconnect and store restart", async () => {
+    const directory = join(await root(), "images");
+    const store = new TerminalImageStore({ directory, isActive: () => true });
+    const [a, b] = await Promise.all([
+      store.save(payload("a", "A")),
+      store.save(payload("b", "B")),
+    ]);
+    expect(dirname(a)).not.toBe(dirname(b));
+    const restarted = new TerminalImageStore({ directory, isActive: () => true });
+    await restarted.save(payload("a", "later"));
+    expect(await readFile(a)).toEqual(Buffer.concat([PNG, Buffer.from("A")]));
+    expect(await readFile(b)).toEqual(Buffer.concat([PNG, Buffer.from("B")]));
   });
 
-  test("uses a .jpg extension for jpegs", async () => {
-    const result = await materializeClipboardImageToTempFile({
-      mimeType: "image/jpeg",
-      dataBase64: PNG_PAYLOAD,
-    });
+  test.skipIf(process.platform === "win32")(
+    "directories and image bytes are owner-only",
+    async () => {
+      const directory = join(await root(), "images");
+      const store = new TerminalImageStore({ directory, isActive: () => true });
+      const path = await store.save(payload("a"));
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+      expect((await stat(dirname(path))).mode & 0o777).toBe(0o700);
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+    },
+  );
 
-    try {
-      expect(result.path.endsWith(".jpg")).toBe(true);
-    } finally {
-      unlinkSync(result.path);
-    }
+  test("never evicts active images; retirement survives restart and permits delayed reads", async () => {
+    const directory = join(await root(), "images");
+    let now = 0;
+    const active = new Set(["a", "b"]);
+    const options = {
+      directory,
+      now: () => now,
+      isActive: (id: string) => active.has(id),
+      retentionMs: 100,
+    };
+    const store = new TerminalImageStore(options);
+    const a = await store.save(payload("a"));
+    now = 1000;
+    await store.save(payload("b"));
+    expect(await readFile(a)).toEqual(PNG);
+    active.delete("a");
+    await store.save(payload("b"));
+    now = 1099;
+    const restarted = new TerminalImageStore(options);
+    await restarted.save(payload("b"));
+    expect(await readFile(a)).toEqual(PNG);
+    now = 1100;
+    await restarted.save(payload("b"));
+    await expect(stat(a)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  test("rejects oversized payloads without writing a file", async () => {
-    const oversized = Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64");
+  test("reactivation cancels retirement", async () => {
+    const directory = join(await root(), "images");
+    let now = 0;
+    const active = new Set(["a", "b"]);
+    const store = new TerminalImageStore({
+      directory,
+      now: () => now,
+      isActive: (id) => active.has(id),
+      retentionMs: 100,
+    });
+    const a = await store.save(payload("a"));
+    active.delete("a");
+    await store.save(payload("b"));
+    active.add("a");
+    now = 200;
+    await store.save(payload("a"));
+    expect(await readFile(a)).toEqual(PNG);
+  });
 
+  test("serialized global/per-terminal/count limits reject uploads without evicting files", async () => {
+    const directory = join(await root(), "images");
+    const store = new TerminalImageStore({
+      directory,
+      isActive: () => true,
+      maxBytes: 16,
+      maxTerminalBytes: 8,
+      maxFiles: 2,
+    });
+    const a = await store.save(payload("a"));
+    await expect(store.save(payload("a"))).rejects.toThrow("storage is full");
+    const results = await Promise.allSettled([store.save(payload("b")), store.save(payload("c"))]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(await readFile(a)).toEqual(PNG);
+    const restarted = new TerminalImageStore({ directory, isActive: () => true, maxBytes: 16 });
+    await expect(restarted.save(payload("d"))).rejects.toThrow("storage is full");
+  });
+
+  test("rejects closed terminals and invalid/oversized images", async () => {
+    const directory = join(await root(), "images");
+    const store = new TerminalImageStore({ directory, isActive: () => false });
+    await expect(store.save(payload("gone"))).rejects.toThrow("no longer exists");
+    await expect(store.save({ ...payload("a"), dataBase64: "not image" })).rejects.toThrow(
+      "encoding",
+    );
+    await expect(store.save({ ...payload("a"), mimeType: "image/jpeg" })).rejects.toThrow(
+      "image type",
+    );
     await expect(
-      materializeClipboardImageToTempFile({
-        mimeType: "image/png",
-        dataBase64: oversized,
-      }),
+      store.save({ ...payload("a"), dataBase64: "A".repeat(14 * 1024 * 1024) }),
     ).rejects.toThrow("10 MiB");
-    // The failed call wrote nothing; the next successful call still produces
-    // a well-formed name.
-    const result = await materializeClipboardImageToTempFile({
-      mimeType: "image/png",
-      dataBase64: PNG_PAYLOAD,
-    });
-    try {
-      expect(basename(result.path)).toMatch(/^paseo-image-paste-\d+-\d+\.png$/);
-    } finally {
-      unlinkSync(result.path);
-    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "does not follow a replaced storage directory",
+    async () => {
+      const directory = join(await root(), "images");
+      await symlink(await root(), directory);
+      await expect(
+        new TerminalImageStore({ directory, isActive: () => true }).save(payload("a")),
+      ).rejects.toThrow("Unsafe");
+    },
+  );
+});
+
+describe("terminal file references", () => {
+  test.each([
+    ["/home/O'Brien/my images/image.png", "linux"],
+    ["C:\\Users\\O'Brien\\my images\\image.png", "win32"],
+  ] as const)("preserves spaces and apostrophes for %s", (path, platform) => {
+    expect(terminalImageReference(path, platform)).toBe(`"${path}"`);
+  });
+  test("encodes control and interpolation characters without losing filename bytes", () => {
+    const path = '/tmp/dollar$ back` slash\\ quote"/image.png';
+    const reference = terminalImageReference(path, "linux");
+    expect(reference.startsWith("file://")).toBe(true);
+    expect(fileURLToPath(reference)).toBe(path);
+  });
+  test("uses host Windows URL semantics, independent of the client OS", () => {
+    expect(terminalImageReference("C:\\Users\\name%name\\image.png", "win32")).toBe(
+      "file:///C:/Users/name%25name/image.png",
+    );
   });
 });

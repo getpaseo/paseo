@@ -272,13 +272,11 @@ import {
   createProjectDirectory,
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
-import {
-  materializeClipboardImageToTempFile,
-  writeImageToHostClipboard,
-} from "./host-clipboard.js";
+import { getTerminalImageStore, terminalImageReference } from "./host-clipboard.js";
 
 type ProviderSubagentManagerEvent = Extract<
   AgentManagerEvent,
@@ -7190,48 +7188,39 @@ export class Session {
   private async handleTerminalClipboardWriteImageRequest(
     request: Extract<SessionInboundMessage, { type: "terminal.clipboard.write_image.request" }>,
   ): Promise<void> {
-    // The module never throws; failures travel to the client as success:false
-    // so it can surface them instead of forwarding the paste keystroke.
-    const result = await writeImageToHostClipboard({
-      mimeType: request.mimeType,
-      dataBase64: request.data,
-    });
-    if (result.success) {
-      this.emit({
-        type: "terminal.clipboard.write_image.response",
-        payload: {
-          requestId: request.requestId,
-          success: true,
-          error: result.error,
-        },
-      });
-      return;
-    }
-    // Headless fallback: the image never reached the host clipboard, so hand
-    // the client a temp file path it can paste as text for path-aware TUIs.
     try {
-      const fallback = await materializeClipboardImageToTempFile({
+      const terminal = request.terminalId && this.terminalManager?.getTerminal(request.terminalId);
+      if (!terminal || !this.terminalManager)
+        throw new Error("A live terminalId is required for image paste");
+      const modes = new TerminalInputModeTracker();
+      modes.feed(terminal.getReplayPreamble());
+      if (!modes.getState().bracketedPaste) {
+        throw new Error("Image paste requires an agent that accepts bracketed file paste");
+      }
+      const path = await getTerminalImageStore(this.paseoHome, this.terminalManager).save({
+        terminalId: terminal.id,
         mimeType: request.mimeType,
         dataBase64: request.data,
       });
+      if (this.terminalManager.getTerminal(terminal.id) !== terminal || terminal.getExitInfo()) {
+        throw new Error("Terminal closed before image paste completed");
+      }
+      modes.reset();
+      modes.feed(terminal.getReplayPreamble());
+      if (!modes.getState().bracketedPaste)
+        throw new Error("Terminal stopped accepting file paste");
+      terminal.send({ type: "input", data: `\x1b[200~${terminalImageReference(path)}\x1b[201~` });
       this.emit({
         type: "terminal.clipboard.write_image.response",
-        payload: {
-          requestId: request.requestId,
-          success: false,
-          error: result.error,
-          path: fallback.path,
-        },
+        payload: { requestId: request.requestId, success: true, injected: true, error: null },
       });
-    } catch (fallbackError) {
-      const fallbackMessage =
-        fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+    } catch (error) {
       this.emit({
         type: "terminal.clipboard.write_image.response",
         payload: {
           requestId: request.requestId,
           success: false,
-          error: `${result.error}; temp file fallback failed: ${fallbackMessage}`,
+          error: error instanceof Error ? error.message : String(error),
         },
       });
     }
