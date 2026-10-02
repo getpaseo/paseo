@@ -40,7 +40,6 @@ interface PluginRuntimePort {
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[];
-  identifyUsage: PluginRuntime["identifyUsage"];
   fetchUsage: PluginRuntime["fetchUsage"];
   discoverUsage: PluginRuntime["discoverUsage"];
   connectProvider: PluginRuntime["connectProvider"];
@@ -80,7 +79,7 @@ export class PluginService {
   private readonly errors = new Map<string, string>();
   private readonly listeners = new Set<(pluginId: string) => void>();
   private readonly providers = new Map<string, ProviderRegistration>();
-  private readonly usageSources = new UsageSourceRegistry();
+  private readonly usageSources: UsageSourceRegistry;
   private readonly usageSourceIdsByPlugin = new Map<string, string[]>();
   private readonly providerIdsByPlugin = new Map<string, readonly string[]>();
   private readonly providerListeners = new Set<() => void>();
@@ -96,6 +95,7 @@ export class PluginService {
     private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
+    this.usageSources = new UsageSourceRegistry(Date.now, 300_000, this.logger);
     this.runtime =
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {
@@ -574,11 +574,6 @@ export class PluginService {
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;
           },
-          identify: (input) =>
-            this.runtime.identifyUsage(pluginId, source.id, input) as Promise<{
-              key: string;
-              label?: string;
-            } | null>,
           fetch: (input) => {
             return this.runtime.fetchUsage(pluginId, source.id, input);
           },

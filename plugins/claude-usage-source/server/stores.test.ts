@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { discover, fetchUsage, identify } from "./usage.js";
+import { discover, fetchUsage } from "./usage.js";
 
 let home: string;
 beforeEach(async () => {
@@ -25,8 +25,21 @@ async function profile(_url: RequestInfo | URL, init?: RequestInit) {
     JSON.stringify({ account: { uuid: "pi-account" }, organization: { uuid: "pi-org" } }),
   );
 }
-async function account(input: Parameters<typeof fetchUsage>[0], env: NodeJS.ProcessEnv = {}) {
-  return identify(input, profile, () => 1000, lookup(env));
+async function accountIdentity(
+  input: Parameters<typeof fetchUsage>[0],
+  env: NodeJS.ProcessEnv = {},
+) {
+  const accounts = await discover(lookup(env), profile);
+  const account = accounts.find(
+    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
+  );
+  if (!account) throw new Error("Expected discovered login");
+  return { key: account.key, ...(account.label ? { label: account.label } : {}) };
+}
+async function logins(options: Parameters<typeof discover>[0]) {
+  return (await discover(options, profile)).map(
+    (account) => account.input as Parameters<typeof fetchUsage>[0],
+  );
 }
 async function database(path: string) {
   await mkdir((await import("node:path")).dirname(path), { recursive: true });
@@ -76,9 +89,9 @@ test("Pi uses its own OAuth identity and re-reads rotated tokens without writing
   await json(join(home, ".claude.json"), {
     oauthAccount: { accountUuid: "other", organizationUuid: "other-org" },
   });
-  const inputs = await discover(lookup());
+  const inputs = await logins(lookup());
   expect(inputs).toHaveLength(1);
-  expect(await account(inputs[0]!)).toEqual({ key: "pi-account.pi-org" });
+  expect(await accountIdentity(inputs[0]!)).toEqual({ key: "pi-account.pi-org" });
   await json(path, {
     anthropic: { type: "oauth", access: "fixture-rotated", accountId: "pi-account" },
   });
@@ -103,18 +116,18 @@ test("Pi honors directory override and ignores API keys and malformed files", as
   const env = { PI_CODING_AGENT_DIR: directory };
   const path = join(directory, "auth.json");
   await json(path, { anthropic: { type: "oauth", access: "fixture-pi", accountId: "pi-account" } });
-  expect(await discover(lookup(env))).toEqual([{ route: { store: "pi", path } }]);
+  expect(await logins(lookup(env))).toEqual([{ route: { store: "pi", path } }]);
   await json(path, { anthropic: { type: "api_key", key: "fixture-key" } });
-  expect(await discover(lookup(env))).toEqual([]);
+  expect(await logins(lookup(env))).toEqual([]);
   await writeFile(path, "broken");
-  expect(await discover(lookup(env))).toEqual([]);
+  expect(await logins(lookup(env))).toEqual([]);
 });
 
 test("expired Pi tokens are unavailable without calling usage or refreshing", async () => {
   await json(join(home, ".pi", "agent", "auth.json"), {
     anthropic: { type: "oauth", access: "fixture-expired", accountId: "pi-account", expires: 500 },
   });
-  const [input] = await discover(lookup());
+  const [input] = await logins(lookup());
   expect(
     (
       await fetchUsage(
@@ -129,7 +142,7 @@ test("expired Pi tokens are unavailable without calling usage or refreshing", as
 });
 
 for (const location of ["default", "profile", "xdg", "override", "config"]) {
-  test(`OMP discovers enabled live OAuth rows in ${location} store read-only`, async () => {
+  test(`OMP discovers enabled OAuth rows including expired logins in ${location} store read-only`, async () => {
     let path = join(home, ".omp", "agent", "agent.db");
     let env: NodeJS.ProcessEnv = { OMP_AUTH_BROKER_URL: "https://broker.test" };
     if (location === "profile") {
@@ -151,9 +164,12 @@ for (const location of ["default", "profile", "xdg", "override", "config"]) {
     }
     await database(path);
     const before = await readFile(path);
-    const inputs = await discover(lookup(env));
-    expect(inputs).toEqual([{ route: { store: "omp", path, credentialId: 1 } }]);
-    expect(await account(inputs[0]!, env)).toEqual({ key: "pi-account.pi-org" });
+    const inputs = await logins(lookup(env));
+    expect(inputs).toEqual([
+      { route: { store: "omp", path, credentialId: 1 } },
+      { route: { store: "omp", path, credentialId: 2 } },
+    ]);
+    expect(await accountIdentity(inputs[0]!, env)).toEqual({ key: "pi-account.pi-org" });
     expect(
       (
         await fetchUsage(
@@ -175,56 +191,52 @@ test("missing SQLite skips only OMP", async () => {
   await json(join(home, ".pi", "agent", "auth.json"), {
     anthropic: { type: "oauth", access: "fixture-pi" },
   });
-  const inputs = await discover({ ...lookup(), sqlite: () => undefined });
+  const inputs = await logins({ ...lookup(), sqlite: () => undefined });
   expect(inputs).toEqual([
     { route: { store: "pi", path: join(home, ".pi", "agent", "auth.json") } },
   ]);
 });
 
-test("Claude file and keychain are independent discovery candidates", async () => {
-  const path = join(home, ".claude", ".credentials.json");
-  await json(path, { claudeAiOauth: { accessToken: "fixture-file" } });
-  const inputs = await discover({
+test("Claude Keychain login replaces the fallback file", async () => {
+  await json(join(home, ".claude", ".credentials.json"), {
+    claudeAiOauth: { accessToken: "fixture-file", expiresAt: 500 },
+  });
+  const inputs = await logins({
     ...lookup(),
     platform: "darwin",
     readKeychainCredentials: async () => ({ claudeAiOauth: { accessToken: "fixture-keychain" } }),
   });
-  expect(inputs).toEqual([{ route: { store: "claude", path } }, { route: { store: "keychain" } }]);
+  expect(inputs).toEqual([{ route: { store: "keychain" } }]);
 });
 
 test("Claude account metadata alone does not discover a login", async () => {
   await json(join(home, ".claude.json"), {
     oauthAccount: { accountUuid: "old", organizationUuid: "old-org" },
   });
-  expect(await discover(lookup())).toEqual([]);
-  expect(
-    await identify(
-      { route: { store: "claude", path: join(home, ".claude", ".credentials.json") } },
-      profile,
-      Date.now,
-      lookup(),
-    ),
-  ).toBeNull();
+  expect(await logins(lookup())).toEqual([]);
 });
 
 test("keychain identity belongs to its token even when Claude Code metadata names another account", async () => {
   await json(join(home, ".claude.json"), {
     oauthAccount: { accountUuid: "stale", organizationUuid: "stale-org" },
   });
-  const identity = await identify({ route: { store: "keychain" } }, profile, () => 1000, {
-    ...lookup(),
-    platform: "darwin",
-    readKeychainCredentials: async () => ({
-      claudeAiOauth: { accessToken: "fixture-keychain-other" },
-    }),
-  });
-  expect(identity).toEqual({ key: "pi-account.pi-org" });
+  const [identity] = await discover(
+    {
+      ...lookup(),
+      platform: "darwin",
+      readKeychainCredentials: async () => ({
+        claudeAiOauth: { accessToken: "fixture-keychain-other" },
+      }),
+    },
+    profile,
+  );
+  expect(identity).toEqual({ key: "pi-account.pi-org", input: { route: { store: "keychain" } } });
 });
 
 test("OMP fetch re-reads its row after rotation and skips a newly disabled login", async () => {
   const path = join(home, ".omp", "agent", "agent.db");
   await database(path);
-  const [input] = await discover(lookup());
+  const [input] = await logins(lookup());
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
   db.prepare("UPDATE auth_credentials SET data = ? WHERE id = 1").run(
@@ -246,17 +258,15 @@ test("OMP fetch re-reads its row after rotation and skips a newly disabled login
   ).toBe("unavailable");
   db.prepare("UPDATE auth_credentials SET disabled_cause = 'revoked' WHERE id = 1").run();
   db.close();
-  expect(
-    (
-      await fetchUsage(
-        input!,
-        async () => {
-          throw new Error("disabled login must not fetch");
-        },
-        lookup(),
-      )
-    ).status,
-  ).toBe("unavailable");
+  await expect(
+    fetchUsage(
+      input!,
+      async () => {
+        throw new Error("must not fetch");
+      },
+      lookup(),
+    ),
+  ).rejects.toThrow("login store no longer exists");
 });
 
 test("Claude discovery honors CLAUDE_CONFIG_DIR", async () => {
@@ -268,7 +278,7 @@ test("Claude discovery honors CLAUDE_CONFIG_DIR", async () => {
   await json(join(ignoredDirectory, ".credentials.json"), {
     claudeAiOauth: { accessToken: "fixture-other" },
   });
-  const inputs = await discover(
+  const inputs = await logins(
     lookup({ CLAUDE_CONFIG_DIR: directory, CLAUDE_HOME: ignoredDirectory }),
   );
   expect(inputs).toEqual([

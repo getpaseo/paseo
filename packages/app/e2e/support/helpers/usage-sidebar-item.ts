@@ -36,8 +36,7 @@ import { z } from "zod";
 export default function contribute(server) {
   server.registerUsageSource({
     id: "tall-usage", label: "Scrolling account", input: z.object({}),
-    discover: async () => [{}],
-    identify: async () => ({ key: "scrolling-account" }),
+    discover: async () => [{key: "scrolling-account", input: {}}],
     fetch: async () => ({ status: "available", windows: Array.from({ length: 20 }, (_, i) => ({
       id: String(i), label: "Window " + (i + 1), usedPct: 25,
     })) }),

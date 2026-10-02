@@ -1,6 +1,18 @@
+import type { UsageProblem } from "@getpaseo/protocol/messages";
+import { formatCompactTimeAgo, formatCompactTimeAgoAsProse } from "@/utils/time";
+
 // User-facing copy for the usage surfaces, kept in one file so localization is a
 // single-file change.
 export const usageCopy = {
+  problem: (problem: UsageProblem, now: Date = new Date()): string => {
+    if (problem.kind === "no_quota") return problem.detail;
+    const remedy = problem.refreshedBy
+      ? `Run ${problem.refreshedBy} to refresh it.`
+      : "Sign in again.";
+    if (problem.kind === "rejected") return `Login rejected (HTTP ${problem.status}). ${remedy}`;
+    const ago = formatCompactTimeAgoAsProse(formatCompactTimeAgo(new Date(problem.expiresAt), now));
+    return `Login expired ${ago}. ${remedy}`;
+  },
   title: "Usage",
   planUsage: "Plan usage",
   options: "Usage options",
