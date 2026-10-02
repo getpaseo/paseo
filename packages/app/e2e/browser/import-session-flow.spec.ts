@@ -282,8 +282,10 @@ test("an active-writer conflict shows specific guidance instead of a generic fai
     const flow = new ImportSessionFlow(page);
     await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
     await flow.openGlobally();
-    const row = page.getByTestId("import-session-session-claude-fixture-root-10");
-    await row.scrollIntoViewIfNeeded();
+    // "fixture-unrelated" sorts to the top of the unscoped list (unlike the "fixture-root-*"
+    // filler rows), so the status banner above the row list stays in frame without scrolling.
+    const row = page.getByTestId("import-session-session-claude-fixture-unrelated");
+    await expect(row).toBeVisible();
 
     gate.failNextImportRequest();
     await row.click();
