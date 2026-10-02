@@ -1,4 +1,4 @@
-// Agent provider brand marks, shared by the landing page and the Hub page.
+// Agent provider brand marks, shared by the landing page, the Hub page, and /agents.
 
 import type * as React from "react";
 
@@ -79,6 +79,20 @@ export function PiIcon(props: React.SVGProps<SVGSVGElement>) {
         fillRule="evenodd"
       />
       <path d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+    </svg>
+  );
+}
+
+export function OmpIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="4 4 56 56"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z" />
     </svg>
   );
 }

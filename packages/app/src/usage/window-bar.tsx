@@ -1,6 +1,9 @@
+import { Pin } from "lucide-react-native";
 import { useMemo } from "react";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { usageCopy } from "./copy";
 import { formatDisplayPct, formatResetLabel } from "./format";
 import { UsageMeter } from "./meter";
 import { displayPercent, usageWindowRowLabel } from "./model";
@@ -63,6 +66,7 @@ export function UsageWindowBar({
           isAtRisk={isAtRisk}
           percent={shownPct ?? 0}
           tone={tone}
+          pinned={pinned}
         />
       )}
     </Pressable>
@@ -77,6 +81,7 @@ function WindowRowContent({
   isAtRisk,
   percent,
   tone,
+  pinned,
 }: {
   highlight: StyleProp<ViewStyle>;
   label: string;
@@ -85,27 +90,64 @@ function WindowRowContent({
   isAtRisk: boolean;
   percent: number;
   tone: UsageTone;
+  pinned: boolean;
 }) {
   return (
     <>
       <View style={highlight} pointerEvents="none" />
-      <View style={styles.labelRow}>
-        <Text style={styles.label} numberOfLines={1}>
-          {label}
-        </Text>
-        <Text style={styles.value}>
-          {value}
-          {trailing ? (
-            <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
-          ) : null}
-        </Text>
+      <View style={styles.contentRow}>
+        <View style={styles.windowContent}>
+          <View style={styles.labelRow}>
+            <Text style={styles.label} numberOfLines={1}>
+              {label}
+            </Text>
+            <Text style={styles.value}>
+              {value}
+              {trailing ? (
+                <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
+              ) : null}
+            </Text>
+          </View>
+          <UsageMeter percent={percent} tone={tone} />
+        </View>
+        <UsagePinGlyph pinned={pinned} />
       </View>
-      <UsageMeter percent={percent} tone={tone} />
     </>
   );
 }
 
+const ThemedPin = withUnistyles(Pin);
+
+function UsagePinGlyph({ pinned }: { pinned: boolean }) {
+  const iconMapping = useMemo(
+    () => (theme: { colors: { foregroundMuted: string } }) => ({
+      color: theme.colors.foregroundMuted,
+      fill: pinned ? theme.colors.foregroundMuted : "none",
+    }),
+    [pinned],
+  );
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <View
+          style={styles.pin}
+          testID={pinned ? "usage-pin-glyph-pinned" : "usage-pin-glyph-unpinned"}
+        >
+          <ThemedPin size={12} uniProps={iconMapping} />
+        </View>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <Text style={styles.tooltipText}>{pinned ? usageCopy.unpin : usageCopy.pin}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
+  contentRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  windowContent: { flex: 1, gap: 3 },
+  pin: { width: 12, alignItems: "center" },
+  tooltipText: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.sm },
   row: {
     gap: 3,
     // The highlight bleeds into the card padding so the label and bar stay on the card's rail.

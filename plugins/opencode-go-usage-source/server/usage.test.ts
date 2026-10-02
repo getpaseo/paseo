@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { discover, fetchUsage, identify } from "./usage.js";
+import { discover, fetchUsage } from "./usage.js";
 
 import { inputSchema } from "../shared/input.js";
 
@@ -22,7 +22,7 @@ afterEach(async () => {
 
 test("discovery input rejects an explicit API key", () => {
   expect(inputSchema.safeParse({ apiKey: "unused" }).success).toBe(false);
-  expect(inputSchema.parse({})).toEqual({});
+  expect(() => inputSchema.parse({})).toThrow();
 });
 
 const upstreamResponse = {
@@ -39,7 +39,9 @@ test("discovers and fetches the default key from read-only auth.json", async () 
   const content = JSON.stringify({ "opencode-go": { type: "api", key: "fixture-key" } });
   try {
     await writeFile(path, content);
-    expect(await discover(path)).toEqual([{}]);
+    expect(await discover(path)).toEqual([
+      { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: { path } },
+    ]);
     const requests: Array<{ url: string; authorization: string | null }> = [];
     const fetchApi = async (url: string | URL | Request, init?: RequestInit) => {
       requests.push({
@@ -48,8 +50,7 @@ test("discovers and fetches the default key from read-only auth.json", async () 
       });
       return Response.json(upstreamResponse);
     };
-    const report = await fetchUsage({}, fetchApi as typeof fetch, path);
-    expect((await identify({}, path))?.key).toMatch(/^[a-f0-9]{64}$/);
+    const report = await fetchUsage({ path }, fetchApi as typeof fetch);
     expect(requests).toEqual([
       { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer fixture-key" },
     ]);
@@ -75,38 +76,29 @@ test("omits default discovery when auth.json lacks an OpenCode Go API key", asyn
   try {
     await writeFile(path, JSON.stringify({ openai: { type: "oauth", access: "other-token" } }));
     expect(await discover(path)).toEqual([]);
-    const report = await fetchUsage(
-      {},
-      async () => {
+    await expect(
+      fetchUsage({ path }, async () => {
         throw new Error("must not fetch");
-      },
-      path,
-    );
-    expect(report).toEqual({ status: "unavailable", windows: [] });
+      }),
+    ).rejects.toThrow("login store no longer exists");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
 test.each([401, 403])("maps HTTP %i to unavailable", async (status) => {
-  const report = await fetchUsage({}, async () => new Response(null, { status }), fixturePath);
-  expect(report.status).toBe("unavailable");
-  expect(report.windows).toEqual([]);
+  const report = await fetchUsage(
+    { path: fixturePath },
+    async () => new Response(null, { status }),
+  );
+  expect(report).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status, refreshedBy: "opencode" },
+  });
 });
 
-test("identify returns a key when fetch finds OpenCode Go credentials", async () => {
-  let requested = false;
-  await fetchUsage(
-    {},
-    async () => {
-      requested = true;
-      return new Response(null, { status: 401 });
-    },
-    fixturePath,
-  );
-  expect(requested).toBe(true);
-  const identity = await identify({}, fixturePath);
-  expect(identity?.key).toMatch(/^[a-f0-9]{64}$/);
-  expect(identity?.key).not.toBe("fixture-secret");
-  expect(await identify({}, fixturePath)).toEqual(identity);
+test.each(["missing file", "unrelated file"])("discovers no accounts for %s", async (scenario) => {
+  const path = join(fixtureDirectory, "missing.json");
+  if (scenario === "unrelated file") await writeFile(path, "{}");
+  expect(await discover(path)).toEqual([]);
 });

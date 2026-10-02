@@ -24,6 +24,8 @@ import {
 } from "../support/helpers/sidebar-nav-settings";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import { claudeAndCodexReports } from "../support/helpers/usage-sidebar-item";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -152,6 +154,8 @@ test.describe("Plugin sidebar items", () => {
     page,
   }) => {
     test.setTimeout(180_000);
+    // The Usage item shows only with summary data.
+    await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);
     const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");

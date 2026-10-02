@@ -51,7 +51,6 @@ export type PluginProcessRequest =
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
-  | { type: "usage.identify"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
@@ -191,14 +190,6 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),
-    z
-      .object({
-        type: z.literal("usage.identify"),
-        requestId: z.string(),
-        sourceId: z.string(),
-        input: z.unknown(),
-      })
-      .strict(),
     z
       .object({
         type: z.literal("usage.fetch"),
