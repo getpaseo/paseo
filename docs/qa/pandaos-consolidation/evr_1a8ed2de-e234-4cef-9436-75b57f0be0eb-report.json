@@ -1,0 +1,71 @@
+{
+  "status": "fail",
+  "recipe": "ad-hoc",
+  "workspaceId": "wks_1792a1281cbd8fa6",
+  "profile": "default",
+  "authReused": null,
+  "route": "http://127.0.0.1:4033/h/srv_o6sO7nfaXgr-/plugin/pandaos-dashboard/sidebar/dashboard?pluginId=pandaos-dashboard&contributionKind=sidebar&contributionId=dashboard",
+  "checks": [
+    {
+      "name": "screenshot integrated-dashboard-failed-schedule",
+      "ok": true
+    },
+    {
+      "name": "screenshot integrated-dashboard-snoozed",
+      "ok": true
+    },
+    {
+      "name": "goal \"In this owned Dashboard QA app, find the workspace card for the idle Dashboard QA session and use its Mark done in dashboard button. Do not mark native workspace done or create/start agents.\"",
+      "ok": false,
+      "detail": "uncertain after 0 Jev steps (Jev: 1 decision, 3185 input + 341 output tokens): Jev was not confident enough to choose a target.\nVisible controls: button \"New workspace\" @e1, button \"History\" @e2, button \"Schedules\" @e3, button \"Search\" @e4, button \"Kitchen\" @e5, button \"Dashboard\" @e6, button \"workspace, Questions acceptance, zotac\" @e7, button \"project, feature/pandaos-consolidation, zotac\" @e8, button \"Attach a pull request to this workspace\" @e9, button \"Add project\" @e10, button \"Hosts\" @e11, button \"Import session\" @e12, button \"Help and support\" @e13, button \"Settings\" @e14, button \"Refresh\" @e15, button \"Open\" @e16, button \"Snooze · One hour\" @e17, button \"Snooze · This evening\" @e18, button \"Snooze · Tomorrow morning\" @e19, button \"Mark done in dashboard\" @e20, textbox \"Reply to the agent\" @e21, button \"Send reply\" @e22, button \"All projects\" @e23, button \"project\" @e24, button \"Open workspace\" @e25"
+    }
+  ],
+  "trace": [
+    {
+      "action": "navigate",
+      "ok": true,
+      "ms": 526
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 230
+    },
+    {
+      "action": "click",
+      "ok": true,
+      "ms": 126
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 2241
+    },
+    {
+      "action": "screenshot",
+      "ok": true,
+      "ms": 95
+    },
+    {
+      "action": "click",
+      "ok": true,
+      "ms": 46
+    },
+    {
+      "action": "wait-text",
+      "ok": true,
+      "ms": 20
+    },
+    {
+      "action": "screenshot",
+      "ok": true,
+      "ms": 79
+    },
+    {
+      "action": "goal",
+      "ok": false,
+      "ms": 372
+    }
+  ],
+  "durationMs": 3739
+}

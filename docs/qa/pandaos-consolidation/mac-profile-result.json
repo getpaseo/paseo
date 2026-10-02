@@ -1,0 +1,14 @@
+{
+  "status": "blocked-keychain",
+  "runtime": "Electron44.2.0 darwin-arm64 cached runtime",
+  "host": "macbook",
+  "temporaryDirectory": "/tmp/pandaos-browser-profile-qa",
+  "processes": "fixture exited1 before writes; no remaining owned Electron process",
+  "safeStorage": "isEncryptionAvailable() false",
+  "verified": "OS encryption unavailable path refuses plaintext fallback",
+  "notVerified": [
+    "OS-backed sessioncookie/password restart",
+    "portable backup via real Mac safeStorage"
+  ],
+  "productionChanges": "none"
+}
