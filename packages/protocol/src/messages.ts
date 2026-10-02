@@ -3069,13 +3069,13 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// Carries an image from the client clipboard to the daemon host so agent TUIs
-// can paste it. The TUIs read the OS clipboard of the machine they run on, and
-// no image bytes travel through the pty, so the daemon materializes the image
-// onto its own host clipboard; the client then forwards the \x16 keystroke.
+// Transfers image bytes to the terminal's host. With terminalImageFiles, the
+// daemon stages a private file and injects its reference into the bound PTY.
 export const TerminalClipboardWriteImageRequestSchema = z.object({
   type: z.literal("terminal.clipboard.write_image.request"),
   requestId: z.string(),
+  // Optional on the wire for old clients; required by terminalImageFiles hosts.
+  terminalId: z.string().optional(),
   // Base64-encoded image bytes.
   data: z.string(),
   mimeType: z.enum(["image/png", "image/jpeg"]),
@@ -3661,6 +3661,7 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalClipboardImage): added in v0.5.1, remove gate after 2027-08-24.
         terminalClipboardImage: z.boolean().optional(),
+        terminalImageFiles: z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
@@ -6509,11 +6510,9 @@ export const TerminalClipboardWriteImageResponseSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     success: z.boolean(),
+    injected: z.boolean().optional(),
     error: z.string().nullable(),
-    // Set when the host clipboard could not be written (headless Linux, missing
-    // tools) but the image was materialized on the daemon filesystem instead.
-    // The client pastes this path as text so path-aware TUIs attach it; no
-    // \x16 keystroke follows because there is nothing on a clipboard to read.
+    // Retained for wire compatibility with older clipboard/path hosts.
     path: z.string().optional(),
   }),
 });

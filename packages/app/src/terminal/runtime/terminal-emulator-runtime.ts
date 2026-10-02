@@ -731,9 +731,8 @@ export class TerminalEmulatorRuntime {
     this.attachKeyEventHandler(terminal);
 
     // macOS Cmd+V and context-menu paste arrive as DOM paste events, not keydowns.
-    // xterm pastes the text itself; when the clipboard holds no text but an image,
-    // ship the bytes through onImagePaste, then forward \x16 so agent TUIs can run
-    // their own clipboard-image handlers.
+    // Let xterm handle text. Intercept image-only pastes before its bubbling
+    // listener consumes them as empty text and stops propagation.
     const hostPasteHandler = (event: ClipboardEvent): void => {
       const transfer = event.clipboardData;
       if (!transfer) {
@@ -747,12 +746,13 @@ export class TerminalEmulatorRuntime {
         return;
       }
       event.preventDefault();
+      event.stopPropagation();
       void this.forwardClipboardImage({
         readImage: () => readClipboardImageFromTransfer(transfer),
         input: (data) => terminal.input(data),
       });
     };
-    input.host.addEventListener("paste", hostPasteHandler);
+    input.host.addEventListener("paste", hostPasteHandler, true);
 
     const removeTouchListeners = this.setupTouchScrollHandlers({
       root: input.root,
@@ -844,7 +844,7 @@ export class TerminalEmulatorRuntime {
       },
       removeTouchListeners,
       removeHostPaste: () => {
-        input.host.removeEventListener("paste", hostPasteHandler);
+        input.host.removeEventListener("paste", hostPasteHandler, true);
       },
       restoreDocumentStyles,
       restoreViewportStyles,

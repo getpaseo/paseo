@@ -280,8 +280,8 @@ export function TerminalPane({
   const supportsTerminalSizeOwnership = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-size-ownership"] === true,
   );
-  const supportsTerminalClipboardImage = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.terminalClipboardImage === true,
+  const supportsTerminalImageFiles = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.terminalImageFiles === true,
   );
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
 
@@ -895,32 +895,30 @@ export function TerminalPane({
         toast.error(t("workspace.terminal.hostDisconnected"));
         return "error";
       }
-      if (!supportsTerminalClipboardImage) {
+      // COMPAT(terminalImageFiles): added in v0.11, remove after 2027-04-02.
+      // Older hosts retain native local clipboard keystrokes; never invoke their
+      // shared clipboard writer for transferred bytes.
+      if (!supportsTerminalImageFiles) {
         return "unsupported";
       }
       try {
         const result = await client.writeTerminalClipboardImage({
+          terminalId,
           data: input.data,
           mimeType: input.mimeType,
         });
-        const { success, path } = result;
-        if (success) {
-          return "written";
-        }
-        if (typeof path === "string" && path.length > 0) {
-          // The daemon saved the image to a file; paste the path as text
-          // instead (POSIX single-quoting keeps spaces/quotes intact), letting
-          // bracketed-paste wrapping apply inside the emulator.
-          emulatorRef.current?.paste(`'${path.replaceAll("'", `'\\''`)}'`);
+        if (result.success && result.injected) {
           return "injected";
         }
-      } catch {
-        // Report any RPC failure through the shared paste-image error path below.
+        throw new Error(result.error ?? t("workspace.terminal.pasteImageFailed"));
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("workspace.terminal.pasteImageFailed"),
+        );
+        return "error";
       }
-      toast.error(t("workspace.terminal.pasteImageFailed"));
-      return "error";
     },
-    [client, emulatorRef, supportsTerminalClipboardImage, t, toast],
+    [client, terminalId, supportsTerminalImageFiles, t, toast],
   );
 
   const handleTerminalPaste = useCallback(() => {
@@ -1171,6 +1169,7 @@ export function TerminalPane({
             onFocus={handleTerminalFocus}
             onResize={handleTerminalResize}
             onTerminalKey={handleTerminalKey}
+            onImagePaste={handleTerminalImagePaste}
             onInputModeChange={handleInputModeChange}
             onSelectionChange={handleSelectionChange}
             onResolveLocalFileLink={handleResolveLocalFileLink}
