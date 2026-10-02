@@ -94,22 +94,15 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 
 ## Teams and factory workflows
 
-Use `team_start` from a boss session to run the project's workflow pack. Workers report through
-`team_report`; the dispatcher owns agent creation. Read `../pandaos-factory/SKILL.md` for tracked
-factory delivery and evidence rules adapted from Poteto mode.
+Use the optional Kitchen plugin for coordinated factory work. Open Kitchen through its workspace,
+Sidebar or Command Center contribution; use **Hand off to Kitchen** from an agent to retain its
+source profile. Read `../pandaos-factory/SKILL.md` and the installed plugin's README for tracked
+factory delivery, active report schemas and evidence requirements.
 
-The CLI reads the same state as the Teams screen:
-
-```bash
-pandaos team ls --json
-pandaos team inspect <team-id> --json
-pandaos team events <team-id> --after <commit> --json
-pandaos team message <team-id> "Clarified acceptance criterion"
-```
-
-`inspect` returns the team commit cursor, work item phases, agent bindings, and event history.
-`events --after` is a single incremental read. These commands do not start another scheduler.
-Use `--host` to target a remote daemon.
+Native `team_*` and `item_*` MCP tools and `pandaos team` CLI commands are removed. Kitchen owns
+its state and event log; it does not import native jobs, profiles or packs. Existing native jobs
+must finish with their existing coordinator. Plugin schedules use the same Kitchen service;
+ordinary schedules and heartbeats remain host features below.
 
 ## Schedules and heartbeats
 
