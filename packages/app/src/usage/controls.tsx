@@ -2,8 +2,7 @@ import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { HostFilter } from "@/components/hosts/host-filter";
 import { useMemo, type ReactElement } from "react";
-import type { UsageDisplay } from "./display";
-import { UsageOptionsMenu } from "./options-menu";
+import { UsageRefreshButton } from "./refresh-button";
 import type { UsageHost } from "./model";
 import { useHostUsage } from "./queries";
 import type { UsageView } from "./types";
@@ -17,16 +16,14 @@ export interface UsageHostSelection {
 
 /**
  * The controls on the right of every usage title row: the host filter when there is more than one
- * host, and the options menu. A host that cannot report usage keeps only the host filter.
+ * host, and Refresh all. A host that cannot report usage keeps only the host filter.
  */
 export function UsageControls({
   view,
-  display,
   onRefresh,
   hostSelection,
 }: {
   view: UsageView;
-  display: UsageDisplay;
   onRefresh: () => void;
   hostSelection?: UsageHostSelection;
 }) {
@@ -44,7 +41,7 @@ export function UsageControls({
         />
       ) : null}
       {view.kind === "unavailable" ? null : (
-        <UsageOptionsMenu display={display} busy={busy} onRefresh={onRefresh} />
+        <UsageRefreshButton busy={busy} onRefresh={onRefresh} />
       )}
     </View>
   );
@@ -67,21 +64,15 @@ const styles = StyleSheet.create((theme) => ({
  * One host's usage and the title-row controls that go with it, for the Usage screen and the
  * compact usage sheet.
  */
-export function useHostUsageWithControls(
-  hostSelection: UsageHostSelection,
-  display: UsageDisplay,
-): { view: UsageView; refresh: () => void; controls: ReactElement } {
+export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
+  view: UsageView;
+  refresh: () => void;
+  controls: ReactElement;
+} {
   const { view, refresh } = useHostUsage(hostSelection.serverId);
   const controls = useMemo(
-    () => (
-      <UsageControls
-        view={view}
-        display={display}
-        onRefresh={refresh}
-        hostSelection={hostSelection}
-      />
-    ),
-    [display, hostSelection, refresh, view],
+    () => <UsageControls view={view} onRefresh={refresh} hostSelection={hostSelection} />,
+    [hostSelection, refresh, view],
   );
   return { view, refresh, controls };
 }
