@@ -7,11 +7,11 @@ PandaOS extensions use public Paseo plugin APIs. Install Kitchen and Dashboard s
 | Kitchen   | [marushan491/paseo-kitchen](https://github.com/marushan491/paseo-kitchen)     | teams, work-item dependencies, role dispatch, separate worktrees, reviewed commits, acceptance evidence, team chat, schedules |
 | Dashboard | [marushan491/paseo-dashboard](https://github.com/marushan491/paseo-dashboard) | Inbox, project boards, snoozes, schedule failures, handoff hints                                                              |
 
-The repositories are private. Install from an authenticated local checkout with `pandaos plugin install /absolute/path/to/plugin`. Configure each plugin using its settings screen and README. Plugins support original Paseo and PandaOS; see [plugins.md](plugins.md) for host installation.
+Kitchen is an Apache-2.0 open-source repository. Dashboard remains private. Install each checkout with `pandaos plugin install /absolute/path/to/plugin`. Configure each plugin using its settings screen and README. Plugins support original Paseo and PandaOS; see [plugins.md](plugins.md) for host installation.
 
 ## Navigation
 
-Kitchen and Dashboard register their own Sidebar entries and Command Center commands. The host keeps ordinary workspace navigation and settings. Old `/teams` and `/dashboard` URLs redirect to the project picker; choose the installed plugin from the Sidebar. Disable or remove a plugin to remove its contributions.
+Kitchen and Dashboard register their own Sidebar entries and Command Center commands. Command Center contributions require a host-scoped page or selected workspace; on `/open-project`, use the Sidebar. The host keeps ordinary workspace navigation and settings. Old `/teams` and `/dashboard` URLs redirect to the project picker; choose the installed plugin from the Sidebar. Disable or remove a plugin to remove its contributions.
 
 ## Existing native teams
 
