@@ -7,6 +7,7 @@ import {
   hashAccountKey,
   unavailable,
   windowFromUsedPct,
+  windowFromReportedDuration,
   toneFromUsedPct,
 } from "@getpaseo/plugin/server/usage";
 
@@ -76,10 +77,9 @@ export class Usage {
             status: "available",
             planLabel: usage.tier,
             windows: [
-              windowFromUsedPct({
-                id: "five_hour",
-                label: `${usage.window.windowDurationMins / 60} hours`,
-                shortLabel: `${usage.window.windowDurationMins / 60}h`,
+              windowFromReportedDuration({
+                durationSeconds: usage.window.windowDurationMins * 60,
+                unknown: { id: "window", label: "Current window", shortLabel: "" },
                 summary: true,
                 utilizationPct: usage.window.usedPercent,
                 resetsAt: new Date(usage.window.resetsAtMs).toISOString(),

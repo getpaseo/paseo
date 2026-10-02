@@ -7,7 +7,7 @@ import {
   unavailable,
   type UsageAccount,
   toneFromUsedPct,
-  windowFromUsedPct,
+  windowFromReportedDuration,
   type UsageReport,
   type UsageWindow,
 } from "@getpaseo/plugin/server/usage";
@@ -24,14 +24,29 @@ const authSchema = z.object({
     .optional(),
 });
 const number = z.coerce.number().finite();
-const windowSchema = z.object({ used_percent: number.optional(), reset_at: number.optional() });
+const windowSchema = z.object({
+  used_percent: number.optional(),
+  reset_at: number.optional(),
+  limit_window_seconds: number.nullish(),
+});
+const rateLimitSchema = z.object({
+  primary_window: windowSchema.nullish(),
+  secondary_window: windowSchema.nullish(),
+});
 const responseSchema = z.object({
   plan_type: z.string().optional(),
   email: z.string().optional(),
-  rate_limit: z
-    .object({ primary_window: windowSchema.nullish(), secondary_window: windowSchema.nullish() })
+  rate_limit: rateLimitSchema.nullish(),
+  additional_rate_limits: z
+    .array(
+      z.object({
+        limit_name: z.string().optional(),
+        metered_feature: z.string().optional(),
+        rate_limit: rateLimitSchema.nullish(),
+      }),
+    )
     .nullish(),
-  code_review_rate_limit: z.object({ primary_window: windowSchema.nullish() }).nullish(),
+  code_review_rate_limit: rateLimitSchema.nullish(),
   credits: z.object({ balance: number.optional() }).nullish(),
 });
 
@@ -90,17 +105,33 @@ export async function readAuth(
   };
 }
 
-function usageWindow(
-  spec: { id: string; label: string; shortLabel: string; summary?: boolean },
-  value: z.infer<typeof windowSchema> | null | undefined,
-): UsageWindow | null {
-  if (!value) return null;
-  const usedPct = value.used_percent ?? 0;
-  return windowFromUsedPct({
-    ...spec,
-    utilizationPct: usedPct,
-    resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
-    tone: toneFromUsedPct(usedPct),
+function usageWindows(
+  rateLimit: z.infer<typeof rateLimitSchema> | null | undefined,
+  scope?: { id: string; label: string },
+  summary = false,
+): UsageWindow[] {
+  if (!rateLimit) return [];
+  return (["primary_window", "secondary_window"] as const).flatMap((slot) => {
+    const value = rateLimit[slot];
+    if (!value) return [];
+    const primary = slot === "primary_window";
+    // Codex does not always report a length. A slot is then only an unknown limit,
+    // never evidence of a five-hour or weekly period.
+    return [
+      windowFromReportedDuration({
+        durationSeconds: value.limit_window_seconds ?? null,
+        unknown: {
+          id: primary ? "unknown_primary" : "unknown_secondary",
+          label: primary ? "Primary limit" : "Secondary limit",
+          shortLabel: "",
+        },
+        scope,
+        summary,
+        utilizationPct: value.used_percent,
+        resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
+        tone: toneFromUsedPct(value.used_percent),
+      }),
+    ];
   });
 }
 
@@ -135,19 +166,17 @@ export async function fetchUsage(
   if (text.trim().startsWith("<")) throw new Error("Codex usage API returned HTML");
   const usage = responseSchema.parse(JSON.parse(text));
   const windows = [
-    usageWindow(
-      { id: "session", label: "Session", shortLabel: "5h", summary: true },
-      usage.rate_limit?.primary_window,
-    ),
-    usageWindow(
-      { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true },
-      usage.rate_limit?.secondary_window,
-    ),
-    usageWindow(
-      { id: "code_review", label: "Code review", shortLabel: "review" },
-      usage.code_review_rate_limit?.primary_window,
-    ),
-  ].filter((window): window is UsageWindow => window !== null);
+    ...usageWindows(usage.rate_limit, undefined, true),
+    ...(usage.additional_rate_limits ?? []).flatMap((limit) => {
+      const identity = limit.metered_feature || limit.limit_name;
+      if (!identity) return []; // An unnamed limit has no stable quota identity.
+      return usageWindows(limit.rate_limit, {
+        id: `limit:${encodeURIComponent(identity)}`,
+        label: limit.limit_name || identity,
+      });
+    }),
+    ...usageWindows(usage.code_review_rate_limit, { id: "code_review", label: "Code review" }),
+  ];
   const balance = usage.credits?.balance;
   return {
     status: "available",

@@ -90,18 +90,18 @@ function durationFrom(value: unknown): number | null {
   return Number.isFinite(duration) && duration > 0 ? duration : null;
 }
 
-function durationLabel(duration: number, timeUnit: string | undefined): string | null {
-  if (!timeUnit) return null;
+function durationLabel(duration: number | null, timeUnit: string | undefined): string | null {
+  if (duration === null || !timeUnit) return null;
 
   const normalizedUnit = timeUnit.replace(/^TIME_UNIT_/i, "").toUpperCase();
-  if (normalizedUnit.includes("MINUTE")) {
+  if (normalizedUnit === "MINUTE") {
     if (duration % 60 === 0) return `${duration / 60}-hour limit`;
     return `${duration}-minute limit`;
   }
-  if (normalizedUnit.includes("HOUR")) return `${duration}-hour limit`;
-  if (normalizedUnit.includes("DAY")) return `${duration}-day limit`;
-  if (normalizedUnit.includes("WEEK")) return `${duration}-week limit`;
-  if (normalizedUnit.includes("SECOND")) return `${duration}-second limit`;
+  if (normalizedUnit === "HOUR") return `${duration}-hour limit`;
+  if (normalizedUnit === "DAY") return `${duration}-day limit`;
+  if (normalizedUnit === "WEEK") return `${duration}-week limit`;
+  if (normalizedUnit === "SECOND") return `${duration}-second limit`;
   return null;
 }
 
@@ -201,7 +201,11 @@ function kimiUsageWindowsFromPayload(payload: unknown): UsageWindow[] {
     windows.push(
       windowFromFields({
         id: uniqueWindowId("coding_usage", seenWindowIds),
-        label: explicitUsageLabel(usage) ?? "Weekly limit",
+        // Top-level usage reports no period unless it supplies duration metadata.
+        label:
+          explicitUsageLabel(usage) ??
+          durationLabel(durationFrom(usage.duration), usage.timeUnit) ??
+          "Usage limit",
         fields: usage,
       }),
     );

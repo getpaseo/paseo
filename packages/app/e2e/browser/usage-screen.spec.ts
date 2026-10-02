@@ -15,6 +15,8 @@ import {
 } from "../support/helpers/usage-reports";
 import {
   installLoginUsage,
+  installCodexWindowUsage,
+  expectCodexReportedWindows,
   openUsage,
   refreshLoginUsage,
   hoverUsageWindow,
@@ -312,29 +314,26 @@ test("expired login refreshes to windows with visible pin toggles", async ({ pag
     ).toHaveCount(0);
     await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
     const row = page.getByRole("checkbox", { name: /^Pin Claude Weekly, / });
-    await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "0");
+    await expect(row).toBeChecked();
+    await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "0");
     await hoverUsageWindow(page, "Weekly");
     await expect(page.getByText("Pin", { exact: true })).toBeVisible();
-    await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "1");
-    await expect(row.getByTestId("usage-pin-glyph-unpinned").locator("svg")).toHaveAttribute(
-      "fill",
-      "none",
-    );
-    await qaScreenshot(page, "usage-pin-hover");
-    await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
     await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "1");
     await expect(row.getByTestId("usage-pin-glyph-pinned").locator("svg")).not.toHaveAttribute(
       "fill",
       "none",
     );
-    await expectPinnedUsage(page, ["54% wk"]);
-    await qaScreenshot(page, "usage-pin-selected");
+    await qaScreenshot(page, "usage-pin-hover");
     await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
     await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "1");
     await expect(row.getByTestId("usage-pin-glyph-unpinned").locator("svg")).toHaveAttribute(
       "fill",
       "none",
     );
+    await expectPinnedUsage(page, ["31% 5h"]);
+    await qaScreenshot(page, "usage-pin-unselected");
+    await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
+    await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "1");
     await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
   } finally {
     await fixture.cleanup();
@@ -348,11 +347,57 @@ test("compact usage rows always show the pin glyph", async ({ page }) => {
     await gotoAppShell(page);
     await openUsage(page);
     const card = page.getByTestId("usage-report-login-journey:account");
-    await expect(card.getByTestId("usage-pin-glyph-unpinned")).toHaveCount(2);
-    await expect(card.getByTestId("usage-pin-glyph-unpinned").nth(0)).toHaveCSS("opacity", "1");
-    await expect(card.getByTestId("usage-pin-glyph-unpinned").nth(1)).toHaveCSS("opacity", "1");
+    await expect(card.getByTestId("usage-pin-glyph-pinned")).toHaveCount(2);
+    await expect(card.getByTestId("usage-pin-glyph-pinned").nth(0)).toHaveCSS("opacity", "1");
+    await expect(card.getByTestId("usage-pin-glyph-pinned").nth(1)).toHaveCSS("opacity", "1");
     await qaScreenshot(page, "usage-pin-compact");
   } finally {
     await fixture.cleanup();
   }
 });
+
+for (const shape of ["seven-day-only", "Spark"] as const) {
+  test(`Codex ${shape} windows use provider durations on the card and sidebar`, async ({
+    page,
+  }) => {
+    const reset = Math.floor(Date.now() / 1000) + 5 * 86400;
+    const source = await installCodexWindowUsage({
+      rate_limit: {
+        primary_window: { used_percent: 11, limit_window_seconds: 604800, reset_at: reset },
+        secondary_window: null,
+      },
+      additional_rate_limits:
+        shape === "Spark"
+          ? [
+              {
+                limit_name: "GPT-5.3-Codex-Spark",
+                metered_feature: "codex_bengalfox",
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 18000,
+                    reset_at: Math.floor(Date.now() / 1000) + 3600,
+                  },
+                  secondary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 604800,
+                    reset_at: reset,
+                  },
+                },
+              },
+            ]
+          : [],
+    });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoAppShell(page);
+      await expect(usageItem(page)).toBeVisible();
+      await usageItem(page).click();
+      await qaScreenshot(page, `codex-${shape}-card-and-summary`);
+      await expectCodexReportedWindows(page, shape);
+      await qaScreenshot(page, `codex-${shape}-pins`);
+    } finally {
+      await source.cleanup();
+    }
+  });
+}

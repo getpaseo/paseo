@@ -39,7 +39,9 @@ function response(headers: HeadersInit, accountId?: string): Promise<Response> {
     new Response(
       JSON.stringify({
         plan_type: "plus",
-        rate_limit: { primary_window: { used_percent: 30, reset_at: 1700000000 } },
+        rate_limit: {
+          primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 1700000000 },
+        },
       }),
       { status: 200 },
     ),
@@ -62,7 +64,7 @@ test("explicit route reads Codex auth and preserves the usage request", async ()
     expect(report).toMatchObject({
       status: "available",
       planLabel: "plus",
-      windows: [{ id: "session", usedPct: 30 }],
+      windows: [{ id: "five_hour", usedPct: 30 }],
     });
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -95,8 +97,8 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
       new Response(
         JSON.stringify({
           rate_limit: {
-            primary_window: { used_percent: 12 },
-            secondary_window: { used_percent: 96 },
+            primary_window: { used_percent: 12, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 96, limit_window_seconds: 604800 },
           },
           credits: { balance: "0" },
         }),
@@ -105,7 +107,7 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
   );
   expect(report.windows).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ id: "session", tone: "ok" }),
+      expect.objectContaining({ id: "five_hour", tone: "ok" }),
       expect.objectContaining({ id: "weekly", tone: "danger" }),
     ]),
   );
@@ -121,8 +123,8 @@ test("summarizes the session and weekly windows by default, not code review", as
       new Response(
         JSON.stringify({
           rate_limit: {
-            primary_window: { used_percent: 12 },
-            secondary_window: { used_percent: 40 },
+            primary_window: { used_percent: 12, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 40, limit_window_seconds: 604800 },
           },
           code_review_rate_limit: { primary_window: { used_percent: 5 } },
         }),
@@ -130,9 +132,9 @@ test("summarizes the session and weekly windows by default, not code review", as
       ),
   );
   expect(report.windows.map((window) => [window.id, window.summary ?? false])).toEqual([
-    ["session", true],
+    ["five_hour", true],
     ["weekly", true],
-    ["code_review", false],
+    ["code_review:unknown_primary", false],
   ]);
 });
 
@@ -259,4 +261,121 @@ test.each([401, 403])("reports a Codex login rejected with HTTP %i", async (stat
   expect(
     await fetchUsage(authInput(fixtureHome), async () => new Response(null, { status })),
   ).toEqual({ status: "unavailable", problem: { kind: "rejected", status, refreshedBy: "codex" } });
+});
+
+// Issue #4165: the primary slot contains the only weekly window.
+test("names a seven-day-only primary window from its reported duration", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      rate_limit: {
+        primary_window: { used_percent: 1, limit_window_seconds: 604800 },
+        secondary_window: null,
+      },
+    }),
+  );
+  expect(report).toMatchObject({
+    status: "available",
+    windows: [{ id: "weekly", label: "Weekly", shortLabel: "wk", usedPct: 1 }],
+  });
+});
+
+test("reports every named additional limit with its own duration identity", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      additional_rate_limits: [
+        {
+          limit_name: "GPT-5.3-Codex-Spark",
+          metered_feature: "codex_bengalfox",
+          rate_limit: {
+            primary_window: { used_percent: 0, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 0, limit_window_seconds: 604800 },
+          },
+        },
+        {
+          limit_name: "Another limit",
+          metered_feature: "another",
+          rate_limit: {
+            primary_window: { used_percent: 4, limit_window_seconds: 7200 },
+          },
+        },
+      ],
+    }),
+  );
+  expect(report).toMatchObject({
+    status: "available",
+    windows: [
+      {
+        id: "limit:codex_bengalfox:five_hour",
+        label: "GPT-5.3-Codex-Spark · 5-hour",
+        shortLabel: "GPT-5.3-Codex-Spark 5h",
+      },
+      {
+        id: "limit:codex_bengalfox:weekly",
+        label: "GPT-5.3-Codex-Spark · Weekly",
+        shortLabel: "GPT-5.3-Codex-Spark wk",
+      },
+      { id: "limit:another:7200s", label: "Another limit · 2-hour" },
+    ],
+  });
+});
+
+test("a weekly pin means weekly after the provider moves it between slots", async () => {
+  const { resolvePinnedUsage } = await import("../../../packages/app/src/usage/pinned.js");
+  const preferences = {
+    displayAs: "used" as const,
+    serverId: null,
+    pins: [{ sourceId: "codex", windowId: "weekly" }],
+  };
+  for (const primaryWeekly of [false, true]) {
+    const weekly = { used_percent: 11, limit_window_seconds: 604800 };
+    const report = await fetchUsage(authInput(fixtureHome), async () =>
+      Response.json({
+        rate_limit: {
+          primary_window: primaryWeekly ? weekly : { used_percent: 4, limit_window_seconds: 18000 },
+          secondary_window: primaryWeekly ? null : weekly,
+        },
+      }),
+    );
+    const entry = {
+      id: "codex:account",
+      sourceId: "codex",
+      sourceLabel: "Codex",
+      account: { key: "account" },
+      fetchedAt: "2026-10-02T00:00:00Z",
+      report,
+    };
+    expect(resolvePinnedUsage([entry], preferences)).toMatchObject([
+      { windows: [{ key: "codex:account/weekly", percentText: "11%", shortLabel: "wk" }] },
+    ]);
+    // The old slot ID is ambiguous: do not silently retarget a saved Session pin.
+    expect(
+      resolvePinnedUsage([entry], {
+        ...preferences,
+        pins: [{ sourceId: "codex", windowId: "session" }],
+      }),
+    ).toEqual([]);
+  }
+});
+
+test("unknown lengths and code review never get a duration from their slot", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      rate_limit: {
+        primary_window: { used_percent: 11 },
+        secondary_window: { used_percent: 22, limit_window_seconds: null },
+      },
+      code_review_rate_limit: {
+        primary_window: { used_percent: 3, limit_window_seconds: 604800 },
+        secondary_window: { used_percent: 4, limit_window_seconds: 18000 },
+      },
+    }),
+  );
+  expect(report).toMatchObject({
+    windows: [
+      { id: "unknown_primary", label: "Primary limit", shortLabel: "" },
+      { id: "unknown_secondary", label: "Secondary limit", shortLabel: "" },
+      { id: "code_review:weekly", label: "Code review · Weekly", shortLabel: "Code review wk" },
+      { id: "code_review:five_hour", label: "Code review · 5-hour", shortLabel: "Code review 5h" },
+    ],
+  });
 });

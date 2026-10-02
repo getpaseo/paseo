@@ -188,7 +188,9 @@ promise for completion: equal results, including equal discovery timestamps, emi
 ## Usage sources
 
 See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the
-contract, account identity, login fallback, and read-only credential rules.
+contract, account and window identity, provider-derived period names, login fallback, and
+read-only credential rules. Usage adapters own the interpretation of provider fields; the app
+renders their names and resolves pins without provider-specific duration guesses.
 
 ---
 

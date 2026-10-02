@@ -363,6 +363,27 @@ inputs tried in order until a report is `available`. An unavailable report, erro
 fetch falls through to the next input. If none succeeds, the card carries the last report.
 Discovery failures are logged by the daemon and produce no card.
 
+Window names must come from provider data: an explicit duration, a named API field such as
+`five_hour` or `weekly`, or the provider's own period name. Response slots and reset countdowns
+do not establish duration. When the provider omits it, use a neutral name such as “Rolling” or
+“Primary limit” and explain the missing metadata next to the adapter.
+
+For numeric durations, use `windowFromReportedDuration()` from
+`@getpaseo/plugin/server/usage` (Paseo 0.11+). Pass the reported seconds or `null`, a neutral
+`unknown` identity and name, and an optional stable quota `scope`. The helper derives the ID,
+label, and short label together; it accepts no duration-label override. For named API periods,
+use `windowFromUsedPct()` with names justified by that field.
+
+A window ID identifies a quota scope and period, never its response position, utilization, or
+reset instant. Scope model-specific quotas by the provider's stable feature ID, falling back to
+the reported limit name when no ID exists. Preserve IDs across slot moves and display-name
+changes. Do not alias an old ambiguous ID to a different period: saved pins match source and
+window IDs across all accounts, so users must select the corrected window again.
+
+`summary: true` selects source defaults until the user customizes pins. The app computes one
+effective selection for cards, the sidebar, and toggles. The first edit snapshots those defaults;
+an explicit empty selection stays empty.
+
 Re-read the selected store in `fetch()` so the CLI's token rotations take effect. Never redeem
 refresh tokens or write credential stores: refreshing elsewhere can invalidate the CLI's copy,
 and rewriting parsed files can discard fields you do not model. If the store disappeared after

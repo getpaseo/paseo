@@ -74,15 +74,14 @@ export function extractGrokTokenFromAuth(auth: unknown): string | null {
   return null;
 }
 
-function grokMonthlyCreditBalance(
-  response: z.infer<typeof GrokUsageResponseSchema>,
-): UsageBalance | null {
+function grokCreditBalance(response: z.infer<typeof GrokUsageResponseSchema>): UsageBalance | null {
   const limit = response.config?.monthlyLimit?.val ?? null;
   const used = response.config?.used?.val ?? response.usage?.creditUsage ?? null;
   if (limit === null && used === null) return null;
   return {
-    id: "monthly_credits",
-    label: "Monthly credits",
+    // Only the named monthly allowance establishes a monthly credit bucket.
+    id: limit === null ? "credits" : "monthly_credits",
+    label: limit === null ? "Credits" : "Monthly credits",
     used,
     remaining: limit !== null && used !== null ? Math.max(0, limit - used) : null,
     limit,
@@ -95,11 +94,18 @@ function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): Usa
   const percent = response.config?.creditUsagePercent;
   if (typeof percent !== "number") return null;
   const period = response.config?.currentPeriod;
-  const weekly = (period?.type ?? "").toUpperCase().includes("WEEKLY");
+  const names = {
+    USAGE_PERIOD_TYPE_WEEKLY: { id: "weekly", label: "Weekly", shortLabel: "wk" },
+    USAGE_PERIOD_TYPE_MONTHLY: { id: "monthly", label: "Monthly", shortLabel: "mo" },
+  };
+  // An absent or unfamiliar enum does not establish a monthly duration.
+  const name = names[period?.type as keyof typeof names] ?? {
+    id: `period:${period?.type || "unknown"}`,
+    label: period?.type || "Current period",
+    shortLabel: "",
+  };
   return windowFromUsedPct({
-    id: weekly ? "weekly" : "monthly",
-    label: weekly ? "Weekly" : "Monthly",
-    shortLabel: weekly ? "wk" : "mo",
+    ...name,
     utilizationPct: percent,
     resetsAt: period?.end ?? null,
     tone: toneFromUsedPct(percent),
@@ -129,7 +135,7 @@ export async function fetchUsage(
   if (!res.ok) throw new Error(`Grok usage API returned ${res.status}`);
 
   const resp = GrokUsageResponseSchema.parse(await res.json());
-  const balance = grokMonthlyCreditBalance(resp);
+  const balance = grokCreditBalance(resp);
   const window = grokUsageWindow(resp);
 
   return {

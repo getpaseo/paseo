@@ -1171,7 +1171,7 @@ for (const usage of [
         windows: [
           {
             id: "five_hour",
-            label: "5 hours",
+            label: "5-hour",
             usedPct: 75,
             remainingPct: 25,
             tone: "warning",
@@ -1317,4 +1317,26 @@ test("usage identity follows the resolved config directory across credential and
 test.each(["no sessions", "unrelated environment"])("Muse discovery is empty with %s", async () => {
   const { Usage } = await import("../server/usage.js");
   expect(await new Usage().registration().discover()).toEqual([]);
+});
+
+test("Muse window identity follows the reported duration instead of assuming five hours", async () => {
+  const h = await harness("catalog-controls", {
+    MUSE_TEST_USAGE: JSON.stringify({
+      usage: {
+        observedAtMs: 1700000000000,
+        tier: "Pro",
+        window: { usedPercent: 11, resetsAtMs: 1700018000000, windowDurationMins: 120 },
+        weekly: { usedPercent: 22, resetsAtMs: 1700604800000 },
+      },
+    }),
+  });
+  await h.open();
+  const [account] = await h.usageSource.discover();
+  expect(await h.usageSource.fetch(account!.input)).toMatchObject({
+    status: "available",
+    windows: [
+      { id: "7200s", label: "2-hour", shortLabel: "2h" },
+      { id: "weekly", label: "Weekly", shortLabel: "wk" },
+    ],
+  });
 });

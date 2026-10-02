@@ -326,3 +326,46 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     else process.env["GROK_TOKEN"] = previous;
   }
 });
+
+it.each([undefined, "USAGE_PERIOD_TYPE_DAILY", "USAGE_PERIOD_TYPE_UNKNOWN_WEEKLY"])(
+  "does not invent a monthly period for %s",
+  async (type) => {
+    const directory = mkdtempSync(join(tmpdir(), "grok-period-"));
+    try {
+      const locator = join(directory, "auth.json");
+      writeFileSync(locator, JSON.stringify({ access_token: "fixture" }));
+      const report = await fetchUsage({ store: "file", locator }, async () =>
+        Response.json({ config: { creditUsagePercent: 11, currentPeriod: { type } } }),
+      );
+      expect(report).toMatchObject({
+        status: "available",
+        windows: [
+          {
+            id: type ? `period:${type}` : "period:unknown",
+            label: type ?? "Current period",
+            shortLabel: "",
+          },
+        ],
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("does not call credits monthly when no monthly limit was reported", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "grok-credits-"));
+  try {
+    const locator = join(directory, "auth.json");
+    writeFileSync(locator, JSON.stringify({ access_token: "fixture" }));
+    const report = await fetchUsage({ store: "file", locator }, async () =>
+      Response.json({ config: { used: { val: 11 } } }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      balances: [{ id: "credits", label: "Credits", used: 11 }],
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -57,6 +57,13 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
     await client.installDirectoryPlugin(subprocessDirectory, "fixture-directory");
     const both = await client.listUsageReports({ forceRefresh: true });
     expect(both.reports).toHaveLength(8);
+    for (const id of ["fixture:one", "fixture-directory:one"]) {
+      expect(both.reports.find((entry) => entry.id === id)?.report.windows[0]).toMatchObject({
+        id: "weekly",
+        label: "Weekly",
+        shortLabel: "wk",
+      });
+    }
     await client.patchDaemonConfig({ pluginsEnabled: false });
     await expect.poll(async () => (await client.listUsageReports()).reports.length).toBe(4);
   } finally {

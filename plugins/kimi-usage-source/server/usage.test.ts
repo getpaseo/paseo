@@ -279,7 +279,7 @@ describe("Kimi usage source usage windows", () => {
       windows: [
         {
           id: "coding_usage",
-          label: "Weekly limit",
+          label: "Usage limit",
           usedPct: 61,
           remainingPct: 39,
           resetsAt: "2026-08-05T00:01:45Z",
@@ -426,5 +426,43 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
   } finally {
     if (previous === undefined) delete process.env["KIMI_TOKEN"];
     else process.env["KIMI_TOKEN"] = previous;
+  }
+});
+
+it("does not invent a weekly duration for unnamed top-level usage", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kimi-period-"));
+  try {
+    const locator = join(directory, "auth.json");
+    writeFileSync(locator, JSON.stringify({ access_token: "fixture" }));
+    const report = await fetchUsage({ store: "file", locator }, async () =>
+      Response.json({ usage: { limit: "100", remaining: "74" } }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [{ id: "coding_usage", label: "Usage limit" }],
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("does not infer a duration from an unfamiliar time-unit name containing HOUR", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kimi-unit-"));
+  try {
+    const locator = join(directory, "auth.json");
+    writeFileSync(locator, JSON.stringify({ access_token: "fixture" }));
+    const report = await fetchUsage({ store: "file", locator }, async () =>
+      Response.json({
+        limits: [
+          {
+            window: { duration: 2, timeUnit: "TIME_UNIT_NOT_HOUR" },
+            detail: { limit: "100", used: "11" },
+          },
+        ],
+      }),
+    );
+    expect(report).toMatchObject({ status: "available", windows: [{ label: "Limit 1" }] });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

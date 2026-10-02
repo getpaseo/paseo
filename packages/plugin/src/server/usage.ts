@@ -97,6 +97,55 @@ export function windowFromUsedPct(input: {
 }
 
 /**
+ * Numeric provider windows have one identity and vocabulary, independent of response slots.
+ * Pass null when the provider omits the duration; reset countdowns are not window lengths.
+ * Named API fields (weekly, monthly, etc.) use windowFromUsedPct instead.
+ */
+export function windowFromReportedDuration(input: {
+  durationSeconds: number | null;
+  /** Stable quota identity and provider name for a model- or feature-scoped limit. */
+  scope?: { id: string; label: string };
+  /** Neutral identity and names when the provider does not report a positive duration. */
+  unknown: { id: string; label: string; shortLabel: string };
+  utilizationPct: number | null | undefined;
+  resetsAt?: string | null;
+  summary?: boolean;
+  tone?: UsageWindow["tone"];
+}): UsageWindow {
+  const duration = input.durationSeconds;
+  const name =
+    duration !== null && Number.isFinite(duration) && duration > 0
+      ? durationWindowName(duration)
+      : input.unknown;
+  const scope = input.scope;
+  return windowFromUsedPct({
+    id: scope ? `${scope.id}:${name.id}` : name.id,
+    label: scope ? `${scope.label} · ${name.label}` : name.label,
+    shortLabel: scope
+      ? `${scope.label}${name.shortLabel ? ` ${name.shortLabel}` : ""}`
+      : name.shortLabel,
+    utilizationPct: input.utilizationPct,
+    resetsAt: input.resetsAt,
+    summary: input.summary,
+    tone: input.tone,
+  });
+}
+
+function durationWindowName(seconds: number): { id: string; label: string; shortLabel: string } {
+  if (seconds === 604800) return { id: "weekly", label: "Weekly", shortLabel: "wk" };
+  const id = seconds === 18000 ? "five_hour" : `${seconds}s`;
+  const units = [
+    [86400, "day", "d"],
+    [3600, "hour", "h"],
+    [60, "minute", "m"],
+    [1, "second", "s"],
+  ] as const;
+  const unit = units.find(([size]) => seconds % size === 0) ?? units[units.length - 1]!;
+  const amount = seconds / unit[0];
+  return { id, label: `${amount}-${unit[1]}`, shortLabel: `${amount}${unit[2]}` };
+}
+
+/**
  * The tone scale for anything measured against a known limit, windows and balances alike.
  *
  * Thresholds match `deriveTone` in the app's provider-usage/tone.ts, which is what the
