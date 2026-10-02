@@ -1,5 +1,5 @@
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
-import { useSettings } from "@/hooks/use-settings";
+import { useAppSettings } from "@/hooks/use-settings";
 import { resolveWorkspaceTargetPlacement } from "@/workspace-tabs/open-beside";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useSessionStore } from "@/stores/session-store";
@@ -16,7 +16,7 @@ export function usePluginHostNavigation(
   serverId: string,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   const compact = useIsCompactFormFactor();
-  const terminalOnSide = useSettings((settings) => settings.openInSidePane.terminals);
+  const terminalOnSide = useAppSettings().settings.openInSidePane.terminals;
   return useMemo(
     () =>
       createPluginHostNavigation(serverId, {

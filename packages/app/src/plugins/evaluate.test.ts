@@ -761,6 +761,17 @@ it("registers normalized code-block actions and removes them at cleanup", async 
   expect(plugin.codeBlockActions).toEqual([]);
 });
 
+it("accepts memoized code block action components", () => {
+  const plugin = evaluatePluginClientBundle(
+    "terminal",
+    bundle(`
+    const Component = require("react").memo(function Actions() { return null; });
+    plugin.addCodeBlockActions({ id: "run", languages: ["bash"], Component });
+  `),
+  );
+  expect(plugin.codeBlockActions.map(({ id }) => id)).toEqual(["run"]);
+});
+
 it.each([
   '{ id: "run", languages: [], Component: function() {} }',
   '{ id: "run", languages: [" "], Component: function() {} }',

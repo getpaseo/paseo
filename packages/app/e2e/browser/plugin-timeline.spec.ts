@@ -3,6 +3,7 @@ import { test } from "../support/fixtures";
 import {
   CODE_ACTIONS_SOURCE,
   CODE_ACTIONS_TEXT,
+  CAPPED_CODE_ACTIONS_TEXT,
   withTimelinePlugin,
   requestPluginTimeline,
   interactWithStreamingCard,
@@ -77,3 +78,29 @@ for (const width of [1100, 390]) {
     );
   });
 }
+
+test("inline code actions stay disabled for a fence cut by the render cap", async ({
+  page,
+}, info) => {
+  await withTimelinePlugin(
+    page,
+    info,
+    "assistant",
+    async (agent) => {
+      await requestPluginTimeline(agent);
+      await agent.client.waitForFinish(agent.agentId, 60_000);
+      await expect(page.getByTestId("assistant-message-capped-notice")).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Run fence 0 clicks 0", exact: true }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("button", { name: "Run fence 1 clicks 0", exact: true }),
+      ).toBeDisabled();
+    },
+    {
+      clientSource: CODE_ACTIONS_SOURCE,
+      assistantText: CAPPED_CODE_ACTIONS_TEXT,
+      instantResponse: true,
+    },
+  );
+});

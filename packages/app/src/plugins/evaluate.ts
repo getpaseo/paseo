@@ -419,7 +419,7 @@ export function runPluginClientBundle(
       ) {
         throw new Error(`Code block actions ${actionId} need non-empty languages`);
       }
-      if (typeof contribution.Component !== "function")
+      if (!isComponentType(contribution.Component))
         throw new Error(`Code block actions ${actionId} is not a component`);
       codeBlockActionIds.add(actionId);
       const languages = [

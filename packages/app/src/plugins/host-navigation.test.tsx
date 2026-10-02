@@ -1,22 +1,14 @@
 /**
  * @vitest-environment jsdom
  */
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { usePluginHostNavigation } from "./host-navigation";
 
-vi.mock("@/hooks/use-settings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-settings")>()),
-  useSettings: (select: (value: unknown) => unknown) =>
-    select({ openInSidePane: { terminals: false } }),
-}));
-vi.mock("@/constants/layout", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/constants/layout")>()),
-  useIsCompactFormFactor: () => false,
-  supportsDesktopPaneSplits: () => true,
-}));
 vi.mock("@/utils/navigate-to-agent", () => ({
   navigateToAgent: vi.fn(),
 }));
@@ -27,6 +19,11 @@ vi.mock("@/stores/navigation-active-workspace-store", () => ({
 const navigateToAgentMock = vi.mocked(navigateToAgent);
 const navigateToWorkspaceMock = vi.mocked(navigateToWorkspace);
 
+// The hook reads the terminal open-location preference through the real settings query.
+function wrapper({ children }: { children: ReactNode }) {
+  return createElement(QueryClientProvider, { client: new QueryClient() }, children);
+}
+
 describe("usePluginHostNavigation", () => {
   beforeEach(() => {
     navigateToAgentMock.mockReset();
@@ -34,7 +31,7 @@ describe("usePluginHostNavigation", () => {
   });
 
   it("opens agents and workspaces on the rendering host", () => {
-    const { result } = renderHook(() => usePluginHostNavigation("host-1"));
+    const { result } = renderHook(() => usePluginHostNavigation("host-1"), { wrapper });
 
     act(() => result.current.openAgent({ agentId: "agent-1" }));
     act(() => result.current.openWorkspace({ workspaceId: "workspace-1" }));
@@ -49,6 +46,7 @@ describe("usePluginHostNavigation", () => {
   it("keeps the capability stable until the rendering host changes", () => {
     const { result, rerender } = renderHook(({ serverId }) => usePluginHostNavigation(serverId), {
       initialProps: { serverId: "host-1" },
+      wrapper,
     });
     const initialNavigation = result.current;
 

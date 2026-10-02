@@ -47,12 +47,22 @@ export default function contribute(client) {
   return () => {};
 }`;
 
+function assistantFeatureValues(
+  mode: "assistant" | "tools",
+  options: { assistantText?: string; instantResponse?: boolean },
+): Record<string, string | number> {
+  if (mode !== "assistant") return {};
+  const text = options.assistantText ?? ASSISTANT_TEXT;
+  if (options.instantResponse) return { mockAssistantResponse: text };
+  return { mockStreamingAssistantResponse: text, mockStreamingAssistantIntervalMs: 300 };
+}
+
 export async function withTimelinePlugin(
   page: Page,
   info: TestInfo,
   mode: "assistant" | "tools",
   run: (agent: MockAgentWorkspace) => Promise<void>,
-  options: { clientSource?: string; assistantText?: string } = {},
+  options: { clientSource?: string; assistantText?: string; instantResponse?: boolean } = {},
 ): Promise<void> {
   info.setTimeout(120_000);
   await page.addInitScript(() => {
@@ -66,13 +76,7 @@ export async function withTimelinePlugin(
     repoPrefix: "timeline-plugin-",
     title: "Timeline plugin regression",
     model: "ten-second-stream",
-    featureValues:
-      mode === "assistant"
-        ? {
-            mockStreamingAssistantResponse: options.assistantText ?? ASSISTANT_TEXT,
-            mockStreamingAssistantIntervalMs: 300,
-          }
-        : {},
+    featureValues: assistantFeatureValues(mode, options),
   });
   const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await pluginClient.getDaemonConfig();
@@ -179,4 +183,16 @@ export const CODE_ACTIONS_TEXT = [
   "> ```",
   "",
   "Finishing the response after both executable blocks are visible.",
+].join("\n");
+
+// Each Markdown block renders as its own row, capped at 32,000 characters; the second fence alone
+// exceeds the cap, so its row cuts it before the closing fence.
+export const CAPPED_CODE_ACTIONS_TEXT = [
+  "```bash",
+  "echo before-cap",
+  "```",
+  "",
+  "```bash",
+  ...Array.from({ length: 3_000 }, (_, line) => `echo cut-${line}`),
+  "```",
 ].join("\n");
