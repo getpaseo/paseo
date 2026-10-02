@@ -38,7 +38,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
-import { useWorkspaceDoneToggle } from "@/leitstand/mark-done-button";
+import { useWorkspaceDoneToggle } from "@/components/workspace-done-button";
 import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,

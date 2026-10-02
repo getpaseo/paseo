@@ -11,14 +11,9 @@ export interface WorkspaceDoneToggle {
   toggle: () => void;
 }
 
-/**
- * The one way a session becomes done: the person says so. The daemon stores the mark, so every
- * device agrees; hosts too old to store it get null rather than a mark that vanishes.
- */
 export function useWorkspaceDoneToggle(
   serverId: string | null | undefined,
   workspaceId: string | null | undefined,
-  /** Overrides the stored mark, for callers that already hold the session's state. */
   doneOverride?: boolean,
 ): WorkspaceDoneToggle | null {
   const client = useHostRuntimeClient(serverId ?? "");
@@ -50,7 +45,6 @@ export function MarkDoneButton({
 }: {
   serverId: string;
   workspaceId: string;
-  /** True offers to reopen a session marked done; omitted reads the stored mark. */
   done?: boolean;
   size: "xs" | "sm" | "md";
   testID: string;

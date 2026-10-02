@@ -6,7 +6,6 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
-  Users,
   History,
   Plus,
   Search,
@@ -42,7 +41,6 @@ const BUILTIN_ICONS: Record<BuiltinSidebarNavId, LucideIcon> = {
   history: History,
   search: Search,
   schedules: CalendarClock,
-  teams: Users,
 };
 
 function NavIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
@@ -59,7 +57,6 @@ function navItemLabel(t: TFunction, item: SidebarNavItem): string {
   return item.kind === "builtin" ? t(builtinSidebarNavLabelKey(item.id)) : item.group.title;
 }
 
-/** Own component so the row can stay hook-free about which items have a shortcut. */
 function NavItemShortcut({ item }: { item: SidebarNavItem }): ReactElement | null {
   const chord = useShortcutKeys(
     item.kind === "builtin" ? builtinSidebarNavShortcutAction(item.id) : null,

@@ -216,8 +216,6 @@ import {
   createGitMetadataGenerator,
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
-import { TeamSession } from "./session/team/team-session.js";
-import type { TeamService } from "./team/service.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { BrowserTunnelSession } from "./session/browser/tunnel.js";
@@ -515,7 +513,6 @@ export interface SessionOptions {
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
-  teamService?: TeamService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -859,7 +856,6 @@ export class Session {
   private readonly voiceSessions: VoiceSessions;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
-  private readonly teamSession: TeamSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -897,7 +893,6 @@ export class Session {
       workspaceLabelService,
       filesystem,
       scheduleService,
-      teamService,
       checkoutDiffManager,
       github,
       renameCurrentBranch,
@@ -1038,11 +1033,6 @@ export class Session {
     this.scheduleSession = new ScheduleSession({
       host: { emit: (msg) => this.emit(msg) },
       scheduleService,
-      logger: this.sessionLogger,
-    });
-    this.teamSession = new TeamSession({
-      host: { emit: (msg) => this.emit(msg) },
-      teamService,
       logger: this.sessionLogger,
     });
     this.providerCatalogSession = new ProviderCatalogSession({
@@ -3411,11 +3401,20 @@ export class Session {
   private dispatchTeamMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "team.list.request":
-        return this.teamSession.handleTeamListRequest(msg);
       case "team.events.request":
-        return this.teamSession.handleTeamEventsRequest(msg);
       case "team.message.request":
-        return this.teamSession.handleTeamMessageRequest(msg);
+        // COMPAT(nativeTeams): added in v0.9.1, remove after 2027-04-02.
+        this.emit({
+          type: "rpc_error",
+          payload: {
+            requestId: msg.requestId,
+            requestType: msg.type,
+            error:
+              "Native Teams are unavailable. Install and open the Kitchen plugin to manage teams.",
+            code: "unsupported_feature",
+          },
+        });
+        return Promise.resolve();
       default:
         return undefined;
     }

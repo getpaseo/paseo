@@ -839,6 +839,10 @@ describe("browser MCP tools", () => {
 
   it("omits output schemas from tools/list and keeps tool call content model-visible", async () => {
     const agentManager = new BoundaryAgentManagerFake();
+    agentManager.getAgent("agent-1")!.labels = {
+      "pandaos.team.role": "developer",
+      "pandaos.team.tools": "team_report",
+    };
     const agentStorage = new BoundaryAgentStorageFake();
     const broker = new FakeBrowserToolsBroker({
       requestId: "req-browser-tabs",
@@ -890,6 +894,8 @@ describe("browser MCP tools", () => {
       expect(expectSingleTextContent(listAgentsResult)).toContain('"agents": []');
 
       const listedTools = await client.listTools();
+      expect(listedTools.tools.some((tool) => tool.name.startsWith("team_"))).toBe(false);
+      expect(listedTools.tools.some((tool) => tool.name === "item_plan")).toBe(false);
       expect(listedTools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining(["browser_list_tabs", "list_agents"]),
       );

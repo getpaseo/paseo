@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
 
 import {
   assertPullRequestAutoMergeDisableReady,
@@ -556,6 +556,37 @@ test("routes host-scoped agent skills requests through the daemon owner", async 
     payload: { requestId: "save-skills", ...status, confirmationRequired: null },
   });
 });
+
+test.each([
+  { type: "team.list.request", requestId: "legacy-list" },
+  { type: "team.events.request", requestId: "legacy-events", teamId: "legacy-team" },
+  {
+    type: "team.message.request",
+    requestId: "legacy-message",
+    teamId: "legacy-team",
+    text: "Hello",
+  },
+] satisfies SessionInboundMessage[])(
+  "rejects unsupported native Team request $type",
+  async (request) => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+    await session.handleMessage(request);
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: request.type,
+          error:
+            "Native Teams are unavailable. Install and open the Kitchen plugin to manage teams.",
+          code: "unsupported_feature",
+        },
+      },
+    ]);
+    await session.cleanup();
+  },
+);
 
 test("routes plugin requests and releases its owned catalog subscription on cleanup", async () => {
   const messages: SessionOutboundMessage[] = [];

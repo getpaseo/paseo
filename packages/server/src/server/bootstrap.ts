@@ -1,5 +1,3 @@
-import { TeamService } from "./team/service.js";
-import { PackRegistry } from "./team/pack.js";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import { isShadowModeEnabled } from "./system-one/scope.js";
 import { ShadowPredictor } from "./system-one/shadow-predictor.js";
@@ -1482,34 +1480,6 @@ export async function createPaseoDaemon(
     readAllowScheduledAutomation: () => daemonConfigStore.get().allowScheduledAutomation,
   });
   await scheduleService.start();
-  const teamPacks = new PackRegistry();
-  const loadedPacks = await teamPacks.loadFrom(path.join(config.paseoHome, "packs"));
-  for (const failure of loadedPacks.failed) {
-    logger.warn(failure, "Workflow pack failed to load");
-  }
-  const teamService = new TeamService({
-    storageRoot: config.paseoHome,
-    logger,
-    agentManager,
-    agentStorage,
-    createAgent,
-    packs: teamPacks,
-    getUsage: getProviderUsageForRouting,
-    listFallbackProviders: () =>
-      (daemonConfigStore.get().agentProfiles ?? []).map((profile) => profile.provider),
-    decide: (cwd) =>
-      daemonConfigStore.get().systemOne?.enabled === true &&
-      !isSystemOneExcluded(config.paseoHome, cwd)
-        ? createConfiguredSystemOneDecisionSource(
-            config.paseoHome,
-            daemonConfigStore,
-            () => cwd,
-            "team",
-          )
-        : null,
-    minConfidence: () => daemonConfigStore.get().systemOne?.minimumConfidence ?? 0.5,
-  });
-  await teamService.start();
   daemonConfigStore.onFieldChange("resourcePolicy", (value) => {
     if (value === "economy" || value === "balanced" || value === "deep") {
       agentManager.setResourcePolicy(value);
@@ -1567,7 +1537,6 @@ export async function createPaseoDaemon(
       terminalManager,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       scheduleService,
-      teamService,
       providerSnapshotManager,
       daemonConfigStore,
       resourcePolicyRuntime,
@@ -2040,7 +2009,6 @@ export async function createPaseoDaemon(
               resourcePolicyRuntime,
               browserActivity,
               providerUsageService,
-              teamService,
             );
             // Sorted handbacks ping when System One sorts them; a plain finish then stays quiet.
             wsServer.setHandoffPingsActive(

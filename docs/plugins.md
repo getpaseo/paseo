@@ -6,6 +6,12 @@ Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
+## PandaOS extensions
+
+Build optional PandaOS workflows and dashboards as plugins first. Reuse an existing community plugin when it meets the requirements; extend or build a plugin when it does not. Add Core code only for a required public capability or a host-wide invariant that a plugin cannot enforce. Keep that capability generic so upstream can adopt it.
+
+Kitchen owns team orchestration and its Sidebar entry. The Dashboard plugin owns Inbox and project boards, including snoozes, handoffs and failed schedules. See [team-runtime.md](team-runtime.md) for installation and the native-team migration boundary. PandaOS branding, ordinary agents, permissions, quotas and provider routing remain host responsibilities.
+
 ## Install a directory source
 
 Create a typecheckable plugin project, install its development dependencies, then install it into

@@ -104,8 +104,6 @@ import type {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
-import type { TeamService } from "../../team/service.js";
-import { isToolAllowedForTeamRole, registerTeamTools, resolveTeamRole } from "../../team/tools.js";
 import { buildTerminalRunMarker, readTerminalRun, terminalRunPollDelayMs } from "./terminal-run.js";
 import type { ResourcePolicyRuntime } from "../../resource-policy.js";
 import { applyPullRequestCurationChange } from "../../workspace-pull-request-curation.js";
@@ -116,7 +114,6 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
-  teamService?: TeamService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">;
@@ -630,7 +627,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
 
   const tools = new Map<string, PaseoToolDefinition>();
-  const teamRole = resolveTeamRole(agentManager, callerAgentId, options.callerLabels);
   const registerTool = (
     name: string,
     config: PaseoToolConfig,
@@ -638,9 +634,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
-      return;
-    }
-    if (!isToolAllowedForTeamRole(teamRole, name)) {
       return;
     }
     tools.set(name, {
@@ -3536,12 +3529,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       };
     },
   );
-
-  registerTeamTools(registerTool, {
-    teamService: options.teamService,
-    callerAgentId,
-    teamRole,
-  });
 
   return toCatalog();
 }

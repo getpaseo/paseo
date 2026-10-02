@@ -16,7 +16,6 @@ import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
-import type { TeamService } from "./team/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import { ResourcePolicyRuntime } from "./resource-policy.js";
@@ -606,7 +605,6 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
-  private readonly teamService: TeamService | undefined;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private browserToolsBroker: BrowserToolsBroker | null = null;
   private readonly browserActivity: BrowserActivityHub | undefined;
@@ -690,7 +688,6 @@ export class VoiceAssistantWebSocketServer {
     resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">,
     browserActivity?: BrowserActivityHub,
     providerUsageService?: ProviderUsageService,
-    teamService?: TeamService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -795,7 +792,6 @@ export class VoiceAssistantWebSocketServer {
     });
 
     this.providerUsageService = resolveProviderUsageService(providerUsageService, this.logger);
-    this.teamService = teamService;
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();
@@ -1521,7 +1517,6 @@ export class VoiceAssistantWebSocketServer {
       workspaceLabelService: this.workspaceLabelService ?? undefined,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
-      teamService: this.teamService,
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
@@ -1949,7 +1944,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(workspaceDone): added in v0.9.3, remove gate after 2027-04-01.
         workspaceDone: true,
         // COMPAT(teams): added in v0.9.4, remove gate after 2027-04-01.
-        teams: this.teamService !== undefined,
+        teams: false,
         // COMPAT(agentLastReplies): added in v0.9.3, remove gate after 2027-04-01.
         agentLastReplies: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.

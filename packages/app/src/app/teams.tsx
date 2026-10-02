@@ -1,10 +1,6 @@
-import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import { TeamsScreen } from "@/screens/teams-screen";
+import { Redirect } from "expo-router";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
 
-export default function TeamsRoute() {
-  return (
-    <HostRouteBootstrapBoundary>
-      <TeamsScreen />
-    </HostRouteBootstrapBoundary>
-  );
+export default function LegacyPluginRoute() {
+  return <Redirect href={buildOpenProjectRoute()} />;
 }

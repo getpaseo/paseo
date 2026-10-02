@@ -1,18 +1,13 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Field, FormTextInput } from "@/components/ui/form-field";
-import { normalizeJiraSite } from "./jira";
-import { useJiraSite, useLeitstandPreferencesStore } from "./preferences-store";
+import { normalizeJiraSite } from "@/utils/jira";
+import { useJiraSite, useJiraSiteStore } from "@/stores/jira-site-store";
 
-/**
- * Where ticket keys link to, stored on this device. Saves on blur or Enter; an empty field
- * clears it, and keys then show as plain text.
- */
 export function JiraSiteSetting() {
   const { t } = useTranslation();
   const site = useJiraSite();
-  const setJiraSite = useLeitstandPreferencesStore((state) => state.setJiraSite);
-  // null while the field still shows the saved value.
+  const setJiraSite = useJiraSiteStore((state) => state.setJiraSite);
   const [draft, setDraft] = useState<string | null>(null);
   const isBlank = draft === null || draft.trim() === "";
   const normalized = isBlank ? null : normalizeJiraSite(draft);

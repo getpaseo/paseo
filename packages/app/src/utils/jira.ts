@@ -1,6 +1,5 @@
 const JIRA_KEY_PATTERN = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 
-/** Ticket keys in the order they first appear across the given texts, each once. */
 export function extractJiraKeys(texts: readonly (string | null | undefined)[]): string[] {
   const keys = new Set<string>();
   for (const text of texts) {
@@ -12,10 +11,6 @@ export function extractJiraKeys(texts: readonly (string | null | undefined)[]): 
   return [...keys];
 }
 
-/**
- * The site as an origin plus optional path prefix, without a trailing slash, or null when the
- * input is not an http(s) URL. A bare host gets https, since that is what every Jira Cloud site is.
- */
 export function normalizeJiraSite(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
