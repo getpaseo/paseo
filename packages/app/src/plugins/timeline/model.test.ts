@@ -32,6 +32,7 @@ function plugin(input: {
         >["transform"],
       },
     ],
+    executionModes: [],
     timelineRenderers: [],
   };
 }

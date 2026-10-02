@@ -23,8 +23,25 @@ export function createPluginNavigation(input: {
     openSettings(pluginId, screenId) {
       router.push(buildPluginSettingsRoute(serverId, pluginId, screenId));
     },
-    openSurface(pluginId, surfaceId) {
-      router.push(buildPluginSurfaceRoute(serverId, pluginId, { kind: "surface", id: surfaceId }));
+    openNewWorkspace(target) {
+      router.push({
+        pathname: "/new",
+        params: {
+          serverId: target.serverId ?? serverId,
+          dir: target.cwd,
+          projectId: target.projectId,
+          executionId: target.executionId,
+          presetId: target.presetId,
+        },
+      });
+    },
+    openSurface(pluginId, surfaceId, options) {
+      const route = buildPluginSurfaceRoute(serverId, pluginId, { kind: "surface", id: surfaceId });
+      router.push(
+        options?.params
+          ? `${route}?pluginParams=${encodeURIComponent(JSON.stringify(options.params))}`
+          : route,
+      );
     },
     openWorkspacePanel(pluginId, panelId, location) {
       if (!workspaceId) throw new Error("No active workspace");

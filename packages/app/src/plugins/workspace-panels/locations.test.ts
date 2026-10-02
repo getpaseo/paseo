@@ -11,6 +11,7 @@ vi.mock("../client-runtime", () => ({
   createPluginClientRuntime: () => ({
     paseo: {},
     rpc: async () => undefined,
+    openNewWorkspace: () => undefined,
     openSurface: () => undefined,
     openPanel: () => undefined,
     addComposerPill: () => ({ update() {}, remove() {} }),

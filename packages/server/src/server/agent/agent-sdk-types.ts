@@ -214,6 +214,7 @@ export interface AgentRunOptions {
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
   clientMessageId?: string;
+  messageOrigin?: "client" | "plugin" | "unknown";
 }
 
 export interface AgentSteerOptions extends AgentRunOptions {

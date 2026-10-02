@@ -58,3 +58,12 @@ export declare function useHosts(): readonly PluginHostSummary[];
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
 export declare function openExternalUrl(url: string): Promise<void>;
+
+export type {
+  PluginExecutionPreset,
+  PluginExecutionPresetCatalog,
+  PluginExecutionStartInput,
+  PluginExecutionModeContribution,
+  PluginOpenNewWorkspaceOptions,
+  PluginOpenSurfaceOptions,
+} from "./execution.js";

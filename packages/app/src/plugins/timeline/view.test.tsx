@@ -24,6 +24,7 @@ vi.mock("../client-runtime", () => ({
     paseo: {},
     dispose: () => {},
     rpc: async () => undefined,
+    openNewWorkspace: () => undefined,
     openSurface: () => undefined,
     openPanel: () => undefined,
     addComposerPill: () => ({ update() {}, remove() {} }),

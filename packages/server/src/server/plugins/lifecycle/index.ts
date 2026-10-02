@@ -17,6 +17,7 @@ import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 export const lifecycleEventNames = [
   "agent.created",
+  "agent.user_message_accepted",
   "agent.turn_started",
   "agent.turn_ended",
   "agent.permission_requested",
@@ -171,6 +172,9 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
   constructor(changed: () => void) {
     this.changed = changed;
   }
+
+  readonly supportsLifecycleEvent = (name: string): boolean =>
+    (lifecycleEventNames as readonly string[]).includes(name);
 
   readonly on: PluginLifecycleRegistration["on"] = (name, handler) => {
     if (!lifecycleEventNames.includes(name)) {

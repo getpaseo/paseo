@@ -7,6 +7,7 @@ import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 import { getIsElectron } from "@/constants/platform";
 import { createWorkspaceBrowser } from "@/desktop/browser/store";
+import { createPluginNavigation } from "./navigation";
 import { createPluginHostNavigation } from "./host-navigation-model";
 
 export function usePluginHostNavigation(
@@ -15,6 +16,7 @@ export function usePluginHostNavigation(
   return useMemo(
     () =>
       createPluginHostNavigation(serverId, {
+        openNewWorkspace: createPluginNavigation({ serverId, workspaceId: null }).openNewWorkspace,
         browserAvailable: getIsElectron(),
         openAgent: navigateToAgent,
         openWorkspace: navigateToWorkspace,

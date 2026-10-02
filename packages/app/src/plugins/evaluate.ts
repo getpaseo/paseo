@@ -77,6 +77,7 @@ export type PluginClientRuntime = Pick<
   | "rpc"
   | "openSettings"
   | "openSurface"
+  | "openNewWorkspace"
   | "openPanel"
   | "addComposerPill"
   | "addHeaderButton"
@@ -89,6 +90,7 @@ export function runPluginClientBundle(
   onChange: () => void = () => undefined,
 ): EvaluatedPlugin {
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
+    executionModes: [],
     surfaces: [],
     settingsScreens: [],
     sidebarItems: [],
@@ -150,6 +152,23 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addExecutionMode(contribution) {
+      const modeId = requireId(contribution.id, "execution mode id");
+      if (collector.executionModes.some((mode) => mode.id === modeId))
+        throw new Error(`Duplicate execution mode: ${modeId}`);
+      if (
+        !contribution.title.trim() ||
+        typeof contribution.loadPresets !== "function" ||
+        typeof contribution.start !== "function"
+      )
+        throw new Error(`Invalid execution mode: ${modeId}`);
+      resolvePluginIcon(contribution.icon);
+      return register(
+        collector.executionModes,
+        { ...contribution, id: modeId, title: contribution.title.trim() },
+        () => undefined,
+      );
+    },
     addSettingsScreen(contribution) {
       const screenId = requireId(contribution.id, "settings screen id");
       if (settingsScreenIds.has(screenId))
@@ -445,6 +464,7 @@ export function runPluginClientBundle(
   return {
     id,
     cleanup,
+    executionModes: collector.executionModes,
     surfaces: collector.surfaces,
     settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,

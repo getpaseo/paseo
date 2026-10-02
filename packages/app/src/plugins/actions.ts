@@ -1,5 +1,7 @@
 import { callPluginRpc } from "@getpaseo/plugin/client/host";
 import type {
+  PluginOpenNewWorkspaceOptions,
+  PluginOpenSurfaceOptions,
   PluginAgentCommandContext,
   PluginCommandCapabilities,
   PluginPanelLocation,
@@ -12,7 +14,8 @@ import type { InstalledPlugin } from "./types";
 
 export interface PluginNavigation {
   openSettings(pluginId: string, screenId: string): void;
-  openSurface(pluginId: string, surfaceId: string): void;
+  openSurface(pluginId: string, surfaceId: string, options?: PluginOpenSurfaceOptions): void;
+  openNewWorkspace(input: PluginOpenNewWorkspaceOptions): void;
   openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
   openAgentPanel(
     pluginId: string,
@@ -35,11 +38,14 @@ export function createPluginCapabilities(
         throw new Error(`Plugin settings screen is unavailable: ${screenId}`);
       navigation.openSettings(plugin.id, screenId);
     },
-    openSurface(surfaceId) {
+    openNewWorkspace(input) {
+      navigation.openNewWorkspace({ ...input, executionId: `${plugin.id}:${input.executionId}` });
+    },
+    openSurface(surfaceId, options) {
       if (!plugin.surfaces.some((surface) => surface.id === surfaceId)) {
         throw new Error(`Plugin surface is unavailable: ${surfaceId}`);
       }
-      navigation.openSurface(plugin.id, surfaceId);
+      navigation.openSurface(plugin.id, surfaceId, options);
     },
   };
 }

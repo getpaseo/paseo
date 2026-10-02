@@ -1,3 +1,8 @@
+import type {
+  PluginExecutionModeContribution,
+  PluginOpenNewWorkspaceOptions,
+  PluginOpenSurfaceOptions,
+} from "./execution.js";
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
@@ -39,6 +44,7 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
+    readonly openNewWorkspace?: (input: PluginOpenNewWorkspaceOptions) => void;
     readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
@@ -47,7 +53,9 @@ interface PluginNavigableHostProps extends PluginHostProps {
   };
 }
 
-export interface PluginSurfaceProps extends PluginNavigableHostProps {}
+export interface PluginSurfaceProps extends PluginNavigableHostProps {
+  readonly params?: Readonly<Record<string, string>>;
+}
 
 export interface PluginIconProps {
   name: string;
@@ -85,6 +93,7 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities {
+  addExecutionMode(contribution: PluginExecutionModeContribution): PluginCleanup;
   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
@@ -174,7 +183,8 @@ export interface PluginCommandCapabilities {
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     input: ZodInput<InputSchema>,
   ): Promise<ZodOutput<OutputSchema>>;
-  openSurface(id: string): void;
+  openSurface(id: string, options?: PluginOpenSurfaceOptions): void;
+  openNewWorkspace(input: PluginOpenNewWorkspaceOptions): void;
   openSettings(id: string): void;
 }
 

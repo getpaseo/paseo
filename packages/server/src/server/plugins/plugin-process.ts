@@ -250,6 +250,7 @@ function evaluateBundle(bundle: string): void {
     handle: register,
     registerProvider,
     registerSettings,
+    supportsLifecycleEvent: hooks.supportsLifecycleEvent,
     on: hooks.on,
     before: hooks.before,
   });

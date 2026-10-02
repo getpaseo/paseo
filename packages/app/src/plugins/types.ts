@@ -6,6 +6,7 @@ import type {
   PluginThemeContribution,
 } from "@getpaseo/plugin";
 import type {
+  PluginExecutionModeContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
@@ -25,6 +26,7 @@ export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelCont
 export interface EvaluatedPlugin {
   id: string;
   cleanup: PluginCleanup;
+  executionModes: PluginExecutionModeContribution[];
   surfaces: PluginSurfaceContribution[];
   settingsScreens: PluginSettingsScreenContribution[];
   sidebarItems: PluginSidebarContribution[];

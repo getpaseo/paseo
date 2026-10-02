@@ -1,3 +1,6 @@
+import { startPluginExecution } from "@/plugins/execution";
+import { useExecutionMode, buildExecutionControls } from "@/plugins/use-execution-mode";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import type {
   CreateAgentRequestOptions,
   CreateWorkspaceRequestOptions,
@@ -194,6 +197,8 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+  executionId?: string;
+  presetId?: string;
 }
 
 const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
@@ -1615,12 +1620,97 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 }
 
+function initialExecutionLaunchTarget(executionId: string | undefined): LaunchTarget | null {
+  return executionId ? { kind: "chat" } : null;
+}
+
+function resolveExecutionProjectId(
+  project: Parameters<typeof getHostProjectId>[0] | null,
+  serverId: string,
+) {
+  return project ? (getHostProjectId(project, serverId) ?? undefined) : undefined;
+}
+
+function executionDefaultAgentConfig(composerState: NewWorkspaceComposerState | null) {
+  const provider = composerState?.selectedProvider;
+  if (!provider) return undefined;
+  const model = composerState.effectiveModelId;
+  return {
+    provider: model ? `${provider}/${model}` : provider,
+    modeId: composerState.selectedMode || undefined,
+    thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
+    featureValues: composerState.featureValues,
+  };
+}
+
+async function createWorkspacePluginExecution(input: {
+  execution: ReturnType<typeof useExecutionMode>;
+  payload: MessagePayload;
+  composerState: NewWorkspaceComposerState | null;
+  ensureWorkspace: CreateChatAgentInput["ensureWorkspace"];
+  serverId: string;
+  projectId?: string;
+  draftId: string;
+  draftKey: string;
+  draftContextScopeKey: string | null;
+  clearDraft: CreateChatAgentInput["clearDraft"];
+  supportsForgeSearch: boolean;
+  isStillOnCreateScreen(): boolean;
+}) {
+  const { execution, payload, composerState } = input;
+  const mode = execution.selectedExecution;
+  const catalog = execution.presetCatalog;
+  if (!mode || execution.presetsLoading || !catalog)
+    throw new Error(execution.executionError ?? "Choose an available execution mode and team.");
+  const preset = catalog.presets.find((candidate) => candidate.id === execution.presetId);
+  if (!preset || preset.unavailableReason)
+    throw new Error(
+      preset?.unavailableReason ?? catalog.unavailableReason ?? "Choose an available team.",
+    );
+  if (isEmptyWorkspaceSubmission(payload))
+    throw new Error("Describe what you want to build or attach the request.");
+  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
+  const wire = splitComposerAttachmentsForSubmit(payload.attachments, {
+    format: resolveComposerAttachmentSubmitFormat({
+      supportsForgeAttachments: input.supportsForgeSearch,
+    }),
+  });
+  const images = await encodeImages(wire.images);
+  const { workspace } = await input.ensureWorkspace({
+    cwd: payload.cwd,
+    prompt: payload.text,
+    attachments: getWorkspaceNamingAttachments(wire.attachments),
+    withInitialAgent: false,
+  });
+  const result = await startPluginExecution(mode, {
+    workspaceId: workspace.id,
+    cwd: workspace.workspaceDirectory,
+    projectId: input.projectId,
+    presetId: execution.presetId,
+    text: payload.text,
+    images: images ?? [],
+    attachments: wire.attachments ?? [],
+    idempotencyKey: `${input.draftId}:execution`,
+    defaultAgentConfig: executionDefaultAgentConfig(composerState),
+    routingMode: composerState?.isAuto ? "auto" : "manual",
+  });
+  clearConsumedDraft();
+  if (input.isStillOnCreateScreen())
+    navigateToAgent({
+      serverId: input.serverId,
+      agentId: result.agentId,
+      workspaceId: workspace.id,
+    });
+}
+
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
   projectId,
   displayName: displayNameProp,
   draftId,
+  executionId: initialExecutionId,
+  presetId: initialPresetId,
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
@@ -1682,7 +1772,9 @@ export function NewWorkspaceScreen({
     () => resolveTerminalProfiles(daemonConfig?.terminalProfiles),
     [daemonConfig?.terminalProfiles],
   );
-  const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
+  const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(() =>
+    initialExecutionLaunchTarget(initialExecutionId),
+  );
   const launchTarget = useMemo(
     () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
     [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles],
@@ -1759,6 +1851,13 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
+  const execution = useExecutionMode({
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory,
+    projectId: resolveExecutionProjectId(selectedProject, selectedServerId),
+    initialExecutionId,
+    initialPresetId,
+  });
   const [pickerSelection, dispatchPickerSelection] = useReducer(
     reducePickerSelection,
     initialPickerSelectionState,
@@ -2080,6 +2179,25 @@ export function NewWorkspaceScreen({
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
+        if (execution.executionId) {
+          setPendingAction("chat");
+          await createWorkspacePluginExecution({
+            execution,
+            payload,
+            composerState,
+            ensureWorkspace,
+            serverId: selectedServerId,
+            projectId: resolveExecutionProjectId(selectedProject, selectedServerId),
+            draftId: creationIdentity.draftId,
+            draftKey,
+            draftContextScopeKey,
+            clearDraft: chatDraft.clear,
+            supportsForgeSearch,
+            isStillOnCreateScreen,
+          });
+          setPendingAction(null);
+          return;
+        }
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           let outcome: SubmitOutcome = "background";
@@ -2132,6 +2250,8 @@ export function NewWorkspaceScreen({
     },
     [
       composerState,
+      execution,
+      selectedProject,
       draftContextScopeKey,
       creationIdentity,
       chatDraft.clear,
@@ -2266,6 +2386,11 @@ export function NewWorkspaceScreen({
     [composerState, isPending],
   );
 
+  const executionControls = useMemo(
+    () => buildExecutionControls(execution, agentControlsWithDisabled, isPending, isCompact),
+    [execution, agentControlsWithDisabled, isPending, isCompact],
+  );
+
   const pickerEmptyText =
     branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
       ? t("newWorkspace.refPicker.searching")
@@ -2391,6 +2516,8 @@ export function NewWorkspaceScreen({
       autoFocusKey={launchFocusKey}
       commandDraftConfig={composerState?.commandDraftConfig}
       agentControls={agentControlsWithDisabled}
+      controlsContent={executionControls}
+      placeholder={execution.placeholder}
     />
   );
   return (

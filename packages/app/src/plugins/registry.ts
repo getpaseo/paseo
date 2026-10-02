@@ -85,6 +85,7 @@ export class PluginRegistry {
           requirements: entry.requirements,
           queryClient: new QueryClient(),
           cleanup: () => undefined,
+          executionModes: [],
           surfaces: [],
           settingsScreens: [],
           sidebarItems: [],

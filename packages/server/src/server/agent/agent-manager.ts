@@ -2836,7 +2836,9 @@ export class AgentManager {
       return false;
     }
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+        origin: options.messageOrigin,
+      });
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -3065,6 +3067,7 @@ export class AgentManager {
       if (options?.clientMessageId) {
         this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
           messageId: options.clientMessageId,
+          origin: options.messageOrigin,
           turnId,
           providerMessageId:
             stagedSubmittedPromptEcho?.item.type === "user_message"
@@ -3272,7 +3275,13 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedSteer(
+          agent,
+          prompt,
+          options?.clientMessageId,
+          expectedTurnId,
+          options?.messageOrigin,
+        );
       }
       return admission;
     });
@@ -3302,7 +3311,13 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedSteer(
+              agent,
+              prompt,
+              options?.clientMessageId,
+              expectedTurnId,
+              options?.messageOrigin,
+            );
           }
           return admission;
         })
@@ -3407,6 +3422,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     clientMessageId: string | undefined,
     expectedTurnId: string,
+    origin?: AgentRunOptions["messageOrigin"],
   ): Promise<void> {
     if (!clientMessageId) {
       return;
@@ -3414,6 +3430,7 @@ export class AgentManager {
     this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
       messageId: clientMessageId,
       turnId: expectedTurnId,
+      origin,
     });
     this.emitState(agent);
   }
@@ -5769,7 +5786,13 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    options?: { messageId?: string; providerMessageId?: string; turnId?: string },
+    options?: {
+      messageId?: string;
+      providerMessageId?: string;
+      turnId?: string;
+      accepted?: boolean;
+      origin?: AgentRunOptions["messageOrigin"];
+    },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
       return;
@@ -5784,6 +5807,15 @@ export class AgentManager {
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     };
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
+    if (this.pluginLifecycle && !agent.internal && options?.accepted !== false) {
+      this.pluginLifecycle.emit("agent.user_message_accepted", {
+        agent: describeHookAgent({ ...agent, title: agent.config.title }),
+        messageId: clientMessageId,
+        text: item.text,
+        prompt,
+        origin: options?.origin ?? "unknown",
+      });
+    }
   }
 
   private reconcileSubmittedPromptEcho(
@@ -5796,6 +5828,7 @@ export class AgentManager {
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     if (!existing) {
       this.recordSubmittedPrompt(agent, item.text, clientMessageId, {
+        accepted: false,
         messageId: clientMessageId,
         ...(messageId ? { providerMessageId: messageId } : {}),
         ...(turnId ? { turnId } : {}),

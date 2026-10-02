@@ -4648,6 +4648,11 @@ export class Session {
     }
   }
 
+  private acceptedMessageOrigin(): NonNullable<AgentRunOptions["messageOrigin"]> {
+    if (parsePluginClientId(this.clientId)) return "plugin";
+    return this.interactive ? "client" : "unknown";
+  }
+
   private async handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -4683,7 +4688,10 @@ export class Session {
         agentId,
         prompt,
         messageId,
-        runOptions,
+        runOptions: {
+          ...runOptions,
+          messageOrigin: this.acceptedMessageOrigin(),
+        },
 
         clearPendingPermissions: true,
         logger: this.sessionLogger,
@@ -8892,6 +8900,7 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          runOptions: { messageOrigin: this.acceptedMessageOrigin() },
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           clearPendingPermissions: true,
           logger: this.sessionLogger,

@@ -318,6 +318,7 @@ function resolveContextWindowPlacement(
 
 interface RenderLeftContentArgs {
   agentControls: DraftAgentControlsProps | undefined;
+  controlsContent?: ReactElement;
   agentId: string;
   serverId: string;
   focusInput: () => void;
@@ -328,6 +329,7 @@ interface RenderLeftContentArgs {
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
   const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
   if (!args.showAgentControls) return null;
+  if (args.controlsContent) return args.controlsContent;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
     return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
   }
@@ -988,6 +990,7 @@ interface ComposerProps {
   onAttentionPromptSend?: () => void;
   /** Controlled agent controls rendered in input area (draft flows). */
   agentControls?: DraftAgentControlsProps;
+  controlsContent?: ReactElement;
   /** Extra styles merged onto the message input wrapper (e.g. elevated background). */
   inputWrapperStyle?: import("react-native").ViewStyle;
   /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
@@ -1276,6 +1279,7 @@ function ComposerContentImpl({
   onAttentionInputFocus,
   onAttentionPromptSend,
   agentControls,
+  controlsContent,
   inputWrapperStyle,
   isCompactLayout: isCompactLayoutOverride,
   inputMode = "chat",
@@ -2227,13 +2231,22 @@ function ComposerContentImpl({
     () =>
       renderLeftContent({
         agentControls,
+        controlsContent,
         agentId,
         serverId,
         focusInput,
         isCompactLayout,
         showAgentControls: mode.showAgentControls,
       }),
-    [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, serverId],
+    [
+      agentControls,
+      controlsContent,
+      agentId,
+      focusInput,
+      isCompactLayout,
+      mode.showAgentControls,
+      serverId,
+    ],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {

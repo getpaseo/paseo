@@ -98,3 +98,12 @@ test("session-open hooks reject changes to session identity instead of silently 
     ),
   ).rejects.toThrow("agent.session_open hooks can only change env");
 });
+
+test("advertises actual lifecycle events without guessing unsupported names", () => {
+  const hooks = new PluginHookHandlers(() => {});
+  expect(hooks.supportsLifecycleEvent("agent.user_message_accepted")).toBe(true);
+  expect(hooks.supportsLifecycleEvent("agent.human_approved")).toBe(false);
+  expect(hooks.catalog().events).toEqual([]);
+  hooks.on("agent.user_message_accepted", () => {});
+  expect(hooks.catalog().events).toEqual(["agent.user_message_accepted"]);
+});

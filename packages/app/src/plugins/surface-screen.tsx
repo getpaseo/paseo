@@ -60,6 +60,7 @@ function SurfaceRenderer({
   layout,
   host,
   theme,
+  params,
 }: {
   Surface: ComponentType<PluginSurfaceProps>;
   client: DaemonClient;
@@ -67,11 +68,12 @@ function SurfaceRenderer({
   layout: PluginSurfaceProps["layout"];
   host: PluginSurfaceProps["host"];
   theme: PluginTheme;
+  params: PluginSurfaceProps["params"];
 }) {
   const navigation = usePluginHostNavigation(host.id);
   return (
     <PluginRuntimeBoundary plugin={plugin} client={client}>
-      <Surface theme={theme} host={host} layout={layout} navigation={navigation} />
+      <Surface theme={theme} host={host} layout={layout} navigation={navigation} params={params} />
     </PluginRuntimeBoundary>
   );
 }
@@ -149,7 +151,18 @@ export function PluginSurfaceScreen() {
     pluginId?: string | string[];
     contributionKind?: string | string[];
     contributionId?: string | string[];
+    pluginParams?: string | string[];
   }>();
+  const surfaceParams = useMemo(() => {
+    try {
+      const value: unknown = JSON.parse(routeParam(params.pluginParams) || "{}");
+      if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+      if (!Object.values(value).every((item) => typeof item === "string")) return undefined;
+      return value as Readonly<Record<string, string>>;
+    } catch {
+      return undefined;
+    }
+  }, [params.pluginParams]);
   const serverId = routeParam(params.serverId);
   const pluginId = routeParam(params.pluginId);
   const contributionKind = routeParam(params.contributionKind);
@@ -231,6 +244,7 @@ export function PluginSurfaceScreen() {
             Surface={surface.Component}
           >
             <ThemedSurfaceRenderer
+              params={surfaceParams}
               Surface={surface.Component}
               client={client}
               plugin={plugin}

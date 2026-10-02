@@ -970,6 +970,7 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
     cwd: process.cwd(),
   });
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-order-"));
+  const publish = vi.fn();
   const manager = new AgentManager({
     clients: {
       codex: new (class extends TestAgentClient {
@@ -979,6 +980,7 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
       })(),
     },
     logger,
+    pluginLifecycle: { emit: publish, before: async (_name, request) => request },
   });
   let agentId: string | null = null;
   try {
@@ -993,10 +995,18 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
     })();
     await manager.waitForAgentRunStart(agent.id);
 
-    const steer = manager.steerAgentRun(agent.id, "hello", {
+    const richPrompt: AgentPromptInput = [
+      { type: "text", text: "hello" },
+      { type: "image", data: "image-data", mimeType: "image/png" },
+    ];
+    const steer = manager.steerAgentRun(agent.id, richPrompt, {
       clientMessageId: "hello-client",
+      messageOrigin: "client",
     });
     await entered.promise;
+    expect(publish.mock.calls.filter(([name]) => name === "agent.user_message_accepted")).toEqual(
+      [],
+    );
     session.pushEvent({
       type: "timeline",
       provider: "codex",
@@ -1018,6 +1028,18 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
     release.resolve();
     await expect(steer).resolves.toEqual({ status: "accepted" });
     await consume;
+    expect(publish.mock.calls.filter(([name]) => name === "agent.user_message_accepted")).toEqual([
+      [
+        "agent.user_message_accepted",
+        expect.objectContaining({
+          agent: expect.objectContaining({ id: agent.id }),
+          messageId: "hello-client",
+          text: "hello",
+          prompt: richPrompt,
+          origin: "client",
+        }),
+      ],
+    ]);
     const rows = manager.fetchTimeline(agent.id, { limit: 0 }).rows.filter((row) => {
       return (
         (row.item.type === "user_message" && row.item.text === "hello") ||

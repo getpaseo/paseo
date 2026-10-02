@@ -29,6 +29,7 @@ function installed(): InstalledPlugin {
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    executionModes: [],
     timelineRenderers: [],
   };
 }

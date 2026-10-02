@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
+client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, execution modes, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -321,12 +321,25 @@ See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-
 and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
 for the author-facing contract.
 
+## Workspace execution modes
+
+Register `addExecutionMode` to offer a workflow beside Direct in New workspace. The plugin owns
+preset discovery and execution; the app creates the workspace and passes the existing composer's
+text, images and attachments. Return an ordinary agent ID to open its native chat. Keep execution
+idempotent with the supplied key. Failed starts retain the draft.
+
+`openNewWorkspace` preselects the registered mode and optional project, directory and preset. Its
+execution ID is local to the calling plugin; surface navigation uses `pluginId:executionId`.
+`openSurface(id, { params })` returns to a specific mission through the surface's `params` prop.
+Gate these client capabilities on older apps. A new client capability does not establish that an
+older daemon supports a server lifecycle hook.
+
 ## Lifecycle hooks
 
 Server entries register lifecycle observers with `server.on()` and request transforms with
 `server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
 owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
-eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+supported hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or

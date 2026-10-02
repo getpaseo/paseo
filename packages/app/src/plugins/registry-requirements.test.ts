@@ -30,6 +30,7 @@ function registry(version: string) {
         openSettings() {
           cleanups++;
         },
+        openNewWorkspace: () => undefined,
         openSurface() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),

@@ -322,6 +322,25 @@ export default function contribute(client: PluginClientContext) {
 
 Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
 
+## Execution modes
+
+Client entries register `addExecutionMode({ id, title, icon, loadPresets, start, onManage? })`.
+New workspace offers Direct and the installed host's contributions. `loadPresets({ cwd, projectId? })`
+returns `presets`, `defaultPresetId?` and `unavailableReason?`. Each preset has an ID, friendly title,
+optional description/group and optional unavailable reason. Missing defaults stay unavailable until
+someone chooses a usable preset.
+
+`start` receives the created `workspaceId`, its actual `cwd`, optional `projectId`, `presetId`,
+original `text`, encoded `images`, structured `attachments` and `idempotencyKey`. Optional
+`defaultAgentConfig` and `routingMode` carry the existing composer preferences. The plugin creates
+and starts its ordinary agent, then returns `{ agentId }`. The app keeps the draft on failure.
+Implement durable idempotency in the plugin; the app only deduplicates concurrent submissions.
+
+`client.openNewWorkspace({ executionId, presetId?, projectId?, cwd?, serverId? })` uses a plugin-local
+execution ID. `props.navigation?.openNewWorkspace` uses `pluginId:executionId`. Hide dependent
+entrypoints when the capability is absent. `openSurface(id, { params: { missionId } })` supplies
+string parameters through `PluginSurfaceProps.params`.
+
 ## Lifecycle hooks
 
 In `index.server.ts`:
@@ -344,6 +363,15 @@ export default function contribute(server: PluginServerContext) {
 | `server.before(name, callback)` | `({ request }, { paseo, signal })` | Modified request, or `undefined` to keep it; async supported |
 
 Hooks run on the daemon while the plugin is enabled, even with no app connected.
+Use `server.supportsLifecycleEvent?.("agent.user_message_accepted") === true` before depending on
+an event added after your oldest supported daemon. An absent capability means that flow is unavailable;
+report that in the preset catalog instead of starting a partially supported workflow.
+
+`agent.user_message_accepted` carries the accepted structured prompt, including its images and
+attachments. `origin` describes the submission transport: `client` for an interactive app session,
+`plugin` for a plugin session, and `unknown` otherwise. This is not a verified human identity or
+approval capability. Never authorize acceptance, merge or permission changes from message text.
+The hook requires a message ID; use stable IDs for submissions that need durable deduplication.
 
 ### Change configuration and inject an MCP server
 
@@ -509,16 +537,17 @@ plans, and mode changes; requesting permission does not end the turn.
 
 ### Events
 
-| Name                         | Event fields                             | Trigger                                            |
-| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
-| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
-| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
-| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
-| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
-| `workspace.created`          | `workspace`                              | Record created; directory available                |
-| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+| Name                          | Event fields                                     | Trigger                                                                      |
+| ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `agent.created`               | `agent`                                          | Ordinary creation finishes; excludes import/resume                           |
+| `agent.user_message_accepted` | `agent`, `messageId`, `text`, `prompt`, `origin` | Deduplicated prompt is accepted; excludes provider echoes and history replay |
+| `agent.turn_started`          | `agent`, `turnId`                                | Live turn starts                                                             |
+| `agent.turn_ended`            | `agent`, `turnId`, `outcome`, `timeline`         | Live turn completes, fails, or is canceled                                   |
+| `agent.permission_requested`  | `agent`, `request`                               | Permission or question becomes pending                                       |
+| `agent.permission_resolved`   | `agent`, `requestId`, `resolution`               | Pending request is answered or cleared                                       |
+| `agent.archived`              | `agent`, `archivedAt`                            | Archive state is saved                                                       |
+| `workspace.created`           | `workspace`                                      | Record created; directory available                                          |
+| `workspace.archived`          | `workspace`                                      | Archive state is saved                                                       |
 
 Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
 `workspace.created` is not a setup barrier before agent startup.

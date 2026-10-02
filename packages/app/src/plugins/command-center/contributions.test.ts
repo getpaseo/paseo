@@ -7,7 +7,7 @@ import {
   type PluginWorkspaceSnapshot,
 } from "@getpaseo/plugin";
 import { type PluginCommandCenterItemContribution } from "@getpaseo/plugin/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
 import { buildPluginCommandCenterContributions } from "./contributions";
@@ -103,6 +103,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    executionModes: [],
     timelineRenderers: [],
   };
 }
@@ -146,6 +147,7 @@ describe("plugin Command Center contributions", () => {
       state: stateSource(),
       navigation: {
         openSettings() {},
+        openNewWorkspace: () => undefined,
         openSurface() {},
         openWorkspacePanel() {},
         openAgentPanel() {},
@@ -178,6 +180,7 @@ describe("plugin Command Center contributions", () => {
 
   it("supplies the direct API, typed RPC, snapshots, and narrow navigation", async () => {
     const opened: string[] = [];
+    const newWorkspace = vi.fn();
     let rpcValue = 0;
     let receivedPaseo: PaseoApi | null = null;
     const installed = plugin(async (context) => {
@@ -186,6 +189,12 @@ describe("plugin Command Center contributions", () => {
       receivedPaseo = context.paseo;
       rpcValue = (await context.rpc(inspect, { value: 4 })).value;
       context.openSurface("main");
+      context.openNewWorkspace({
+        executionId: "team",
+        projectId: "project",
+        cwd: "/project",
+        presetId: "standard",
+      });
       context.openPanel("details", { location: "explorer" });
     });
     const runtime = createRuntime(installed);
@@ -197,6 +206,7 @@ describe("plugin Command Center contributions", () => {
       agentId: agent.id,
       navigation: {
         openSettings() {},
+        openNewWorkspace: newWorkspace,
         openSurface(pluginId, surfaceId) {
           opened.push(`${pluginId}/surface/${surfaceId}`);
         },
@@ -213,6 +223,12 @@ describe("plugin Command Center contributions", () => {
     });
 
     await actions.find((action) => action.id === "review:agent")?.run();
+    expect(newWorkspace).toHaveBeenCalledWith({
+      executionId: "review:team",
+      projectId: "project",
+      cwd: "/project",
+      presetId: "standard",
+    });
 
     expect(rpcValue).toBe(5);
     expect(receivedPaseo).toBe(runtime.paseo);
@@ -229,6 +245,7 @@ describe("plugin Command Center contributions", () => {
         agentId: agent.id,
         navigation: {
           openSettings() {},
+          openNewWorkspace: () => undefined,
           openSurface() {},
           openWorkspacePanel() {},
           openAgentPanel() {},

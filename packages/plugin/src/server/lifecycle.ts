@@ -2,6 +2,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentTimelineItem,
+  AgentPromptInput,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
 import type { PaseoApi } from "@getpaseo/client";
@@ -45,6 +46,13 @@ export type PluginTurnOutcome =
   | { kind: "canceled"; reason: string };
 
 export interface PluginLifecycleEvents {
+  "agent.user_message_accepted": {
+    agent: PluginHookAgent;
+    messageId: string;
+    text: string;
+    prompt: AgentPromptInput;
+    origin: "client" | "plugin" | "unknown";
+  };
   "agent.turn_started": { agent: PluginHookAgent; turnId: string | null };
   "agent.turn_ended": {
     agent: PluginHookAgent;
@@ -71,6 +79,7 @@ export interface PluginBeforeRequests {
 }
 
 export interface PluginLifecycleRegistration {
+  supportsLifecycleEvent(name: string): boolean;
   on<Name extends keyof PluginLifecycleEvents>(
     name: Name,
     handler: (

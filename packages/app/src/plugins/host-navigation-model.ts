@@ -1,9 +1,10 @@
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { PluginOpenNewWorkspaceOptions, PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 import { isHttpUrl } from "@/utils/http-url";
 
 interface HostNavigationOwner {
   browserAvailable: boolean;
+  openNewWorkspace?(input: PluginOpenNewWorkspaceOptions): void;
   openAgent(input: { serverId: string; agentId: string }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
@@ -15,6 +16,7 @@ export function createPluginHostNavigation(
   owner: HostNavigationOwner,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return {
+    openNewWorkspace: owner.openNewWorkspace,
     openAgent: ({ agentId, serverId: targetServerId }) =>
       owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>

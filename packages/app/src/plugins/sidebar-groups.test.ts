@@ -27,6 +27,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    executionModes: [],
     timelineRenderers: [],
   };
 }

@@ -5,6 +5,7 @@ const runtime = {
   paseo: {},
   async rpc() {},
   openSettings() {},
+  openNewWorkspace: () => undefined,
   openSurface() {},
   openPanel() {},
   addHeaderButton() {
@@ -28,6 +29,39 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("registers execution modes under plugin lifetime and rejects duplicate modes", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "execution",
+      bundle(
+        `plugin.addExecutionMode({id:"crew",title:"Crew",icon:"Blocks",async loadPresets(){return {presets:[{id:"standard",title:"Standard team"}],defaultPresetId:"missing"};},async start(){return {agentId:"boss"};}})`,
+      ),
+    );
+    expect(await plugin.executionModes[0]!.loadPresets({ cwd: "/project" })).toMatchObject({
+      defaultPresetId: "missing",
+    });
+    expect(
+      await plugin.executionModes[0]!.start({
+        workspaceId: "workspace",
+        cwd: "/project",
+        presetId: "standard",
+        text: "Build",
+        images: [],
+        attachments: [],
+        idempotencyKey: "draft",
+      }),
+    ).toEqual({ agentId: "boss" });
+    await plugin.cleanup();
+    expect(plugin.executionModes).toEqual([]);
+    expect(() =>
+      evaluatePluginClientBundle(
+        "duplicate",
+        bundle(
+          `const mode={id:"crew",title:"Crew",icon:"Blocks",async loadPresets(){return {presets:[]};},async start(){return {agentId:"boss"};}};plugin.addExecutionMode(mode);plugin.addExecutionMode(mode);`,
+        ),
+      ),
+    ).toThrow("Duplicate execution mode");
+  });
+
   it("releases button registrations when client setup throws", () => {
     let active = 0;
     function addButton() {
