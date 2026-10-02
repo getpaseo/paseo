@@ -25,6 +25,7 @@ export const it: TranslationResources = {
     total: "{{total}} corrispondenze",
   },
   common: {
+    bottomSheetBackdrop: "Sfondo del pannello inferiore",
     back: "Indietro",
     loading: "Caricamento...",
     actions: {
@@ -441,7 +442,9 @@ export const it: TranslationResources = {
       recovery: {
         archivedTitle: "Ambiente di lavoro archiviato",
         restoreDescription:
-          "{{workspaceName}} è stato archiviato e il suo worktree è stato rimosso. Ripristina il branch {{branch}} per riaprirlo.",
+          "Ripristina {{workspaceName}} per tornare ai suoi agenti. Il worktree userà il branch {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Ripristina {{workspaceName}} per tornare ai suoi agenti. Un nuovo branch partirà dalla base salvata o dal branch predefinito del repository.",
         unarchiveDescription:
           "{{workspaceName}} è archiviato. Ripristinalo dall'archivio per riaprirlo.",
         restoreAction: "Ripristina",
@@ -1177,6 +1180,9 @@ export const it: TranslationResources = {
       settings: "Impostazioni",
       closeSidebar: "Chiudi barra laterale",
     },
+    footer: {
+      usage: "Utilizzo",
+    },
     help: {
       trigger: "Guida e assistenza",
       sectionHelp: "Guida",
@@ -1582,6 +1588,8 @@ export const it: TranslationResources = {
     noFiles: "Nessun file o cartella trovato",
     noCommands: "Nessun comando trovato",
     failedToLoad: "Caricamento non riuscito",
+    chooseProjectForCommands: "Scegli un progetto per vedere i comandi",
+    chooseModelForCommands: "Seleziona un modello per vedere i comandi",
   },
   loadOlderHistory: {
     failed: "Impossibile caricare la cronologia precedente",
@@ -1677,6 +1685,17 @@ export const it: TranslationResources = {
     hostPassword: {
       title: "Password per {{host}}",
       label: "Password dell'host",
+    },
+    hostConfirmation: {
+      title: "Connettersi a questo host?",
+      description:
+        "Questo host potrà eseguire codice nell'app e raggiungere gli altri host connessi. Connettiti solo se lo riconosci.",
+      descriptionChanged:
+        "Questo link modifica il modo in cui ti connetti all'host. L'host potrà eseguire codice nell'app e raggiungere gli altri host connessi. Connettiti solo se lo riconosci.",
+      hostLabel: "Host",
+      fingerprintLabel: "Impronta della chiave",
+      relayLabel: "Relay",
+      connect: "Connetti",
     },
     connectionMethods: {
       title: "Aggiungi connessione",
@@ -2113,6 +2132,7 @@ export const it: TranslationResources = {
         offline: "Connettiti a questo host per aprire le impostazioni dei plugin.",
         update: "Aggiorna questo host per usare le impostazioni dei plugin.",
         unavailable: "Questa schermata delle impostazioni del plugin non è disponibile.",
+        backToPlugins: "Torna ai plugin",
       },
       trustedTitle: "I plugin sono codice a cui concedi fiducia",
       trustedDescription:
@@ -2338,8 +2358,16 @@ export const it: TranslationResources = {
         description: "Mostra un indice per passare da un prompt all'altro",
       },
       sidebar: {
-        title: "Barra laterale",
-        description: "Scegli quali elementi appaiono in cima alla barra laterale e in quale ordine",
+        header: {
+          title: "Intestazione",
+          description:
+            "Scegli quali elementi appaiono nella parte superiore della barra laterale e in quale ordine",
+        },
+        footer: {
+          title: "Parte inferiore",
+          description:
+            "Scegli quali righe appaiono nella parte inferiore della barra laterale e in quale ordine. Aggiungi progetto e la riga delle icone sono sempre visibili",
+        },
         moveUp: "Sposta su",
         moveDown: "Sposta giù",
       },
@@ -2363,6 +2391,14 @@ export const it: TranslationResources = {
         codeSize: "Dimensione del codice",
         codeSizeHint: "Usata per codice, differenze e output del terminale",
         codeSizeAccessibility: "Dimensione del carattere del codice",
+      },
+      layout: {
+        title: "Disposizione",
+        contentWidth: "Larghezza del contenuto",
+        contentWidthHint: "Larghezza massima della chat e dei file Markdown sugli schermi ampi",
+        contentWidthAccessibility: "Larghezza del contenuto in pixel",
+        reset: "Ripristina",
+        resetAccessibility: "Ripristina la larghezza predefinita del contenuto",
       },
       syntax: {
         title: "Sintassi",
