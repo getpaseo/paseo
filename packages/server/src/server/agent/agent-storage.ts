@@ -4,7 +4,12 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema, AgentRoutingNoticeSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentStatusSchema,
+  AgentRoutingNoticeSchema,
+  AgentPromptInputSchema,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -43,7 +48,23 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+const AcceptedUserMessageSchema = z.object({
+  timestamp: z.string(),
+  providerMessageId: z.string().optional(),
+  turnId: z.string().optional(),
+  item: z.object({
+    type: z.literal("user_message"),
+    text: z.string(),
+    clientMessageId: z.string(),
+    messageId: z.string().optional(),
+    prompt: AgentPromptInputSchema,
+  }),
+});
+
+export type AcceptedUserMessage = z.infer<typeof AcceptedUserMessageSchema>;
+
 const STORED_AGENT_SCHEMA = z.object({
+  acceptedUserMessages: z.array(AcceptedUserMessageSchema).optional(),
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),
@@ -104,6 +125,15 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+function preserveSnapshotMetadata(
+  record: StoredAgentRecord,
+  existing: StoredAgentRecord | null,
+): void {
+  record.acceptedUserMessages = existing?.acceptedUserMessages;
+  record.titleSource = existing?.titleSource;
+  if (existing && existing.archivedAt !== undefined) record.archivedAt = existing.archivedAt;
+}
+
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
@@ -340,16 +370,45 @@ export class AgentStorage {
         internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
       });
 
-      record.titleSource = existing?.titleSource;
+      preserveSnapshotMetadata(record, existing);
       if (hasTitleOverride && options?.title && existing?.title !== options.title)
         record.titleSource = agent.config.title ? "manual" : "provisional";
-      // Preserve soft-delete/archive status across snapshot flushes. The
-      // projection runs inside the per-agent write queue so it cannot commit a
-      // stale pre-archive record after the archive mutation.
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
       return record;
+    });
+  }
+
+  async saveAcceptedUserMessage(agentId: string, message: AcceptedUserMessage): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const messages = existing.acceptedUserMessages ?? [];
+      return {
+        ...existing,
+        acceptedUserMessages: [
+          ...messages.filter(
+            (entry) => entry.item.clientMessageId !== message.item.clientMessageId,
+          ),
+          AcceptedUserMessageSchema.parse({
+            ...messages.find(
+              (entry) => entry.item.clientMessageId === message.item.clientMessageId,
+            ),
+            ...message,
+          }),
+        ],
+      };
+    });
+  }
+
+  async retainAcceptedUserMessages(agentId: string, ids: ReadonlySet<string>): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return {
+        ...existing,
+        acceptedUserMessages: existing.acceptedUserMessages?.filter((message) =>
+          ids.has(message.item.clientMessageId),
+        ),
+      };
     });
   }
 

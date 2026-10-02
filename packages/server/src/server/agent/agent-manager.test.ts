@@ -980,6 +980,7 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
       })(),
     },
     logger,
+    registry: new AgentStorage(join(workdir, "agents"), logger),
     pluginLifecycle: { emit: publish, before: async (_name, request) => request },
   });
   let agentId: string | null = null;
@@ -1048,7 +1049,7 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
     });
     expect(rows).toMatchObject([
       {
-        item: { type: "user_message", text: "hello" },
+        item: { type: "user_message", text: "hello", prompt: richPrompt },
         turnId: "active-turn-1",
       },
       {
@@ -1056,6 +1057,31 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
         turnId: "active-turn-1",
       },
     ]);
+    await manager.flush();
+    const restored = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+      idFactory: () => agent.id,
+    });
+    try {
+      await restored.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await restored.hydrateTimelineFromProvider(agent.id, { force: true });
+      expect(restored.fetchTimeline(agent.id, { limit: 0 }).rows).toContainEqual(
+        expect.objectContaining({
+          item: expect.objectContaining({
+            type: "user_message",
+            clientMessageId: "hello-client",
+            prompt: richPrompt,
+          }),
+        }),
+      );
+    } finally {
+      await restored.closeAgent(agent.id);
+      await restored.flush();
+    }
   } finally {
     release.resolve();
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);

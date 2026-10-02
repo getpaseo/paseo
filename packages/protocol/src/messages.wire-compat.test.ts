@@ -406,3 +406,27 @@ test("blocked setup preserves the legacy failed shape and optional provenance", 
     legacySnapshot.parse(failed),
   );
 });
+
+test("accepted user messages retain optional rich prompt without changing legacy text-only rows", () => {
+  const legacy = { type: "user_message", text: "Build the screenshot", clientMessageId: "brief" };
+  expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  const prompt = [
+    { type: "text", text: "Build the screenshot" },
+    { type: "image", data: "image-data", mimeType: "image/png" },
+    {
+      type: "text",
+      mimeType: "text/plain",
+      title: "Existing context",
+      contextKind: "chat_history",
+      text: "Original conversation",
+    },
+  ];
+  const current = { ...legacy, prompt };
+  expect(AgentTimelineItemPayloadSchema.parse(current)).toEqual(current);
+  const oldSchema = z.object({
+    type: z.literal("user_message"),
+    text: z.string(),
+    clientMessageId: z.string().optional(),
+  });
+  expect(oldSchema.parse(current)).toEqual(legacy);
+});

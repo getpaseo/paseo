@@ -68,6 +68,7 @@ import {
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import { restoreAcceptedUserMessages } from "./accepted-user-messages.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -272,6 +273,7 @@ export interface SubscribeOptions {
 }
 
 interface HydrateTimelineOptions {
+  pruneAcceptedMessages?: boolean;
   force?: boolean;
   broadcast?: boolean | (() => boolean);
   broadcastTimeline?: boolean;
@@ -3756,6 +3758,7 @@ export class AgentManager {
           force: true,
           broadcast: true,
           broadcastTimeline: false,
+          pruneAcceptedMessages: true,
         });
         this.dispatch({
           type: "timeline_replacement",
@@ -4588,6 +4591,7 @@ export class AgentManager {
         agent,
         typeof broadcast === "function" ? broadcast() : broadcast,
         typeof broadcastTimeline === "function" ? broadcastTimeline() : broadcastTimeline,
+        options.pruneAcceptedMessages ?? false,
       );
       return;
     }
@@ -4599,6 +4603,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean,
     broadcastTimeline: boolean,
+    pruneAcceptedMessages: boolean,
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
@@ -4631,7 +4636,12 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
+    const restoredHistory = await this.restoreAcceptedHistory(
+      agent,
+      historyEvents,
+      pruneAcceptedMessages,
+    );
+    for (const event of restoredHistory) {
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -4647,6 +4657,25 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  private async restoreAcceptedHistory(
+    agent: ActiveManagedAgent,
+    events: readonly Extract<AgentStreamEvent, { type: "timeline" }>[],
+    prune: boolean,
+  ): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[]> {
+    await this.registry?.flush();
+    const record = await this.registry?.get(agent.id);
+    const restored = restoreAcceptedUserMessages(
+      events,
+      record?.acceptedUserMessages ?? [],
+      agent.provider,
+      !prune,
+    );
+    if (prune && this.registry) {
+      await this.registry.retainAcceptedUserMessages(agent.id, restored.retainedIds);
+    }
+    return restored.events;
   }
 
   private async primeTimelineFromLegacyProviderHistory(
@@ -4701,7 +4730,8 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
-    for (const event of historyEvents) {
+    const restoredHistory = await this.restoreAcceptedHistory(agent, historyEvents, false);
+    for (const event of restoredHistory) {
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -5803,6 +5833,7 @@ export class AgentManager {
     const item: AgentTimelineItem = {
       type: "user_message",
       text: submittedPromptText(prompt),
+      ...(options?.accepted !== false ? { prompt } : {}),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     };
@@ -5909,6 +5940,7 @@ export class AgentManager {
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
+    this.enqueueAcceptedUserMessage(agentId, row);
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
   }
@@ -5999,6 +6031,28 @@ export class AgentManager {
     this.trackBackgroundTask(task);
   }
 
+  private enqueueAcceptedUserMessage(agentId: string, row: AgentTimelineRow): void {
+    const item = row.item;
+    if (
+      !this.registry ||
+      item.type !== "user_message" ||
+      item.prompt === undefined ||
+      !item.clientMessageId
+    )
+      return;
+    const task = this.registry
+      .saveAcceptedUserMessage(agentId, {
+        timestamp: row.timestamp,
+        item: { ...item, clientMessageId: item.clientMessageId, prompt: item.prompt },
+        ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
+        ...(row.turnId ? { turnId: row.turnId } : {}),
+      })
+      .catch((err) => {
+        this.logger.error({ err, agentId }, "Failed to persist accepted user message");
+      });
+    this.trackBackgroundTask(task);
+  }
+
   private enqueueDurableTimelineAppend(agentId: string, row: AgentTimelineRow): void {
     if (!this.durableTimelineStore) {
       return;
@@ -6029,6 +6083,7 @@ export class AgentManager {
   }
 
   private enqueueDurableTimelineUpdate(agentId: string, row: AgentTimelineRow): void {
+    this.enqueueAcceptedUserMessage(agentId, row);
     if (!this.durableTimelineStore) return;
     const task = this.durableTimelineStore.updateCommittedRow(agentId, row).catch((err) => {
       this.logger.error(

@@ -38,6 +38,7 @@ export interface PluginExecutionModeContribution {
 }
 
 export interface PluginOpenNewWorkspaceOptions {
+  initialText?: string;
   executionId: string;
   presetId?: string;
   projectId?: string;

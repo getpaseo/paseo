@@ -148,6 +148,38 @@ describe("AgentStorage", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("accepted rich prompts survive disk reload, snapshot writes and explicit rewind pruning", async () => {
+    const agent = createManagedAgent({ id: "accepted-agent" });
+    await storage.applySnapshot(agent);
+    const message = {
+      timestamp: "2026-10-03T12:00:00.000Z",
+      item: {
+        type: "user_message" as const,
+        text: "Build the screenshot",
+        clientMessageId: "accepted-1",
+        messageId: "accepted-1",
+        prompt: [
+          { type: "text" as const, text: "Build the screenshot" },
+          { type: "image" as const, data: "image-data", mimeType: "image/png" },
+        ],
+      },
+    };
+    await storage.saveAcceptedUserMessage(agent.id, {
+      ...message,
+      providerMessageId: "provider-1",
+    });
+    await storage.saveAcceptedUserMessage(agent.id, message);
+    await storage.applySnapshot(agent);
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect((await reloaded.get(agent.id))?.acceptedUserMessages).toEqual([
+      { ...message, providerMessageId: "provider-1" },
+    ]);
+    await reloaded.retainAcceptedUserMessages(agent.id, new Set());
+    expect(
+      (await new AgentStorage(storagePath, logger).get(agent.id))?.acceptedUserMessages,
+    ).toEqual([]);
+  });
+
   test("applySnapshot persists configs and snapshot metadata", async () => {
     await storage.applySnapshot(
       createManagedAgent({

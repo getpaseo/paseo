@@ -1,3 +1,5 @@
+import { useDraftStore } from "@/stores/draft-store";
+import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { buildPluginSettingsRoute } from "./settings/routes";
 import { router } from "expo-router";
 import type { PluginPanelLocation } from "@getpaseo/plugin/client";
@@ -24,6 +26,13 @@ export function createPluginNavigation(input: {
       router.push(buildPluginSettingsRoute(serverId, pluginId, screenId));
     },
     openNewWorkspace(target) {
+      const draftId = target.initialText === undefined ? undefined : generateDraftId();
+      if (draftId) {
+        const key = buildNewWorkspaceDraftKey(draftId);
+        const drafts = useDraftStore.getState();
+        if (!drafts.getDraftInput(key))
+          drafts.editDraftText({ draftKey: key, text: target.initialText ?? "" });
+      }
       router.push({
         pathname: "/new",
         params: {
@@ -32,6 +41,7 @@ export function createPluginNavigation(input: {
           projectId: target.projectId,
           executionId: target.executionId,
           presetId: target.presetId,
+          draftId,
         },
       });
     },

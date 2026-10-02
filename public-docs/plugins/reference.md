@@ -337,7 +337,8 @@ and starts its ordinary agent, then returns `{ agentId }`. The app keeps the dra
 Implement durable idempotency in the plugin; the app only deduplicates concurrent submissions.
 
 `client.openNewWorkspace({ executionId, presetId?, projectId?, cwd?, serverId? })` uses a plugin-local
-execution ID. `props.navigation?.openNewWorkspace` uses `pluginId:executionId`. Hide dependent
+execution ID. Optional `initialText` prefills a fresh native composer draft for review; it never auto-sends
+and is not placed in the URL. `props.navigation?.openNewWorkspace` uses `pluginId:executionId`. Hide dependent
 entrypoints when the capability is absent. `openSurface(id, { params: { missionId } })` supplies
 string parameters through `PluginSurfaceProps.params`.
 
@@ -371,6 +372,9 @@ report that in the preset catalog instead of starting a partially supported work
 attachments. `origin` describes the submission transport: `client` for an interactive app session,
 `plugin` for a plugin session, and `unknown` otherwise. This is not a verified human identity or
 approval capability. Never authorize acceptance, merge or permission changes from message text.
+Accepted user-message timeline items also persist optional `prompt`, so plugins can recover the
+original rich blocks through public timeline refetch after reconnect or restart. Older items without
+that field remain valid. Provider echoes never invent rich blocks.
 The hook requires a message ID; use stable IDs for submissions that need durable deduplication.
 
 ### Change configuration and inject an MCP server

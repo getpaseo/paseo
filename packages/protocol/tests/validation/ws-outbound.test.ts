@@ -62,6 +62,39 @@ async function compileInlineSchema(sourceSchema: string): Promise<GeneratedSchem
 }
 
 describe("WS outbound zod-aot validation", () => {
+  it("preserves accepted rich prompt blocks in generated outbound timeline validation", () => {
+    const prompt = [
+      { type: "text", text: "Reviewed request" },
+      { type: "image", data: "image-data", mimeType: "image/png" },
+      {
+        type: "text",
+        mimeType: "text/plain",
+        title: "Source",
+        contextKind: "chat_history",
+        text: "Context",
+      },
+    ];
+    const message = {
+      type: "session",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent",
+          timestamp: "2026-10-03T12:00:00.000Z",
+          event: {
+            type: "timeline",
+            provider: "mock",
+            item: { type: "user_message", text: "Reviewed request", prompt },
+          },
+        },
+      },
+    };
+    expect(GeneratedWSOutboundMessageSchema.safeParse(message)).toEqual({
+      success: true,
+      data: message,
+    });
+  });
+
   it("applies defaults inside discriminated-union branches", async () => {
     const schema = await compileInlineSchema(`
 const SourceSchema = z.discriminatedUnion("type", [
