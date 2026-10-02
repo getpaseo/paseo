@@ -29,4 +29,11 @@ describe("formatThinkingOptionLabel", () => {
     expect(formatThinkingOptionLabel({ id: "think-hard", label: "think-hard" })).toBe("Think hard");
     expect(formatThinkingOptionLabel({ id: "xhigh", label: "XHigh" })).toBe("Extra high");
   });
+
+  it("preserves provider-supplied xhigh labels with extra detail", () => {
+    expect(formatThinkingOptionLabel({ id: "xhigh", label: "XHigh (56 | 8m)" })).toBe("X high (56 | 8m)");
+    expect(formatThinkingOptionLabel({ id: "xhigh", label: "XHigh (45 | 6m)" })).toBe("X high (45 | 6m)");
+    expect(formatThinkingOptionLabel({ id: "xhigh" })).toBe("Extra high");
+    expect(formatThinkingOptionLabel({ id: "xhigh", label: "Extra high" })).toBe("Extra high");
+  });
 });
