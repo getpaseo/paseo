@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Page } from "@playwright/test";
@@ -12,7 +13,40 @@ import {
   type UsageListRequest,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
-import { expectPinnedUsage, usageItem } from "../support/helpers/usage-sidebar-item";
+import {
+  installLoginUsage,
+  installCodexWindowUsage,
+  expectCodexReportedWindows,
+  openUsage,
+  refreshLoginUsage,
+  hoverUsageWindow,
+} from "../support/helpers/usage-login";
+import { expectPinnedUsage, togglePin, usageItem } from "../support/helpers/usage-sidebar-item";
+
+const emptyHome = path.join(tmpdir(), `paseo-usage-empty-${randomUUID()}`);
+test.use({
+  e2eDaemonEnvironment: {
+    HOME: emptyHome,
+    USERPROFILE: emptyHome,
+    CODEX_HOME: emptyHome,
+    CLAUDE_CONFIG_DIR: emptyHome,
+    XDG_DATA_HOME: emptyHome,
+    PI_CODING_AGENT_DIR: emptyHome,
+    COPILOT_TOKEN: "",
+    GITHUB_TOKEN: "",
+    GITHUB_PAT: "",
+    CURSOR_ACCESS_TOKEN: "",
+    CURSOR_TOKEN: "",
+    GROK_API_KEY: "",
+    GROK_TOKEN: "",
+    KIMI_TOKEN: "",
+    KIMI_API_KEY: "",
+    KIMI_CODE_HOME: emptyHome,
+    MINIMAX_API_KEY: "",
+    ZAI_API_KEY: "",
+    GLM_API_KEY: "",
+  },
+});
 
 function forcedRefreshes(usage: UsageReportsFixture): UsageListRequest[] {
   return usage.listRequests().filter((request) => request.forceRefresh);
@@ -73,7 +107,10 @@ test.describe("usage screen", () => {
             fetchedAt: "2026-01-01T00:00:00.000Z",
             sourceId: "beta",
             sourceLabel: "Beta plan",
-            report: { status: "unavailable", windows: [] },
+            report: {
+              status: "unavailable",
+              problem: { kind: "no_quota", detail: "No active coding plan" },
+            },
           },
         ],
       ],
@@ -184,7 +221,8 @@ test.describe("usage screen", () => {
     const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
-    await page.locator('[data-testid="sidebar-usage"]:visible').first().click();
+    // Without reports the footer has no Usage item; its Usage icon opens the screen.
+    await page.locator('[data-testid="sidebar-usage-icon"]:visible').first().click();
 
     await expect(
       page.getByTestId(`usage-host-${serverId}`).getByText(/^Update .+ to see usage$/),
@@ -215,7 +253,7 @@ test.describe("usage screen", () => {
       });
 
       // Nothing picked and no workspace open: the first host.
-      await expectPinnedUsage(page, ["31%"]);
+      await expectPinnedUsage(page, ["31% Weekly"]);
       await usageItem(page).click();
       await expect(page.getByTestId(`usage-host-${primaryServerId}`)).toBeVisible();
 
@@ -226,7 +264,7 @@ test.describe("usage screen", () => {
       ).toBeVisible({ timeout: 30_000 });
       await expect(hostFilter(page)).toContainText("Secondary box");
       await qaScreenshot(page, "usage-screen-picked-host");
-      await expectPinnedUsage(page, ["12%"]);
+      await expectPinnedUsage(page, ["12% Weekly"]);
 
       // The e2e seed resets the host list on every load, so reopening re-adds the second host.
       await addConnectedHostAndReload(page, {
@@ -234,7 +272,7 @@ test.describe("usage screen", () => {
         label: "Secondary box",
         port: secondary.port,
       });
-      await expectPinnedUsage(page, ["12%"]);
+      await expectPinnedUsage(page, ["12% Weekly"]);
       await expect(
         page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12%"),
       ).toBeVisible({ timeout: 30_000 });
@@ -243,3 +281,123 @@ test.describe("usage screen", () => {
     }
   });
 });
+
+const loginWindows: UsageReportEntry["report"] = {
+  status: "available",
+  windows: [
+    { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 31 },
+    { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 54 },
+  ],
+};
+
+test("expired login refreshes to windows with visible pin toggles", async ({ page }) => {
+  const fixture = await installLoginUsage({
+    status: "unavailable",
+    problem: {
+      kind: "expired",
+      expiresAt: new Date(Date.now() - 3_600_000).toISOString(),
+      refreshedBy: "claude",
+    },
+  });
+  try {
+    await gotoAppShell(page);
+    await openUsage(page);
+    await expect(
+      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+    await qaScreenshot(page, "usage-expired-login");
+    await fixture.setReport(loginWindows);
+    await refreshLoginUsage(page);
+    await expect(
+      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+    ).toHaveCount(0);
+    await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
+    const row = page.getByRole("checkbox", { name: /^Pin Claude Weekly, / });
+    await expect(row).toBeChecked();
+    await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "0");
+    await hoverUsageWindow(page, "Weekly");
+    await expect(page.getByText("Pin", { exact: true })).toBeVisible();
+    await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "1");
+    await expect(row.getByTestId("usage-pin-glyph-pinned").locator("svg")).not.toHaveAttribute(
+      "fill",
+      "none",
+    );
+    await qaScreenshot(page, "usage-pin-hover");
+    await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
+    await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "1");
+    await expect(row.getByTestId("usage-pin-glyph-unpinned").locator("svg")).toHaveAttribute(
+      "fill",
+      "none",
+    );
+    await expectPinnedUsage(page, ["31% 5h"]);
+    await qaScreenshot(page, "usage-pin-unselected");
+    await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
+    await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "1");
+    await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("compact usage rows always show the pin glyph", async ({ page }) => {
+  const fixture = await installLoginUsage(loginWindows);
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await gotoAppShell(page);
+    await openUsage(page);
+    const card = page.getByTestId("usage-report-login-journey:account");
+    await expect(card.getByTestId("usage-pin-glyph-pinned")).toHaveCount(2);
+    await expect(card.getByTestId("usage-pin-glyph-pinned").nth(0)).toHaveCSS("opacity", "1");
+    await expect(card.getByTestId("usage-pin-glyph-pinned").nth(1)).toHaveCSS("opacity", "1");
+    await qaScreenshot(page, "usage-pin-compact");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+for (const shape of ["seven-day-only", "Spark"] as const) {
+  test(`Codex ${shape} windows use provider durations on the card and sidebar`, async ({
+    page,
+  }) => {
+    const reset = Math.floor(Date.now() / 1000) + 5 * 86400;
+    const source = await installCodexWindowUsage({
+      rate_limit: {
+        primary_window: { used_percent: 11, limit_window_seconds: 604800, reset_at: reset },
+        secondary_window: null,
+      },
+      additional_rate_limits:
+        shape === "Spark"
+          ? [
+              {
+                limit_name: "GPT-5.3-Codex-Spark",
+                metered_feature: "codex_bengalfox",
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 18000,
+                    reset_at: Math.floor(Date.now() / 1000) + 3600,
+                  },
+                  secondary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 604800,
+                    reset_at: reset,
+                  },
+                },
+              },
+            ]
+          : [],
+    });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoAppShell(page);
+      await expect(usageItem(page)).toBeVisible();
+      await usageItem(page).click();
+      await qaScreenshot(page, `codex-${shape}-card-and-summary`);
+      await expectCodexReportedWindows(page, shape);
+      await qaScreenshot(page, `codex-${shape}-pins`);
+    } finally {
+      await source.cleanup();
+    }
+  });
+}

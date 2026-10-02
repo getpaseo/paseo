@@ -391,6 +391,10 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     jsx: "automatic",
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
+    // The neutral platform reads no package.json entry fields, so packages without
+    // `exports` would not resolve. Read the same fields as esbuild's browser platform
+    // minus `browser`, since the bundle also runs in React Native.
+    mainFields: target === "client" ? ["module", "main"] : undefined,
     // Metro lowers async syntax before Hermes sees app code. Plugin client bundles bypass Metro,
     // so apply the same compatibility transform before the app evaluates them from source.
     supported: target === "client" ? { "async-await": false } : undefined,

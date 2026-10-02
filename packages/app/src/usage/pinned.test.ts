@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { UsagePreferences } from "./preferences";
-import { resolvePinnedUsage } from "./pinned";
+import {
+  choosePinnedUsageLayout,
+  resolvePinnedUsage,
+  type PinnedUsageSource,
+  type PinnedUsageWindow,
+} from "./pinned";
 import type { UsageReportEntry, UsageWindow } from "./types";
 
 function report(input: {
@@ -26,8 +31,8 @@ const claude = report({
   sourceLabel: "Claude",
   icon: "<svg/>",
   windows: [
-    { id: "five-hour", label: "5-hour", usedPct: 31 },
-    { id: "weekly", label: "Weekly", usedPct: 80 },
+    { id: "five-hour", label: "Session", shortLabel: "5h", usedPct: 31 },
+    { id: "weekly", label: "Weekly", shortLabel: "wk", usedPct: 80 },
   ],
 });
 const codex = report({
@@ -36,15 +41,39 @@ const codex = report({
   windows: [{ id: "weekly", label: "Weekly", remainingPct: 88 }],
 });
 
-function preferences(
-  pinned: UsagePreferences["pinned"],
-  displayAs: UsagePreferences["displayAs"] = "used",
-): UsagePreferences {
-  return { displayAs, pinned, serverId: null };
+function windows(reports: UsageReportEntry[], prefs: UsagePreferences): PinnedUsageWindow[] {
+  return resolvePinnedUsage(reports, prefs).flatMap((source) => source.windows);
 }
 
+function preferences(
+  pinned: UsagePreferences["pins"],
+  displayAs: UsagePreferences["displayAs"] = "used",
+): UsagePreferences {
+  return { displayAs, pins: pinned, serverId: null };
+}
+
+describe("choosePinnedUsageLayout", () => {
+  const widths = { labelsWidth: 200, percentsWidth: 120, windowCount: 2 };
+
+  it("shows meters only when every window's meter fits beside the labels", () => {
+    expect(choosePinnedUsageLayout({ ...widths, available: 240 })).toBe("meters");
+    expect(choosePinnedUsageLayout({ ...widths, available: 239 })).toBe("labels");
+  });
+
+  it("drops the labels before it lets the line overflow", () => {
+    expect(choosePinnedUsageLayout({ ...widths, available: 199 })).toBe("percents");
+  });
+
+  it("shows labels until the widths are measured", () => {
+    expect(choosePinnedUsageLayout({ ...widths, available: null })).toBe("labels");
+    expect(choosePinnedUsageLayout({ ...widths, available: 999, labelsWidth: null })).toBe(
+      "labels",
+    );
+  });
+});
+
 describe("resolvePinnedUsage", () => {
-  it("defaults to the first window with a percent for each source account", () => {
+  it("defaults to source-wide pins collected from each account", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -60,57 +89,114 @@ describe("resolvePinnedUsage", () => {
       windows: [{ id: "empty", label: "Empty" }],
     });
     expect(
-      resolvePinnedUsage([claude, codex, work, empty], preferences([])).map((item) => [
+      windows([claude, codex, work, empty], preferences(null)).map((item) => [
         item.key,
         item.percentText,
       ]),
     ).toEqual([
       ["claude:default/five-hour", "31%"],
-      ["codex:default/weekly", "12%"],
+      ["claude:default/weekly", "80%"],
       ["claude:work/weekly", "90%"],
+      ["codex:default/weekly", "12%"],
     ]);
   });
 
   it("pins replace defaults, and removing all pins restores defaults", () => {
     const reports = [claude, codex];
     expect(
-      resolvePinnedUsage(reports, preferences([{ sourceId: "claude", windowId: "weekly" }])).map(
+      windows(reports, preferences([{ sourceId: "claude", windowId: "weekly" }])).map(
         (item) => item.key,
       ),
     ).toEqual(["claude:default/weekly"]);
-    expect(resolvePinnedUsage(reports, preferences([])).map((item) => item.key)).toEqual([
+    expect(windows(reports, preferences(null)).map((item) => item.key)).toEqual([
       "claude:default/five-hour",
       "codex:default/weekly",
     ]);
   });
 
-  it("shows pinned windows in pin order, not report order", () => {
-    const items = resolvePinnedUsage(
-      [claude, codex],
+  it("groups pinned windows by source in report order, not pin order", () => {
+    const work = report({
+      sourceId: "claude",
+      sourceLabel: "Claude",
+      account: "work",
+      windows: [{ id: "weekly", label: "Weekly", usedPct: 90 }],
+    });
+    const sources = resolvePinnedUsage(
+      [claude, codex, work],
       preferences([
+        { sourceId: "claude", windowId: "weekly" },
         { sourceId: "codex", windowId: "weekly" },
         { sourceId: "claude", windowId: "five-hour" },
       ]),
     );
 
-    expect(items).toEqual([
-      {
-        key: "codex:default/weekly",
-        icon: null,
-        label: "Codex Weekly 12% used",
-        percentText: "12%",
-      },
-      {
-        key: "claude:default/five-hour",
-        icon: "<svg/>",
-        label: "Claude 5-hour 31% used",
-        percentText: "31%",
-      },
+    const windowKeys = (source: PinnedUsageSource) => source.windows.map((window) => window.key);
+    expect(sources.map((source) => [source.key, windowKeys(source)])).toEqual([
+      ["claude:default", ["claude:default/five-hour", "claude:default/weekly"]],
+      ["claude:work", ["claude:work/weekly"]],
+      ["codex:default", ["codex:default/weekly"]],
+    ]);
+    expect(sources[0]).toEqual({
+      key: "claude:default",
+      icon: "<svg/>",
+      windows: [
+        {
+          key: "claude:default/five-hour",
+          label: "Claude Session 31% used",
+          shortLabel: "5h",
+          percent: 31,
+          percentText: "31%",
+          tone: "default",
+        },
+        {
+          key: "claude:default/weekly",
+          label: "Claude Weekly 80% used",
+          shortLabel: "wk",
+          percent: 80,
+          percentText: "80%",
+          tone: "warning",
+        },
+      ],
+    });
+  });
+
+  it("names a window by its label when the source gives no short label", () => {
+    const items = windows([codex], preferences([{ sourceId: "codex", windowId: "weekly" }]));
+
+    expect(items.map((item) => item.shortLabel)).toEqual(["Weekly"]);
+  });
+
+  it("defaults to every window the source marks as summary, when it marks any", () => {
+    const marked = report({
+      sourceId: "claude",
+      sourceLabel: "Claude",
+      windows: [
+        { id: "five-hour", label: "Session", shortLabel: "5h", usedPct: 31, summary: true },
+        { id: "weekly", label: "Weekly", shortLabel: "wk", usedPct: 80, summary: true },
+        { id: "weekly-fable", label: "Weekly · Fable", usedPct: 8 },
+      ],
+    });
+
+    expect(windows([marked, codex], preferences(null)).map((item) => item.key)).toEqual([
+      "claude:default/five-hour",
+      "claude:default/weekly",
+      "codex:default/weekly",
     ]);
   });
 
+  it("keeps an empty short label empty, for a percent that needs no name", () => {
+    const opencode = report({
+      sourceId: "opencode",
+      sourceLabel: "OpenCode Go",
+      windows: [{ id: "rolling", label: "Rolling", shortLabel: "", usedPct: 21 }],
+    });
+    const items = windows([opencode], preferences(null));
+
+    expect(items.map((item) => item.shortLabel)).toEqual([""]);
+  });
+
   it("formats the share left when the user reads usage as remaining", () => {
-    const items = resolvePinnedUsage(
+    const items = windows(
       [claude, codex],
       preferences(
         [
@@ -123,7 +209,7 @@ describe("resolvePinnedUsage", () => {
 
     expect(items.map((item) => item.percentText)).toEqual(["69%", "88%"]);
     expect(items.map((item) => item.label)).toEqual([
-      "Claude 5-hour 69% left",
+      "Claude Session 69% left",
       "Codex Weekly 88% left",
     ]);
   });
@@ -134,7 +220,7 @@ describe("resolvePinnedUsage", () => {
       sourceLabel: "OpenCode",
       windows: [{ id: "monthly", label: "Monthly" }],
     });
-    const items = resolvePinnedUsage(
+    const items = windows(
       [claude, noPercent],
       preferences([
         { sourceId: "claude", windowId: "monthly" },
@@ -159,7 +245,7 @@ describe("resolvePinnedUsage", () => {
       account: "work",
       windows: [{ id: "five-hour", label: "5-hour", usedPct: 90 }],
     });
-    const items = resolvePinnedUsage(
+    const items = windows(
       [personal, codex, work],
       preferences([{ sourceId: "claude", windowId: "five-hour" }]),
     );
@@ -169,4 +255,19 @@ describe("resolvePinnedUsage", () => {
       ["Claude (work) 5-hour 90% used", "90%"],
     ]);
   });
+});
+
+it("keeps unavailable and error reports out of the sidebar summary", () => {
+  const expired: UsageReportEntry = {
+    ...claude,
+    report: {
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "2026-10-01T00:00:00.000Z", refreshedBy: "claude" },
+    },
+  };
+  const failed: UsageReportEntry = {
+    ...codex,
+    report: { status: "error", error: "Store deleted" },
+  };
+  expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
 });

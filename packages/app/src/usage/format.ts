@@ -34,13 +34,14 @@ export function formatResetLabel(iso: string | null | undefined): string | null 
   return rel === "now" ? "resetting now" : `resets ${rel}`;
 }
 
-export function formatAmount(value: number, unit: UsageBalanceUnit): string {
+/** A balance amount as the app's language writes it: "$1,234.50", "12,345". */
+export function formatAmount(value: number, unit: UsageBalanceUnit, locale: string): string {
   switch (unit) {
     case "usd":
-      return `$${value.toFixed(2)}`;
+      return new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(value);
     case "tokens":
       return formatTokenCount(value);
     default:
-      return value.toLocaleString();
+      return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
   }
 }
