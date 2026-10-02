@@ -44,7 +44,46 @@ The tools are part of the [Paseo MCP toolset](/docs/mcp), so **Enable Paseo tool
 
 ## Host-native browser
 
-Browser tabs are hosted by the Paseo daemon on the machine where your workspace runs. The app shows a remote viewport and forwards clicks, keyboard input, scrolling, hover, and long-press drags, so Mac, Android, and the web client can use the same Linux browser profile. The desktop app remains a compatibility fallback for older daemons.
+Browser tabs are hosted by the Paseo daemon on the machine where your workspace runs. The app shows a remote viewport and forwards clicks, keyboard input, scrolling, hover, and long-press drags, so Mac, Android, and the web client can use the same Linux browser profile. The desktop app remains a compatibility fallback for older daemons. Handoff changes who controls input; the page and profile stay on the host before, during, and after it.
+
+## Import and backup
+
+In **Settings → your host → Browser**, each detected profile identifies its source device
+and destination. Current hosts import cookies and saved passwords into the displayed host
+browser, including profiles read by the Mac desktop app. Older hosts need an update for
+password import; their desktop fallback uses the separate Electron profile. Close the source
+browser first. Chromium imports require that profile's original Safe Storage key; Firefox
+imports use its NSS key database and optional Primary Password. Firefox needs Python 3 and
+an installed Firefox/NSS library on the source device.
+
+Imported passwords are stored encrypted. On the host, clicking or tabbing into an empty password field in
+a top-level form offers the matching username's credential for that exact origin. A single
+saved account can fill an empty username; multiple accounts require a matching username.
+Settings list the displayed profile's saved accounts and let you remove them. Agent browser
+commands cannot trigger vault autofill. Credentials never appear in import replies or browser-tool metadata.
+
+**Encrypted browser backup** saves the displayed profile's cookies and saved passwords to
+a local file from the desktop app. Use a separate passphrase of at least 12 characters.
+Restore authenticates the whole file before changing the profile, adds missing entries,
+and preserves existing cookies and credentials. A wrong passphrase or damaged file leaves
+the profile unchanged. Site sessions can expire or be revoked independently of the backup.
+Session cookies are also checkpointed with OS encryption for a normal app/host shutdown;
+this does not promise recovery after forced process termination.
+
+A Chromium keyring error means encrypted source values could not be decrypted with the
+original key. On macOS, unlock the login keychain and allow the source browser's Safe Storage
+entry. On Linux, install `libsecret-tools` when `secret-tool` is missing, unlock the original
+keyring, and run the daemon in that user's desktop D-Bus session. Creating a new keyring
+cannot decrypt the old profile. Do not delete or replace the original key or browser data.
+The importer refuses incomplete decryption rather than claiming a successful login import.
+Encrypted snapshots remain untouched when their key cannot be unlocked.
+
+Google's [OAuth policy](https://developers.google.com/identity/protocols/oauth2/policies)
+restricts embedded user agents. Current hosts use ordinary Chrome pages; the Electron
+fallback may still be rejected. Google login and Play Console require separate Mac acceptance.
+An **Open in browser** action opens the current full URL. It does not transfer session cookies
+between the host and the external browser. OAuth popups stay in the host context with their
+opener; canceling a handoff returns control without closing its tab.
 
 ## Taking control of a tab
 

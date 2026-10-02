@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BrowserImportError,
@@ -10,6 +11,7 @@ import {
   deriveChromiumKey,
   listBrowserImportSources,
   readBrowserImportCookies,
+  readBrowserImportPasswords,
   type BrowserImportEnvironment,
 } from "./browser-cookie-import.js";
 
@@ -102,6 +104,36 @@ function writeChromiumProfile(input: {
 }
 
 describe("Chromium cookie decryption", () => {
+  it("imports saved Chromium passwords without the cookie host hash and discovers password-only profiles", async () => {
+    const homeDir = makeHome();
+    const root = join(homeDir, "Library", "Application Support", "Chromium");
+    mkdirSync(join(root, "Default"), { recursive: true });
+    const db = new DatabaseSync(join(root, "Default", "Login Data"));
+    db.exec(
+      "CREATE TABLE logins (origin_url TEXT, username_value TEXT, password_value BLOB, blacklisted_by_user INTEGER)",
+    );
+    const key = deriveChromiumKey("fixture-keychain", 1003);
+    db.prepare("INSERT INTO logins VALUES (?, ?, ?, 0)").run(
+      "https://example.test/login",
+      "fixture-user",
+      encrypt({ prefix: "v10", key, plaintext: Buffer.from("fixture-login") }),
+    );
+    db.close();
+    const mac = env({ homeDir, platform: "darwin", password: "fixture-keychain" });
+    expect(await listBrowserImportSources(mac)).toEqual([
+      { id: "chromium:Default", browserName: "Chromium", profileName: "Default" },
+    ]);
+    expect(await readBrowserImportCookies("chromium:Default", mac)).toEqual([]);
+    expect(await readBrowserImportPasswords("chromium:Default", mac)).toEqual([
+      { origin: "https://example.test", username: "fixture-user", password: "fixture-login" },
+    ]);
+    await expect(
+      readBrowserImportPasswords(
+        "chromium:Default",
+        env({ homeDir, platform: "darwin", password: "wrong-keychain" }),
+      ),
+    ).rejects.toThrow(/Unlock the login keychain/);
+  });
   it("decrypts Linux v10 cookies and strips the host hash from DB version 24", async () => {
     const homeDir = makeHome();
     const key = deriveChromiumKey("peanuts", 1);
@@ -286,6 +318,60 @@ describe("Chromium cookie decryption", () => {
 });
 
 describe("Firefox cookies", () => {
+  it.skipIf(process.platform !== "linux")(
+    "imports Firefox NSS logins and refuses an incorrect Primary Password",
+    async () => {
+      const homeDir = makeHome();
+      const root = join(homeDir, ".mozilla", "firefox");
+      const dir = join(root, "fixture.default");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(root, "profiles.ini"),
+        "[Profile0]\nName=default\nIsRelative=1\nPath=fixture.default\n",
+      );
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          String.raw`
+import base64, ctypes, ctypes.util, json, os, sys
+nss = ctypes.CDLL(ctypes.util.find_library('nss3'))
+class Item(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_uint), ('data', ctypes.c_void_p), ('len', ctypes.c_uint)]
+nss.NSS_InitReadWrite.argtypes = [ctypes.c_char_p]
+nss.PK11_GetInternalKeySlot.restype = ctypes.c_void_p
+nss.PK11_InitPin.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+nss.PK11SDR_Encrypt.argtypes = [ctypes.POINTER(Item), ctypes.POINTER(Item), ctypes.POINTER(Item), ctypes.c_void_p]
+nss.SECITEM_FreeItem.argtypes = [ctypes.POINTER(Item), ctypes.c_int]
+nss.PK11_FreeSlot.argtypes = [ctypes.c_void_p]
+assert nss.NSS_InitReadWrite(('sql:' + sys.argv[1]).encode()) == 0
+slot = nss.PK11_GetInternalKeySlot()
+assert nss.PK11_InitPin(slot, None, b'fixture-primary') == 0
+def encrypt(value):
+    buf = ctypes.create_string_buffer(value.encode())
+    source = Item(0, ctypes.cast(buf, ctypes.c_void_p), len(value))
+    target, key = Item(), Item()
+    assert nss.PK11SDR_Encrypt(ctypes.byref(key), ctypes.byref(source), ctypes.byref(target), None) == 0
+    try: return base64.b64encode(ctypes.string_at(target.data, target.len)).decode()
+    finally: nss.SECITEM_FreeItem(ctypes.byref(target), 0)
+with open(os.path.join(sys.argv[1], 'logins.json'), 'w') as f:
+    json.dump({'logins': [{'hostname': 'https://firefox.test', 'encryptedUsername': encrypt('fixture-user'), 'encryptedPassword': encrypt('fixture-login')}]}, f)
+nss.PK11_FreeSlot(slot)
+assert nss.NSS_Shutdown() == 0
+`,
+          dir,
+        ],
+        { timeout: 10_000, stdio: "pipe" },
+      );
+      const linux = env({ homeDir, platform: "linux" });
+      expect(await readBrowserImportPasswords(`firefox:${dir}`, linux, "fixture-primary")).toEqual([
+        { origin: "https://firefox.test", username: "fixture-user", password: "fixture-login" },
+      ]);
+      await expect(
+        readBrowserImportPasswords(`firefox:${dir}`, linux, "wrong-primary"),
+      ).rejects.toThrow(/Primary Password/);
+    },
+  );
   it("reads the default cookie jar from profiles.ini with seconds and milliseconds expiry", async () => {
     const homeDir = makeHome();
     const root = join(homeDir, ".mozilla", "firefox");

@@ -35,6 +35,24 @@ describe("PasswordVault", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("imports logins across a restart, preserves existing credentials and refuses an unavailable keychain", () => {
+    const vault = createVault();
+    vault.save("https://example.test", "existing", "newer-fixture");
+    const logins = [
+      { origin: "https://example.test", username: "existing", password: "old-fixture" },
+      { origin: "https://example.test", username: "imported", password: "imported-fixture" },
+    ];
+    expect(vault.importLogins(logins)).toEqual({ passwordCount: 1, skippedPasswords: 1 });
+    expect(createVault().exportLogins()).toEqual([
+      { origin: "https://example.test", username: "existing", password: "newer-fixture" },
+      logins[1],
+    ]);
+    expect(() => createVault(createFakeCrypto(false)).importLogins(logins)).toThrow(
+      /Unlock the system keychain/,
+    );
+    expect(createVault().lookup("https://other.test")).toEqual([]);
+  });
+
   it("stores passwords encrypted with owner-only permissions and reads them back", () => {
     const vault = createVault();
     expect(vault.save("https://example.com", "ada", "s3cret")).toBe(true);

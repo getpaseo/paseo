@@ -2495,7 +2495,7 @@ export const en = {
       },
       import: {
         title: "Import from browser",
-        info: "Copies cookies from Chrome, Chromium, Brave, Edge, Arc, Vivaldi, or Firefox into the PandaOS browser so agents can test while signed in. Passwords are not imported.",
+        info: "Import this device's cookies and saved passwords into the desktop browser. Copy cookies to the host separately for agent handoffs. Passwords stay on this device. Source browsers can require access to the keychain or a Firefox Primary Password.",
         action: "Import",
         importing: "Importing...",
         loading: "Loading...",

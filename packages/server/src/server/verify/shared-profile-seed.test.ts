@@ -5,11 +5,14 @@ import {
   utimesSync,
   writeFileSync,
   existsSync,
+  rmSync,
+  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { seedSharedProfile } from "./playwright-host.js";
+import { ProfileCookieSecrets } from "./profile-secrets.js";
 
 function profile(root: string, workspace: string, marker: string, ageSeconds: number): void {
   const dir = path.join(root, workspace, "default", "Default");
@@ -22,6 +25,47 @@ function profile(root: string, workspace: string, marker: string, ageSeconds: nu
 }
 
 describe("seedSharedProfile", () => {
+  it("encrypts the legacy import cache before removal and refuses to overwrite it when the keyring is locked", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "profile-secrets-"));
+    const legacy = path.join(dir, "imported-cookies.json");
+    const encrypted = path.join(dir, "imported-cookies.enc");
+    const data = {
+      version: "fixture",
+      cookies: [
+        {
+          name: "sid",
+          value: "synthetic-session",
+          domain: "example.test",
+          path: "/",
+          expires: -1,
+          httpOnly: true,
+          secure: true,
+        },
+      ],
+    };
+    try {
+      writeFileSync(legacy, JSON.stringify(data));
+      const locked = new ProfileCookieSecrets(async () => {
+        throw new Error("locked");
+      });
+      await expect(locked.migrate(legacy, encrypted)).rejects.toThrow("locked");
+      expect(existsSync(legacy)).toBe(true);
+      expect(existsSync(encrypted)).toBe(false);
+      const secrets = new ProfileCookieSecrets(async () => Buffer.alloc(32, 2));
+      await secrets.migrate(legacy, encrypted);
+      expect(existsSync(legacy)).toBe(false);
+      expect(readFileSync(encrypted).includes(Buffer.from("synthetic-session"))).toBe(false);
+      expect(statSync(encrypted).mode & 0o777).toBe(0o600);
+      expect(
+        await new ProfileCookieSecrets(async () => Buffer.alloc(32, 2)).read(encrypted),
+      ).toEqual(data);
+      await expect(
+        new ProfileCookieSecrets(async () => Buffer.alloc(32, 3)).read(encrypted),
+      ).rejects.toThrow(/could not be decrypted/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("starts the shared profile from the most recently used workspace profile, without caches", () => {
     const root = mkdtempSync(path.join(tmpdir(), "profiles-"));
     profile(root, "wks_old", "old-login", 3600);

@@ -196,6 +196,41 @@ export interface DesktopBrowserBridge {
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
   listImportSources?: () => Promise<BrowserImportSource[]>;
+  importProfile?: (input: { sourceId: string; primaryPassword: string }) => Promise<
+    | {
+        ok: true;
+        cookieCount: number;
+        domainCount: number;
+        passwordCount: number;
+        skippedPasswords: number;
+      }
+    | { ok: false; error: string }
+  >;
+  readImportProfile?: (input: { sourceId: string; primaryPassword: string }) => Promise<
+    | {
+        ok: true;
+        cookies: BrowserImportCookie[];
+        logins: { origin: string; username: string; password: string }[];
+      }
+    | { ok: false; error: string }
+  >;
+  backupFile?: (
+    input: { action: "save"; encrypted: string } | { action: "read" },
+  ) => Promise<
+    { ok: true; cancelled?: boolean; encrypted?: string } | { ok: false; error: string }
+  >;
+  profileStatus?: () => Promise<{ available: boolean; error: string | null }>;
+  backup?: (input: { action: "export" | "restore"; passphrase: string }) => Promise<
+    | {
+        ok: true;
+        cancelled?: boolean;
+        cookieCount?: number;
+        passwordCount?: number;
+        skippedCookies?: number;
+        skippedPasswords?: number;
+      }
+    | { ok: false; error: string }
+  >;
 
   readImportCookies?: (
     sourceId: string,

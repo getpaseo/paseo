@@ -44,9 +44,16 @@ PASEO_CAPTURE_HARNESS_GROUP=browser-profile npm run capture-harness --workspace=
 ```
 
 The browser profile group runs two Electron processes in sequence. It verifies that each
-renderer-side `did-attach` identity maps to the correct main-process guest, that two live
+renderer-side loaded-guest identity maps to the correct main-process guest, that two live
 tabs share cookies and local storage through one persistent session, and that the data is
-still present after the first Electron process exits and the second starts.
+still present after the first Electron process exits and the second starts. It uses the
+production partition in an isolated `userData` directory under the output folder. The
+fixture also restores a session cookie and password vault with real OS `safeStorage`,
+authenticates a passphrase backup, and preserves an existing credential during restore.
+An unlocked keyring is required; the Linux `basic_text` backend fails the fixture. The
+profile screenshot contains only synthetic fixture data. Renderer identity is read at
+`dom-ready`: Electron 44 can attach both main-process guests while leaving a renderer
+`did-attach` promise unresolved.
 
 The automation group uses a real guest webview to verify the page-side ref contract:
 ARIA-like snapshot text includes headings, static text, and controls; refs survive

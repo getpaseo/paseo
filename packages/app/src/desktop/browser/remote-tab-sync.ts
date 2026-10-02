@@ -1,4 +1,3 @@
-import { getIsElectron } from "@/constants/platform";
 import type { BrowserMirrorEvent } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import { publishBrowserMirror } from "@/desktop/browser/mirror";
 import { isRemoteBrowserClosed, useBrowserStore } from "@/desktop/browser/store";
@@ -107,10 +106,7 @@ export function syncRemoteBrowserTabs(input: {
         url: tab.url,
         title: tab.title,
       });
-    } else if (
-      (!getIsElectron() || record.url === "about:blank" || !record.url) &&
-      (record.url !== tab.url || record.title !== tab.title)
-    ) {
+    } else if (record.url !== tab.url || record.title !== tab.title) {
       browserStore.updateBrowser(record.browserId, { url: tab.url, title: tab.title });
     }
     const localBrowserId = record?.browserId ?? tab.browserId;

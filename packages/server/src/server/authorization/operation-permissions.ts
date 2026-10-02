@@ -25,6 +25,8 @@ const INBOUND_PERMISSION = {
   "agent.timeline.append.request": "workspace.write",
   "browser.host.register.request": ["workspace.write"],
   "browser.import.import_cookies.request": "daemon.manage",
+  "browser.profile.backup.request": "daemon.manage",
+  "browser.profile.manage_passwords.request": "daemon.manage",
   "browser.import.list_sources.request": "daemon.read",
   "browser.remote.execute.request": "workspace.write",
   "browser.tunnel.connect.request": "workspace.write",
@@ -460,6 +462,8 @@ const OUTBOUND_PERMISSION = {
   voice_input_state: "workspace.write",
   wait_for_finish_response: "workspace.read",
   "browser.import.import_cookies.response": "daemon.manage",
+  "browser.profile.backup.response": "daemon.manage",
+  "browser.profile.manage_passwords.response": "daemon.manage",
   "browser.import.list_sources.response": "daemon.read",
   "browser.activity": "workspace.read",
   "browser.handoff": "workspace.read",
@@ -507,7 +511,6 @@ export function requiredPermissionForInbound(operation: InboundOperation): Permi
 export function requiredPermissionForOutbound(
   message: SessionOutboundMessage,
 ): PermissionRequirement {
-  // The legacy status envelope carries both agent RPC results and daemon configuration.
   if (
     message.type === "status" &&
     (message.payload.status === "agent_created" || message.payload.status === "agent_create_failed")

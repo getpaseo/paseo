@@ -67,6 +67,11 @@
       "types": "./dist/server/server/agent/agent-response-loop.d.ts",
       "source": "./src/server/agent/agent-response-loop.ts",
       "default": "./dist/server/server/agent/agent-response-loop.js"
+    },
+    "./browser-backup": {
+      "types": "./dist/server/server/browser-import/browser-backup.d.ts",
+      "source": "./src/server/browser-import/browser-backup.ts",
+      "default": "./dist/server/server/browser-import/browser-backup.js"
     }
   },
   "publishConfig": {

@@ -3,6 +3,8 @@ import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
+import { BrowserImportLoginSchema } from "@getpaseo/protocol/browser-import/rpc-schemas";
 import type {
   BrowserImportCookie,
   BrowserImportSource,
@@ -73,15 +75,15 @@ const CHROMIUM_BROWSERS: ChromiumBrowser[] = [
   },
 ];
 
-// Seconds between 1601-01-01 (Chromium's cookie epoch) and 1970-01-01.
 const CHROMIUM_EPOCH_OFFSET_SECONDS = 11_644_473_600;
-// Playwright rejects expiry beyond 9999-12-31.
+
 const MAX_COOKIE_EXPIRES_SECONDS = 253_402_300_799;
 const CHROMIUM_IV = Buffer.alloc(16, 0x20);
 
 interface ResolvedSource extends BrowserImportSource {
   family: "chromium" | "firefox";
-  cookiesPath: string;
+  cookiesPath: string | null;
+  profilePath: string;
   browser?: ChromiumBrowser;
 }
 
@@ -89,7 +91,7 @@ export interface BrowserImportEnvironment {
   homeDir: string;
   platform: NodeJS.Platform;
   nowSeconds: number;
-  /** Returns the Safe Storage password; null when the keyring has none. */
+
   readSafeStoragePassword: (browser: ChromiumBrowser) => Promise<string | null>;
 }
 
@@ -117,16 +119,136 @@ export async function readBrowserImportCookies(
   sourceId: string,
   env: BrowserImportEnvironment = defaultBrowserImportEnvironment(),
 ): Promise<BrowserImportCookie[]> {
-  // Resolve by id instead of accepting a path, so a client can only name detected profiles.
   const source = (await resolveSources(env)).find((candidate) => candidate.id === sourceId);
   if (!source) {
     throw new BrowserImportError(`Browser profile ${sourceId} was not found on this device.`);
   }
+  if (!source.cookiesPath) return [];
   return withDatabaseCopy(source.cookiesPath, async (db) =>
     source.family === "firefox"
       ? readFirefoxCookies(db, env.nowSeconds)
       : readChromiumCookies(db, source.browser!, env),
   );
+}
+
+export { BrowserImportLoginSchema };
+export type BrowserImportLogin = z.infer<typeof BrowserImportLoginSchema>;
+
+export async function readBrowserImportPasswords(
+  sourceId: string,
+  env: BrowserImportEnvironment = defaultBrowserImportEnvironment(),
+  primaryPassword = "",
+): Promise<BrowserImportLogin[]> {
+  const source = (await resolveSources(env)).find((candidate) => candidate.id === sourceId);
+  if (!source) throw new BrowserImportError("Browser profile was not found on this device.");
+  if (source.family === "firefox") return readFirefoxPasswords(source.profilePath, primaryPassword);
+  const loginPath = path.join(source.profilePath, "Login Data");
+  if (!existsSync(loginPath)) return [];
+  return withDatabaseCopy(loginPath, async (db) => {
+    const rows = readAllRows(
+      db,
+      "SELECT origin_url, username_value, password_value FROM logins WHERE blacklisted_by_user = 0",
+    );
+    const encryptedRows = rows.map((row) => ({ encrypted_value: row.password_value }));
+    const keys = await chromiumKeys(encryptedRows, source.browser!, env);
+    const logins: BrowserImportLogin[] = [];
+    for (const row of rows) {
+      const encrypted = Buffer.from(row.password_value as Uint8Array);
+      if (encrypted.length === 0) continue;
+      const password = decryptChromiumCookieValue({ encrypted, keys, domain: "", metaVersion: 0 });
+      if (password === null)
+        throw new BrowserImportError(keyringHelp(source.browser!, env.platform));
+      let origin: string;
+      try {
+        origin = new URL(String(row.origin_url)).origin;
+      } catch {
+        continue;
+      }
+      const login = BrowserImportLoginSchema.safeParse({
+        origin,
+        username: String(row.username_value),
+        password,
+      });
+      if (login.success) logins.push(login.data);
+    }
+    return logins;
+  });
+}
+
+const FIREFOX_DECRYPT_SCRIPT = String.raw`
+import base64, ctypes, ctypes.util, json, os, sys
+try:
+    profile, primary = json.load(sys.stdin)
+    library = ctypes.util.find_library('nss3')
+    if not library:
+        library = '/Applications/Firefox.app/Contents/MacOS/libnss3.dylib'
+    nss = ctypes.CDLL(library)
+    class Item(ctypes.Structure):
+        _fields_ = [('type', ctypes.c_uint), ('data', ctypes.c_void_p), ('len', ctypes.c_uint)]
+    nss.NSS_Init.argtypes = [ctypes.c_char_p]
+    nss.NSS_Init.restype = ctypes.c_int
+    nss.PK11_GetInternalKeySlot.restype = ctypes.c_void_p
+    nss.PK11_CheckUserPassword.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    nss.PK11_FreeSlot.argtypes = [ctypes.c_void_p]
+    nss.PK11SDR_Decrypt.argtypes = [ctypes.POINTER(Item), ctypes.POINTER(Item), ctypes.c_void_p]
+    nss.SECITEM_FreeItem.argtypes = [ctypes.POINTER(Item), ctypes.c_int]
+    if nss.NSS_Init(('sql:' + profile).encode()) != 0: raise RuntimeError()
+    slot = nss.PK11_GetInternalKeySlot()
+    if not slot or nss.PK11_CheckUserPassword(slot, primary.encode()) != 0: raise RuntimeError()
+    def decrypt(value):
+        raw = base64.b64decode(value, validate=True)
+        buf = ctypes.create_string_buffer(raw)
+        source = Item(0, ctypes.cast(buf, ctypes.c_void_p), len(raw))
+        target = Item()
+        if nss.PK11SDR_Decrypt(ctypes.byref(source), ctypes.byref(target), None) != 0: raise RuntimeError()
+        try: return ctypes.string_at(target.data, target.len).decode('utf8')
+        finally: nss.SECITEM_FreeItem(ctypes.byref(target), 0)
+    with open(os.path.join(profile, 'logins.json')) as f: records = json.load(f)['logins']
+    result = [{'origin': r['hostname'], 'username': decrypt(r['encryptedUsername']), 'password': decrypt(r['encryptedPassword'])} for r in records]
+    nss.PK11_FreeSlot(slot)
+    nss.NSS_Shutdown()
+    json.dump(result, sys.stdout)
+except Exception:
+    sys.exit(1)
+`;
+
+async function readFirefoxPasswords(
+  profilePath: string,
+  primaryPassword: string,
+): Promise<BrowserImportLogin[]> {
+  if (!existsSync(path.join(profilePath, "logins.json"))) return [];
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "paseo-firefox-import-"));
+  try {
+    for (const name of ["logins.json", "key4.db", "cert9.db"]) {
+      for (const suffix of ["", "-wal", "-journal"]) {
+        const file = path.join(profilePath, name + suffix);
+        if (existsSync(file)) await copyFile(file, path.join(tempDir, name + suffix));
+      }
+    }
+    const { execFile } = await import("node:child_process");
+    const output = await new Promise<string>((resolve, reject) => {
+      const child = execFile(
+        "python3",
+        ["-c", FIREFOX_DECRYPT_SCRIPT],
+        { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
+        (error, stdout) => {
+          if (error)
+            reject(
+              new BrowserImportError(
+                "Firefox passwords could not be unlocked. Enter its Primary Password if set. Python 3 and Firefox's NSS library must be installed on this device.",
+              ),
+            );
+          else resolve(stdout);
+        },
+      );
+      child.stdin!.end(JSON.stringify([tempDir, primaryPassword]));
+    });
+    const parsed = z.array(BrowserImportLoginSchema).safeParse(JSON.parse(output));
+    if (!parsed.success) throw new BrowserImportError("Firefox returned invalid login data.");
+    return parsed.data;
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function resolveSources(env: BrowserImportEnvironment): Promise<ResolvedSource[]> {
@@ -139,13 +261,15 @@ async function resolveSources(env: BrowserImportEnvironment): Promise<ResolvedSo
         path.join(root, profile.dir, "Network", "Cookies"),
         path.join(root, profile.dir, "Cookies"),
       ].find((candidate) => existsSync(candidate));
-      if (!cookiesPath) continue;
+      const profilePath = path.join(root, profile.dir);
+      if (!cookiesPath && !existsSync(path.join(profilePath, "Login Data"))) continue;
       sources.push({
         id: `${browser.key}:${profile.dir}`,
         browserName: browser.name,
         profileName: profile.name,
         family: "chromium",
-        cookiesPath,
+        cookiesPath: cookiesPath ?? null,
+        profilePath,
         browser,
       });
     }
@@ -153,13 +277,15 @@ async function resolveSources(env: BrowserImportEnvironment): Promise<ResolvedSo
   for (const root of firefoxRoots(env)) {
     for (const profile of await listFirefoxProfiles(root)) {
       const cookiesPath = path.join(profile.dir, "cookies.sqlite");
-      if (!existsSync(cookiesPath)) continue;
+      const hasCookies = existsSync(cookiesPath);
+      if (!hasCookies && !existsSync(path.join(profile.dir, "logins.json"))) continue;
       sources.push({
         id: `firefox:${profile.dir}`,
         browserName: "Firefox",
         profileName: profile.name,
         family: "firefox",
-        cookiesPath,
+        cookiesPath: hasCookies ? cookiesPath : null,
+        profilePath: profile.dir,
       });
     }
   }
@@ -196,11 +322,11 @@ async function listChromiumProfiles(root: string): Promise<Array<{ dir: string; 
     };
     const cache = localState.profile?.info_cache;
     if (cache && Object.keys(cache).length > 0) {
-      return Object.entries(cache).map(([dir, info]) => ({ dir, name: info.name || dir }));
+      return Object.entries(cache)
+        .filter(([dir]) => dir === "Default" || /^Profile \d+$/.test(dir))
+        .map(([dir, info]) => ({ dir, name: info.name || dir }));
     }
-  } catch {
-    // No readable Local State: fall back to the conventional profile directory names.
-  }
+  } catch {}
   const entries = await readdir(root).catch(() => [] as string[]);
   return entries
     .filter((entry) => entry === "Default" || /^Profile \d+$/.test(entry))
@@ -227,7 +353,6 @@ async function listFirefoxProfiles(root: string): Promise<Array<{ dir: string; n
   return profiles;
 }
 
-// node:sqlite ships with Node 22.5+ and Electron 44, but @types/node@20 has no typings for it.
 interface SqliteStatement {
   all(): Record<string, unknown>[];
   get(): Record<string, unknown> | undefined;
@@ -247,7 +372,7 @@ async function withDatabaseCopy<T>(
 ): Promise<T> {
   const sqliteSpecifier: string = "node:sqlite";
   const sqlite = (await import(sqliteSpecifier)) as SqliteModule;
-  // The running browser holds a lock on its database; read a private copy including its journal.
+
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "paseo-cookie-import-"));
   const copyPath = path.join(tempDir, "cookies.db");
   try {
@@ -267,7 +392,7 @@ async function withDatabaseCopy<T>(
 
 function readAllRows(db: SqliteDatabase, sql: string): Record<string, unknown>[] {
   const statement = db.prepare(sql);
-  // Chromium's expires_utc (microseconds since 1601) exceeds Number.MAX_SAFE_INTEGER.
+
   statement.setReadBigInts(true);
   return statement.all();
 }
@@ -285,7 +410,6 @@ async function readChromiumCookies(
   const cookies: BrowserImportCookie[] = [];
   let undecryptable = 0;
   for (const row of rows) {
-    // Partitioned (CHIPS) cookies need a partition key Playwright's addCookies cannot express here.
     if (row.top_frame_site_key) continue;
     const expires =
       Number(row.has_expires) && Number(row.is_persistent)
@@ -318,12 +442,16 @@ async function readChromiumCookies(
       ...sameSiteAttribute(Number(row.samesite), secure),
     });
   }
-  if (cookies.length === 0 && undecryptable > 0) {
-    throw new BrowserImportError(
-      `${browser.name} cookies could not be decrypted with the key from this device's keyring.`,
-    );
-  }
+  if (undecryptable > 0) throw new BrowserImportError(keyringHelp(browser, env.platform));
   return cookies;
+}
+
+function keyringHelp(browser: ChromiumBrowser, platform: NodeJS.Platform): string {
+  const action =
+    platform === "darwin"
+      ? `Unlock the login keychain in Keychain Access and allow access to "${browser.macKeychainService}".`
+      : "Unlock your desktop login keyring and run PandaOS in the same desktop/D-Bus session as the source browser.";
+  return `${browser.name} data could not be decrypted with this device's keyring. ${action} Open the source profile once, then retry. A profile copied from another device needs its original keyring; importing other cookies does not restore its login.`;
 }
 
 export interface ChromiumKeys {
@@ -347,29 +475,38 @@ async function chromiumKeys(
     if (!prefixes.has("v10")) return { v10: null, v11: null };
     const password = await env.readSafeStoragePassword(browser);
     if (!password) {
-      throw new BrowserImportError(`Keychain has no "${browser.macKeychainService}" entry.`);
+      throw new BrowserImportError(keyringHelp(browser, env.platform));
     }
     return { v10: deriveChromiumKey(password, 1003), v11: null };
   }
-  // Linux: v10 uses Chromium's fixed fallback password, v11 the password from libsecret.
+
   let v11: Buffer | null = null;
   if (prefixes.has("v11")) {
     const password = await env.readSafeStoragePassword(browser);
     if (!password) {
-      throw new BrowserImportError(
-        `${browser.name} cookies are encrypted with the system keyring, which is not readable here.`,
-      );
+      throw new BrowserImportError(keyringHelp(browser, env.platform));
     }
     v11 = deriveChromiumKey(password, 1);
   }
   return { v10: deriveChromiumKey("peanuts", 1), v11 };
 }
 
+export async function readBrowserProfileEncryptionKey(): Promise<Buffer> {
+  const env = defaultBrowserImportEnvironment();
+  for (const browser of CHROMIUM_BROWSERS.slice(0, 2)) {
+    const secret = await env.readSafeStoragePassword(browser);
+    if (secret)
+      return createHash("sha256").update("pandaos-browser-profile-v1\0").update(secret).digest();
+  }
+  throw new BrowserImportError(
+    "The host browser keyring is unavailable. Unlock the login keyring and run PandaOS in the same desktop/D-Bus session as Chrome or Chromium. Open Chrome once to create its Safe Storage entry, then retry.",
+  );
+}
+
 export function deriveChromiumKey(password: string, iterations: number): Buffer {
   return pbkdf2Sync(password, "saltysalt", iterations, 16, "sha1");
 }
 
-/** Returns null when the value does not decrypt with the available keys. */
 export function decryptChromiumCookieValue(input: {
   encrypted: Buffer;
   keys: ChromiumKeys;
@@ -388,7 +525,6 @@ export function decryptChromiumCookieValue(input: {
     return null;
   }
   if (input.metaVersion >= 24) {
-    // Since DB version 24 the plaintext starts with SHA-256(host_key); it also proves the key was right.
     const hostHash = createHash("sha256").update(input.domain).digest();
     if (plaintext.length < 32 || !plaintext.subarray(0, 32).equals(hostHash)) return null;
     plaintext = plaintext.subarray(32);
@@ -399,13 +535,12 @@ export function decryptChromiumCookieValue(input: {
 function sameSiteAttribute(value: number, secure: boolean): Pick<BrowserImportCookie, "sameSite"> {
   if (value === 2) return { sameSite: "Strict" };
   if (value === 1) return { sameSite: "Lax" };
-  // Chromium drops SameSite=None cookies that are not Secure.
+
   if (value === 0 && secure) return { sameSite: "None" };
   return {};
 }
 
 function readFirefoxCookies(db: SqliteDatabase, nowSeconds: number): BrowserImportCookie[] {
-  // Container and partitioned cookies carry originAttributes; only the default jar maps onto one profile.
   const rows = readAllRows(db, "SELECT * FROM moz_cookies WHERE originAttributes = ''");
   return parseFirefoxCookieRows(rows, nowSeconds);
 }
@@ -417,7 +552,7 @@ export function parseFirefoxCookieRows(
   const cookies: BrowserImportCookie[] = [];
   for (const row of rows) {
     const rawExpiry = Number(row.expiry);
-    // Firefox 130+ stores expiry in milliseconds, older versions in seconds.
+
     const expires = Math.min(
       rawExpiry > 1e11 ? rawExpiry / 1000 : rawExpiry,
       MAX_COOKIE_EXPIRES_SECONDS,
@@ -440,7 +575,6 @@ export function parseFirefoxCookieRows(
 
 async function readMacKeychainPassword(service: string): Promise<string | null> {
   try {
-    // Waits for the user's answer on the first Keychain prompt.
     const { stdout } = await execCommand(
       "security",
       ["find-generic-password", "-w", "-s", service],
@@ -452,7 +586,7 @@ async function readMacKeychainPassword(service: string): Promise<string | null> 
     return String(stdout).trim() || null;
   } catch (error) {
     const code = (error as { code?: unknown }).code;
-    // `security` exits 44 when the item does not exist; everything else is a denied or failed prompt.
+
     if (code === 44) return null;
     throw new BrowserImportError(`Keychain access to "${service}" was denied.`);
   }
@@ -465,7 +599,12 @@ async function readLinuxSecretPassword(application: string): Promise<string | nu
       envMode: "internal",
     });
     return String(stdout).trim() || null;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new BrowserImportError(
+        "Reading the Linux browser keyring needs secret-tool. Install libsecret-tools, unlock the login keyring, and run PandaOS in the same desktop/D-Bus session as the source browser.",
+      );
+    }
     return null;
   }
 }

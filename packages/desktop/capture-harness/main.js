@@ -3,7 +3,16 @@ const fsp = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
-const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  session,
+  safeStorage,
+} = require("electron");
 const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
 
 const ROOT = __dirname;
@@ -40,6 +49,12 @@ const FRESH_REPEAT_COUNT = 3;
 const SOAK_MS = Number(process.env.PASEO_CAPTURE_HARNESS_SOAK_MS || 75000);
 const HARNESS_GROUP = process.env.PASEO_CAPTURE_HARNESS_GROUP || "permanent-parking";
 const BROWSER_PROFILE_PHASE = process.env.PASEO_CAPTURE_HARNESS_PHASE || "";
+if (HARNESS_GROUP === "browser-profile") {
+  app.setPath("userData", path.join(OUT_DIR, "browser-profile-user-data"));
+  if (process.platform === "linux")
+    app.commandLine.appendSwitch("password-store", "gnome-libsecret");
+}
+const BROWSER_PROFILE_SESSION_FILE = path.join(OUT_DIR, "browser-session.enc");
 const BROWSER_PROFILE_ORIGIN_FILE = path.join(OUT_DIR, "browser-profile-origin.txt");
 const BROWSER_PROFILE_VALUE_FILE = path.join(OUT_DIR, "browser-profile-value.txt");
 const PERMANENT_STATE_FILTER = new Set(
@@ -124,9 +139,7 @@ function applyEarlyMacHarnessActivationPolicy() {
   }
   try {
     app.setActivationPolicy("accessory");
-  } catch {
-    // App readiness varies by Electron/macOS version; enforce again before windows.
-  }
+  } catch {}
 }
 
 function applyMacHarnessActivationPolicyBeforeWindows() {
@@ -1583,7 +1596,7 @@ function sendContainedEnter(guest) {
   guest.sendInputEvent({
     type: "keyDown",
     keyCode: "Enter",
-    // Prevent Electron from redispatching an unhandled guest key to the embedder.
+
     skipIfUnhandled: true,
   });
   guest.sendInputEvent({
@@ -2435,12 +2448,6 @@ async function runAutomationGroup() {
     });
     results.push(...browserKeyboardChecks);
 
-    // Resize is not harness-testable: the harness hosts webviews in the parked
-    // 1px resident host, and Electron does not propagate CSS-box resizes to a
-    // parked guest's capture surface (see docs/browser-capture-harness.md).
-    // The production resize path is app-owned webview sizing, covered by
-    // packages/app/src/desktop/browser/automation/handler.test.ts.
-
     await fsp.writeFile(
       path.join(OUT_DIR, "automation-results.json"),
       `${JSON.stringify({ generatedAt: new Date().toISOString(), results }, null, 2)}\n`,
@@ -2505,7 +2512,7 @@ async function createBrowserProfileHarnessWindow(partition, sourceUrl) {
   await waitForInactiveReveal(handle, "browser profile window");
   const [guests, identities] = await withTimeout(
     Promise.all([guestsPromise, renderer(win, "window.captureHarness.profileIdentities()")]),
-    "browser profile did-attach",
+    "browser profile loaded guest identity",
     BROWSER_PROFILE_TIMEOUT_MS,
   );
   return { handle, guests, identities };
@@ -2522,6 +2529,8 @@ function assertBrowserProfileFixture(state, expectedValue, label) {
   if (state.localStorage !== expectedValue) {
     fail(`${label} localStorage mismatch ${JSON.stringify(state)}`);
   }
+  if (!state.cookie.split("; ").includes(`paseo-browser-session=${expectedValue}`))
+    fail(`${label} session cookie did not survive`);
   if (!state.cookie.split("; ").includes(`paseo-browser-profile=${expectedValue}`)) {
     fail(`${label} cookie mismatch ${JSON.stringify(state)}`);
   }
@@ -2576,6 +2585,7 @@ async function prepareBrowserProfileValue(firstGuest, profileSession) {
     const value = ${JSON.stringify(profileValue)};
     localStorage.setItem("paseo-browser-profile", value);
     document.cookie = "paseo-browser-profile=" + value + "; Max-Age=86400; SameSite=Lax";
+    document.cookie = "paseo-browser-session=" + value + "; SameSite=Lax";
   })()`);
   if (BROWSER_PROFILE_PHASE === "write") {
     await fsp.writeFile(BROWSER_PROFILE_VALUE_FILE, `${profileValue}\n`);
@@ -2588,7 +2598,34 @@ async function runBrowserProfileGroup() {
   if (!["write", "read"].includes(BROWSER_PROFILE_PHASE)) {
     fail(`unknown browser profile phase ${BROWSER_PROFILE_PHASE}`);
   }
-  const partition = "persist:paseo-browser-profile-harness-restart";
+  const {
+    PASEO_BROWSER_PROFILE_PARTITION: partition,
+  } = require("../dist/features/browser-profile.js");
+  const {
+    fromElectronCookie,
+    toElectronCookie,
+  } = require("../dist/features/browser-cookie-import.js");
+  const {
+    readBrowserSessionCookies,
+    writeBrowserSessionCookies,
+    encryptBrowserBackup,
+    decryptBrowserBackup,
+  } = require("../dist/features/browser-backup.js");
+  const { PasswordVault } = require("../dist/features/browser-passwords/vault.js");
+  const crypto = {
+    isAvailable: () =>
+      safeStorage.isEncryptionAvailable() &&
+      (process.platform !== "linux" ||
+        !["basic_text", "unknown"].includes(safeStorage.getSelectedStorageBackend())),
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (buffer) => safeStorage.decryptString(buffer),
+  };
+  if (!crypto.isAvailable())
+    fail("browser profile fixture needs an unlocked OS keyring; plaintext fallback is forbidden");
+  const vault = new PasswordVault({
+    filePath: path.join(OUT_DIR, "browser-passwords.json"),
+    crypto,
+  });
   const profileSession = session.fromPartition(partition);
   const fixture = await startBrowserProfileServer();
   const windows = [];
@@ -2597,6 +2634,21 @@ async function runBrowserProfileGroup() {
       await profileSession.clearStorageData();
       await profileSession.clearCache();
     }
+    if (BROWSER_PROFILE_PHASE === "read") {
+      for (const cookie of await readBrowserSessionCookies(BROWSER_PROFILE_SESSION_FILE, crypto))
+        await profileSession.cookies.set(toElectronCookie(cookie));
+      const logins = vault.lookup(fixture.origin);
+      if (logins.length !== 1 || logins[0].password !== "profile-fixture-credential")
+        fail("encrypted vault did not survive process restart");
+      const restored = await decryptBrowserBackup(
+        await fsp.readFile(path.join(OUT_DIR, "browser-backup.json"), "utf8"),
+        "profile fixture backup passphrase",
+      );
+      if (restored.logins.length !== 1 || restored.cookies.length !== 2)
+        fail("portable profile backup lost fixture data");
+      if (vault.importLogins(restored.logins).passwordCount !== 0)
+        fail("restore replaced an existing credential");
+    }
     const profileWindow = await createBrowserProfileHarnessWindow(partition, fixture.origin);
     windows.push(profileWindow.handle);
     const [firstGuest, secondGuest] = resolveBrowserProfileGuests(profileWindow, profileSession);
@@ -2604,15 +2656,40 @@ async function runBrowserProfileGroup() {
 
     const profileValue = await prepareBrowserProfileValue(firstGuest, profileSession);
 
+    if (BROWSER_PROFILE_PHASE === "write") {
+      const cookies = (await profileSession.cookies.get({})).map(fromElectronCookie);
+      await writeBrowserSessionCookies(
+        BROWSER_PROFILE_SESSION_FILE,
+        cookies.filter((cookie) => cookie.expires === -1),
+        crypto,
+      );
+      vault.importLogins([
+        {
+          origin: fixture.origin,
+          username: "profile-fixture-user",
+          password: "profile-fixture-credential",
+        },
+      ]);
+      const encrypted = await encryptBrowserBackup(
+        { version: 1, cookies, logins: vault.exportLogins() },
+        "profile fixture backup passphrase",
+      );
+      await fsp.writeFile(path.join(OUT_DIR, "browser-backup.json"), encrypted, { mode: 0o600 });
+    }
     const firstState = await readBrowserProfileFixture(firstGuest);
     const secondState = await readBrowserProfileFixture(secondGuest);
     assertBrowserProfileFixture(firstState, profileValue, "browser profile first tab");
     assertBrowserProfileFixture(secondState, profileValue, "browser profile second tab");
 
-    pass("browser profile renderer did-attach identities match their main-process guests");
+    pass("browser profile renderer identities match their main-process guests");
     pass("browser profile tabs share cookies, localStorage, and one persistent session");
     if (BROWSER_PROFILE_PHASE === "read") {
       pass("browser profile cookies and localStorage survived an Electron process restart");
+      pass("browser profile session cookie and saved credential restored through OS encryption");
+      pass("portable encrypted backup authenticated and preserved existing credentials");
+      const png = await firstGuest.capturePage();
+      if (png.isEmpty()) fail("browser profile screenshot was empty");
+      await fsp.writeFile(path.join(OUT_DIR, "browser-profile-restart.png"), png.toPNG());
     }
     const results = [
       { group: "browser-profile", check: "renderer-main-identity", pass: true },
@@ -2621,7 +2698,7 @@ async function runBrowserProfileGroup() {
     if (BROWSER_PROFILE_PHASE === "read") {
       results.push({
         group: "browser-profile",
-        check: "process-restart-persistence",
+        check: "process-restart-persistence-and-encrypted-restore",
         pass: true,
       });
     }
@@ -2849,9 +2926,7 @@ async function main() {
 }
 
 app
-  .on("window-all-closed", () => {
-    // The permanent parking sweep intentionally opens and closes many phase windows.
-  })
+  .on("window-all-closed", () => {})
   .whenReady()
   .then(() => {
     applyMacHarnessActivationPolicyBeforeWindows();
@@ -2865,8 +2940,6 @@ app
         path.join(OUT_DIR, "fatal-error.txt"),
         `${error && error.stack ? error.stack : String(error)}\n`,
       );
-    } catch {
-      // Ignore reporting failures during shutdown.
-    }
+    } catch {}
     app.exit(1);
   });

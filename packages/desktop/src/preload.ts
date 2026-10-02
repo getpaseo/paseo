@@ -140,6 +140,15 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     clearProfile: (legacyBrowserIds: string[]) =>
       ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds),
     listImportSources: () => ipcRenderer.invoke("paseo:browser:list-import-sources"),
+    importProfile: (input: { sourceId: string; primaryPassword: string }) =>
+      ipcRenderer.invoke("paseo:browser:import-profile", input),
+    readImportProfile: (input: { sourceId: string; primaryPassword: string }) =>
+      ipcRenderer.invoke("paseo:browser:read-import-profile", input),
+    backupFile: (input: { action: "save"; encrypted: string } | { action: "read" }) =>
+      ipcRenderer.invoke("paseo:browser:backup-file", input),
+    profileStatus: () => ipcRenderer.invoke("paseo:browser:profile-status"),
+    backup: (input: { action: "export" | "restore"; passphrase: string }) =>
+      ipcRenderer.invoke("paseo:browser:backup", input),
     readImportCookies: (sourceId: string) =>
       ipcRenderer.invoke("paseo:browser:read-import-cookies", sourceId),
     executeAutomationCommand: (request: Record<string, unknown>) =>

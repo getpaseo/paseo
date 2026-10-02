@@ -410,8 +410,6 @@ export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteReq
 export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
 
 export interface DaemonClientConfig {
-  /** Deliver compact bodies/hash references to a caller-owned snapshot cache.
-   * The default keeps public SDK snapshot entries expanded. */
   providerSnapshots?: "wire";
   url: string;
   clientId: string;
@@ -487,7 +485,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
   // COMPAT(createAgentWorktree): low-level old callers may still send the
-  // create-agent worktree field. Added in v0.2.0; remove after 2027-01-17.
+
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
@@ -735,7 +733,7 @@ export interface FetchProviderSubagentTimelineOptions {
 }
 
 // COMPAT(daemon-client-object-options): added in v0.1.102; remove after
-// 2026-12-29 once SDK callers have migrated to object parameters.
+
 function normalizeFetchAgentOptions(
   input: FetchAgentOptions | string,
   legacyOptions?: LegacyFetchAgentOptions | string,
@@ -1087,7 +1085,6 @@ const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
-/** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = DEFAULT_SESSION_RPC_TIMEOUT_MS;
 const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = DEFAULT_SESSION_RPC_TIMEOUT_MS;
 const DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -1219,9 +1216,7 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
-  // Whether a timeout on this ping should be recorded as a liveness failure. Only the
-  // heartbeat sets this; a latency measurement never drives teardown, even when a
-  // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
+
   drivesLivenessFailure: boolean;
 }
 
@@ -1341,10 +1336,6 @@ export class DaemonClient {
     }
   }
 
-  // ============================================================================
-  // Connection
-  // ============================================================================
-
   async connect(): Promise<void> {
     if (this.connectionState.status === "disposed") {
       throw new Error("Daemon client is disposed");
@@ -1379,8 +1370,7 @@ export class DaemonClient {
     if (this.connectionState.status === "connecting") {
       return;
     }
-    // This attempt supersedes any retry the last disconnect scheduled. Left
-    // armed, that retry would tear down the connection this attempt opens.
+
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -1391,8 +1381,7 @@ export class DaemonClient {
       const selected = resolution instanceof Promise ? await resolution : resolution;
       if (!this.shouldReconnect) return;
       this.helloAuth = selected.helloAuth;
-      // Reconnect can overlap with browser close/error delivery ordering.
-      // Always dispose previous transport before constructing the next one.
+
       this.disposeTransport();
       const baseTransportFactory =
         this.config.transportFactory ??
@@ -1479,9 +1468,7 @@ export class DaemonClient {
           this.resetConnectTimeout();
           const reason = describeTransportError(event);
           const isGeneric = reason === "Transport error";
-          // Browser WebSocket.onerror often provides no useful details and is followed
-          // by a close event (often with code 1006). Prefer surfacing the close details
-          // instead of immediately disconnecting with a generic "Transport error".
+
           if (isGeneric) {
             this.lastErrorValue ??= reason;
             if (!this.pendingGenericTransportErrorTimeout) {
@@ -1613,8 +1600,7 @@ export class DaemonClient {
     const transport = this.transport;
     if (!transport || this.connectionVerification === transport) return;
     this.connectionVerification = transport;
-    // A session probe has its own deadline, independent of a heartbeat that the OS
-    // may have suspended. A successful response also proves the session can serve RPCs.
+
     void this.ping({ timeoutMs: 3_000 })
       .catch((error: unknown) => {
         if (this.transport !== transport || this.connectionState.status !== "connected") return;
@@ -1662,10 +1648,6 @@ export class DaemonClient {
   getLastLivenessRttMs(): number | null {
     return this.lastLivenessRttMs;
   }
-
-  // ============================================================================
-  // Message Subscription
-  // ============================================================================
 
   subscribe(handler: DaemonEventHandler): () => void {
     this.eventListeners.add(handler);
@@ -1739,10 +1721,6 @@ export class DaemonClient {
     };
   }
 
-  // ============================================================================
-  // Core Send Helpers
-  // ============================================================================
-
   private beginTraceSection(name: string, args?: Record<string, string>): boolean {
     const trace = this.config.trace;
     if (!trace?.isEnabled()) {
@@ -1786,11 +1764,6 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Send a session message. For fire-and-forget messages (heartbeats, etc.),
-   * failures are suppressed if `suppressSendErrors` is configured.
-   * For RPC methods that wait for responses, use `sendSessionMessageOrThrow` instead.
-   */
   private sendSessionMessage(message: SessionInboundMessage): void {
     if (!this.transport || this.connectionState.status !== "connected") {
       if (this.config.suppressSendErrors) {
@@ -1830,27 +1803,18 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Send a session message for RPC methods that create waiters.
-   * If the connection is still being established ("connecting"), the message
-   * is queued and will be sent once connected (or rejected after timeout).
-   * This prevents waiters from hanging forever when called during connection.
-   */
   private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
     const status = this.connectionState.status;
 
-    // If connected, send immediately
     if (this.transport && status === "connected") {
       const payload = SessionInboundMessageSchema.parse(message);
       this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
       return Promise.resolve();
     }
 
-    // If connecting, queue the message to be sent once connected
     if (status === "connecting") {
       return new Promise((resolve, reject) => {
         const timeoutHandle = setTimeout(() => {
-          // Remove from queue
           const idx = this.pendingSendQueue.findIndex((p) => p.resolve === resolve);
           if (idx !== -1) {
             this.pendingSendQueue.splice(idx, 1);
@@ -1867,13 +1831,9 @@ export class DaemonClient {
       });
     }
 
-    // Not connected and not connecting - fail immediately
     return Promise.reject(new DaemonConnectionError(`Transport not connected (status: ${status})`));
   }
 
-  /**
-   * Flush pending send queue - called when connection is established.
-   */
   private flushPendingSendQueue(): void {
     const queue = this.pendingSendQueue;
     this.pendingSendQueue = [];
@@ -1894,9 +1854,6 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Reject all pending sends - called when connection fails or is closed.
-   */
   private rejectPendingSendQueue(error: Error): void {
     const queue = this.pendingSendQueue;
     this.pendingSendQueue = [];
@@ -2280,10 +2237,6 @@ export class DaemonClient {
     }, LIVENESS_HEARTBEAT_INTERVAL_MS);
   }
 
-  // ============================================================================
-  // Agent RPCs (requestId-correlated)
-  // ============================================================================
-
   private observe<T extends CorrelatedResponseType>(
     responseType: T,
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>,
@@ -2321,8 +2274,6 @@ export class DaemonClient {
       },
       options?.signal,
       () => {
-        // Reject and release this handle before closing a source with an unknown bootstrap outcome.
-        // Closing first would classify the failure as a reconnect and replay the failed request.
         if (resetSource) {
           this.disposeTransport(1001, "Subscription request failed");
           this.scheduleReconnect({ reason: "Subscription request failed" });
@@ -2363,11 +2314,6 @@ export class DaemonClient {
     });
   }
 
-  /**
-   * Viewport frames arrive in receive. Each frame is acked as it arrives, which paces the
-   * daemon to what this connection drains. "ended" means the tab closed or the subscription
-   * failed, including after a reconnect; no further frames follow.
-   */
   observeBrowserTunnel(input: {
     workspaceId: string;
     browserId: string;
@@ -2456,7 +2402,6 @@ export class DaemonClient {
     });
   }
 
-  /** Fire-and-forget: the result comes back to other apps as a browser.mirror event. */
   applyBrowserMirrorAction(input: {
     workspaceId: string;
     browserId: string;
@@ -2885,6 +2830,38 @@ export class DaemonClient {
     });
   }
 
+  async backupBrowserProfile(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "browser.profile.backup.request" }>,
+      "type" | "requestId"
+    >,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "browser.profile.backup.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "browser.profile.backup.request", ...input },
+      responseType: "browser.profile.backup.response",
+      timeout: 180_000,
+    });
+  }
+
+  async manageBrowserPasswords(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "browser.profile.manage_passwords.request" }>,
+      "type" | "requestId"
+    >,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "browser.profile.manage_passwords.response" }
+    >["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "browser.profile.manage_passwords.request", ...input },
+      responseType: "browser.profile.manage_passwords.response",
+    });
+  }
+
   async importBrowserCookies(
     source: Extract<
       SessionInboundMessage,
@@ -2898,7 +2875,7 @@ export class DaemonClient {
       requestId,
       message: { type: "browser.import.import_cookies.request", source },
       responseType: "browser.import.import_cookies.response",
-      // A daemon on macOS may wait on the user's Keychain prompt.
+
       timeout: 180_000,
     });
   }
@@ -3043,10 +3020,6 @@ export class DaemonClient {
     }
     return { agent: payload.agent, project: payload.project ?? null };
   }
-
-  // ============================================================================
-  // Agent Lifecycle
-  // ============================================================================
 
   private readonly creations = new CreationClient({
     supports: (feature) => this.lastServerInfoMessage?.features?.[feature] === true,
@@ -3211,10 +3184,6 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Active, archived and deleted agents with origin and cumulative usage. Requires
-   * server_info.features.agentHistory; not counted against the economy status-read limit.
-   */
   async listAgentHistory(
     options: { since?: string; limit?: number; includeInternal?: boolean } = {},
   ): Promise<AgentHistoryEntry[]> {
@@ -3347,16 +3316,11 @@ export class DaemonClient {
     return { title: payload.title };
   }
 
-  /**
-   * Store which change requests this workspace keeps in its set and which it drops. Decisions
-   * rather than a list, so a set the daemon resolves differently tomorrow still honours them.
-   */
   async curateWorkspacePullRequests(
     workspaceId: string,
     curation: { added: readonly number[]; removed: readonly number[] },
     // COMPAT(curatedPullRequestFacts): added in v0.8.1. What the numbers stand
-    // for, so the daemon can hand the set back to any client instead of only to
-    // the one that resolved it.
+
     facts?: readonly CuratedPullRequestFacts[],
     requestId?: string,
   ): Promise<{ curation: { added: number[]; removed: number[] } | null }> {
@@ -3388,11 +3352,6 @@ export class DaemonClient {
     return { curation: payload.curation };
   }
 
-  /**
-   * Point one workspace's gh at its own config directory, so its agents and Paseo's own gh
-   * calls act as that account. An empty string clears it back to the machine's default.
-   */
-  /** The GitHub logins this host can offer, for a picker that shows names, not paths. */
   async listForgeAccounts(requestId?: string): Promise<ForgeAccount[]> {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
@@ -3447,7 +3406,6 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
-  /** Stored last replies per agent; loads no agent. Gate on `server_info.features.agentLastReplies`. */
   async getAgentLastReplies(
     agentIds: readonly string[],
     requestId?: string,
@@ -3460,7 +3418,6 @@ export class DaemonClient {
     return payload.replies;
   }
 
-  /** Marks a session done or open again. Gate on `server_info.features.workspaceDone`. */
   async setWorkspaceDone(
     workspaceId: string,
     done: boolean,
@@ -3508,7 +3465,6 @@ export class DaemonClient {
     if (!payload.revoked) throw new Error(payload.error ?? "revokePairedDevice rejected");
   }
 
-  /** Combines workspaces under a new topic. Gate on `server_info.features.workspaceTopics`. */
   async createWorkspaceTopic(
     input: { title: string; description?: string | null; workspaceIds: string[] },
     requestId?: string,
@@ -3524,7 +3480,6 @@ export class DaemonClient {
     return payload.topic;
   }
 
-  /** Moves a workspace into a topic, or out of its topic when `topicId` is null. */
   async assignWorkspaceTopic(
     workspaceId: string,
     topicId: string | null,
@@ -3897,10 +3852,6 @@ export class DaemonClient {
     return payload;
   }
 
-  // ============================================================================
-  // Agent Interaction
-  // ============================================================================
-
   async sendAgentMessage(
     agentId: string,
     text: string,
@@ -4028,10 +3979,6 @@ export class DaemonClient {
     return payload.notice ?? null;
   }
 
-  /**
-   * Moves the agent to another provider. `modelId` names a model of the target
-   * provider; the agent's mode and thinking selections do not survive the move.
-   */
   async setAgentProvider(agentId: string, provider: string, modelId: string | null): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
@@ -4146,13 +4093,6 @@ export class DaemonClient {
     return payload.notice ?? null;
   }
 
-  /**
-   * Applies a whole agent-config bundle in one request. Use this instead of
-   * chaining the single-field setters when the values belong together so client
-   * interruption and other mutations cannot interleave between steps. A
-   * provider rejection can still leave earlier steps applied.
-   * Gated on `server_info.features.agentConfigApply`.
-   */
   async applyAgentConfig(
     agentId: string,
     config: AgentConfigApply,
@@ -4252,7 +4192,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 300_000, // 5 minutes — npm update can be slow on remote machines
+      timeout: 300_000,
       options: { skipQueue: true },
       select: (msg) => {
         const parsed = DaemonUpdateResponseSchema.safeParse(msg);
@@ -4266,10 +4206,6 @@ export class DaemonClient {
       },
     });
   }
-
-  // ============================================================================
-  // Audio / Voice
-  // ============================================================================
 
   async setVoiceMode(enabled: boolean, agentId?: string): Promise<SetVoiceModePayload> {
     const requestId = this.createRequestId();
@@ -4522,10 +4458,6 @@ export class DaemonClient {
   async audioPlayed(id: string): Promise<void> {
     this.sendSessionMessage({ type: "audio_played", id });
   }
-
-  // ============================================================================
-  // Git Operations
-  // ============================================================================
 
   async getCheckoutStatus(
     cwd: string,
@@ -5171,14 +5103,8 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "directory_suggestions_response",
-      // Home-tree scans on large home dirs can take several seconds; don't cut
-      // the suggestion request off early (it would surface as an empty list).
     });
   }
-
-  // ============================================================================
-  // File Explorer
-  // ============================================================================
 
   private async requestFileExplorer(
     cwd: string,
@@ -5276,7 +5202,6 @@ export class DaemonClient {
     let initial = true;
     subscription.subscribe({
       snapshot: (snapshot) => {
-        // The initial version is returned below. Subsequent snapshots repair reconnects.
         if (!initial) onUpdate(snapshot.initial);
         initial = false;
       },
@@ -5400,8 +5325,6 @@ export class DaemonClient {
 
       const chunkSize = input.chunkSize ?? 128 * 1024;
       for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
-        // Native WebSocket.send encodes binary synchronously. Let rendering and
-        // incoming messages run between bounded pieces on every platform.
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         if (settled) return await responsePromise;
         if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
@@ -5473,10 +5396,6 @@ export class DaemonClient {
     });
   }
 
-  // ============================================================================
-  // Provider Models / Commands
-  // ============================================================================
-
   async listProviderModels(
     provider: AgentProvider,
     options?: { cwd?: string; requestId?: string },
@@ -5489,7 +5408,7 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_models_response",
-      // Provider SDK cold starts (especially model discovery) can exceed 60s.
+
       timeout: 90000,
     });
     return normalizeListProviderModelsPayload(payload);
@@ -5808,10 +5727,6 @@ export class DaemonClient {
     });
   }
 
-  // ============================================================================
-  // Permissions
-  // ============================================================================
-
   async respondToPermission(
     agentId: string,
     requestId: string,
@@ -6096,10 +6011,6 @@ export class DaemonClient {
     });
   }
 
-  // ============================================================================
-  // Waiting / Streaming Helpers
-  // ============================================================================
-
   async waitForAgentUpsert(
     agentId: string,
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
@@ -6229,10 +6140,6 @@ export class DaemonClient {
     };
   }
 
-  // ============================================================================
-  // Terminals
-  // ============================================================================
-
   observeTerminals(input: {
     cwd: string;
     workspaceId?: string;
@@ -6310,11 +6217,6 @@ export class DaemonClient {
     });
   }
 
-  /**
-   * Snapshot/restore and output arrive in receive. Subscribe to the returned handle
-   * for terminal_stream_exit: payload.error means observation failure, not PTY exit.
-   * Either outcome detaches this slot and releases the handle automatically.
-   */
   observeTerminal(
     terminalId: string,
     receive: (event: TerminalStreamEvent) => void,
@@ -6589,10 +6491,6 @@ export class DaemonClient {
     });
   }
 
-  // ============================================================================
-  // Internals
-  // ============================================================================
-
   private createRequestId(requestId?: string): string {
     return requestId ?? crypto.randomUUID();
   }
@@ -6668,9 +6566,7 @@ export class DaemonClient {
     if (this.transport) {
       try {
         this.transport.close(code, reason);
-      } catch {
-        // no-op
-      }
+      } catch {}
       this.transport = null;
     }
   }
@@ -6684,9 +6580,7 @@ export class DaemonClient {
     for (const cleanup of this.transportCleanup) {
       try {
         cleanup();
-      } catch {
-        // no-op
-      }
+      } catch {}
     }
     this.transportCleanup = [];
   }
@@ -6715,9 +6609,7 @@ export class DaemonClient {
           if (this.transport === transport) this.handleTransportMessage(buffer);
           return;
         })
-        .catch(() => {
-          // Ignore failed blob decoding and allow reconnect logic to recover.
-        });
+        .catch(() => {});
       return;
     }
 
@@ -6889,7 +6781,7 @@ export class DaemonClient {
 
     if (frame.opcode === FileTransferOpcode.FileChunk) {
       // COMPAT(fileReadByteBudget): added in v0.5.0, remove after 2027-02-21 once daemon floor >= v0.5.0.
-      // Old daemons stream despite maxBytes; discard before client-side accumulation.
+
       if (transfer.maxBytes && transfer.size > transfer.maxBytes) {
         return;
       }
@@ -6967,9 +6859,7 @@ export class DaemonClient {
     for (const listener of this.connectionListeners) {
       try {
         listener(next);
-      } catch {
-        // no-op
-      }
+      } catch {}
     }
   }
 
@@ -7000,8 +6890,6 @@ export class DaemonClient {
     this.owned.disconnected();
     this.providerSnapshotUpdates.clear();
 
-    // Clear all pending waiters and queued sends since the connection was lost
-    // and responses from the previous connection will never arrive.
     this.clearWaiters(new DaemonConnectionError(reason ?? "Connection lost"));
     this.rejectPendingSendQueue(new DaemonConnectionError(reason ?? "Connection lost"));
     this.rejectPingProbe(new DaemonConnectionError(reason ?? "Connection lost"));
@@ -7148,9 +7036,7 @@ export class DaemonClient {
       for (const handler of this.rawMessageListeners) {
         try {
           handler(consumerMessage);
-        } catch {
-          // no-op
-        }
+        } catch {}
       }
     }
 
@@ -7159,9 +7045,7 @@ export class DaemonClient {
       for (const handler of handlers) {
         try {
           handler(consumerMessage);
-        } catch {
-          // no-op
-        }
+        } catch {}
       }
     }
 
@@ -7284,7 +7168,6 @@ export class DaemonClient {
     timeout = 30000,
     options?: WaitOptions,
   ): WaitHandle<T> {
-    // Capture stack trace at call site, not inside setTimeout
     const timeoutError = new DaemonConnectionError(
       `Timeout waiting for message (${timeout}ms)`,
       "DAEMON_REQUEST_TIMEOUT",
@@ -7344,7 +7227,6 @@ export class DaemonClient {
         return;
       }
 
-      // Extremely unlikely: cancel called before the Promise executor ran.
       queueMicrotask(() => {
         if (!settled && rejectFn) {
           rejectFn(error);

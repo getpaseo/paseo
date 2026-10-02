@@ -9,6 +9,8 @@ import type { DaemonPlaywrightHost } from "./verify/playwright-host.js";
 import type { EvidenceStore } from "./verify/evidence-store.js";
 import { VerifySession } from "./verify/verify-session.js";
 import {
+  handleBrowserProfileBackup,
+  handleBrowserProfilePasswords,
   handleBrowserImportCookies,
   handleBrowserImportListSources,
 } from "./browser-import/browser-import-session.js";
@@ -321,13 +323,10 @@ type ProviderSubagentManagerEvent = Extract<
   { type: "provider_subagent" }
 >["event"];
 
-// TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
-// Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
-// the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
-// Previews show two lines; the full reply stays in the timeline.
+
 const LAST_REPLY_MAX_CHARS = 600;
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -337,7 +336,7 @@ function errorToFriendlyMessage(error: unknown): string {
 
 function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boolean {
   if (!appVersion) return false;
-  // Strip prerelease suffix: "0.1.45-beta.4" -> "0.1.45"
+
   const base = appVersion.replace(/-.*$/, "");
   const parts = base.split(".").map(Number);
   const minParts = minVersion.split(".").map(Number);
@@ -400,10 +399,6 @@ type FetchAgentHistoryRequestMessage = Extract<
 >;
 type AgentDirectoryRequestMessage = FetchAgentsRequestMessage | FetchAgentHistoryRequestMessage;
 
-/**
- * Only history carries a query. The active-agents directory filters on
- * structure and never ranks, so it always reads as no query at all.
- */
 function agentDirectorySearchQuery(request: AgentDirectoryRequestMessage): string {
   if (request.type !== "fetch_agent_history_request") return "";
   return request.search?.trim() ?? "";
@@ -477,7 +472,6 @@ const nodeSessionFileSystem: SessionFileSystem = {
   },
 };
 
-// Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
@@ -489,7 +483,7 @@ export interface SessionOptions {
   clientId: string;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
-  // The app's own screens; resource policies throttle agents and scripts, not the person.
+
   interactive?: boolean;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
@@ -517,8 +511,7 @@ export interface SessionOptions {
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
-  // Injected so tests can substitute the git branch rename without module mocks;
-  // defaults to the real checkout-git implementation.
+
   renameCurrentBranch?: typeof renameCurrentBranchDefault;
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
@@ -674,11 +667,6 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
   return record.archivedAt ? "unarchived" : "existing";
 }
 
-/**
- * Session represents a single connected client session.
- * It owns all state management, orchestration logic, and message processing.
- * Session has no knowledge of WebSockets - it only emits and receives messages.
- */
 function resolveWorkspaceLabelService(
   service: WorkspaceLabelService | undefined,
 ): WorkspaceLabelService | null {
@@ -1355,8 +1343,7 @@ export class Session {
   private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
     const owner = this.delivery.begin("timelines", undefined, (id) => {
       this.timelineSubscriptions.delete(id);
-      // The client subscribes to the timelines it renders, so releasing them is
-      // the moment nobody is reading these agents any more.
+
       this.scheduleService.releaseViewedAgents(id);
       this.refreshObservationProducers();
     });
@@ -1367,7 +1354,7 @@ export class Session {
   }
 
   // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2.
-  // Remove after 2027-03-07 once the supported client floor is >= v0.8.0.
+
   private supportsTimelineItem(item: { type: string }, source?: object): boolean {
     let capability: ClientCapability;
     if (item.type === "notification") capability = CLIENT_CAPS.timelineNotifications;
@@ -1500,7 +1487,7 @@ export class Session {
       return;
     }
     // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
-    // Older clients create before subscribing and require the causal update beside the response.
+
     this.emit({
       type: "workspace_update",
       payload: {
@@ -1567,9 +1554,6 @@ export class Session {
     }
   }
 
-  /**
-   * Get the client's current activity state
-   */
   private currentClientMetadata() {
     const source = this.delivery.currentSource;
     if (!source) throw new Error("Client control has no source");
@@ -1640,17 +1624,8 @@ export class Session {
     this.emit(message);
   }
 
-  /**
-   * Send initial state to client after connection
-   */
-  public async sendInitialState(): Promise<void> {
-    // No unsolicited agent list hydration. Callers must use fetch_agents_request.
-  }
+  public async sendInitialState(): Promise<void> {}
 
-  /**
-   * Interrupt the agent's active run so the next prompt starts a fresh turn.
-   * Returns once the manager confirms the stream has been cancelled.
-   */
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
     const snapshot = this.agentManager.getAgent(agentId);
     if (!snapshot) {
@@ -1713,9 +1688,6 @@ export class Session {
     });
   }
 
-  /**
-   * Subscribe to AgentManager events and forward them to the client
-   */
   private refreshObservationProducers(): void {
     const legacy = this.delivery.hasLegacySources();
     const workspaces =
@@ -2074,7 +2046,6 @@ export class Session {
             },
           });
         } else if (event.event.type === "permission_resolved") {
-          // A provider event is not the outcome of whichever request is currently running.
           this.emitSubscribedEvent({
             type: "agent_permission_resolved",
             payload: {
@@ -2084,8 +2055,6 @@ export class Session {
             },
           });
         }
-
-        // Title updates may be applied asynchronously after agent creation.
       },
       { replayState: false },
     );
@@ -2166,8 +2135,7 @@ export class Session {
     const checkout = checkoutFromPersistedWorkspacePlacement({
       workspace,
       // COMPAT(workspacePlacementBackfill): added in v0.1.107, remove after 2027-01-15.
-      // Legacy records can lack branch and worktreeRoot because persisted registries
-      // are not migrated in place.
+
       fallbackBranch: snapshot?.git.currentBranch ?? null,
       fallbackWorktreeRoot: snapshot?.git.repoRoot,
     });
@@ -2190,9 +2158,6 @@ export class Session {
     return this.buildProjectPlacementForWorkspace(workspace, project);
   }
 
-  /**
-   * Main entry point for processing session messages
-   */
   public async handleMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     return this.delivery.request(source, msg, () => this.handleRequest(msg, source));
   }
@@ -2408,7 +2373,7 @@ export class Session {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           command: request.command,
-          // The app streams only the daemon's own browser; its local tabs never come here.
+
           hostId: DAEMON_BROWSER_HOST_ID,
         })
       : browserToolsFailure({
@@ -2416,7 +2381,9 @@ export class Session {
           code: "browser_unsupported",
           message: "Remote browser hosting is unavailable.",
         });
-    // A tab the user closes can never be finished, so its handoff ends as cancelled.
+    if (payload.ok)
+      await this.verifyHost?.autofillFromUserCommand(request.workspaceId, request.command);
+
     if (payload.ok && payload.result.command === "close_tab") {
       this.browserActivity?.control({
         workspaceId: request.workspaceId,
@@ -2806,7 +2773,7 @@ export class Session {
           source,
         );
         this.refreshObservationProducers();
-        // Late subscribers need the current state: a paused run emits nothing until resumed.
+
         if (msg.events.includes("browser.activity")) {
           for (const payload of this.browserActivity?.current() ?? []) {
             owner.emit({ type: "browser.activity", payload });
@@ -3372,6 +3339,10 @@ export class Session {
       emit: (message: SessionOutboundMessage) => this.emit(message),
     };
     switch (msg.type) {
+      case "browser.profile.backup.request":
+        return handleBrowserProfileBackup(msg, deps);
+      case "browser.profile.manage_passwords.request":
+        return handleBrowserProfilePasswords(msg, deps);
       case "browser.import.list_sources.request":
         return handleBrowserImportListSources(msg, deps);
       case "browser.import.import_cookies.request":
@@ -3597,7 +3568,6 @@ export class Session {
     }
   }
 
-  // Not a status read: the economy resource policy limits fetch_agents, and this list must stay usable.
   private async handleAgentHistoryListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.history.list.request" }>,
   ): Promise<void> {
@@ -3636,7 +3606,6 @@ export class Session {
     }
   }
 
-  /** Keeps a deleted agent's title, origin and cost findable; a failure never blocks the delete. */
   private async recordAgentTombstone(agentId: string, summary: string | null): Promise<void> {
     if (typeof this.agentStorage.writeTombstone !== "function") return;
     try {
@@ -3654,12 +3623,10 @@ export class Session {
       (await this.agentStorage.get(agentId))?.workspaceId ??
       null;
 
-    // Read while the agent still has its timeline; closing drops it.
     const tombstoneSummary = await this.agentManager
       .getLastAssistantMessage(agentId)
       .catch(() => null);
 
-    // File-backed storage still needs an early delete fence before closeAgent().
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
 
     try {
@@ -3671,8 +3638,6 @@ export class Session {
       );
     }
 
-    // Drain queued persistence from the just-closed agent before removing its
-    // durable snapshot, otherwise an in-flight background write can recreate it.
     await this.agentManager.flush();
 
     try {
@@ -4018,12 +3983,8 @@ export class Session {
         },
       });
 
-      // Emit a project.update so clients that track the project as an empty
-      // project (no workspaces yet) receive the resolved name immediately.
       await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
-      // Re-emit descriptors for every workspace under this project so the new
-      // resolved name lands in the UI immediately.
       const workspaces = await this.workspaceRegistry.list();
       const affectedWorkspaceIds = workspaces
         .filter((workspace) => workspace.projectId === existing.projectId)
@@ -4380,8 +4341,6 @@ export class Session {
     }
   }
 
-  // Clients see the change through the registry's mutation broadcast; the response only settles
-  // the request. Domain errors are the user's to read, anything else is logged.
   private workspaceTopicErrorMessage(error: unknown, requestId: string): string {
     if (error instanceof WorkspaceTopicError) return error.message;
     this.sessionLogger.error({ err: error, requestId }, "session: workspace topic request failed");
@@ -4502,9 +4461,7 @@ export class Session {
 
     try {
       const updatedAt = new Date().toISOString();
-      // The facts travel with the decision. A number the daemon cannot draw is
-      // a decision nobody can see, which is what made an attached pull request
-      // vanish on the way back from the record.
+
       const storedFacts = selectCuratedPullRequestFacts(normalized, facts);
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
@@ -4535,11 +4492,6 @@ export class Session {
     }
   }
 
-  /**
-   * The logins this host can offer a workspace. Directories already pinned by a
-   * workspace are probed too, so one that lives outside `~/.config` still shows
-   * up as the current choice instead of silently vanishing from the picker.
-   */
   private async handleForgeAccountListRequest(requestId: string): Promise<void> {
     const emit = (accounts: ForgeAccount[], error: string | null) => {
       this.emit({ type: "forge.accounts.list.response", payload: { requestId, accounts, error } });
@@ -4585,9 +4537,6 @@ export class Session {
       });
     };
 
-    // Normalize before storing so every later reader gets the same directory,
-    // and so a path we would silently ignore is rejected while the user is
-    // still looking at the field.
     const normalized = normalizeForgeConfigDir(forgeConfigDir);
     if (forgeConfigDir.trim().length > 0 && normalized === null) {
       emitResponse(false, null, "Enter an absolute directory, for example ~/.config/gh-work");
@@ -4612,9 +4561,7 @@ export class Session {
           emitResponse(false, null, "Project not found");
           return;
         }
-        // A workspace override would mask the project choice the user just
-        // made, which reads as the setting having done nothing. Choosing for
-        // the project is choosing for its workspaces.
+
         const affected = (await this.workspaceRegistry.list())
           .filter((record) => record.projectId === workspace.projectId)
           .filter((record) => record.forgeConfigDir !== null)
@@ -4700,9 +4647,6 @@ export class Session {
     }
   }
 
-  /**
-   * Handle text message to agent (with optional image attachments)
-   */
   private async handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -4739,8 +4683,7 @@ export class Session {
         prompt,
         messageId,
         runOptions,
-        // A typed or spoken message from the human answers any permission the
-        // agent is blocked on.
+
         clearPendingPermissions: true,
         logger: this.sessionLogger,
       });
@@ -4754,9 +4697,6 @@ export class Session {
     }
   }
 
-  /**
-   * Handle create agent request
-   */
   private creationUpdate(snapshot: CreationSnapshot): SessionOutboundMessage {
     return {
       type: snapshot.kind === "workspace" ? "workspace.create.update" : "agent.create.update",
@@ -5429,9 +5369,7 @@ export class Session {
         if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
           throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
         }
-        // Share the loader's per-agent in-flight operation with timeline fetches.
-        // Unarchiving publishes the record before provider resume finishes, so
-        // the agent pane can otherwise race this request and resume it twice.
+
         snapshot = await ensureAgentLoaded(agentId, {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
@@ -5685,9 +5623,6 @@ export class Session {
     return resolvedCandidate.startsWith(resolvedRoot + sep);
   }
 
-  /**
-   * Handle clearing agent attention flag
-   */
   private async handleClearAgentAttention(
     agentId: string | string[],
     requestId?: string,
@@ -5725,13 +5660,9 @@ export class Session {
       }
     } catch (error) {
       this.sessionLogger.error({ err: error, agentIds }, "Failed to clear agent attention");
-      // Don't throw - this is not critical
     }
   }
 
-  /**
-   * Handle client heartbeat for activity tracking
-   */
   private handleClientHeartbeat(msg: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -5773,18 +5704,12 @@ export class Session {
     }
   }
 
-  /**
-   * Handle push token registration
-   */
   private handleRegisterPushToken(token: string): void {
     this.currentClientMetadata().pushToken = token;
     this.pushNotifications.renew(token);
     this.sessionLogger.info("Registered push token");
   }
 
-  /**
-   * Handle list commands request for an agent
-   */
   private async handleListCommandsRequest(
     msg: Extract<SessionInboundMessage, { type: "list_commands_request" }>,
   ): Promise<void> {
@@ -5867,9 +5792,6 @@ export class Session {
     }
   }
 
-  /**
-   * Handle agent permission response from user
-   */
   private async handleAgentPermissionResponse(
     agentId: string,
     requestId: string,
@@ -5884,8 +5806,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       // COMPAT(ownedSubscriptions): added in v0.8.0, remove after 2027-03-09.
-      // Legacy clients consume the single domain resolution; modern request outcomes
-      // are independent of whether this socket (or its logical Session) observes it.
+
       if (this.delivery.isModern(this.delivery.currentSource)) {
         this.delivery.reply({
           type: "agent_permission_resolved",
@@ -6023,9 +5944,6 @@ export class Session {
     });
   }
 
-  /**
-   * Build the current agent list payload (live + persisted), optionally filtered by labels.
-   */
   private async listAgentPayloads(filter?: {
     labels?: Record<string, string>;
     includeArchived?: boolean;
@@ -6034,20 +5952,17 @@ export class Session {
     const includeArchived = filter?.includeArchived === true;
     const labelEntries = filter?.labels ? Object.entries(filter.labels) : [];
 
-    // Get live agents with session modes
     const agentSnapshots = this.agentManager.listAgents();
     const liveAgents = await Promise.all(
       agentSnapshots.map((agent) => this.buildAgentPayload(agent)),
     );
 
-    // Add persisted agents that have not been lazily initialized yet
-    // (excluding internal agents which are for ephemeral system tasks)
     const registryRecords = await this.agentStorage.list();
     const liveIds = new Set(agentSnapshots.map((a) => a.id));
     const registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds());
     const persistedAgents = registryRecords
       .filter((record) => !liveIds.has(record.id) && !record.internal)
-      // Keep raw-record filters ahead of projection; seeded homes can carry thousands of archived agents.
+
       .filter((record) => includeArchived || !record.archivedAt)
       .filter((record) => labelEntries.every(([key, value]) => record.labels?.[key] === value))
       .filter(
@@ -6064,7 +5979,6 @@ export class Session {
       agents = agents.filter((agent) => !agent.archivedAt);
     }
 
-    // Filter by labels if filter provided
     if (labelEntries.length > 0) {
       agents = agents.filter((agent) =>
         labelEntries.every(([key, value]) => agent.labels[key] === value),
@@ -6417,9 +6331,7 @@ export class Session {
       activityAt: null,
       diffStat,
       scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
-      // A workspace sitting on a plain directory gets no derived set, but what
-      // someone attached to it by hand is still its set. Leaving this out is
-      // what made an attached pull request invisible on exactly those rows.
+
       ...buildCuratedOnlyGitHubRuntime(workspace),
       ...(resolvedProjectRecord
         ? {
@@ -6447,11 +6359,6 @@ export class Session {
     };
   }
 
-  /**
-   * The set a row draws, which is the derived one with the workspace's own
-   * decisions applied. Applying them here rather than in each client is what
-   * makes a set assembled on one machine show up on the next.
-   */
   private buildWorkspaceGitHubRuntimePayload(
     snapshot: WorkspaceGitRuntimeSnapshot,
     workspace: PersistedWorkspaceRecord,
@@ -6487,9 +6394,7 @@ export class Session {
       diffStat: snapshot.git.diffStat ?? null,
       gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot, workspace),
-      // Reuse the forge already resolved on the snapshot (probe-aware; GitHub-only
-      // resolves to "github") so the sidebar/hover-card brand mark matches the
-      // status projection without a second resolve.
+
       forge: snapshot.forge.forge,
     };
   }
@@ -6569,10 +6474,6 @@ export class Session {
     return this.workspaceDirectory.buildDescriptorMap(options);
   }
 
-  // external path→workspace adapter, not ownership. Used by archive-by-path flows
-  // where the request carries a worktree path (unique to one workspace) rather
-  // than a workspaceId. This is a directory lookup for an archive target, not a
-  // status/ownership attribution.
   private async findWorkspaceIdForCwd(cwd: string): Promise<string | null> {
     const workspaces = await this.workspaceRegistry.list();
     return resolveWorkspaceIdForPath(cwd, workspaces);
@@ -6716,7 +6617,7 @@ export class Session {
 
   private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {
     // COMPAT(worktreeRestore): clients older than v0.1.105 used refresh_agent_request
-    // as their explicit recovery RPC. Remove after 2027-01-11.
+
     if (!clientUsesLegacyWorkspaceRestore(this.appVersion)) {
       return;
     }
@@ -6953,9 +6854,6 @@ export class Session {
     };
   }
 
-  // When a workspace is archived its project may have no active workspaces left.
-  // Resolve that project parent so the `remove` update can carry it, keeping the
-  // sidebar in sync without a full re-hydration.
   private async resolveProjectWithoutActiveWorkspacesForArchivedWorkspace(
     workspaceId: string,
   ): Promise<{ emptyProject: WorkspaceProjectDescriptorPayload } | null> {
@@ -6972,19 +6870,12 @@ export class Session {
   private async emitWorkspaceUpdateForTerminalContribution(
     event: TerminalWorkspaceContributionChangedEvent,
   ): Promise<void> {
-    // A terminal's activity contributes only to the workspace it carries. A
-    // terminal with no workspaceId attributes to nothing — status is per-id.
     if (!event.workspaceId) {
       return;
     }
     await this.emitWorkspaceUpdatesForWorkspaceIds([event.workspaceId]);
   }
 
-  // A git fact (branch, diff, dirty, PR) changed at `cwd`. Every workspace whose
-  // OWN cwd is this folder re-derives its git facts from that folder (id → cwd)
-  // and emits its own per-id descriptor. This is a deliberate same-folder fan,
-  // not a cwd → id ownership lookup: git never resolves which workspace owns a
-  // path. See `workspaceIdsOnCheckout`.
   private async emitWorkspaceUpdateForCwd(cwd: string, options?: {}): Promise<void> {
     if (this.workspaceUpdatesSubscriptions.size === 0) return;
     const workspaceIds = workspaceIdsOnCheckout(await this.workspaceRegistry.list(), cwd);
@@ -7452,12 +7343,6 @@ export class Session {
     );
   }
 
-  // Build the bootstrap snapshot used by `flushBootstrappedWorkspaceUpdates`
-  // to decide which pending updates to drop. Captures the status,
-  // statusEnteredAt, and activityAt (parsed to ms) for each workspace entry
-  // so a status-only change (e.g. the unmask case), a statusEnteredAt-only
-  // change (e.g. a fresh unmask time), AND a fresher activity all still
-  // ship to the client.
   private buildBootstrapSnapshot(entries: FetchWorkspacesResponseEntry[]): {
     snapshotByWorkspaceId: Map<
       string,
@@ -7531,8 +7416,7 @@ export class Session {
     workspaceId?: string,
   ): Promise<WorkspaceDescriptorPayload> {
     let creationRequest = request;
-    // Hooks belong to the operation: retries fingerprint the caller's input
-    // and must not rerun hooks or compare their potentially changing output.
+
     if (this.pluginRuntime) {
       const { type, requestId, ...input } = request;
       const transformed = await this.pluginRuntime.before("workspace.create", input);
@@ -7995,8 +7879,6 @@ export class Session {
     }
   }
 
-  // Named accessor: the workspace descriptor builder and the git-watch test both read a workspace's
-  // scripts snapshot through here; the workspace-scripts module owns the payload assembly.
   private buildWorkspaceScriptPayloadSnapshot(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord | null,
@@ -8337,9 +8219,6 @@ export class Session {
           throw new Error(`Workspace not found: ${requestedWorkspaceId}`);
         }
 
-        // Clearing attention is scoped to the workspace that OWNS the agent, by
-        // workspaceId — never by comparing cwd strings. A sibling workspace
-        // sharing the same directory keeps its own agents' attention.
         const clearableAgentIds = agents
           .filter((agent) => !agent.archivedAt)
           .filter((agent) => agent.workspaceId === workspace.workspaceId)
@@ -9175,9 +9054,6 @@ export class Session {
     }
   }
 
-  /**
-   * Emit a message to the client
-   */
   // COMPAT(explicitEventSubscriptions): added in v0.8.0, remove legacy broadcasts after 2027-03-08.
   private wantsEvent(event: SessionEventSubscription, source?: object): boolean {
     for (const subscription of this.eventSubscriptions.values()) {
@@ -9254,9 +9130,7 @@ export class Session {
     if (!this.authorization.allowsOutbound(msg)) return;
     if (this.delivery.reply(msg)) return;
     if (this.emitSubscribedEvent(msg)) return;
-    // JSON.stringify(msg) is only computed when trace is enabled — it runs for
-    // every outbound message otherwise, and trace is disabled by default.
-    // Optional-chained because test logger stubs don't implement isLevelEnabled.
+
     if (this.sessionLogger.isLevelEnabled?.("trace")) {
       this.sessionLogger.trace(
         {
@@ -9334,9 +9208,6 @@ export class Session {
     this.emit(msg);
   }
 
-  /**
-   * Clean up session resources
-   */
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
@@ -9481,7 +9352,6 @@ function legacyWantsEvent(
   }
 }
 
-/** The account a project lends its workspaces; null means it lends none. */
 function projectForgeConfigDirOf(
   project: { forgeConfigDir: string | null } | null | undefined,
 ): string | null {
