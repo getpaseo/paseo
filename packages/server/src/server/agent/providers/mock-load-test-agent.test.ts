@@ -449,6 +449,27 @@ describe("MockLoadTestAgentClient", () => {
     unsubscribe();
   });
 
+  test("holds a quiet running turn so idle-turn UI cost can be measured", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "quiet-thirty-minute-turn",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    await session.startTurn("Stay running quietly.");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // The submitted user message, then one stream event at 0, 20, 40 and 60 seconds.
+    expect(events.filter((event) => event.type === "timeline")).toHaveLength(5);
+    expect(events.map((event) => event.type)).not.toContain("turn_completed");
+    await session.interrupt();
+    unsubscribe();
+  });
+
   test("emits a settled assistant Markdown image path selected by prompt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();
