@@ -70,7 +70,7 @@ import {
 } from "~/downloads";
 import type { DesktopPlatform, MobilePlatform } from "~/platform";
 import { isMobilePlatform } from "~/platform";
-import { useRelease, useVisitorPlatform } from "~/routes/__root";
+import { useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
 import {
   ClaudeCodeIcon,
@@ -991,10 +991,10 @@ const SECONDARY_CTA_CLASS =
   "inline-flex items-center justify-center gap-2 rounded-lg border border-white/12 px-3 py-2.5 text-sm text-white hover:bg-white/10 transition-colors";
 
 function DesktopDownloadButton({ platform }: { platform: DesktopPlatform }) {
-  const download = getDesktopDownload(useRelease(), platform);
+  const download = getDesktopDownload(platform);
   const Icon = download.icon;
   return (
-    <a href={download.href} target="_blank" rel="noopener noreferrer" className={PRIMARY_CTA_CLASS}>
+    <a href={download.href} className={PRIMARY_CTA_CLASS}>
       <Icon className="h-4 w-4" />
       Download for {download.label}
     </a>

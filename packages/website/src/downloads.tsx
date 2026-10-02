@@ -27,6 +27,30 @@ export function downloadUrls(release: ReleaseAssetInfo) {
   };
 }
 
+export type DownloadAsset = keyof ReturnType<typeof downloadUrls>;
+
+const DOWNLOAD_ASSETS: ReadonlySet<string> = new Set<DownloadAsset>([
+  "macAppleSilicon",
+  "macIntel",
+  "linuxAppImage",
+  "linuxDeb",
+  "linuxRpm",
+  "windowsExeX64",
+  "windowsExeArm64",
+  "androidApk",
+]);
+
+export function isDownloadAsset(value: unknown): value is DownloadAsset {
+  return typeof value === "string" && DOWNLOAD_ASSETS.has(value);
+}
+
+/** Download buttons link here; the thanks page starts the download itself. */
+export function thanksPageHref(asset: DownloadAsset, channel?: "beta"): string {
+  const params = new URLSearchParams({ asset });
+  if (channel) params.set("channel", channel);
+  return `/download/thanks?${params}`;
+}
+
 export const appStoreUrl = "https://apps.apple.com/app/paseo-pocket-engineer/id6758887924";
 export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.paseo";
 export const webAppUrl = "https://app.paseo.sh";
@@ -37,18 +61,14 @@ export interface PrimaryDownload {
   icon: (props: React.SVGProps<SVGSVGElement>) => React.ReactElement;
 }
 
-export function getDesktopDownload(
-  release: ReleaseAssetInfo,
-  platform: DesktopPlatform,
-): PrimaryDownload {
-  const urls = downloadUrls(release);
+export function getDesktopDownload(platform: DesktopPlatform): PrimaryDownload {
   switch (platform) {
     case "windows":
-      return { label: "Windows", href: urls.windowsExeX64, icon: WindowsIcon };
+      return { label: "Windows", href: thanksPageHref("windowsExeX64"), icon: WindowsIcon };
     case "linux":
-      return { label: "Linux", href: urls.linuxAppImage, icon: LinuxIcon };
+      return { label: "Linux", href: thanksPageHref("linuxAppImage"), icon: LinuxIcon };
     case "mac":
-      return { label: "Mac", href: urls.macAppleSilicon, icon: AppleIcon };
+      return { label: "Mac", href: thanksPageHref("macAppleSilicon"), icon: AppleIcon };
   }
 }
 
