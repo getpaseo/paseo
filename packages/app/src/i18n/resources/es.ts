@@ -2495,6 +2495,13 @@ export const es: TranslationResources = {
           delete: "Eliminar habilidad",
         },
       },
+      browserTools: {
+        title: "Herramientas del navegador",
+        warning:
+          "Permite que los agentes accedan a las pestañas del navegador de Paseo y las controlen, incluido el estado de las sesiones iniciadas. Actívalo solo para agentes de confianza.",
+        updating: "Actualizando herramientas del navegador…",
+        accessibilityLabel: "Activar herramientas del navegador",
+      },
       orchestration: {
         title: "Orquestación",
         unavailable: "Conéctese a este host para administrar la orquestación",

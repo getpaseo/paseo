@@ -2450,6 +2450,13 @@ export const ko: TranslationResources = {
           delete: "스킬 삭제",
         },
       },
+      browserTools: {
+        title: "브라우저 도구",
+        warning:
+          "에이전트가 로그인된 브라우저 상태를 포함해 Paseo 브라우저 탭에 접근하고 제어할 수 있게 합니다. 신뢰하는 에이전트에만 활성화하세요.",
+        updating: "브라우저 도구 업데이트 중…",
+        accessibilityLabel: "브라우저 도구 활성화",
+      },
       orchestration: {
         title: "오케스트레이션",
         unavailable: "오케스트레이션을 관리하려면 이 호스트에 연결하세요",

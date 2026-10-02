@@ -2439,6 +2439,13 @@ export const ar: TranslationResources = {
           delete: "حذف المهارة",
         },
       },
+      browserTools: {
+        title: "أدوات المتصفح",
+        warning:
+          "يسمح للوكلاء بالوصول إلى علامات تبويب متصفح Paseo والتحكم فيها، بما في ذلك حالة تسجيل الدخول في المتصفح. فعّل هذا فقط للوكلاء الذين تثق بهم.",
+        updating: "جارٍ تحديث أدوات المتصفح…",
+        accessibilityLabel: "تفعيل أدوات المتصفح",
+      },
       orchestration: {
         title: "التنسيق",
         unavailable: "اتصل بهذا المضيف لإدارة التنسيق",

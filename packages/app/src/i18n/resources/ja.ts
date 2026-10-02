@@ -2463,6 +2463,13 @@ export const ja: TranslationResources = {
           delete: "スキルを削除",
         },
       },
+      browserTools: {
+        title: "ブラウザツール",
+        warning:
+          "エージェントが Paseo のブラウザタブにアクセスして操作できるようにします。ログイン中のブラウザの状態も含まれます。信頼できるエージェントにのみ有効にしてください。",
+        updating: "ブラウザツールを更新中…",
+        accessibilityLabel: "ブラウザツールを有効にする",
+      },
       orchestration: {
         title: "オーケストレーション",
         unavailable: "オーケストレーションを管理するにはこのホストに接続してください",

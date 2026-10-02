@@ -2477,6 +2477,13 @@ export const ptBR: TranslationResources = {
           delete: "Excluir skill",
         },
       },
+      browserTools: {
+        title: "Ferramentas do navegador",
+        warning:
+          "Permite que os agentes acessem e controlem as abas do navegador do Paseo, incluindo o estado de sessões conectadas. Ative apenas para agentes em que você confia.",
+        updating: "Atualizando ferramentas do navegador…",
+        accessibilityLabel: "Ativar ferramentas do navegador",
+      },
       orchestration: {
         title: "Orquestração",
         unavailable: "Conecte-se a este host para gerenciar a orquestração",

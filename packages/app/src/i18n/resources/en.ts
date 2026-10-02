@@ -2566,6 +2566,13 @@ export const en = {
           delete: "Delete skill",
         },
       },
+      browserTools: {
+        title: "Browser tools",
+        warning:
+          "Allow agents to access and control Paseo browser tabs, including logged-in browser state. Only enable this for agents you trust.",
+        updating: "Updating browser tools…",
+        accessibilityLabel: "Enable browser tools",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connect to this host to manage orchestration",

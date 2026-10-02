@@ -2502,6 +2502,13 @@ export const fr: TranslationResources = {
           delete: "Supprimer la compétence",
         },
       },
+      browserTools: {
+        title: "Outils du navigateur",
+        warning:
+          "Autorise les agents à accéder aux onglets du navigateur Paseo et à les contrôler, y compris l’état des sessions connectées. N’activez cette option que pour des agents de confiance.",
+        updating: "Mise à jour des outils du navigateur…",
+        accessibilityLabel: "Activer les outils du navigateur",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connectez-vous à cet hôte pour gérer l'orchestration",

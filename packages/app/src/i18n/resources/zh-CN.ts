@@ -2411,6 +2411,13 @@ export const zhCN: TranslationResources = {
           delete: "删除 skill",
         },
       },
+      browserTools: {
+        title: "浏览器工具",
+        warning:
+          "允许 Agent 访问并控制 Paseo 浏览器标签页，包括已登录的浏览器状态。仅对你信任的 Agent 启用。",
+        updating: "正在更新浏览器工具…",
+        accessibilityLabel: "启用浏览器工具",
+      },
       orchestration: {
         title: "编排",
         unavailable: "连接到这个 Host 以管理编排",
