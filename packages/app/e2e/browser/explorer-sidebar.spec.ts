@@ -77,20 +77,33 @@ async function launchExplorerPanel(
   const explorer = explorerSidebar(page);
   await explorer.getByRole("button", { name: "New tab", exact: true }).click();
   await page.getByRole("menuitem", { name: new RegExp(`^${name}`) }).click();
+  await explorer.getByRole("button", { name: "New tab", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: new RegExp(`^${name}`) })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 }
 
-async function closeExplorerFilesOnHover(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+async function closeExplorerFilesFromContextMenu(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+) {
   const explorer = explorerSidebar(page);
   const files = explorer.getByRole("button", { name: "Browse workspace files", exact: true });
-  const close = explorer.getByTestId("workspace-files-close");
-  await page.getByTestId("workspace-pane-main").hover();
-  // The shared close overlay stays mounted with zero opacity to preserve geometry.
-  await expect(close.locator("..")).toHaveCSS("opacity", "0");
   await files.hover();
-  await expect(close.locator("..")).toHaveCSS("opacity", "1");
-  await expect(close).toBeVisible();
-  await close.click();
+  await expect(explorer.getByTestId("workspace-files-close")).toHaveCount(0);
+  await explorer.getByTestId("workspace-tab-changes_tree").hover();
+  await expect(explorer.getByTestId("workspace-working-diff-close-changes_tree")).toHaveCount(0);
+  await files.click({ button: "right", position: { x: 12, y: 13 } });
+  await page.getByRole("menuitem", { name: "Close", exact: true }).click();
   await expect(files).toHaveCount(0);
+}
+
+async function expectWorkspaceCloseOnHover(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  const main = page.getByTestId("workspace-pane-main");
+  const tab = main.locator('[data-testid^="workspace-tab-"][aria-selected="true"]');
+  const close = main.getByRole("button", { name: "Close", exact: true });
+  await explorerSidebar(page).hover();
+  await expect(close.locator("..")).toHaveCSS("opacity", "0");
+  await tab.hover();
+  await expect(close.locator("..")).toHaveCSS("opacity", "1");
 }
 
 async function closeOtherExplorerTabs(page: Parameters<typeof ensureExplorerSidebar>[0]) {
@@ -107,7 +120,7 @@ async function closeOtherExplorerTabs(page: Parameters<typeof ensureExplorerSide
   await confirmation;
 }
 
-test("Explorer shares add, hover close, and pane-local context actions with workspace tabs", async ({
+test("Explorer keeps Files and Changes close actions in the context menu", async ({
   page,
 }, testInfo) => {
   const workspace = await seedWorkspace({ repoPrefix: "explorer-shared-tabs-" });
@@ -124,8 +137,14 @@ test("Explorer shares add, hover close, and pane-local context actions with work
       const menu = page.getByTestId("workspace-new-tab-menu").filter({ visible: true });
       await expect(menu).toBeVisible();
       await expect(menu.getByRole("menuitem", { name: /^Agent/ })).toHaveCount(0);
+      await expect(menu.getByRole("menuitem", { name: /^Files/ })).toHaveCount(0);
+      await expect(menu.getByRole("menuitem", { name: /^Changes/ })).toHaveCount(0);
       await expect(menu.getByText("Terminal profiles", { exact: true })).toHaveCount(0);
       await expect(menu.getByRole("menuitem", { name: /^Terminal/ })).toBeVisible();
+      const entries = await menu.getByRole("menuitem").allTextContents();
+      expect(entries.findIndex((entry) => entry.startsWith("Terminal"))).toBeLessThan(
+        entries.findIndex((entry) => entry.startsWith("Diff")),
+      );
       await page.keyboard.press("Escape");
       await main.getByTestId("workspace-new-tab-button").click();
       await expect(menu).toBeVisible();
@@ -134,8 +153,9 @@ test("Explorer shares add, hover close, and pane-local context actions with work
       await page.keyboard.press("Escape");
     });
 
-    await test.step("hover exposes X, and + restores the closed Files tab in Explorer", async () => {
-      await closeExplorerFilesOnHover(page);
+    await test.step("Files and Changes omit X, and + restores Files after context-menu close", async () => {
+      await expectWorkspaceCloseOnHover(page);
+      await closeExplorerFilesFromContextMenu(page);
       await launchExplorerPanel(page, "Files");
       await expect(
         explorer.getByRole("button", { name: "Browse workspace files", exact: true }),

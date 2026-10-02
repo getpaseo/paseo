@@ -18,7 +18,7 @@ import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
-import { panelSupportsHost, type PaneHost } from "@/panels/panel-manifest";
+import { panelCanLaunchInPane, panelSupportsHost, type PaneHost } from "@/panels/panel-manifest";
 import {
   getPanelRegistration,
   type PanelIconProps,
@@ -63,6 +63,8 @@ export interface WorkspaceTabLaunchGroup {
   accessory?: { id: string; label: string; run: () => void };
 }
 
+const EMPTY_PANE_PANEL_KINDS: readonly WorkspaceTabTarget["kind"][] = [];
+
 const NewTabLauncherContext = createContext<NewTabLauncher | null>(null);
 
 export function NewTabLauncherProvider({
@@ -96,8 +98,9 @@ export function useWorkspaceTabLaunchCatalog(input: {
   purpose: WorkspaceTabLaunchPurpose;
   host: PaneHost;
   surface: "menu" | "panel";
+  panePanelKinds?: readonly WorkspaceTabTarget["kind"][];
 }): readonly WorkspaceTabLaunchGroup[] {
-  const { serverId, purpose, host, surface } = input;
+  const { serverId, purpose, host, surface, panePanelKinds = EMPTY_PANE_PANEL_KINDS } = input;
   const { t } = useTranslation();
   const router = useRouter();
   const launcher = useContext(NewTabLauncherContext);
@@ -241,7 +244,13 @@ export function useWorkspaceTabLaunchCatalog(input: {
         },
       });
     }
-    return groups;
+    if (surface !== "menu") return groups;
+    return groups.flatMap((group) => {
+      const items = group.items.filter((item) =>
+        panelCanLaunchInPane(item.panelKind, panePanelKinds),
+      );
+      return items.length > 0 ? [{ ...group, items }] : [];
+    });
   }, [
     config?.terminalProfiles,
     editTerminalProfiles,
@@ -251,6 +260,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     purpose,
     host,
     surface,
+    panePanelKinds,
     serverId,
     t,
   ]);

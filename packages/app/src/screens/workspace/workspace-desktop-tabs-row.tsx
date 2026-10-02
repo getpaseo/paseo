@@ -211,7 +211,10 @@ function TabLabelMeasurement({
   );
 }
 
+type PanePanelKinds = readonly WorkspaceTabDescriptor["kind"][];
+
 interface WorkspaceNewTabButtonProps {
+  panePanelKinds: PanePanelKinds;
   host: PaneHost;
   launchPurpose: WorkspaceTabLaunchPurpose;
   serverId: string;
@@ -221,6 +224,7 @@ interface WorkspaceNewTabButtonProps {
 }
 
 function WorkspaceNewTabButton({
+  panePanelKinds,
   host,
   launchPurpose,
   serverId,
@@ -245,6 +249,7 @@ function WorkspaceNewTabButton({
         serverId={serverId}
         purpose={launchPurpose}
         host={host}
+        panePanelKinds={panePanelKinds}
         paneId={paneId}
       />
     </DropdownMenu>
@@ -254,6 +259,7 @@ function WorkspaceNewTabButton({
 }
 
 function WorkspacePaneToolbarActions({
+  panePanelKinds,
   host,
   launchPurpose,
   showNewTabButton,
@@ -267,6 +273,7 @@ function WorkspacePaneToolbarActions({
   onSplitDown,
   onTogglePaneMaximized,
 }: {
+  panePanelKinds: PanePanelKinds;
   host: PaneHost;
   launchPurpose: WorkspaceTabLaunchPurpose;
   showNewTabButton: boolean;
@@ -307,6 +314,7 @@ function WorkspacePaneToolbarActions({
     <ToolbarControls style={styles.paneSplitActions}>
       {showNewTabButton ? (
         <WorkspaceNewTabButton
+          panePanelKinds={panePanelKinds}
           host={host}
           launchPurpose={launchPurpose}
           placement="toolbar"
@@ -1077,6 +1085,8 @@ function ResolvedWorkspaceDesktopTabsRow({
     [exitFocusModeWidth, focusModeEnabled, showPaneMaximizeAction, showPaneSplitActions],
   );
 
+  const panePanelKinds = useMemo(() => tabs.map(({ tab }) => tab.kind), [tabs]);
+
   const fallbackTabLabels = useMemo(
     () => ({
       newTab: t("workspace.tabs.actions.newTab"),
@@ -1251,7 +1261,8 @@ function ResolvedWorkspaceDesktopTabsRow({
       dragHandleProps,
       isActive,
     }: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => {
-      const shouldShowCloseButton = layout.closeButtonPolicy === "all";
+      const shouldShowCloseButton =
+        layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
       const layoutItem = layout.items[index] ?? null;
       const resolvedTabWidth = layoutItem?.width ?? 150;
       const showLabel = layoutItem?.showLabel ?? true;
@@ -1378,6 +1389,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           />
           {!layout.requiresHorizontalScrollFallback ? (
             <WorkspaceNewTabButton
+              panePanelKinds={panePanelKinds}
               host={host}
               launchPurpose={launchPurpose}
               placement="inline"
@@ -1396,6 +1408,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         />
       </View>
       <WorkspacePaneToolbarActions
+        panePanelKinds={panePanelKinds}
         host={host}
         launchPurpose={launchPurpose}
         showNewTabButton={layout.requiresHorizontalScrollFallback}
