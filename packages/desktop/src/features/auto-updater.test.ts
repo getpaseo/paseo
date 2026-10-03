@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { UUID } from "builder-util-runtime";
+import { CancellationToken, UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
 const { autoUpdaterMock } = vi.hoisted(() => {
@@ -40,6 +40,7 @@ import {
   bucketFromStagingUserId,
   checkForAppUpdate,
   createAppUpdateLifecycleLogger,
+  downloadAndInstallUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -139,6 +140,37 @@ describe("checkForAppUpdate", () => {
       isSilent: false,
       isForceRunAfter: true,
     });
+  });
+});
+
+describe("downloadAndInstallUpdate", () => {
+  it("cancels the updater download when the install signal aborts", async () => {
+    const token = new CancellationToken();
+    let passed: CancellationToken | undefined;
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: {
+        version: "9.9.9",
+        releaseDate: "2026-04-28T00:00:00.000Z",
+        rolloutHours: 24,
+      },
+      cancellationToken: token,
+    });
+    autoUpdaterMock.downloadUpdate.mockImplementationOnce((candidate: CancellationToken) => {
+      passed = candidate;
+      return new Promise(() => undefined);
+    });
+    const controller = new AbortController();
+    const pending = downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable", signal: controller.signal },
+      async () => true,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(passed).toBe(token);
+    expect(token.cancelled).toBe(true);
   });
 });
 

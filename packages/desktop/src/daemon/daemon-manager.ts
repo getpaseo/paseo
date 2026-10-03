@@ -421,7 +421,9 @@ async function waitForAgentsToStop(signal: AbortSignal): Promise<boolean> {
         onlyIfIdle: true,
         signal,
       });
-      return true;
+      // Cancel can arrive while this stop is still finishing. A finished stop
+      // must not install and restart the app.
+      return !signal.aborted;
     } catch (error) {
       if (signal.aborted) return false;
       if (!(error instanceof AgentsBusyError)) throw error;

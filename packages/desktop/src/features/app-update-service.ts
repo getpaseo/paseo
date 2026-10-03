@@ -52,6 +52,7 @@ export interface AppUpdateRuntime {
   configure(input: AppUpdateRuntimeConfiguration): void;
   checkForUpdates(): Promise<RuntimeUpdateCheckResult | null>;
   downloadUpdate(targetVersion: string): Promise<unknown>;
+  cancelDownload(): void;
   quitAndInstall(input: AppUpdateInstallRequest): void;
 }
 
@@ -153,10 +154,12 @@ function whenAborted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
       (value) => {
         signal.removeEventListener("abort", onAbort);
         resolve(value);
+        return undefined;
       },
       (error) => {
         signal.removeEventListener("abort", onAbort);
         reject(error);
+        return undefined;
       },
     );
   });
@@ -387,7 +390,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
-    if (signal?.aborted) return cancelledInstallResult(currentVersion);
+    if (signal?.aborted) {
+      deps.runtime.cancelDownload();
+      return cancelledInstallResult(currentVersion);
+    }
     return installCachedUpdate(currentVersion, {
       onBeforeQuit,
       restart: true,
@@ -396,7 +402,17 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     });
   }
 
-  async function ensureUpdateDownloaded(
+  function listenForDownloadAbort(
+    signal: AbortSignal | undefined,
+    cancelDownload: boolean,
+  ): () => void {
+    if (!signal || !cancelDownload) return () => undefined;
+    const stopDownload = () => deps.runtime.cancelDownload();
+    signal.addEventListener("abort", stopDownload);
+    return () => signal.removeEventListener("abort", stopDownload);
+  }
+
+  async function downloadReadyUpdate(
     readyVersion: string,
     signal?: AbortSignal,
   ): Promise<"ready" | "aborted" | "superseded"> {
@@ -432,6 +448,21 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     return signal?.aborted ? "aborted" : "ready";
   }
 
+  async function ensureUpdateDownloaded(
+    readyVersion: string,
+    signal?: AbortSignal,
+    cancelDownloadOnAbort = false,
+  ): Promise<"ready" | "aborted" | "superseded"> {
+    // whenAborted only stops waiting. A user cancel also has to stop the download.
+    const stopListening = listenForDownloadAbort(signal, cancelDownloadOnAbort);
+    try {
+      const result = await downloadReadyUpdate(readyVersion, signal);
+      return signal?.aborted ? "aborted" : result;
+    } finally {
+      stopListening();
+    }
+  }
+
   async function installCachedUpdate(
     currentVersion: string,
     {
@@ -456,6 +487,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     const readyVersion = cachedUpdateInfo.version;
     if (signal?.aborted) {
+      if (cancelOnAbort) deps.runtime.cancelDownload();
       return cancelOnAbort
         ? cancelledInstallResult(currentVersion)
         : buildDeferredInstallResult(currentVersion);
@@ -478,7 +510,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     try {
-      const preparation = await ensureUpdateDownloaded(readyVersion, signal);
+      const preparation = await ensureUpdateDownloaded(
+        readyVersion,
+        signal,
+        cancelOnAbort === true,
+      );
       if (preparation === "aborted") {
         return cancelOnAbort
           ? cancelledInstallResult(currentVersion)
