@@ -102,11 +102,35 @@ MCP tool as `create_agent({ internal: true })`. The contract:
 - A one-shot helper can finish and auto-archive before its creator's `waitForFinish` arrives, so the
   archived snapshot and last message stay readable by exact id for ten minutes after archive.
   Storage plays that role for public agents.
+- Hidden means opt-in, not unreachable. `fetch_agents_request` with `filter.includeInternal`
+  returns live internal agents and, with `includeArchived`, the retained archived ones; the
+  snapshot carries `internal: true`. The CLI exposes it as `paseo ls --internal`. The app never
+  passes the flag, so a "show internal agents" setting is one filter field away.
 
 The flag lives on `create_agent_request`, not in `AgentSessionConfig` on the wire, because that
 config schema is reused for update overrides. The `agent.create` transform hook cannot set it
 either: the manager re-pins `internal` from the original request after the hook runs, so a plugin
 cannot hide an agent another client asked for. Clients gate on `features.internalAgents`.
+
+### Internal workspaces
+
+`workspace.create.request` takes `internal: true` as well (`workspaces.create({ internal: true })`,
+`paseo workspace create --internal`, `create_workspace({ internal: true })`). The record is
+persisted like any workspace, with `internal: true`, so it survives a restart and archives
+normally. What changes:
+
+- `fetch_workspaces_request` and workspace update subscriptions leave it out unless
+  `filter.includeInternal` is set; sequenced sync reads carry no filter and never include it.
+  A project whose only workspaces are internal reads as empty to a caller that did not opt in.
+- Opening a directory by path (`open_project`, `paseo run` without `--workspace`) never adopts an
+  internal workspace; it mints a visible one beside it.
+- Plugin `workspace.create`, `workspace.created`, and `workspace.archived` hooks skip it.
+- Every agent created inside it is internal. `AgentManager` applies this from the workspace id on
+  every create path (session, MCP, schedule, hub) before the plugin hook, so a creator cannot opt
+  an agent out. `paseo run --internal` with `--new-workspace` creates the workspace internal too.
+
+Archive and shutdown enumerate agents with `includeInternal` so nothing inside an internal
+workspace outlives it. Clients gate on `features.internalWorkspaces`.
 
 ## Archive
 

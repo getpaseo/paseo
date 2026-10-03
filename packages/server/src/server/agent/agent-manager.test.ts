@@ -7687,6 +7687,82 @@ test("listAgents excludes internal agents", async () => {
   const agents = manager.listAgents();
   expect(agents).toHaveLength(1);
   expect(agents[0]?.config.title).toBe("Normal Agent");
+
+  // Opting in lists both, and the internal one is marked.
+  const everyAgent = manager.listAgents({ includeInternal: true });
+  expect(everyAgent.map((agent) => [agent.config.title, agent.internal])).toEqual([
+    ["Normal Agent", false],
+    ["Internal Agent", true],
+  ]);
+});
+
+test("createAgent inside an internal workspace makes the agent internal and skips persistence", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000115";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const beforeHookCalls: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+    isInternalWorkspace: async (workspaceId) => workspaceId === "wks_internal",
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) => {
+        beforeHookCalls.push(name);
+        return request;
+      },
+    },
+  });
+
+  await manager.createAgent({ provider: "codex", cwd: workdir, title: "Helper" }, undefined, {
+    workspaceId: "wks_internal",
+  });
+
+  expect(manager.getAgent(agentId)?.internal).toBe(true);
+  expect(manager.listAgents()).toEqual([]);
+  expect(await storage.get(agentId)).toBeNull();
+  // The create hook is skipped like any internal agent; launch hooks still run.
+  expect(beforeHookCalls).not.toContain("agent.create");
+});
+
+test("global subscribers receive internal agent events only when they opt in", async () => {
+  const internalAgentId = "00000000-0000-4000-8000-000000000116";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => internalAgentId,
+  });
+  await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Internal Agent", internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  const hidden: string[] = [];
+  const optedIn: string[] = [];
+  const unsubscribeHidden = manager.subscribe((event) => {
+    if (event.type === "agent_state") hidden.push(event.agent.id);
+  });
+  const unsubscribeOptedIn = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") optedIn.push(event.agent.id);
+    },
+    { includeInternal: true },
+  );
+
+  expect(hidden).toEqual([]);
+  expect(optedIn).toEqual([internalAgentId]);
+
+  await manager.archiveAgent(internalAgentId);
+  expect(hidden).toEqual([]);
+  expect(optedIn.length).toBeGreaterThan(1);
+  unsubscribeHidden();
+  unsubscribeOptedIn();
 });
 
 test("getAgent returns internal agents by ID", async () => {

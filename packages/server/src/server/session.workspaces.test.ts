@@ -9514,6 +9514,50 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   });
 });
 
+test("workspace.create.request with internal persists a hidden workspace that only opted-in listings show", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, PersistedWorkspaceRecord>();
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const workspace = record as PersistedWorkspaceRecord;
+    workspaces.set(workspace.workspaceId, workspace);
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-internal-workspace",
+    internal: true,
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  const response = findByType(emitted, "workspace.create.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-internal-workspace",
+    error: null,
+    workspace: { internal: true },
+  });
+  const workspaceId = response?.payload.workspace?.id as string;
+  expect(workspaces.get(workspaceId)?.internal).toBe(true);
+  // No subscription exists, and the legacy causal update stays quiet for a hidden workspace.
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
+
+  const hidden = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "req-list-hidden",
+  });
+  expect(hidden.entries).toEqual([]);
+
+  const shown = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "req-list-shown",
+    filter: { includeInternal: true },
+  });
+  expect(shown.entries.map((entry) => [entry.id, entry.internal])).toEqual([[workspaceId, true]]);
+});
+
 test("workspace.create.request reports an unknown explicit project", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });

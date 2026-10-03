@@ -136,6 +136,10 @@ export function matchesAgentUpdatesFilter(input: {
     return false;
   }
 
+  if (agent.internal && filter?.includeInternal !== true) {
+    return false;
+  }
+
   if (filter && !agentThinkingOptionMatchesFilter(agent, filter)) {
     return false;
   }

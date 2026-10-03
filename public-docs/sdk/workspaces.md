@@ -52,6 +52,8 @@ const workspace = await client.workspaces.create({
 
 You can pass `projectId` in either source when you already have one. Most integrations should omit it; the daemon finds or creates the project from the directory.
 
+Pass `internal: true` for a workspace that only your integration should see. It stays out of `list()`, workspace updates, and plugin hooks, and every agent created inside it is an [internal agent](./agents.md#run-an-internal-helper). The handle, `ref(id).refresh()`, and `archive()` still work on it. Older hosts reject the call with "Update the host to use internal workspaces."; check `features.internalWorkspaces` in `server_info` when you need to degrade.
+
 ## Start an agent in a workspace
 
 Create through the workspace handle:
@@ -115,6 +117,8 @@ do {
   cursor = page.pageInfo.nextCursor ?? undefined;
 } while (cursor);
 ```
+
+Internal workspaces are left out unless the filter sets `includeInternal: true`; entries that are internal carry `internal: true`. The same flag on `client.agents.list({ filter: { includeInternal: true } })` includes internal agents.
 
 ## Refresh and archive a handle
 

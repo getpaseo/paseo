@@ -466,7 +466,7 @@ export async function archiveWorkspaceContents(
   const archivedAgents = new Set<string>();
 
   const liveAgents = dependencies.agentManager
-    .listAgents()
+    .listAgents({ includeInternal: true })
     .filter((agent) => agent.workspaceId === workspaceId);
   for (const agent of liveAgents) {
     archivedAgents.add(agent.id);

@@ -3170,6 +3170,86 @@ test("rejects an internal create before sending when the host predates internal 
   expect(mock.sent).toHaveLength(0);
 });
 
+test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  // workspaceMultiplicity keeps the fetch on the real workspace directory RPC.
+  mock.triggerOpen({
+    features: { workspaceMultiplicity: true, internalAgents: true, internalWorkspaces: true },
+  });
+  await connectPromise;
+
+  void client
+    .createWorkspace({ source: { kind: "directory", path: "/tmp/project" }, internal: true })
+    .catch(() => undefined);
+  void client.fetchWorkspaces({ filter: { includeInternal: true } }).catch(() => undefined);
+  void client.fetchAgents({ filter: { includeInternal: true } }).catch(() => undefined);
+
+  expect(mock.sent.map((frame) => parseSentFrame(frame))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "workspace.create.request", internal: true }),
+      expect.objectContaining({
+        type: "fetch_workspaces_request",
+        filter: { includeInternal: true },
+      }),
+      expect.objectContaining({ type: "fetch_agents_request", filter: { includeInternal: true } }),
+    ]),
+  );
+});
+
+test("rejects internal workspace creation and internal listings before sending on older hosts", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { internalAgents: true } });
+  await connectPromise;
+
+  await expect(
+    client.createWorkspace({ source: { kind: "directory", path: "/tmp/project" }, internal: true }),
+  ).rejects.toThrow("Update the host to use internal workspaces.");
+  await expect(client.fetchWorkspaces({ filter: { includeInternal: true } })).rejects.toThrow(
+    "Update the host to use internal workspaces.",
+  );
+  expect(mock.sent).toHaveLength(0);
+
+  // Agent listings gate on the older internalAgents feature.
+  const olderMock = createMockTransport();
+  const olderClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => olderMock.transport,
+  });
+  clients.push(olderClient);
+  const olderConnect = olderClient.connect();
+  olderMock.triggerOpen({ features: {} });
+  await olderConnect;
+  await expect(olderClient.fetchAgents({ filter: { includeInternal: true } })).rejects.toThrow(
+    "Update the host to create internal agents.",
+  );
+  expect(olderMock.sent).toHaveLength(0);
+});
+
 test("sends structured attachments with create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
