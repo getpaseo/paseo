@@ -1,0 +1,33 @@
+=== flutter doctor ===
+Doctor summary (to see all details, run flutter doctor -v):
+[✓] Flutter (Channel stable, 3.47.6, on Ubuntu 22.04.5 LTS 6.8.0-138-generic, locale en_US.UTF-8)
+[✓] Android toolchain - develop for Android devices (Android SDK version 36.0.0)
+    ! Multiple adb binaries found. This can cause conflicts and device detection issues:
+        - /home/admin/Android/Sdk/platform-tools/adb
+        - /usr/lib/android-sdk/platform-tools/adb
+[✓] Chrome - develop for the web
+[✗] Linux toolchain - develop for Linux desktop
+    ✗ clang++ is required for Linux development.
+      It is likely available from your distribution (e.g.: apt install clang), or can be downloaded from https://releases.llvm.org/
+    ✗ CMake is required for Linux development.
+      It is likely available from your distribution (e.g.: apt install cmake), or can be downloaded from https://cmake.org/download/
+[✓] Connected device (3 available)
+[✓] Network resources
+
+! Doctor found issues in 1 category.
+doctor-exit=0
+
+=== flutter devices ===
+Found 3 connected devices:
+  Pixel 7 Pro (mobile) • 28251FDH3003RS • android-arm64  • Android 16 (API 36)
+  Linux (desktop)      • linux          • linux-x64      • Ubuntu 22.04.5 LTS 6.8.0-138-generic
+  Chrome (web)         • chrome         • web-javascript • Google Chrome 149.0.7827.155
+
+Run "flutter emulators" to list and start any available device emulators.
+
+If you expected another device to be detected, please run "flutter doctor" to diagnose potential issues. You may also try increasing the time to wait for connected devices with the "--device-timeout" flag. Visit https://flutter.dev/setup/ for troubleshooting tips.
+
+=== adb devices ===
+List of devices attached
+28251FDH3003RS         device usb:2-7 product:cheetah model:Pixel_7_Pro device:cheetah transport_id:1
+

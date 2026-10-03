@@ -1,0 +1,2 @@
+PASS: 20 reference calendar cases (not native platform tests).
+schedule-exit=0

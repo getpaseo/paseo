@@ -1,0 +1,55 @@
+$ ssh macbook 'sw_vers -productName; sw_vers -productVersion; sw_vers -buildVersion; xcodebuild -version; xcrun --show-sdk-version --sdk iphoneos; ls -d ~/Library/Application\ Support/Google/Chrome/Default; which flutter node; echo done'
+macOS
+27.0
+26A428
+Xcode 27.0
+Build version 27A266a
+27.0
+/Users/mau/Library/Application Support/Google/Chrome/Default
+flutter not found
+node not found
+done
+(Chrome profile: directory presence only. No profile content read, no cookies/sessions/keys extracted.)
+
+$ ssh macbook 'ls -l ~/.appstoreconnect/private_keys/'
+total 8
+-rw-------@ 1 mau  staff  257  8 Sep. 23:03 AuthKey_9N9APUZP88.p8
+(Key file name only. Key material never printed, copied, or moved. 0600.)
+
+$ ssh macbook 'ls ~/.appstoreconnect/ ; grep -rln "9N9APUZP88" ~/Documents ~/.appstoreconnect ~/fastlane ~/workspace ~/projects /tmp | grep -v "\.p8$" ; echo "(search done)"'
+total 0
+drwxr-xr-x@  3 mau  staff  96  8 Sep. 23:03 .
+drwxr-x---+ 158 mau  staff  5056  3 Okt. 15:53 ..
+drwx------@  3 mau  staff    96  8 Sep. 23:03 private_keys
+(search done)
+(No other file references the Key ID: no Issuer ID discoverable on the Mac.
+Issuer ID must come from App Store Connect → Users and Access → Integrations → Team Keys.)
+
+$ ssh macbook 'grep -i -m5 "issuer" ~/Documents/Second\ Brain/20\ Projects/Private/A11\ Portal-Inventur\ Breathe\ and\ Pray.md; echo ---; which git python3 openssl curl; python3 --version; ls -d ~/flutter-sdk || echo no-flutter-sdk'
+---
+/usr/bin/git
+/usr/bin/python3
+/usr/bin/openssl
+/usr/bin/python3 --version → Python 3.9.6
+no-flutter-sdk
+(No issuer match in that note. The note documents the Breathe-and-Pray app and is
+explicitly NOT used as a source for Kin IDs.)
+
+$ ssh macbook 'uname -m; df -h ~ | tail -n 1'
+arm64
+/dev/disk3s5   926Gi   502Gi   398Gi    56%    ...    /System/Volumes/Data
+
+Flutter 3.47.6 macos arm64 (from official release manifest https://storage.googleapis.com/flutter_infra_release/releases/releases_macos.json):
+stable 3.47.6 3.13.5 stable/macos/flutter_macos_arm64_3.47.6-stable.zip
+sha256 a1946d3b6b3de15ce247dc89649df9035ce29e6b4e7ebe91919a25890ea2e79a
+
+$ ssh macbook 'nohup sh -c "curl -sS -C - -o /tmp/flutter-mac.zip <url> && shasum -a 256 /tmp/flutter-mac.zip > /tmp/flutter-dl.done" &'
+Download of the SDK tarball to /tmp/flutter-mac.zip started (resume-capable),
+integrity check against the manifest sha256 above on completion.
+Bootstrap tree transferred separately:
+$ git archive 71482e9 apps/mobile | ssh macbook 'rm -rf /tmp/kin-ios-check && mkdir -p /tmp/kin-ios-check && tar -x -C /tmp/kin-ios-check'
+→ /tmp/kin-ios-check/apps/mobile/{ios,android,lib,...} present (184320 bytes archived).
+
+ASC API status: BLOCKED on exactly one fact — the Issuer ID (UUID). Private key
+exists with correct restrictive permissions and was never read. No JWT minted,
+no API call made, nothing created/renamed/deleted in any portal.
