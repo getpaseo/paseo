@@ -2357,6 +2357,11 @@ Put `--host <url>` before a management command when the target is not the CLI's 
 never deletes a directory source; it deletes managed files for Git and npm sources. The install-time
 `--id` is the runtime ID and allows the same directory or repository to be installed more than once.
 
+`remove` keeps saved settings in `$PASEO_HOME/plugin-settings/<id>`. Reinstalling with the same runtime
+ID restores those settings, including when the source path changes. To permanently discard them,
+remove the plugin first, then delete that settings directory on the daemon host. A different runtime
+ID has its own settings.
+
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
 
 Most plugins should omit `build`. Use it only when the staged checkout must install a dependency

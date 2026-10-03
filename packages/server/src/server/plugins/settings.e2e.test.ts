@@ -1,5 +1,5 @@
 import { resolveDaemonVersion } from "../daemon-version.js";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
@@ -82,7 +82,8 @@ export default function(server) {
 }, 60_000);
 
 test("two clients share settings, observe changes, and preserve values through plugin lifecycle", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "settings-plugin-"));
+  const root = await mkdtemp(path.join(tmpdir(), "settings-plugin-"));
+  const directory = path.join(root, "plugin");
   const daemon = await createTestPaseoDaemon();
   const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
   const second = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
@@ -101,6 +102,7 @@ test("two clients share settings, observe changes, and preserve values through p
     rpc.read.output.parse(await client.invokePluginRpc(pluginId, rpc.read.name, {}));
   const changed: string[] = [];
   try {
+    await mkdir(directory);
     await writeFile(
       path.join(directory, "paseo-plugin.json"),
       JSON.stringify({
@@ -175,16 +177,33 @@ export default function(server) {
     expect(await read(first)).toMatchObject({ values: { enabled: false } });
     await first.installDirectoryPlugin(directory, "other-installation");
     expect(await read(first, "other-installation")).toMatchObject({ values: { enabled: true } });
+    const persisted = await read(first);
+    const settingsFile = path.join(
+      daemon.paseoHome,
+      "plugin-settings",
+      "settings-test",
+      "display.json",
+    );
+    const savedSettings = await readFile(settingsFile, "utf8");
     await first.removePlugin("settings-test");
+    expect(await readFile(settingsFile, "utf8")).toBe(savedSettings);
+    expect(await read(first, "other-installation")).toMatchObject({ values: { enabled: true } });
     await first.installDirectoryPlugin(directory);
-    expect(await read(first)).toMatchObject({ values: { enabled: true } });
+    expect(await read(first)).toEqual(persisted);
+    await first.removePlugin("settings-test");
+    const relocated = path.join(root, "relocated");
+    await rename(directory, relocated);
+    await first.installDirectoryPlugin(relocated);
+    expect(await read(first)).toEqual(persisted);
   } catch (error) {
-    console.error(await first.getPluginLogs("settings-test"));
+    console.error(
+      await first.getPluginLogs("settings-test").catch((logError: unknown) => logError),
+    );
     throw error;
   } finally {
     await first.close();
     await second.close();
     await daemon.close();
-    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 }, 60_000);
