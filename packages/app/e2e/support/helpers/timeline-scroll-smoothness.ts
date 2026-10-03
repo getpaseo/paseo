@@ -278,12 +278,12 @@ export function findScrollJumps(frames: ScrollFrame[]) {
     if (!previous?.anchor) return [];
     // Wheel input can move the reading line onto an image before it expands.
     // Follow that intended row, not text now below the image.
-    const inputDelta = current.wheelTotal - previous.wheelTotal;
-    const availableScroll = Math.min(inputDelta, previous.scrollTop);
+    const recent = frames.findLast((frame) => frame.at <= previous.at - 100);
+    const wheelBudget = current.wheelTotal - (recent?.wheelTotal ?? 0);
+    const availableScroll = Math.min(wheelBudget, previous.scrollTop);
     const readingLine = 8 - availableScroll;
     const currentRows = new Map(current.rows.map((row) => [row.id, row]));
     const intendedRow = previous.rows.find((row) => row.top + row.height > readingLine);
-    const intendedHeight = intendedRow && currentRows.get(intendedRow.id)?.height;
     const anchor = previous.anchor;
     const before = currentRows.has(anchor)
       ? previous.rows.find((row) => row.id === anchor)!
@@ -298,18 +298,20 @@ export function findScrollJumps(frames: ScrollFrame[]) {
     // A busy main thread can deliver wheel movement hundreds of milliseconds
     // after its event. Only assert idle stability after the driver stops input.
     const idle = current.inputFinishedAt !== null && previous.at - current.inputFinishedAt > 250;
-    const recent = frames.findLast((frame) => frame.at <= previous.at - 100);
-    const wheelBudget = current.wheelTotal - (recent?.wheelTotal ?? 0);
-    // Growth displaces only later rows. It never grants extra movement to the
-    // image itself, and its top must still follow the input budget.
-    const enteredRowGrowth =
-      inputDelta > 0 &&
+    // Wheel events can precede their scroll update. Use the same recent input
+    // budget for the intended reading row and displacement checks. Growth below
+    // that new reader can move the old anchor without moving the reading line.
+    const readerFollowsInput =
       intendedRow &&
-      intendedHeight !== undefined &&
-      before.top >= intendedRow.top + intendedRow.height &&
-      Math.abs(currentRows.get(intendedRow.id)!.top - intendedRow.top - availableScroll) <= 32
-        ? Math.max(0, intendedHeight - intendedRow.height)
-        : 0;
+      currentRows.has(intendedRow.id) &&
+      Math.abs(currentRows.get(intendedRow.id)!.top - intendedRow.top - availableScroll) <= 32;
+    const enteredRowGrowth = readerFollowsInput
+      ? previous.rows.reduce((growth, row) => {
+          if (row.top < intendedRow.top || row.top >= before.top) return growth;
+          const height = currentRows.get(row.id)?.height ?? row.height;
+          return growth + Math.max(0, height - row.height);
+        }, 0)
+      : 0;
     const excessForward = movement > wheelBudget + enteredRowGrowth + 32;
     // Upward wheel input moves the same text DOWN the viewport. A negative move
     // is a reversal, independent of legitimate scrollTop compensation on prepend.
