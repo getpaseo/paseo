@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
@@ -1666,6 +1668,145 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  test("refreshes descriptors after append, rewrite, replacement, and deletion", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-cache-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "changing-transcript");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "changing.jsonl");
+      const initial = `${JSON.stringify({
+        type: "user",
+        sessionId: "changing-session",
+        cwd: "/changing-project",
+        message: { content: "First prompt" },
+      })}\n`;
+      function title(customTitle: string): string {
+        return `${JSON.stringify({ type: "custom-title", customTitle })}\n`;
+      }
+      await fs.writeFile(sessionFile, initial + title("First title"));
+      const timestamp = new Date("2026-06-01T12:00:00.000Z");
+      await fs.utimes(sessionFile, timestamp, timestamp);
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      const first = await client.listImportableSessions({ limit: 1 });
+      expect(first.map((session) => session.title)).toEqual(["First title"]);
+      // Callers must not be able to mutate a cached descriptor, including its Date.
+      first[0]!.title = "Changed by caller";
+      first[0]!.lastActivityAt.setTime(0);
+      const repeated = await Promise.all([
+        client.listImportableSessions({ limit: 1 }),
+        client.listImportableSessions({ limit: 1 }),
+      ]);
+      expect(repeated.map((sessions) => [sessions[0]!.title, sessions[0]!.lastActivityAt])).toEqual(
+        [
+          ["First title", timestamp],
+          ["First title", timestamp],
+        ],
+      );
+
+      await fs.appendFile(sessionFile, title("After append"));
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["After append"]);
+
+      // Same-length rewrites with a restored mtime still invalidate the descriptor.
+      await fs.writeFile(sessionFile, initial + title("Other title"));
+      await fs.utimes(sessionFile, timestamp, timestamp);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Other title"]);
+
+      const replacement = path.join(projectDir, "replacement.tmp");
+      await fs.writeFile(replacement, initial + title("Final title"));
+      await fs.utimes(replacement, timestamp, timestamp);
+      await fs.rename(replacement, sessionFile);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Final title"]);
+
+      await fs.unlink(sessionFile);
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers a transcript larger than the available heap", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-heap-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "large-transcript");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "large.jsonl");
+      const transcript = await fs.open(sessionFile, "w");
+      try {
+        await transcript.writeFile(
+          `${JSON.stringify({
+            type: "user",
+            sessionId: "large-session",
+            cwd: "/large-project",
+            message: { content: "First prompt" },
+          })}\r\n`,
+        );
+        const block = `${JSON.stringify({ type: "assistant", text: "x".repeat(1024) })}\n`.repeat(
+          1024,
+        );
+        for (let index = 0; index < 128; index += 1) {
+          await transcript.writeFile(block);
+        }
+        // A malformed record must not hide the final unterminated record.
+        await transcript.writeFile(
+          `incomplete json\n${JSON.stringify({
+            type: "user",
+            message: { content: "Last prompt 🐢" },
+          })}`,
+        );
+      } finally {
+        await transcript.close();
+      }
+
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          "--max-old-space-size=96",
+          "--import",
+          import.meta.resolve("tsx"),
+          "--input-type=module",
+          "--eval",
+          `
+            import { deepStrictEqual } from "node:assert";
+            import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+            import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+            const client = new ClaudeAgentClient({
+              logger: pino({ level: "silent" }),
+              runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
+            });
+            const listings = await Promise.all(Array.from({ length: 4 }, () => client.listImportableSessions({ limit: 1 })));
+            const sessions = listings[0];
+            for (const listing of listings) deepStrictEqual(listing, sessions);
+            console.log(JSON.stringify(sessions));
+          `,
+        ],
+        { timeout: 20_000 },
+      );
+
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          providerHandleId: "large-session",
+          cwd: "/large-project",
+          title: "First prompt",
+          firstPromptPreview: "First prompt",
+          lastPromptPreview: "Last prompt 🐢",
+          lastActivityAt: (await fs.stat(sessionFile)).mtime.toISOString(),
+        },
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("uses the latest native custom title and leaves fixture mtimes unchanged", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
