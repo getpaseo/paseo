@@ -5,6 +5,7 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
+  resolveSettingsDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
@@ -88,6 +89,13 @@ describe("desktop sidebar layout", () => {
         viewportWidth: 751,
       }),
     ).toBe(false);
+  });
+
+  it("narrows the settings sidebar so the detail pane keeps its 400px target", () => {
+    expect(resolveSettingsDesktopSidebarWidth(600)).toBe(200);
+    expect(resolveSettingsDesktopSidebarWidth(650)).toBe(250);
+    expect(resolveSettingsDesktopSidebarWidth(720)).toBe(320);
+    expect(resolveSettingsDesktopSidebarWidth(1200)).toBe(320);
   });
 
   it("imposes no content minimum outside settings", () => {
