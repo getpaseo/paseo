@@ -26,6 +26,7 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
+  type ScriptStatusUpdateMessage,
   type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type WorkspaceScriptListRequest,
@@ -450,6 +451,7 @@ export interface SessionOptions {
   getTransportBufferedAmount?: (source?: object) => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
@@ -810,6 +812,7 @@ export class Session {
       getTransportBufferedAmount,
       onLifecycleIntent,
       onWorkspaceRecovered,
+      publishScriptStatusUpdate,
       logger,
       downloadTokenStore,
       pushNotifications,
@@ -1148,8 +1151,11 @@ export class Session {
       resolveScriptHealth: this.resolveScriptHealth,
       logger: this.sessionLogger,
       emit: (message) => this.emit(message),
+      publishStatusUpdate: (message) => {
+        if (publishScriptStatusUpdate) publishScriptStatusUpdate(message);
+        else this.emit(message);
+      },
       spawnWorkspaceScript,
-      wantsStatusUpdates: () => this.wantsEvent("script_status_update"),
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(this.paseoHome).worktrees?.servicePorts,

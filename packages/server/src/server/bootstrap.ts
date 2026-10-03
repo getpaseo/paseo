@@ -1417,9 +1417,8 @@ export async function createPaseoDaemon(
       serviceProxyPublicBaseUrl,
       resolveScriptHealth: (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
       logger,
-      // MCP operations do not belong to one WebSocket session, so lifecycle
-      // status updates fan out to every connected client.
       emit: (message) => wsServer?.broadcast(wrapSessionMessage(message)),
+      publishStatusUpdate: (message) => wsServer?.publishScriptStatusUpdate(message),
       spawnWorkspaceScript,
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
