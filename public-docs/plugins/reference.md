@@ -654,6 +654,7 @@ plans, and mode changes; requesting permission does not end the turn.
 | Name                         | Event fields                             | Trigger                                            |
 | ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
 | `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
+| `agent.closed`               | `agent`                                  | A live agent runtime closes                        |
 | `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
 | `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
 | `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
@@ -663,6 +664,7 @@ plans, and mode changes; requesting permission does not end the turn.
 | `workspace.archived`         | `workspace`                              | Archive state is saved                             |
 
 Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
+closing an agent that is already closed does not emit another `agent.closed` event.
 `workspace.created` is not a setup barrier before agent startup.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):

@@ -6,7 +6,7 @@ import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
-test("workspace archive publishes agent archive hooks for both live and closed agents", async () => {
+test("closing and archiving agents publish their distinct lifecycle hooks once", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-archive-hooks-"));
   const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
@@ -33,7 +33,16 @@ test("workspace archive publishes agent archive hooks for both live and closed a
       workspaceId: workspace.id,
     });
     await daemon.daemon.agentManager.closeAgent(closed.id);
+    await daemon.daemon.agentManager.closeAgent(closed.id);
     expect(daemon.daemon.agentManager.getAgent(closed.id)).toBeNull();
+    await expect
+      .poll(async () => {
+        const logs = await client.getPluginLogs("lifecycle-logger");
+        return logs
+          .filter((entry) => entry.message.startsWith('{"hook":"agent.closed"'))
+          .map((entry) => JSON.parse(entry.message).data.agent.id);
+      })
+      .toEqual([closed.id]);
     await client.archiveWorkspace(workspace.id);
     await expect
       .poll(async () => {
@@ -45,6 +54,15 @@ test("workspace archive publishes agent archive hooks for both live and closed a
           .map((entry) => {
             return JSON.parse(entry.message).data.agent.id;
           })
+          .sort();
+      })
+      .toEqual([live.id, closed.id].sort());
+    await expect
+      .poll(async () => {
+        const logs = await client.getPluginLogs("lifecycle-logger");
+        return logs
+          .filter((entry) => entry.message.startsWith('{"hook":"agent.closed"'))
+          .map((entry) => JSON.parse(entry.message).data.agent.id)
           .sort();
       })
       .toEqual([live.id, closed.id].sort());
