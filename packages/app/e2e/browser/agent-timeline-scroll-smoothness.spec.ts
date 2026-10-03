@@ -44,6 +44,16 @@ test("scroll detector distinguishes entered image growth from a simultaneous vie
   expect(findScrollJumps([before, after])).toEqual([]);
   expect(
     findScrollJumps([
+      { ...before, scrollTop: 200 },
+      {
+        ...after,
+        wheelTotal: 1000,
+        rows: after.rows.map((row) => ({ ...row, top: row.top + 100 })),
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    findScrollJumps([
       before,
       { ...after, rows: after.rows.map((row) => ({ ...row, top: row.top - 500 })) },
     ]),

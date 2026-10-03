@@ -279,7 +279,8 @@ export function findScrollJumps(frames: ScrollFrame[]) {
     // Wheel input can move the reading line onto an image before it expands.
     // Follow that intended row, not text now below the image.
     const inputDelta = current.wheelTotal - previous.wheelTotal;
-    const readingLine = 8 - Math.min(inputDelta, previous.scrollTop);
+    const availableScroll = Math.min(inputDelta, previous.scrollTop);
+    const readingLine = 8 - availableScroll;
     const currentRows = new Map(current.rows.map((row) => [row.id, row]));
     const intendedRow = previous.rows.find((row) => row.top + row.height > readingLine);
     const intendedHeight = intendedRow && currentRows.get(intendedRow.id)?.height;
@@ -306,7 +307,7 @@ export function findScrollJumps(frames: ScrollFrame[]) {
       intendedRow &&
       intendedHeight !== undefined &&
       before.top >= intendedRow.top + intendedRow.height &&
-      Math.abs(currentRows.get(intendedRow.id)!.top - intendedRow.top - inputDelta) <= 32
+      Math.abs(currentRows.get(intendedRow.id)!.top - intendedRow.top - availableScroll) <= 32
         ? Math.max(0, intendedHeight - intendedRow.height)
         : 0;
     const excessForward = movement > wheelBudget + enteredRowGrowth + 32;
