@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { createPlayAudio } from "./play-audio";
-import { pcmToWav } from "./pcm";
+import { playPcm16 } from "./pcm";
 import { playFile, type FilePlaybackStatus, type FilePlayer } from "./file-playback";
 
 const source = { base64: "UklGRg==", mimeType: "audio/wav" };
@@ -65,15 +65,38 @@ test("rejects calls from an unloaded plugin", async () => {
   await expect(play(source)).rejects.toThrow("Playback stopped");
 });
 
-test("wraps voice PCM with its original sample rate and samples", () => {
+test("voice PCM retains its native output and 16 kHz samples", async () => {
   const pcm = new Uint8Array([0, 0, 255, 127, 0, 128]);
-  const wav = pcmToWav(pcm, "audio/pcm;rate=24000;bits=16");
-  const view = new DataView(wav.buffer);
-  expect(view.getUint32(24, true)).toBe(24000);
-  expect(view.getUint16(22, true)).toBe(1);
-  expect(view.getUint16(34, true)).toBe(16);
-  expect(view.getUint32(40, true)).toBe(pcm.length);
-  expect(wav.slice(44)).toEqual(pcm);
+  let written: Uint8Array | undefined;
+  const duration = await playPcm16(
+    pcm,
+    "audio/pcm;rate=16000;bits=16",
+    new AbortController().signal,
+    {
+      resumePlayback() {},
+      playPCMData(bytes) {
+        written = bytes;
+      },
+      stopPlayback() {},
+    },
+  );
+  expect(written).toEqual(pcm);
+  expect(duration).toBe(3 / 16000);
+});
+
+test("voice PCM cancellation stops native output and rejects", async () => {
+  let stopped = false;
+  const owner = new AbortController();
+  const result = playPcm16(new Uint8Array(32000), "audio/pcm;rate=16000;bits=16", owner.signal, {
+    resumePlayback() {},
+    playPCMData() {},
+    stopPlayback() {
+      stopped = true;
+    },
+  });
+  owner.abort();
+  await expect(result).rejects.toThrow("Playback stopped");
+  expect(stopped).toBe(true);
 });
 
 function filePlayer() {
@@ -135,4 +158,24 @@ test("native cancellation releases playback and settles the caller", async () =>
   owner.abort(new Error("Plugin unloaded"));
   await expect(promise).rejects.toThrow("Playback stopped");
   expect(h.removed()).toBe(true);
+});
+
+test("plugin PCM parameters become a WAV so playback does not initialize capture", async () => {
+  const type = "audio/pcm;rate=16000;bits=16";
+  let received = "";
+  let wav: ArrayBuffer | undefined;
+  const play = createPlayAudio(
+    {
+      play: async (audio) => {
+        received = audio.type;
+        wav = await audio.arrayBuffer();
+        return 0;
+      },
+    },
+    new AbortController().signal,
+  );
+  await play({ base64: "AAAAAA==", mimeType: type });
+  expect(received).toBe("audio/wav");
+  expect(new DataView(wav!).getUint32(24, true)).toBe(16000);
+  expect(new Uint8Array(wav!).slice(44)).toEqual(new Uint8Array(4));
 });

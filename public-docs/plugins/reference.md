@@ -184,6 +184,8 @@ Unloading a plugin cancels its active and queued audio. Voice playback controls 
 interrupt that shared queue. Playback does not request microphone permission.
 
 Use PCM WAV or MP3 for portable files. Other codecs depend on the client's decoder.
+MIME parameters are accepted. Raw mono PCM16 uses `audio/pcm;rate=16000;bits=16`
+(default rate: 24000); Paseo wraps these bytes as a WAV before playback.
 Browsers require user interaction before allowing sound; handle rejection and offer a
 play button. The function plays on the device running the plugin client, not on the daemon,
 and does not promise delivery while the app is suspended or closed.

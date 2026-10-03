@@ -4,7 +4,7 @@ import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import { createPlaybackQueue } from "./playback";
 import { playFile } from "./file-playback";
-import { pcmToWav } from "./pcm";
+import { playPcm16 } from "./pcm";
 
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
@@ -102,9 +102,12 @@ export function createAudioEngine(
 
   let nextFileId = 0;
   async function playAudio(audio: AudioPlaybackSource, signal: AbortSignal): Promise<number> {
-    let bytes = new Uint8Array(await audio.arrayBuffer());
+    const bytes = new Uint8Array(await audio.arrayBuffer());
     if (signal.aborted) throw new Error("Playback stopped");
-    if (audio.type.startsWith("audio/pcm")) bytes = pcmToWav(bytes, audio.type);
+    if (audio.type.startsWith("audio/pcm")) {
+      await ensureInitialized();
+      return playPcm16(bytes, audio.type, signal, native);
+    }
     // Capture owns its audio session while active. File playback alone must not
     // initialize the microphone or the native two-way engine.
     if (!refs.captureActive) {
@@ -117,19 +120,18 @@ export function createAudioEngine(
     }
     if (signal.aborted) throw new Error("Playback stopped");
     // AVPlayer needs a file extension to recognize local encoded audio on iOS.
-    const extension = audio.type.startsWith("audio/pcm")
-      ? "wav"
-      : ({
-          "audio/wav": "wav",
-          "audio/x-wav": "wav",
-          "audio/wave": "wav",
-          "audio/mpeg": "mp3",
-          "audio/mp3": "mp3",
-          "audio/mp4": "m4a",
-          "audio/aac": "aac",
-          "audio/ogg": "ogg",
-          "audio/flac": "flac",
-        }[audio.type] ?? "audio");
+    const extension =
+      {
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/wave": "wav",
+        "audio/mpeg": "mp3",
+        "audio/mp3": "mp3",
+        "audio/mp4": "m4a",
+        "audio/aac": "aac",
+        "audio/ogg": "ogg",
+        "audio/flac": "flac",
+      }[audio.type.split(";")[0].trim()] ?? "audio";
     const file = new File(Paths.cache, `paseo-audio-${Date.now()}-${nextFileId++}.${extension}`);
     try {
       file.write(bytes);

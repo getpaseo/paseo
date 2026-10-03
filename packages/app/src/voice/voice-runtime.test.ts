@@ -307,8 +307,9 @@ describe("voice runtime", () => {
 
     runtime.onServerSpeechStateChanged("server-1", true);
 
-    expect(engine.stop).toHaveBeenCalledTimes(1);
-    expect(engine.clearQueue).toHaveBeenCalledTimes(1);
+    expect(engine.stop).not.toHaveBeenCalled();
+    expect(engine.clearQueue).not.toHaveBeenCalled();
+    expect(vi.mocked(engine.play).mock.calls[0][1]?.aborted).toBe(true);
 
     resolvePlay(0.1);
   });

@@ -64,3 +64,73 @@ test("a failed file does not block the queue", async () => {
   await expect(failed).rejects.toThrow("Invalid audio");
   await expect(next).resolves.toBe(2);
 });
+
+test("ending the voice waiting cue leaves a plugin's active audio playing", async () => {
+  const { createVoiceRuntime } = await import("../voice/voice-runtime");
+  let finishPlugin!: () => void;
+  let cueQueued!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    cueQueued = resolve;
+  });
+  const output = createPlaybackQueue<{ type: string }>(
+    (_source, signal) =>
+      new Promise((resolve, reject) => {
+        finishPlugin = () => resolve(1);
+        signal.addEventListener("abort", () => reject(new Error("Playback stopped")), {
+          once: true,
+        });
+      }),
+  );
+  const engine = {
+    initialize: async () => {},
+    destroy: async () => {
+      output.destroy();
+    },
+    startCapture: async () => {},
+    stopCapture: async () => {},
+    toggleMute: () => false,
+    isMuted: () => false,
+    play(source: { type: string }, signal?: AbortSignal) {
+      if (source.type.startsWith("audio/pcm")) cueQueued();
+      return output.play(source, signal);
+    },
+    stop: output.stop,
+    clearQueue: output.clearQueue,
+    isPlaying: output.isPlaying,
+  };
+  const runtime = createVoiceRuntime({
+    engine,
+    getServerInfo: () => ({
+      serverId: "host",
+      hostname: "host",
+      version: "1.0.0",
+      capabilities: {
+        voice: { dictation: { enabled: true, reason: "" }, voice: { enabled: true, reason: "" } },
+      },
+    }),
+    activateKeepAwake: async () => {},
+    deactivateKeepAwake: async () => {},
+  });
+  runtime.registerSession({
+    serverId: "host",
+    setVoiceMode: async () => {},
+    sendVoiceAudioChunk: async () => {},
+    audioPlayed: async () => {},
+    abortRequest: async () => {},
+    setAssistantAudioPlaying: () => {},
+  });
+  try {
+    await runtime.startVoice("host", "agent");
+    const result = engine.play({ type: "audio/wav" }).then(
+      () => "finished",
+      () => "stopped",
+    );
+    runtime.onTurnEvent("host", "agent", "turn_started");
+    await queued;
+    runtime.onAssistantAudioStarted("host");
+    finishPlugin();
+    expect(await result).toBe("finished");
+  } finally {
+    await runtime.destroy();
+  }
+});
