@@ -286,10 +286,6 @@ function renderContextWindowMeter(
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending) {
-    return null;
-  }
   return (
     <ContextWindowMeter
       maxTokens={contextWindowMaxTokens}
@@ -2560,7 +2556,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   contextWindowMeterSlot: {
-    width: 28,
     height: 28,
     flexShrink: 0,
     alignItems: "center",

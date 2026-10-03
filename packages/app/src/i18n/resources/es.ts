@@ -1981,7 +1981,11 @@ export const es: TranslationResources = {
   contextWindow: {
     title: "ventana contextual",
     used: "{{percentage}}% utilizado",
-    tokens: "Fichas{{used}}/{{max}}",
+    tokens: "{{used}} / {{max}} tokens",
+    snapshot: "Registro de uso",
+    loading: "Cargando contexto",
+    unknown: "Contexto desconocido",
+    unknownAccessibility: "Uso de la ventana de contexto desconocido",
     sessionCost: "Costo de la sesión{{cost}}",
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
   },

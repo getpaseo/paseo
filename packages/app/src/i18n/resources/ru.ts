@@ -1966,7 +1966,11 @@ export const ru: TranslationResources = {
   contextWindow: {
     title: "Контекстное окно",
     used: "Использовано: {{percentage}}%",
-    tokens: "Токены: {{used}} / {{max}}",
+    tokens: "{{used}} / {{max}} токенов",
+    snapshot: "Снимок использования",
+    loading: "Загрузка контекста",
+    unknown: "Контекст неизвестен",
+    unknownAccessibility: "Использование контекстного окна неизвестно",
     sessionCost: "Стоимость сессии: {{cost}}",
     accessibility: "Использовано {{percentage}}% контекстного окна",
   },

@@ -1911,7 +1911,11 @@ export const zhCN: TranslationResources = {
   contextWindow: {
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
-    tokens: "{{used}} / {{max}} tokens",
+    tokens: "{{used}} / {{max}} 个令牌",
+    snapshot: "用量快照",
+    loading: "正在加载上下文窗口",
+    unknown: "上下文未知",
+    unknownAccessibility: "上下文窗口用量未知",
     sessionCost: "会话费用 {{cost}}",
     accessibility: "上下文窗口已使用 {{percentage}}%",
   },

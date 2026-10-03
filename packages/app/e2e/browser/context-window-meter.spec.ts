@@ -47,6 +47,49 @@ async function progressArcCentroid(meter: Locator): Promise<{ x: number; y: numb
 }
 
 test.describe("context window meter", () => {
+  test("shows the selected snapshot and clears it for an agent with no usage", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "context-window-visible-",
+      title: "Context window visibility e2e",
+      initialPrompt: "emit 1 coalesced agent stream update for context visibility",
+    });
+    try {
+      await session.client.waitForFinish(session.agentId, 30_000);
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      const summary = page.getByTestId("context-window-meter-summary");
+      await expect(summary).toContainText("/ 128k tokens");
+      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText(
+        "Usage snapshot",
+      );
+
+      await page.getByTestId("context-window-meter").hover();
+      await expect(page.getByText("Context window", { exact: true })).toBeVisible();
+      await expect(page.getByText(/\/ 128k tokens/).last()).toBeVisible();
+
+      const missingAgent = await session.client.createAgent({
+        provider: "mock",
+        cwd: session.cwd,
+        workspaceId: session.workspaceId,
+        title: "Context data unavailable",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+      });
+      await openAgentRoute(page, { ...session, agentId: missingAgent.id });
+      await expectComposerVisible(page);
+      await expect(page.getByTestId("context-window-meter-unknown")).toHaveText("Context unknown");
+      await expect(summary).toHaveCount(0);
+
+      await openAgentRoute(page, session);
+      await expect(summary).toContainText("/ 128k tokens");
+      await expect(page.getByTestId("context-window-meter-unknown")).toHaveCount(0);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("draws usage clockwise from twelve o'clock", async ({ page }) => {
     test.setTimeout(180_000);
     // 32,000 of the mock's 128,000-token window: a quarter, from twelve to three o'clock.
