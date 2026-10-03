@@ -489,6 +489,28 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(descriptors.map((descriptor) => descriptor.id)).toContain(TOOL_USE_ID);
   });
 
+  test("honors a fractional replay budget instead of rounding it up to the default", async () => {
+    // 0.5 MB is 524,288 bytes; parseInt would read it as 0 and silently fall back to 256 MB.
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "0.5");
+    const bulkEntry = JSON.stringify({
+      type: "user",
+      isSidechain: true,
+      agentId: AGENT_ID,
+      sessionId: "replay-session",
+      timestamp: "2026-07-26T06:27:55.000Z",
+      message: { role: "user", content: "x".repeat(600 * 1024) },
+    });
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry(), bulkEntry],
+    });
+
+    const events = await replayEvents();
+
+    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+  });
+
   test("replays the parent unchanged, matching the same session without subagent transcripts", async () => {
     // The #5820 reporter's own technique: moving the subagent transcripts away leaves the parent
     // loading fine. The over-budget skip has to be indistinguishable from that state.

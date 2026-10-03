@@ -5854,7 +5854,7 @@ const CLAUDE_SUBAGENT_META_FILE = /^agent-(.+)\.meta\.json$/;
 const DEFAULT_CLAUDE_REPLAY_BUDGET_BYTES = 256 * 1024 * 1024;
 
 function claudeReplayBudgetBytes(): number {
-  const megabytes = Number.parseInt(process.env.PASEO_CLAUDE_REPLAY_BUDGET_MB ?? "", 10);
+  const megabytes = Number.parseFloat(process.env.PASEO_CLAUDE_REPLAY_BUDGET_MB ?? "");
   return Number.isFinite(megabytes) && megabytes > 0
     ? megabytes * 1024 * 1024
     : DEFAULT_CLAUDE_REPLAY_BUDGET_BYTES;
