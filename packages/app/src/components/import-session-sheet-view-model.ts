@@ -2,6 +2,19 @@ import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 
+export function getImportErrorMessage(error: unknown): string {
+  if (!(error instanceof Error) || !error.message.trim()) {
+    return i18n.t("importSession.status.failedImport");
+  }
+  const isCodexSessionInUse =
+    error.message.includes("Codex thread") &&
+    error.message.includes("already has an active writer");
+  if (isCodexSessionInUse) {
+    return i18n.t("importSession.status.codexSessionInUse");
+  }
+  return i18n.t("importSession.status.failedImportDetails", { message: error.message });
+}
+
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
@@ -66,7 +79,7 @@ export function buildProviderLabelMap(
 }
 
 export function aggregateSessionEntries(
-  queries: ReadonlyArray<SessionsQueryResult>,
+  queries: ReadonlyArray<Pick<SessionsQueryResult, "data">>,
 ): FetchRecentProviderSessionEntry[] {
   const seen = new Set<string>();
   const collected: FetchRecentProviderSessionEntry[] = [];
@@ -83,6 +96,23 @@ export function aggregateSessionEntries(
     (a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime(),
   );
   return collected;
+}
+
+/** Match the same fields as the daemon; never leave unrelated placeholder rows visible. */
+export function filterSessionEntries(
+  entries: FetchRecentProviderSessionEntry[],
+  rawQuery: string,
+  provider: string,
+): FetchRecentProviderSessionEntry[] {
+  const query = rawQuery.trim().toLowerCase();
+  return entries.filter((entry) => {
+    if (provider !== ALL_FILTER_VALUE && entry.providerId !== provider) return false;
+    if (!query) return true;
+    const directory = entry.cwd.replaceAll("\\", "/").replace(/\/+$/, "").split("/").at(-1);
+    return [entry.title, entry.firstPromptPreview, entry.lastPromptPreview, directory].some(
+      (value) => value?.toLowerCase().includes(query),
+    );
+  });
 }
 
 export function sumFilteredAlreadyImportedCount(

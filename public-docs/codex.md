@@ -50,6 +50,12 @@ codex
 
 Paseo uses this installation and its existing authentication when you start a Codex agent.
 
+## Import a session open in another client
+
+You can import an existing Codex session to read its saved conversation in Paseo. If another Codex terminal or client has the session open, Paseo loads a read-only snapshot. Reload the agent to refresh that snapshot.
+
+Exit the client holding the session before sending a message, rewinding, or compacting in Paseo. Retry the action to continue the same Codex conversation.
+
 ## Codex is missing in Paseo
 
 The ChatGPT desktop app and the Codex CLI are separate installs. Installing the desktop app does not make the `codex` command available to Paseo.
