@@ -46,7 +46,7 @@ const list = defineRpc({
 
 const append = defineRpc({
   name: "append",
-  input: z.object({ agentId: z.string(), status: z.string() }),
+  input: z.object({ agentId: z.string(), id: z.string(), status: z.string() }),
   output: z.object({ seq: z.number(), epoch: z.string() }),
 });
 
@@ -66,10 +66,10 @@ export default function contribute(server: PluginServerContext) {
     const result = await paseo.agents.list({ page: { limit: 100 } });
     return { agentIds: result.entries.map((entry) => entry.agent.id) };
   });
-  server.handle(append, ({ agentId, status }, { paseo }) =>
+  server.handle(append, ({ agentId, id, status }, { paseo }) =>
     paseo.agents.ref(agentId).timeline.append({
       type: "plugin",
-      id: "review-1",
+      id,
       kind: "review",
       version: 1,
       data: { status },
@@ -111,16 +111,41 @@ export default function contribute(server: PluginServerContext) {
       agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
     });
     const agentId = Reflect.get(created, "agentId");
+    const initial = await client.invokePluginRpc("paseo-api", "append", {
+      agentId,
+      id: "review-1",
+      status: "running",
+    });
+    expect(initial).toEqual({ seq: expect.any(Number), epoch: expect.any(String) });
     await expect(
-      client.invokePluginRpc("paseo-api", "append", { agentId, status: "running" }),
-    ).resolves.toEqual({ seq: expect.any(Number), epoch: expect.any(String) });
-    await client.invokePluginRpc("paseo-api", "append", { agentId, status: "complete" });
+      client.invokePluginRpc("paseo-api", "append", { agentId, id: "review-1", status: "running" }),
+    ).resolves.toEqual(initial);
+    await expect(
+      client.invokePluginRpc("paseo-api", "append", {
+        agentId,
+        id: "review-1",
+        status: "complete",
+      }),
+    ).rejects.toThrow("Plugin timeline item ID already exists with different content");
+    await client.invokePluginRpc("paseo-api", "append", {
+      agentId,
+      id: "review-2",
+      status: "complete",
+    });
     const timeline = await client.fetchAgentTimeline(agentId, { projection: "projected" });
     expect(timeline.entries.filter((entry) => entry.item.type === "plugin")).toEqual([
       expect.objectContaining({
         item: expect.objectContaining({
           type: "plugin",
           id: "review-1",
+          pluginId: "paseo-api",
+          data: { status: "running" },
+        }),
+      }),
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "plugin",
+          id: "review-2",
           pluginId: "paseo-api",
           data: { status: "complete" },
         }),
