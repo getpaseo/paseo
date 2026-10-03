@@ -43,6 +43,12 @@ const patchedPackages = [
     patchPrefix: "@opencode-ai+sdk+",
     cwd: "packages/server",
   },
+  // Newer agent CLIs send this revision to Paseo's injected MCP server.
+  // Remove the patch once the SDK accepts it without raising its outbound default.
+  {
+    nodeModulesPath: "node_modules/@modelcontextprotocol/sdk",
+    patchPrefix: "@modelcontextprotocol+sdk+",
+  },
 ];
 
 const installedPackages = patchedPackages.filter(({ nodeModulesPath }) =>
