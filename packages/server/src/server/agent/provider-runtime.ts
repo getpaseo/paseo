@@ -9,7 +9,7 @@ import type { PaseoToolCatalog } from "./tools/types.js";
 
 export interface AgentProviderRuntime {
   snapshotManager: ProviderSnapshotManager;
-  setPaseoToolCatalog(catalog: PaseoToolCatalog | null): void;
+  setPaseoToolCatalog(catalog: Pick<PaseoToolCatalog, "tools"> | null): void;
   shutdown(): Promise<void>;
 }
 
