@@ -1078,6 +1078,10 @@ export const zhCN: TranslationResources = {
       title: "无法加载更新日志",
       description: "请检查网络连接后重试。",
     },
+    empty: {
+      title: "此版本没有发布说明",
+      description: "打开完整更新日志查看所有版本。",
+    },
   },
   sidebar: {
     display: {

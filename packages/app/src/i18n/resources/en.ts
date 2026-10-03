@@ -1094,6 +1094,10 @@ export const en = {
       title: "Unable to load the changelog",
       description: "Check your connection and try again.",
     },
+    empty: {
+      title: "No release notes for this version",
+      description: "Open the full changelog to see every release.",
+    },
   },
   sidebar: {
     display: {
