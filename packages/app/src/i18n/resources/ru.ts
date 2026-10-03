@@ -529,6 +529,11 @@ export const ru: TranslationResources = {
         revealFailed: "Не удалось показать расположение элемента",
         deleteFailed: "Не удалось удалить элемент",
       },
+      reveal: {
+        outsideWorkspace: "Этот файл находится вне рабочего пространства",
+        hidden: "Это скрытый файл. Включите показ скрытых файлов, чтобы увидеть его.",
+        notFound: "Файл не найден в разделе «Файлы»",
+      },
       draft: {
         filePlaceholder: "Имя файла",
         folderPlaceholder: "Имя папки",
@@ -638,6 +643,7 @@ export const ru: TranslationResources = {
         copyAgentId: "Скопировать идентификатор агента",
         copyTerminalId: "Скопировать идентификатор терминала",
         copyFilePath: "Скопировать путь к файлу",
+        revealInFiles: "Показать в файлах",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
         closeBelow: "Закрыть вкладки ниже",

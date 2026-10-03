@@ -525,6 +525,11 @@ export const ko: TranslationResources = {
         revealFailed: "항목을 표시하지 못했습니다",
         deleteFailed: "항목을 삭제하지 못했습니다",
       },
+      reveal: {
+        outsideWorkspace: "이 파일은 워크스페이스 밖에 있습니다",
+        hidden: "숨겨진 파일입니다. 보려면 숨겨진 파일을 표시하세요.",
+        notFound: "파일에서 이 파일을 찾을 수 없습니다",
+      },
       draft: {
         filePlaceholder: "파일 이름",
         folderPlaceholder: "폴더 이름",
@@ -632,6 +637,7 @@ export const ko: TranslationResources = {
         copyAgentId: "에이전트 ID 복사",
         copyTerminalId: "터미널 ID 복사",
         copyFilePath: "파일 경로 복사",
+        revealInFiles: "파일에서 보기",
         rename: "이름 변경",
         closeAbove: "위쪽 탭 닫기",
         closeBelow: "아래쪽 탭 닫기",

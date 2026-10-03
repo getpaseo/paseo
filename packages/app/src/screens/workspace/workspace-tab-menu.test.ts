@@ -36,6 +36,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId,
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent,
       onRenameTab,
       onCloseTab,
@@ -67,6 +68,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
@@ -103,6 +105,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
@@ -132,6 +135,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
@@ -162,6 +166,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
       onCloseTab: vi.fn(),
@@ -198,6 +203,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId,
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
       onCloseTab: vi.fn(),
@@ -231,6 +237,79 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onRenameTab).toHaveBeenCalledWith(terminalTab);
   });
 
+  it("offers Reveal in Files next to Copy file path for file tabs", () => {
+    const onRevealFileInExplorer = vi.fn();
+    const fileTab: WorkspaceTabDescriptor = {
+      key: "file_abc",
+      tabId: "file_abc",
+      kind: "file",
+      target: { kind: "file", path: "src/app/main.ts", lineStart: 4 },
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: fileTab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-menu-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer,
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const items = entries.filter((entry) => entry.kind === "item");
+    expect(items.slice(0, 2).map((entry) => [entry.key, entry.label, entry.icon])).toEqual([
+      ["copy-file-path", "Copy file path", "copy"],
+      ["reveal-in-files", "Reveal in Files", "list-tree"],
+    ]);
+    const revealEntry = items[1];
+    expect(revealEntry?.testID).toBe("workspace-tab-menu-file_abc-reveal-in-files");
+    revealEntry?.onSelect();
+    expect(onRevealFileInExplorer).toHaveBeenCalledWith("src/app/main.ts");
+  });
+
+  it("offers Reveal in Files only for file tabs", () => {
+    const sharedInput = {
+      surface: "desktop" as const,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    };
+    const nonFileTabs: WorkspaceTabDescriptor[] = [
+      createAgentTab(),
+      {
+        key: "terminal_abc",
+        tabId: "terminal_abc",
+        kind: "terminal",
+        target: { kind: "terminal", terminalId: "terminal-abc" },
+      },
+      { key: "files", tabId: "files", kind: "files", target: { kind: "files" } },
+    ];
+
+    for (const tab of nonFileTabs) {
+      const keys = buildWorkspaceTabMenuEntries({ ...sharedInput, tab }).map((entry) => entry.key);
+      expect(keys).not.toContain("reveal-in-files");
+    }
+  });
+
   it("includes copy file path for file tabs", () => {
     const onCopyFilePath = vi.fn();
     const fileTab: WorkspaceTabDescriptor = {
@@ -249,6 +328,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
@@ -292,6 +372,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
@@ -323,6 +404,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onRevealFileInExplorer: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
