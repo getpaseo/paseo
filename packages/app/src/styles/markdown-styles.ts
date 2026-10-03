@@ -256,7 +256,6 @@ export function createMarkdownStyles(theme: Theme) {
       borderColor: theme.colors.border,
       color: theme.colors.foreground,
       fontSize: theme.fontSize.content,
-      flex: 1,
     },
 
     // =========================================================================
