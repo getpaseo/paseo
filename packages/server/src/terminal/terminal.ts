@@ -496,6 +496,11 @@ export function buildTerminalEnvironment(
     TERM: "xterm-256color",
     TERM_PROGRAM: "kitty",
   });
+  const hasLocale = Boolean(baseEnv.LANG || baseEnv.LC_ALL || baseEnv.LC_CTYPE);
+  if (process.platform === "darwin" && !hasLocale) {
+    // Finder-launched daemons have no locale. Darwin's UTF-8 locale only changes character handling.
+    baseEnv.LC_CTYPE = "UTF-8";
+  }
   const envWithAgentHooks = prependPaseoCliToPath(
     baseEnv,
     input.paseoCliBinDir === undefined ? resolvePaseoCliBinDir() : input.paseoCliBinDir,
