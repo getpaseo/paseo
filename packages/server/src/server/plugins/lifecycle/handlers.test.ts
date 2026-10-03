@@ -98,3 +98,48 @@ test("session-open hooks reject changes to session identity instead of silently 
     ),
   ).rejects.toThrow("agent.session_open hooks can only change env");
 });
+
+test("agent.create hooks read the initial prompt but cannot change it", async () => {
+  const input = {
+    config: { provider: "claude", cwd: "/project" },
+    initialPrompt: "Review PR 42",
+  };
+  const reader = new PluginHookHandlers(() => {});
+  reader.before("agent.create", ({ request }) => {
+    return {
+      ...request,
+      config: { ...request.config, title: `Routed: ${request.initialPrompt}` },
+    };
+  });
+  expect(await reader.invoke("operation", "before", "agent.create", input, paseo)).toEqual({
+    config: { provider: "claude", cwd: "/project", title: "Routed: Review PR 42" },
+    initialPrompt: "Review PR 42",
+  });
+
+  const writer = new PluginHookHandlers(() => {});
+  writer.before("agent.create", ({ request }) => {
+    return { ...request, initialPrompt: "Something else" };
+  });
+  await expect(writer.invoke("operation", "before", "agent.create", input, paseo)).rejects.toThrow(
+    "agent.create hooks cannot change the initial prompt",
+  );
+});
+
+test("agent.create hooks that return a request without the initial prompt keep it", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.before("agent.create", ({ request }) => {
+    return { config: { ...request.config, title: "Fresh request" } };
+  });
+  expect(
+    await hooks.invoke(
+      "operation",
+      "before",
+      "agent.create",
+      { config: { provider: "claude", cwd: "/project" }, initialPrompt: "Review PR 42" },
+      paseo,
+    ),
+  ).toEqual({
+    config: { provider: "claude", cwd: "/project", title: "Fresh request" },
+    initialPrompt: "Review PR 42",
+  });
+});
