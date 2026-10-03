@@ -76,6 +76,8 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
+import { useDirectorySearch } from "@/add-project-flow/use-directory-search";
+import { Button } from "@/components/ui/button";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
@@ -136,7 +138,6 @@ const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foregrou
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const lastCloneParentByHost = new Map<string, string>();
-const EMPTY_PATHS: string[] = [];
 const NAVIGATION_HINT_KEYS = ["Up", "Down"];
 const SELECT_HINT_KEYS = ["Enter"];
 const ESCAPE_HINT_KEYS = ["Esc"];
@@ -412,27 +413,20 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     page.kind === "directory-search" ||
     page.kind === "github-location" ||
     page.kind === "new-directory-parent";
-  const directoryQuery = useFetchQuery({
-    queryKey: ["add-project-flow-directories", hostId, debouncedQuery],
-    queryFn: async () => {
-      if (!client) return { query: debouncedQuery, paths: [] as string[] };
-      const payload = await client.getDirectorySuggestions({
-        query: debouncedQuery,
-        includeDirectories: true,
-        includeFiles: false,
-        limit: 30,
-      });
-      return {
-        query: debouncedQuery,
-        paths:
-          payload.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ??
-          [],
-      };
-    },
-    enabled: Boolean(client && searchesDirectories),
-    dataShape: "value",
-    retry: false,
-    staleTimeMs: 15_000,
+  const directoryRecommendations = useMemo(() => {
+    if (page.kind !== "github-location") return recommendedPaths;
+    const parents = buildSuggestedParentDirectories(recommendedPaths);
+    const lastParent = lastCloneParentByHost.get(hostId ?? "");
+    return lastParent
+      ? [lastParent, ...parents.filter((parent) => parent !== lastParent)]
+      : parents;
+  }, [page.kind, hostId, recommendedPaths]);
+  const directoryQuery = useDirectorySearch({
+    hostId,
+    client,
+    enabled: searchesDirectories,
+    query,
+    recommendedPaths: directoryRecommendations,
   });
   const githubQuery = useFetchQuery({
     queryKey: ["add-project-flow-github", hostId, debouncedQuery],
@@ -535,18 +529,16 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [browse, hostId],
   );
 
-  const directoryPaths = useMemo(
-    () => (directoryQuery.data?.query === query ? directoryQuery.data.paths : EMPTY_PATHS),
-    [directoryQuery.data, query],
-  );
+  const directoryPaths = directoryQuery.paths;
   const pathOptions = useMemo(
     () =>
       buildProjectPickerOptions({
-        recommendedPaths,
+        recommendedPaths: directoryPaths,
+        // The daemon can expand a home-relative query to absolute paths.
         serverPaths: directoryPaths,
         query,
       }),
-    [directoryPaths, query, recommendedPaths],
+    [directoryPaths, query],
   );
   const cloneRepository = useCallback(
     async (locationPage: GithubLocationPage, parentPath: string) => {
@@ -664,13 +656,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     if (page.kind === "github-location") {
       const repositoryName = pathBaseName(page.repository.nameWithOwner);
-      const lastParent = lastCloneParentByHost.get(page.hostId);
-      const parents = buildSuggestedParentDirectories(recommendedPaths);
-      const orderedParents = lastParent
-        ? [lastParent, ...parents.filter((parent) => parent !== lastParent)]
-        : parents;
       const filteredParents = buildProjectPickerOptions({
-        recommendedPaths: orderedParents,
+        recommendedPaths: directoryPaths,
         serverPaths: directoryPaths,
         query: page.query,
       }).map((option) => option.path);
@@ -830,7 +817,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       ? githubQuery.data.payload
       : null;
   const loading =
-    (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
+    (searchesDirectories && (directoryQuery.isWaiting || directoryQuery.isFetching)) ||
     (page.kind === "github-search" &&
       host?.canSearchGithubRepositories === true &&
       (query !== debouncedQuery || githubQuery.isFetching));
@@ -927,18 +914,29 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               </Text>
             ) : null}
             {!isSubmitting && queryError ? (
-              <Text style={styles.errorText} testID="add-project-flow-query-error">
-                {queryError}
-              </Text>
+              <View>
+                <Text style={styles.errorText} testID="add-project-flow-query-error">
+                  {queryError}
+                </Text>
+                {searchesDirectories ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onPress={directoryQuery.retry}
+                    disabled={directoryQuery.isFetching}
+                    testID="add-project-flow-retry"
+                  >
+                    Retry
+                  </Button>
+                ) : null}
+              </View>
             ) : null}
             {!isSubmitting && loading ? (
               <Text style={styles.stateText} testID="add-project-flow-loading">
                 Loading...
               </Text>
             ) : null}
-            {!isSubmitting &&
-            (!loading || page.kind === "github-search") &&
-            (!queryError || page.kind === "github-search")
+            {!isSubmitting
               ? rows.map((option, index) => (
                   <FlowRow key={option.id} option={option} active={index === activeIndex} />
                 ))
