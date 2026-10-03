@@ -31,6 +31,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   BottomSheetScrollView,
   BottomSheetBackdrop,
+  BottomSheetFooter,
+  type BottomSheetFooterProps,
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
@@ -968,6 +970,14 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
     () => [styles.mobileSheetFrame, { paddingBottom: props.safeAreaBottom }],
     [props.safeAreaBottom],
   );
+  const renderFooter = useCallback(
+    (footerProps: BottomSheetFooterProps) => (
+      <BottomSheetFooter {...footerProps} bottomInset={props.safeAreaBottom}>
+        <View style={[styles.footer, styles.mobileSheetFooter]}>{props.footer}</View>
+      </BottomSheetFooter>
+    ),
+    [props.footer, props.safeAreaBottom],
+  );
 
   const body = props.hasChildren ? (
     props.children
@@ -992,6 +1002,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       onChange={props.handleSheetChange}
       onDismiss={props.handleSheetDismiss}
       backdropComponent={renderBackdrop}
+      footerComponent={props.footer ? renderFooter : undefined}
       enablePanDownToClose
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
@@ -1027,6 +1038,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
         ) : (
           <BottomSheetScrollView
             style={styles.mobileSheetBody}
+            enableFooterMarginAdjustment={Boolean(props.footer)}
             contentContainerStyle={[
               styles.comboboxScrollContent,
               props.mobileChildrenContentContainerStyle,
@@ -1037,7 +1049,6 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
             {body}
           </BottomSheetScrollView>
         )}
-        {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
       </View>
     </IsolatedBottomSheetModal>
   );
@@ -1656,6 +1667,9 @@ const styles = StyleSheet.create((theme) => ({
   mobileSheetBody: {
     flex: 1,
     minHeight: 0,
+  },
+  mobileSheetFooter: {
+    backgroundColor: theme.colors.surface0,
   },
   searchInputContainer: {
     flexDirection: "row",
