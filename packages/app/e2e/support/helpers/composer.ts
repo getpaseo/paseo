@@ -172,6 +172,39 @@ export async function dropFileOnComposer(
   await dataTransfer.dispose();
 }
 
+function composerUserModify(page: Page): Promise<string> {
+  return composerInput(page).evaluate((element) =>
+    getComputedStyle(element).getPropertyValue("-webkit-user-modify"),
+  );
+}
+
+/** Chrome on Android offers keyboard images only to a field whose user-modify is read-write. */
+export async function expectComposerAcceptsKeyboardImages(page: Page): Promise<void> {
+  await expect.poll(() => composerUserModify(page)).toBe("read-write");
+}
+
+export async function expectComposerRefusesKeyboardImages(page: Page): Promise<void> {
+  await expect.poll(() => composerUserModify(page)).toBe("read-only");
+}
+
+/** Chrome delivers an image a keyboard inserts as a paste event, carrying the file, at the focused field. */
+export async function insertImageFromKeyboard(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  await composerInput(page).evaluate(
+    (element, { name, mimeType, base64 }) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const clipboardData = new DataTransfer();
+      clipboardData.items.add(new File([bytes], name, { type: mimeType }));
+      element.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    },
+    { name: file.name, mimeType: file.mimeType, base64: file.buffer.toString("base64") },
+  );
+}
+
 /** Hover to reveal the X button (hidden until hover on desktop web), then click by accessible label. */
 export async function removeAttachmentPill(
   page: Page,
