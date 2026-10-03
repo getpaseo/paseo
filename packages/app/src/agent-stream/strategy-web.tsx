@@ -684,7 +684,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     onNearBottomChange,
   });
 
-  const reconcileReadingPosition = useStableEvent((userScrolled = false) => {
+  const reconcileReadingPosition = useStableEvent((userScrolled: boolean = false) => {
     const container = scrollContainerRef.current;
     const content = contentRef.current;
     if (!isActiveRef.current || !container || !content) return;
