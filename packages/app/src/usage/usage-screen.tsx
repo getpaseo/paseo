@@ -8,6 +8,7 @@ import { usageCopy } from "./copy";
 import { useUsagePreferences } from "./display";
 import { useUsageHostSelection } from "./hosts";
 import type { UsageHost } from "./model";
+import { UsageOptions } from "./options";
 import { UsageBody, UsageMessage } from "./usage-section";
 
 // The screen is reachable by URL, so there may be no history to go back to.
@@ -61,10 +62,11 @@ function HostUsage({
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
-  const { view, refresh, controls } = useHostUsageWithControls(hostSelection, display);
+  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
   return (
     <UsagePage actions={controls}>
       <View testID={`usage-host-${serverId}`}>
+        {view.kind === "unavailable" ? null : <UsageOptions display={display} />}
         <UsageBody serverId={serverId} view={view} display={display} onRefresh={refresh} />
       </View>
     </UsagePage>

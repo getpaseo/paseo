@@ -114,6 +114,11 @@ test.describe("Usage item", () => {
       await gotoAppShell(page);
       await usageItem(page).click();
       await expectOnUsageScreen(page);
+      await qaScreenshot(page, "default-pins-card");
+      await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Claude", "Weekly")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Weekly")).toBeChecked();
     });
 
     await test.step("pinning Claude 5-hour and Codex weekly shows both in the Usage item", async () => {
@@ -122,13 +127,17 @@ test.describe("Usage item", () => {
       await expect(page.locator('[data-testid="usage-host-filter-trigger"]:visible')).toHaveCount(
         0,
       );
-      await togglePin(screen, "Claude", "Session");
-      await expectPinnedUsage(page, ["31% 5h"]);
-      await togglePin(screen, "Codex", "Weekly");
+      await togglePin(screen, "Claude", "Weekly");
+      await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
+      await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Session")).toBeChecked();
+      await expect(pinRow(screen, "Codex", "Weekly")).toBeChecked();
+      await qaScreenshot(page, "default-pins-after-one-toggle");
+      await togglePin(screen, "Codex", "Session");
       await expectPinnedUsage(page, ["31% 5h", "12% wk"]);
       await expect(usageItem(page)).not.toHaveText("Usage");
       await qaScreenshot(page, "desktop-footer-pins", { kind: "footer" });
-      await expect(page.getByRole("button", { name: "Usage options", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Refresh all", exact: true })).toBeVisible();
       await qaScreenshot(page, "usage-screen-header", {
         kind: "element",
         locator: page.getByTestId("page-title").locator(".."),
@@ -176,22 +185,26 @@ test.describe("Usage item", () => {
       await expect(pinRow(sheet, "Claude", "Session")).toHaveAccessibleName(
         /^Pin Claude Session, \d+% left( · .+)?$/,
       );
-      // The sheet carries the Usage screen's controls.
-      await expect(page.locator('[data-testid="usage-options-menu"]:visible')).toBeVisible();
-      // The options open as a sheet of their own over the usage sheet.
+      // The sheet carries the same inline Settings row and title-row Refresh all.
+      await expect(sheet.getByTestId("usage-options-toggle")).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      await expect(page.locator('[data-testid="usage-refresh-all"]:visible')).toBeVisible();
       await openUsageOptions(page);
-      await expect(page.getByTestId("usage-display-remaining")).toHaveAttribute(
-        "aria-checked",
+      await expect(sheet.getByTestId("usage-display-remaining")).toHaveAttribute(
+        "aria-selected",
         "true",
       );
-      await qaScreenshot(page, "compact-options-sheet");
-      // Tap the backdrop above both sheets; only the options sheet closes.
-      await page.mouse.click(COMPACT.width / 2, 40);
-      await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+      await qaScreenshot(page, "compact-settings-expanded");
+      await sheet.getByTestId("usage-options-toggle").click();
+      await expect(sheet.getByTestId("usage-display-used")).toHaveCount(0);
       await expect(sheet).toBeVisible();
       await expect(page).not.toHaveURL(/\/usage$/);
+      await waitForSettledPosition(sheet);
       const sheetBox = (await sheet.boundingBox())!;
-      expect(sheetBox.y).toBeGreaterThan(COMPACT.height / 3);
+      // Settings adds a row; the sheet still reserves the top 20% as its backdrop.
+      expect(sheetBox.y).toBeGreaterThanOrEqual(COMPACT.height * 0.2);
       expect(sheetBox.width).toBeGreaterThan(COMPACT.width * 0.8);
       await qaScreenshot(page, "compact-sheet");
       await qaScreenshot(page, "phase7-compact-sheet");
@@ -208,11 +221,11 @@ test.describe("Usage item", () => {
       await expectPinnedUsage(page, ["69% 5h", "88% wk"]);
       await openUsageOptions(page);
       await expect(page.getByTestId("usage-display-remaining")).toHaveAttribute(
-        "aria-checked",
+        "aria-selected",
         "true",
       );
-      await qaScreenshot(page, "usage-options-menu");
-      await page.keyboard.press("Escape");
+      await qaScreenshot(page, "usage-settings-expanded");
+      await page.getByTestId("usage-options-toggle").click();
     });
 
     await test.step("the Settings usage section shares the pins and the toggle", async () => {
@@ -226,16 +239,18 @@ test.describe("Usage item", () => {
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 10_000 });
     });
 
-    await test.step("unpinning both brings back default windows, and that survives a reload", async () => {
+    await test.step("unpinning everything stays empty after a reload", async () => {
       await togglePin(screen, "Claude", "Session");
       await togglePin(screen, "Codex", "Weekly");
-      await expectPinnedUsage(page, ["69% 5h", "46% wk", "93% 5h", "88% wk"]);
+      await expectNoUsageItem(page);
       await page.reload();
       await expect(screen.getByText("88% left")).toBeVisible({ timeout: 10_000 });
-      await expectPinnedUsage(page, ["69% 5h", "46% wk", "93% 5h", "88% wk"]);
-      await gotoAppShell(page);
-      await usageItem(page).click();
-      await expectOnUsageScreen(page);
+      await expectNoUsageItem(page);
+      await expect(pinRow(screen, "Claude", "Session")).not.toBeChecked();
+      await expect(pinRow(screen, "Claude", "Weekly")).not.toBeChecked();
+      await expect(pinRow(screen, "Codex", "Session")).not.toBeChecked();
+      await expect(pinRow(screen, "Codex", "Weekly")).not.toBeChecked();
+      await qaScreenshot(page, "explicit-empty-pins-after-reload");
     });
 
     await test.step("Settings > Sidebar lists the Usage item", async () => {
@@ -262,7 +277,10 @@ test("without summary data the footer drops the Usage item and keeps the Usage i
           fetchedAt: new Date().toISOString(),
           sourceId: "alpha",
           sourceLabel: "Alpha plan",
-          report: { status: "unavailable", windows: [] },
+          report: {
+            status: "unavailable",
+            problem: { kind: "no_quota", detail: "No active coding plan" },
+          },
         },
       ],
     ],
@@ -280,7 +298,7 @@ test("without summary data the footer drops the Usage item and keeps the Usage i
   await expectOnUsageScreen(page);
 });
 
-test("the Usage options show and hide the sidebar Usage item", async ({ page }) => {
+test("the Usage Settings show and hide the sidebar Usage item", async ({ page }) => {
   await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
   await page.setViewportSize(WIDE);
   await gotoAppShell(page);
@@ -289,7 +307,7 @@ test("the Usage options show and hide the sidebar Usage item", async ({ page }) 
   await expectOnUsageScreen(page);
 
   await openUsageOptions(page);
-  const toggle = page.getByTestId("usage-show-in-sidebar");
+  const toggle = page.getByTestId("usage-show-in-sidebar").getByRole("switch");
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await toggle.click();
   await expect(page.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);

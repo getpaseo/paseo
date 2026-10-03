@@ -1,4 +1,5 @@
-import startEntry from "@tanstack/react-start/server-entry";
+import type { Register } from "@tanstack/react-router";
+import type { RequestHandler } from "@tanstack/react-start/server";
 import { getAndroidVersionCode } from "~/android-version";
 import { getCanonicalRedirect } from "~/canonical-url";
 import { getDoc, getLegacyDocsRedirect } from "~/docs";
@@ -59,6 +60,21 @@ function variesByUserAgent(pathname: string, response: Response): boolean {
   return response.headers.get("content-type")?.includes("text/html") ?? false;
 }
 
+// A static import of TanStack Start's server handler breaks every SSR hot reload on
+// Vite 7 with "createStartHandler is not a function". Importing it at request time
+// avoids the race. Remove once the website is on a Vite release with vitejs/vite#22369.
+// https://github.com/TanStack/router/issues/7285
+let cachedStartFetch: RequestHandler<Register> | null = null;
+
+async function getStartFetch(): Promise<RequestHandler<Register>> {
+  if (!cachedStartFetch) {
+    const { createStartHandler, defaultStreamHandler } =
+      await import("@tanstack/react-start/server");
+    cachedStartFetch = createStartHandler(defaultStreamHandler);
+  }
+  return cachedStartFetch;
+}
+
 export default {
   async fetch(request: Request, env: WebsiteEnv, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -105,7 +121,8 @@ export default {
       return markdownResponse(doc.content);
     }
 
-    const response = await startEntry.fetch(request);
+    const startFetch = await getStartFetch();
+    const response = await startFetch(request);
     return variesByUserAgent(url.pathname, response) ? withoutSharedCaching(response) : response;
   },
 };
