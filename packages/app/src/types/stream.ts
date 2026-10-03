@@ -973,11 +973,31 @@ function appendAssistantMessage(
   return [...state, item];
 }
 
+/**
+ * Reasoning deltas belong to the open message lane (#4509): while a message's
+ * text streams, the thought it grew from stays open, so interleaved thinking
+ * deltas merge into it instead of opening another "Thinking" row. The lane is
+ * still open only while everything after its thought is assistant text; any
+ * other item (tool call, user message, …) closed it and a new row starts.
+ */
+function findOpenLaneThoughtIndex(state: StreamItem[]): number {
+  for (let index = state.length - 1; index >= 0; index -= 1) {
+    const item = state[index];
+    if (item?.kind === "thought") {
+      return state.slice(index + 1).every((entry) => entry.kind === "assistant_message")
+        ? index
+        : -1;
+    }
+  }
+  return -1;
+}
+
 function appendThought(
   state: StreamItem[],
   text: string,
   timestamp: Date,
   timelineCursor?: TimelinePosition,
+  source: StreamUpdateSource = "canonical",
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -985,15 +1005,22 @@ function appendThought(
   }
 
   const last = state[state.length - 1];
-  if (last && last.kind === "thought") {
+  let laneThoughtIndex = -1;
+  if (last?.kind !== "thought" && source === "live") {
+    laneThoughtIndex = findOpenLaneThoughtIndex(state);
+  }
+  const mergeIndex = last?.kind === "thought" ? state.length - 1 : laneThoughtIndex;
+
+  if (mergeIndex >= 0) {
+    const target = state[mergeIndex] as ThoughtItem;
     const updated: ThoughtItem = {
-      ...last,
+      ...target,
       ...(timelineCursor ? { timelineCursor } : {}),
-      text: `${last.text}${chunk}`,
+      text: `${target.text}${chunk}`,
       timestamp,
       status: "loading",
     };
-    return [...state.slice(0, -1), updated];
+    return [...state.slice(0, mergeIndex), updated, ...state.slice(mergeIndex + 1)];
   }
 
   if (!hasContent) {
@@ -1009,7 +1036,10 @@ function appendThought(
     timestamp,
     status: "loading",
   };
-  return [...state, item];
+  // A live lane keeps the thinking row above the message text it belongs to.
+  const insertAt =
+    source === "live" && last?.kind === "assistant_message" ? state.length - 1 : state.length;
+  return [...state.slice(0, insertAt), item, ...state.slice(insertAt)];
 }
 
 function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
@@ -1527,7 +1557,7 @@ function reduceTimelineEvent(
         ),
       );
     case "reasoning":
-      return appendThought(state, item.text, timestamp, timelineCursor);
+      return appendThought(state, item.text, timestamp, timelineCursor, source);
     case "tool_call":
       return finalizeActiveThoughts(
         reduceTimelineToolCall(state, event, item, timestamp, timelineCursor),
@@ -1840,8 +1870,17 @@ function shouldFlushHead(input: {
     return true;
   }
 
-  // If incoming kind is different from current head's streamable kind, flush
+  // If incoming kind is different from current head's streamable kind, flush.
+  // Exception (#4509): reasoning belongs to the open message lane. Thinking
+  // deltas merge into the lane's thought whether it precedes or trails the
+  // message text, and the lane's own text does not close the thought beside it.
   if (lastStreamable.kind !== incomingKind) {
+    if (incomingKind === "thought") {
+      return false;
+    }
+    if (lastStreamable.kind === "thought" && incomingKind === "assistant_message") {
+      return false;
+    }
     return true;
   }
 
