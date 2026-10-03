@@ -113,12 +113,14 @@ export function resolveAgentUsageView(input: {
 }): AgentUsageView {
   const { canReport, query } = input;
   if (!canReport) return { kind: "none" };
-  if (query.data) {
-    return query.data.length === 0 ? { kind: "none" } : { kind: "ready", reports: query.data };
-  }
+  // A failed request keeps the reports from before it, or those that streamed in before it failed;
+  // shown alone they would pass for the agent's complete, current usage.
   if (query.error) {
     const reason = query.error instanceof Error ? query.error.message : String(query.error);
     return { kind: "error", message: usageCopy.agentError(reason) };
+  }
+  if (query.data) {
+    return query.data.length === 0 ? { kind: "none" } : { kind: "ready", reports: query.data };
   }
   return { kind: "loading" };
 }

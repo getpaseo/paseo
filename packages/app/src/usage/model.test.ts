@@ -274,4 +274,13 @@ describe("resolveAgentUsageView", () => {
       }),
     ).toEqual({ kind: "error", message: "Unable to load usage: Unknown agent" });
   });
+
+  it("says the request failed instead of showing the reports from before it", () => {
+    expect(
+      resolveAgentUsageView({
+        canReport: true,
+        query: { data: [report], error: new Error("Unknown agent"), isFetching: false },
+      }),
+    ).toEqual({ kind: "error", message: "Unable to load usage: Unknown agent" });
+  });
 });
