@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -430,6 +431,221 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     });
 
     expect(upserts(await replayDescriptors())).toEqual([]);
+  });
+
+  test("skips subagent history replay when the transcript exceeds the replay budget", async () => {
+    // Issue #5820: loading every sidechain transcript at once OOMs the daemon worker on large
+    // sessions. Over budget, the sidechain files stay unread and the parent history still loads.
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "1");
+    const bulkEntry = JSON.stringify({
+      type: "user",
+      isSidechain: true,
+      agentId: AGENT_ID,
+      sessionId: "replay-session",
+      timestamp: "2026-07-26T06:27:55.000Z",
+      message: { role: "user", content: "x".repeat(1024 * 1024 + 8192) },
+    });
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry(), bulkEntry],
+    });
+
+    const events = await replayEvents();
+
+    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+
+    const parentTaskCalls = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === TOOL_USE_ID,
+    );
+    expect(parentTaskCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("still replays subagent history when the transcript is under the replay budget", async () => {
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "16");
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+    });
+
+    const descriptors = upserts(await replayDescriptors());
+    expect(descriptors.map((descriptor) => descriptor.id)).toContain(TOOL_USE_ID);
+    expect(descriptors.at(-1)).toMatchObject({ id: TOOL_USE_ID, status: "completed" });
+  });
+
+  test("falls back to the default budget when the env override is not a positive number", async () => {
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "0");
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+    });
+
+    const descriptors = upserts(await replayDescriptors());
+    expect(descriptors.map((descriptor) => descriptor.id)).toContain(TOOL_USE_ID);
+  });
+
+  test("replays the parent unchanged, matching the same session without subagent transcripts", async () => {
+    // The #5820 reporter's own technique: moving the subagent transcripts away leaves the parent
+    // loading fine. The over-budget skip has to be indistinguishable from that state.
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "1");
+    const bulkEntry = JSON.stringify({
+      type: "user",
+      isSidechain: true,
+      agentId: AGENT_ID,
+      sessionId: "replay-session",
+      timestamp: "2026-07-26T06:27:55.000Z",
+      message: { role: "user", content: "x".repeat(1024 * 1024 + 8192) },
+    });
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry(), bulkEntry],
+    });
+    const withSidechainsSkipped = await replayEvents();
+
+    rmSync(path.join(claudeProjectDirSync(cwd, { configDir }), "replay-session"), {
+      recursive: true,
+      force: true,
+    });
+    const withoutSidechains = await replayEvents();
+
+    expect(withSidechainsSkipped).toEqual(withoutSidechains);
+  });
+
+  test("does not warn about skipped subagent history when the session has none", async () => {
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "1");
+    const records: unknown[] = [];
+    const historyDir = claudeProjectDirSync(cwd, { configDir });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(
+      path.join(historyDir, "replay-session.jsonl"),
+      [
+        taskToolUse(),
+        taskToolResult(),
+        parentEntry([{ type: "text", text: "x".repeat(1024 * 1024 + 8192) }]),
+      ].join("\n"),
+    );
+
+    const client = new ClaudeAgentClient({
+      logger: pino({ level: "info" }, { write: (line: string) => records.push(JSON.parse(line)) }),
+      queryFactory,
+      resolveVersion: async () => "2.1.220",
+    });
+    const session = await client.resumeSession(
+      { provider: "claude", sessionId: "replay-session" },
+      { cwd },
+    );
+    const events: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      events.push(event);
+    }
+    await session.close();
+
+    expect(
+      records.filter(
+        (record) =>
+          (record as { msg?: string }).msg ===
+          "Skipped Claude subagent history replay for oversized transcript",
+      ),
+    ).toEqual([]);
+    expect(events.filter((event) => event.type === "timeline").length).toBeGreaterThan(0);
+  });
+
+  test("warns with the byte accounting when subagent history is skipped", async () => {
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "1");
+    const records: unknown[] = [];
+    const bulkEntry = JSON.stringify({
+      type: "user",
+      isSidechain: true,
+      agentId: AGENT_ID,
+      sessionId: "replay-session",
+      timestamp: "2026-07-26T06:27:55.000Z",
+      message: { role: "user", content: "x".repeat(1024 * 1024 + 8192) },
+    });
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [sidechainEntry(), bulkEntry],
+    });
+
+    const client = new ClaudeAgentClient({
+      logger: pino({ level: "info" }, { write: (line: string) => records.push(JSON.parse(line)) }),
+      queryFactory,
+      resolveVersion: async () => "2.1.220",
+    });
+    const session = await client.resumeSession(
+      { provider: "claude", sessionId: "replay-session" },
+      { cwd },
+    );
+    for await (const _event of session.streamHistory()) {
+      // Drain the replay so the skip decision has run.
+    }
+    await session.close();
+
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: pino.levels.values.warn,
+        msg: "Skipped Claude subagent history replay for oversized transcript",
+        sessionId: "replay-session",
+        parentBytes: expect.any(Number),
+        sidechainBytes: expect.any(Number),
+        budgetBytes: 1024 * 1024,
+      }),
+    );
+    const warned = records.find(
+      (record) =>
+        (record as { msg?: string }).msg ===
+        "Skipped Claude subagent history replay for oversized transcript",
+    ) as { parentBytes: number; sidechainBytes: number };
+    expect(warned.parentBytes).toBeGreaterThan(0);
+    expect(warned.sidechainBytes).toBeGreaterThan(1024 * 1024);
+  });
+
+  test("skips workflow replay too when the transcript exceeds the replay budget", async () => {
+    vi.stubEnv("PASEO_CLAUDE_REPLAY_BUDGET_MB", "1");
+    const bulkEntry = JSON.stringify({
+      type: "user",
+      isSidechain: true,
+      agentId: "wf-bulk-agent",
+      sessionId: "replay-session",
+      timestamp: "2026-07-26T06:27:55.000Z",
+      message: { role: "user", content: "x".repeat(1024 * 1024 + 8192) },
+    });
+    writeWorkflowSession("completed", {
+      children: [
+        {
+          agentId: "wf-bulk-agent",
+          output: "child output",
+          timestamp: "2026-07-26T06:29:00.000Z",
+        },
+      ],
+    });
+    const subagentDirectory = path.join(
+      claudeProjectDirSync(cwd, { configDir }),
+      "replay-session",
+      "subagents",
+    );
+    writeSubagent({
+      subagentDir: subagentDirectory,
+      agentId: "wf-bulk-agent",
+      sidechainLines: [bulkEntry],
+    });
+
+    const events = await replayEvents();
+
+    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    const notifications = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "task_notification",
+    );
+    expect(notifications.length).toBeGreaterThanOrEqual(1);
   });
 
   test("does not accumulate internal workflow agents as replay-only running rows", async () => {

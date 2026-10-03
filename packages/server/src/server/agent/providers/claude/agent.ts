@@ -4893,10 +4893,14 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       const content = fs.readFileSync(historyPath, "utf8");
-      const replay = this.ingestPersistedSidechains(
-        content,
-        readClaudeSidechainHistory(historyPath),
-      );
+      const sidechains = readClaudeSidechainHistory(historyPath, fs.statSync(historyPath).size);
+      if (sidechains.skippedForBudget) {
+        this.logger.warn(
+          { sessionId, cwd: this.config.cwd, historyPath, ...sidechains.skippedForBudget },
+          "Skipped Claude subagent history replay for oversized transcript",
+        );
+      }
+      const replay = this.ingestPersistedSidechains(content, sidechains);
       this.ingestPersistedHistory(content, replay);
     } catch (error) {
       this.logger.warn(
@@ -4926,11 +4930,12 @@ class ClaudeAgentSession implements AgentSession {
     parentContent: string,
     sidechains: ClaudeSidechainHistory,
   ): ClaudeReplayOwnership {
-    const parentEntries = parseClaudeHistoryRecords(parentContent).filter(
-      (entry) => entry.isSidechain !== true,
-    );
-    const sidechainEntries = [parentContent, ...sidechains.contents]
-      .flatMap(parseClaudeHistoryRecords)
+    // Parse the parent transcript once and split it, instead of re-parsing the whole string to
+    // recover the sidechain records it already contained.
+    const parentRecords = parseClaudeHistoryRecords(parentContent);
+    const parentEntries = parentRecords.filter((entry) => entry.isSidechain !== true);
+    const sidechainEntries = parentRecords
+      .concat(sidechains.contents.flatMap(parseClaudeHistoryRecords))
       .filter((entry) => entry.isSidechain === true && typeof entry.agentId === "string");
 
     // Replay produces the same observations the live task protocol produces, then folds them
@@ -5828,37 +5833,100 @@ interface ClaudeSidechainHistory {
   workflowSidechainContentsByRunId: Map<string, string[]>;
   /** agentId -> sidecar metadata, when Claude Code wrote one next to the transcript. */
   metaByAgentId: Map<string, ClaudeSubagentMeta>;
+  /**
+   * Set when the sidechain files (subagent transcripts, workflow summaries, sidecars) were left
+   * unread because the parent plus sidechain transcripts exceed the replay budget, so only
+   * parent history is replayed (issue #5820: loading every subagent transcript at once OOMs the
+   * daemon worker on large sessions).
+   */
+  skippedForBudget?: {
+    parentBytes: number;
+    sidechainBytes: number;
+    budgetBytes: number;
+  };
 }
 
 const CLAUDE_SUBAGENT_META_FILE = /^agent-(.+)\.meta\.json$/;
 
-function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory {
-  const sessionDirectory = path.join(
-    path.dirname(historyPath),
-    path.basename(historyPath, ".jsonl"),
-  );
-  const sidechainDirectory = path.join(sessionDirectory, "subagents");
-  const history: ClaudeSidechainHistory = {
-    contents: [],
-    workflowContents: [],
-    workflowSidechainContentsByRunId: new Map(),
-    metaByAgentId: new Map(),
-  };
-  const workflowDirectory = path.join(sessionDirectory, "workflows");
-  if (fs.existsSync(workflowDirectory)) {
-    for (const entry of fs.readdirSync(workflowDirectory, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      try {
-        history.workflowContents.push(
-          fs.readFileSync(path.join(workflowDirectory, entry.name), "utf8"),
-        );
-      } catch {
-        // A partial or unreadable run summary must not fail the rest of history ingestion.
-      }
-    }
-  }
-  if (!fs.existsSync(sidechainDirectory)) return history;
+// Issue #5820 measured a 757 MB transcript set peaking near ~2.1 GB in the daemon worker before
+// the heap gave out. A 256 MB replay-input budget keeps that peak an order of magnitude lower
+// while leaving ordinary sessions (kilobytes to a few megabytes) untouched.
+const DEFAULT_CLAUDE_REPLAY_BUDGET_BYTES = 256 * 1024 * 1024;
 
+function claudeReplayBudgetBytes(): number {
+  const megabytes = Number.parseInt(process.env.PASEO_CLAUDE_REPLAY_BUDGET_MB ?? "", 10);
+  return Number.isFinite(megabytes) && megabytes > 0
+    ? megabytes * 1024 * 1024
+    : DEFAULT_CLAUDE_REPLAY_BUDGET_BYTES;
+}
+
+/**
+ * Returns null instead of throwing, so a file that disappears or becomes unreadable between the
+ * stat and the read is skipped rather than failing the session's history load.
+ */
+function readClaudeSidechainFile(entryPath: string): string | null {
+  try {
+    return fs.readFileSync(entryPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Byte size for the replay budget, or null when the file cannot be stat-ed. */
+function claudeSidechainFileSize(entryPath: string): number | null {
+  try {
+    return fs.statSync(entryPath).size;
+  } catch {
+    return null;
+  }
+}
+
+interface ClaudeSidechainFile {
+  entryPath: string;
+  workflowRunId?: string;
+}
+
+interface ClaudeSidechainFilePlan {
+  sidechainFiles: ClaudeSidechainFile[];
+  metaFiles: { entryPath: string; agentId: string }[];
+  bytes: number;
+}
+
+function collectClaudeWorkflowSummaryPaths(sessionDirectory: string): {
+  paths: string[];
+  bytes: number;
+} {
+  const workflowDirectory = path.join(sessionDirectory, "workflows");
+  const result = { paths: [] as string[], bytes: 0 };
+  if (!fs.existsSync(workflowDirectory)) return result;
+  for (const entry of fs.readdirSync(workflowDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const summaryPath = path.join(workflowDirectory, entry.name);
+    const summaryBytes = claudeSidechainFileSize(summaryPath);
+    if (summaryBytes === null) continue;
+    result.bytes += summaryBytes;
+    result.paths.push(summaryPath);
+  }
+  return result;
+}
+
+function recordClaudeSidechainFile(
+  plan: ClaudeSidechainFilePlan,
+  sidechainDirectory: string,
+  entryPath: string,
+): number {
+  const relativeParts = path.relative(sidechainDirectory, entryPath).split(path.sep);
+  const workflowRunId =
+    relativeParts[0] === "workflows" && relativeParts.length >= 3 ? relativeParts[1] : undefined;
+  const entryBytes = claudeSidechainFileSize(entryPath);
+  if (entryBytes === null) return 0;
+  plan.sidechainFiles.push({ entryPath, workflowRunId });
+  return entryBytes;
+}
+
+function collectClaudeSidechainFilePlan(sidechainDirectory: string): ClaudeSidechainFilePlan {
+  const plan: ClaudeSidechainFilePlan = { sidechainFiles: [], metaFiles: [], bytes: 0 };
+  if (!fs.existsSync(sidechainDirectory)) return plan;
   const directories = [sidechainDirectory];
   while (directories.length > 0) {
     const directory = directories.pop();
@@ -5871,41 +5939,90 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
       }
       if (!entry.isFile()) continue;
       if (entry.name.endsWith(".jsonl")) {
-        recordClaudeSidechainContents(history, sidechainDirectory, entryPath);
+        plan.bytes += recordClaudeSidechainFile(plan, sidechainDirectory, entryPath);
         continue;
       }
-      // The sidecar carries the Task tool_use id, which is the same id the live stream keys on.
-      // Reading it is what lets replay and live agree instead of each deriving its own link.
       const metaMatch = CLAUDE_SUBAGENT_META_FILE.exec(entry.name);
       if (!metaMatch?.[1]) continue;
-      try {
-        const meta = parseClaudeSubagentMeta(fs.readFileSync(entryPath, "utf8"));
-        if (meta) history.metaByAgentId.set(metaMatch[1], meta);
-      } catch {
-        // Undocumented internals: a missing or unreadable sidecar must never fail ingestion.
-      }
+      const metaBytes = claudeSidechainFileSize(entryPath);
+      if (metaBytes === null) continue;
+      plan.bytes += metaBytes;
+      plan.metaFiles.push({ entryPath, agentId: metaMatch[1] });
     }
   }
-  return history;
+  return plan;
 }
 
-function recordClaudeSidechainContents(
+function storeClaudeSubagentMeta(
   history: ClaudeSidechainHistory,
-  sidechainDirectory: string,
-  entryPath: string,
+  file: { entryPath: string; agentId: string },
 ): void {
-  const contents = fs.readFileSync(entryPath, "utf8");
-  const relativeParts = path.relative(sidechainDirectory, entryPath).split(path.sep);
-  const workflowRunId =
-    relativeParts[0] === "workflows" && relativeParts.length >= 3 ? relativeParts[1] : undefined;
-  if (!workflowRunId) {
+  // The sidecar carries the Task tool_use id, which is the same id the live stream keys on.
+  // Reading it is what lets replay and live agree instead of each deriving its own link.
+  const contents = readClaudeSidechainFile(file.entryPath);
+  if (contents === null) return;
+  try {
+    const meta = parseClaudeSubagentMeta(contents);
+    if (meta) history.metaByAgentId.set(file.agentId, meta);
+  } catch {
+    // Undocumented internals: a malformed sidecar must never fail ingestion.
+  }
+}
+
+function storeClaudeSidechainContents(
+  history: ClaudeSidechainHistory,
+  file: ClaudeSidechainFile,
+): void {
+  const contents = readClaudeSidechainFile(file.entryPath);
+  if (contents === null) return;
+  if (!file.workflowRunId) {
     history.contents.push(contents);
     return;
   }
-
-  const workflowContents = history.workflowSidechainContentsByRunId.get(workflowRunId) ?? [];
+  const workflowContents = history.workflowSidechainContentsByRunId.get(file.workflowRunId) ?? [];
   workflowContents.push(contents);
-  history.workflowSidechainContentsByRunId.set(workflowRunId, workflowContents);
+  history.workflowSidechainContentsByRunId.set(file.workflowRunId, workflowContents);
+}
+
+function readClaudeSidechainHistory(
+  historyPath: string,
+  parentBytes: number,
+): ClaudeSidechainHistory {
+  const sessionDirectory = path.join(
+    path.dirname(historyPath),
+    path.basename(historyPath, ".jsonl"),
+  );
+  const sidechainDirectory = path.join(sessionDirectory, "subagents");
+  const history: ClaudeSidechainHistory = {
+    contents: [],
+    workflowContents: [],
+    workflowSidechainContentsByRunId: new Map(),
+    metaByAgentId: new Map(),
+  };
+
+  // Stat every file before reading any, so an over-budget session is decided from directory
+  // metadata alone instead of partial contents held in memory while the rest is still loading.
+  const summaries = collectClaudeWorkflowSummaryPaths(sessionDirectory);
+  const plan = collectClaudeSidechainFilePlan(sidechainDirectory);
+  const sidechainBytes = summaries.bytes + plan.bytes;
+  const budgetBytes = claudeReplayBudgetBytes();
+  // A session with no sidechain files at all has nothing to skip, however large the parent is.
+  if (sidechainBytes > 0 && parentBytes + sidechainBytes > budgetBytes) {
+    history.skippedForBudget = { parentBytes, sidechainBytes, budgetBytes };
+    return history;
+  }
+
+  for (const summaryPath of summaries.paths) {
+    const contents = readClaudeSidechainFile(summaryPath);
+    if (contents !== null) history.workflowContents.push(contents);
+  }
+  for (const metaFile of plan.metaFiles) {
+    storeClaudeSubagentMeta(history, metaFile);
+  }
+  for (const file of plan.sidechainFiles) {
+    storeClaudeSidechainContents(history, file);
+  }
+  return history;
 }
 
 interface ClaudeHistoricalSubagentToolCall {
