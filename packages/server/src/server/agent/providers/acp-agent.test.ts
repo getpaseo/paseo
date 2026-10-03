@@ -825,6 +825,87 @@ describe("mapACPUsage", () => {
   });
 });
 
+describe("usage_update session notifications", () => {
+  interface UsageUpdateInternals {
+    sessionId: string | null;
+    currentTurnUsage: Record<string, unknown> | undefined;
+    activeForegroundTurnId: string | null;
+    handlePromptResponse(response: PromptResponse, turnId: string): void;
+  }
+
+  test("forwards usage_update as a usage_updated event with context-window fields", async () => {
+    const session = createSession();
+    asInternals<UsageUpdateInternals>(session).sessionId = "session-1";
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 37_000, size: 262_144 } as SessionUpdate,
+    });
+
+    const usageEvents = events.filter((event) => event.type === "usage_updated");
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]).toMatchObject({
+      provider: "claude-acp",
+      usage: { contextWindowUsedTokens: 37_000, contextWindowMaxTokens: 262_144 },
+    });
+  });
+
+  test("drops usage_update with a non-positive or non-finite window size", async () => {
+    const session = createSession();
+    asInternals<UsageUpdateInternals>(session).sessionId = "session-1";
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 100, size: 0 } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: Number.NaN,
+        size: Number.NaN,
+      } as SessionUpdate,
+    });
+
+    expect(events.filter((event) => event.type === "usage_updated")).toHaveLength(0);
+  });
+
+  test("context-window fields survive turn completion", async () => {
+    // The manager replaces agent.lastUsage on both usage_updated and
+    // turn_completed, so a prompt response that maps only per-turn token counts
+    // must not erase the context-window fields merged from usage_update.
+    const session = createSession();
+    const internals = asInternals<UsageUpdateInternals>(session);
+    internals.sessionId = "session-1";
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 37_000, size: 262_144 } as SessionUpdate,
+    });
+
+    internals.handlePromptResponse(
+      {
+        stopReason: "end_turn",
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      } as unknown as PromptResponse,
+      "turn-1",
+    );
+
+    expect(internals.currentTurnUsage).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 5,
+      contextWindowUsedTokens: 37_000,
+      contextWindowMaxTokens: 262_144,
+    });
+  });
+});
+
 describe("deriveModesFromACP", () => {
   test("prefers explicit ACP mode state", () => {
     const result = deriveModesFromACP(
