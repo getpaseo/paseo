@@ -140,7 +140,7 @@ function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImagePars
     return image ? { part: image, end: start + 1 } : null;
   }
 
-  if (token.name !== "a" && token.name !== "picture" && !isHeadingTag(token)) {
+  if (token.name !== "a" && token.name !== "picture" && !isImageBlockWrapper(token)) {
     return null;
   }
 
@@ -168,7 +168,15 @@ function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImagePars
   return { part, end: closeIndex + 1 };
 }
 
+function isImageBlockWrapper(token: HtmlToken | undefined): boolean {
+  return isHeadingTag(token) || isOpenTag(token, "p") || isOpenTag(token, "div");
+}
+
 function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number): boolean {
+  if (isImageBlockWrapper(tokens[start])) {
+    return false;
+  }
+
   const previous = tokens[start - 1];
   // At line start if nothing precedes this image, or the preceding token ends with only
   // whitespace since the last newline (covers a bare space between two images on the same line).
@@ -201,6 +209,9 @@ function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number)
     }
     // An inline image tag — skip over it (the image itself and its possible wrapping close tag).
     if (token.kind === "tag") {
+      if (isImageBlockWrapper(token)) {
+        return false;
+      }
       const imageResult = parseInlineImageAt(tokens, cursor);
       if (imageResult) {
         cursor = imageResult.end;

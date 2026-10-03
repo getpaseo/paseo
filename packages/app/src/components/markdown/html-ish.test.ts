@@ -160,6 +160,26 @@ describe("splitHtmlishMarkdown", () => {
     expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
   });
 
+  it.each(["p", "div"])("renders a linked picture inside %s", (wrapper) => {
+    const source = `<${wrapper}><a href="https://example.com/page"><picture><source srcset="https://example.com/dark.svg"><img src="https://example.com/default.svg" alt="Image"></picture></a></${wrapper}>`;
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        src: "https://example.com/default.svg",
+        alt: "Image",
+        href: "https://example.com/page",
+      },
+    ]);
+  });
+
+  it.each(["h2", "p", "div"])("keeps text after an image-only %s on a separate row", (wrapper) => {
+    const source = `<${wrapper}><img src="https://example.com/image.svg" alt="Image"></${wrapper}>Next section`;
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      { kind: "inlineImage", src: "https://example.com/image.svg", alt: "Image" },
+      { kind: "markdown", text: "Next section" },
+    ]);
+  });
+
   it("preserves inline image parts inside details bodies", () => {
     expect(
       splitHtmlishMarkdown(
