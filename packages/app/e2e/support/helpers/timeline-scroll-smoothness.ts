@@ -280,7 +280,8 @@ export function findScrollJumps(frames: ScrollFrame[]) {
     // Follow that intended row, not text now below the image.
     const recent = frames.findLast((frame) => frame.at <= previous.at - 100);
     const wheelBudget = current.wheelTotal - (recent?.wheelTotal ?? 0);
-    const availableScroll = Math.min(wheelBudget, previous.scrollTop);
+    const frameScroll = Math.max(0, previous.scrollTop - current.scrollTop);
+    const availableScroll = Math.min(frameScroll, wheelBudget, previous.scrollTop);
     const readingLine = 8 - availableScroll;
     const currentRows = new Map(current.rows.map((row) => [row.id, row]));
     const intendedRow = previous.rows.find((row) => row.top + row.height > readingLine);
@@ -298,9 +299,10 @@ export function findScrollJumps(frames: ScrollFrame[]) {
     // A busy main thread can deliver wheel movement hundreds of milliseconds
     // after its event. Only assert idle stability after the driver stops input.
     const idle = current.inputFinishedAt !== null && previous.at - current.inputFinishedAt > 250;
-    // Wheel events can precede their scroll update. Use the same recent input
-    // budget for the intended reading row and displacement checks. Growth below
-    // that new reader can move the old anchor without moving the reading line.
+    // Wheel events can precede their scroll update, or include input already
+    // applied in earlier frames. Locate the reader with this frame's scroll,
+    // bounded by recent input. Growth below it can move the old anchor without
+    // moving the reading line.
     const readerFollowsInput =
       intendedRow &&
       currentRows.has(intendedRow.id) &&

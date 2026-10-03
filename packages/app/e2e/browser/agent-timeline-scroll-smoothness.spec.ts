@@ -34,6 +34,7 @@ test("scroll detector distinguishes entered image growth from a simultaneous vie
   const after: ScrollFrame = {
     ...before,
     at: 1400,
+    scrollTop: 900,
     wheelTotal: 100,
     lastWheelAt: 1050,
     rows: [
@@ -48,6 +49,7 @@ test("scroll detector distinguishes entered image growth from a simultaneous vie
       {
         ...after,
         wheelTotal: 1000,
+        scrollTop: 0,
         rows: after.rows.map((row) => ({ ...row, top: row.top + 100 })),
       },
     ]),
@@ -101,6 +103,23 @@ test("scroll detector accounts for delayed wheel input and growth below the new 
     ],
   };
   expect(findScrollJumps([before, wheel, after])).toEqual([]);
+  // The previous 480 px input has already moved the viewport; the recent
+  // budget includes it, but only the next 480 px belongs to this frame.
+  const steadyBefore = { ...before, at: 1050, wheelTotal: 480, lastWheelAt: 1049 };
+  const steadyAfter = {
+    ...after,
+    at: 1100,
+    wheelTotal: 960,
+    lastWheelAt: 1099,
+    scrollHeight: 6000,
+    rows: [
+      { id: "new-reader", top: -40, height: 278 },
+      { id: "image", top: 238, height: 1184 },
+      { id: "old-reader", top: 1422, height: 130 },
+    ],
+  };
+  expect(findScrollJumps([steadyBefore, steadyAfter])).toEqual([]);
+
   expect(
     findScrollJumps([
       before,
