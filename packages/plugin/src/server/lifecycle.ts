@@ -66,6 +66,12 @@ export interface PluginLifecycleEvents {
     timeline: readonly AgentTimelineItem[];
   };
   "agent.permission_requested": { agent: PluginHookAgent; request: AgentPermissionRequest };
+  "agent.input_activity": {
+    agent: PluginHookAgent;
+    requestId?: string;
+    kind: "focus" | "typing";
+    occurredAt: string;
+  };
   "agent.permission_resolved": {
     agent: PluginHookAgent;
     requestId: string;

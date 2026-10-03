@@ -7,6 +7,75 @@ import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 
+test("input activity crosses clients, protects question drafts and reaches the public plugin hook", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-input-hooks-"));
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.10.0" });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.10.0",
+  });
+  const other = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.10.0" });
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "input-hooks", requirements: { paseo: ">=0.10.0" } }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `export default function contribute(server) {
+      server.on("agent.input_activity", (event) => { console.log(JSON.stringify({ hook: "agent.input_activity", event })); });
+      return () => {};
+    }`,
+    );
+    await Promise.all([client.connect(), other.connect()]);
+    expect(client.getLastServerInfoMessage()?.features?.agentInputActivity).toBe(true);
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    const agent = await client.createAgent({ provider: "codex", cwd: directory });
+    await client.notifyAgentInputActivity(agent.id, { kind: "focus" });
+    const managed = daemon.daemon.agentManager.getAgent(agent.id);
+    if (!managed) throw new Error("Agent unavailable");
+    managed.pendingPermissions.set("question-1", {
+      id: "question-1",
+      provider: "codex",
+      kind: "question",
+      name: "Clarify",
+    });
+    await client.notifyAgentInputActivity(agent.id, { requestId: "question-1", kind: "typing" });
+    const snapshot = await other.fetchAgent(agent.id);
+    expect(snapshot?.agent.pendingPermissions[0]?.metadata?.responseStartedAt).toEqual(
+      expect.any(String),
+    );
+    await expect(
+      other.respondToPermission(agent.id, "question-1", { behavior: "deny" }, true),
+    ).rejects.toThrow("A user has started answering");
+    await expect
+      .poll(async () => {
+        const logs = await client.getPluginLogs("input-hooks");
+        return logs
+          .filter((entry) => entry.message.startsWith('{"hook":"agent.input_activity"'))
+          .map((entry) => JSON.parse(entry.message).event);
+      })
+      .toEqual([
+        {
+          agent: expect.objectContaining({ id: agent.id }),
+          kind: "focus",
+          occurredAt: expect.any(String),
+        },
+        {
+          agent: expect.objectContaining({ id: agent.id }),
+          requestId: "question-1",
+          kind: "typing",
+          occurredAt: expect.any(String),
+        },
+      ]);
+  } finally {
+    await Promise.all([client.close(), other.close()]);
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
 test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
   const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });

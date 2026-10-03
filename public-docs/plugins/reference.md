@@ -556,17 +556,18 @@ plans, and mode changes; requesting permission does not end the turn.
 
 ### Events
 
-| Name                          | Event fields                                     | Trigger                                                                      |
-| ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `agent.created`               | `agent`                                          | Ordinary creation finishes; excludes import/resume                           |
-| `agent.user_message_accepted` | `agent`, `messageId`, `text`, `prompt`, `origin` | Deduplicated prompt is accepted; excludes provider echoes and history replay |
-| `agent.turn_started`          | `agent`, `turnId`                                | Live turn starts                                                             |
-| `agent.turn_ended`            | `agent`, `turnId`, `outcome`, `timeline`         | Live turn completes, fails, or is canceled                                   |
-| `agent.permission_requested`  | `agent`, `request`                               | Permission or question becomes pending                                       |
-| `agent.permission_resolved`   | `agent`, `requestId`, `resolution`               | Pending request is answered or cleared                                       |
-| `agent.archived`              | `agent`, `archivedAt`                            | Archive state is saved                                                       |
-| `workspace.created`           | `workspace`                                      | Record created; directory available                                          |
-| `workspace.archived`          | `workspace`                                      | Archive state is saved                                                       |
+| Name                          | Event fields                                        | Trigger                                                                                    |
+| ----------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `agent.created`               | `agent`                                             | Ordinary creation finishes; excludes import/resume                                         |
+| `agent.user_message_accepted` | `agent`, `messageId`, `text`, `prompt`, `origin`    | Deduplicated prompt is accepted; excludes provider echoes and history replay               |
+| `agent.turn_started`          | `agent`, `turnId`                                   | Live turn starts                                                                           |
+| `agent.turn_ended`            | `agent`, `turnId`, `outcome`, `timeline`            | Live turn completes, fails, or is canceled                                                 |
+| `agent.permission_requested`  | `agent`, `request`                                  | Permission or question becomes pending                                                     |
+| `agent.input_activity`        | `agent`, optional `requestId`, `kind`, `occurredAt` | User focuses an agent composer/question input, starts typing, or chooses a question option |
+| `agent.permission_resolved`   | `agent`, `requestId`, `resolution`                  | Pending request is answered or cleared                                                     |
+| `agent.archived`              | `agent`, `archivedAt`                               | Archive state is saved                                                                     |
+| `workspace.created`           | `workspace`                                         | Record created; directory available                                                        |
+| `workspace.archived`          | `workspace`                                         | Archive state is saved                                                                     |
 
 Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
 `workspace.created` is not a setup barrier before agent startup.
@@ -597,13 +598,22 @@ type PluginTurnOutcome =
   | { kind: "canceled"; reason: string };
 ```
 
-| Field        | Shape / meaning                                                                                       |
-| ------------ | ----------------------------------------------------------------------------------------------------- |
-| `turnId`     | Provider-reported `string` or `null`; can repeat after a session reopens                              |
-| `timeline`   | `readonly AgentTimelineItem[]`; complete snapshot including earlier conversation; text may span items |
-| `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other`                |
-| `resolution` | SDK `AgentPermissionResponse`                                                                         |
-| `archivedAt` | Timestamp string                                                                                      |
+| Field                                    | Shape / meaning                                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `turnId`                                 | Provider-reported `string` or `null`; can repeat after a session reopens                              |
+| `timeline`                               | `readonly AgentTimelineItem[]`; complete snapshot including earlier conversation; text may span items |
+| `request`                                | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other`                |
+| `resolution`                             | SDK `AgentPermissionResponse`                                                                         |
+| `kind` / `occurredAt` for input activity | `"focus" \| "typing"` and a daemon timestamp; no draft text is transmitted                            |
+| `archivedAt`                             | Timestamp string                                                                                      |
+
+### Input activity
+
+Use `server.supportsLifecycleEvent("agent.input_activity")` before registering input-dependent automation. Updated clients report user focus and actual typing; ordinary composer typing is limited to one notification per second so a newly arrived question can observe an already focused draft. Question forms report the first interaction for their pending request. Automatic and imperative focus restoration do not count. `requestId` is absent for ordinary composer interactions. The hook also covers ordinary agents; scope automation to the agents your plugin owns. Update each client before relying on reply protection across devices.
+
+`paseo.agents.ref(id).notifyInputActivity({ requestId?, kind: "focus" | "typing" })` reports an interaction from a plugin-owned editor. It requires `server_info.features.agentInputActivity`. For native pending questions, the host stores `request.metadata.responseStartedAt` until resolution and restores it after provider refresh or daemon restart. Call `respondToPermission({ requestId, response, expectedNoInputStarted: true })` for unattended question responses: the host refuses an already-started or resolved question before submitting to the provider. Manual responses keep using `respondToPermission({ requestId, response })`.
+
+Input activity does not answer a question, grant permissions, or resume an agent. Your plugin owns deadlines and which questions are optional. Older app versions do not report input activity; a capable daemon alone does not establish that every connected client reports it.
 
 ### Before hooks
 

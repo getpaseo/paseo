@@ -160,6 +160,7 @@ export interface MessageInputProps {
   /** Reports cursor selection updates from the underlying input. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
+  onInputActivity?: (kind: "focus" | "typing") => void;
   onHeightChange?: (height: number) => void;
   /** Extra styles merged onto the input wrapper (e.g. elevated background). */
   inputWrapperStyle?: import("react-native").ViewStyle;
@@ -635,6 +636,7 @@ interface ComposerTextSurfaceProps {
   accessibilityLabel: string;
   onChangeText: (text: string) => void;
   onFocus: () => void;
+  onUserFocus: () => void;
   onBlur: () => void;
   editable: boolean;
   scrollEnabled: boolean;
@@ -673,6 +675,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         placeholder={props.placeholder}
         accessibilityLabel={props.accessibilityLabel}
         onFocus={props.onFocus}
+        onUserFocus={props.onUserFocus}
         onBlur={props.onBlur}
         style={props.textInputStyle}
         multiline
@@ -1076,6 +1079,7 @@ interface ResolvedMessageInputProps {
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
   onFocusChange: ((focused: boolean) => void) | undefined;
+  onInputActivity: ((kind: "focus" | "typing") => void) | undefined;
   onHeightChange: ((height: number) => void) | undefined;
   inputWrapperStyle: import("react-native").ViewStyle | undefined;
   attachmentSlot: React.ReactNode;
@@ -1123,6 +1127,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     onKeyPressCallback: props.onKeyPress,
     onSelectionChangeCallback: props.onSelectionChange,
     onFocusChange: props.onFocusChange,
+    onInputActivity: props.onInputActivity,
     onHeightChange: props.onHeightChange,
     inputWrapperStyle: props.inputWrapperStyle,
     attachmentSlot: props.attachmentSlot,
@@ -1178,6 +1183,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       onKeyPressCallback,
       onSelectionChangeCallback,
       onFocusChange,
+      onInputActivity,
       onHeightChange,
       inputWrapperStyle,
       attachmentSlot,
@@ -1264,7 +1270,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       replaceText,
       runKeyboardAction: (action) =>
         runMessageInputKeyboardAction(action, {
-          focusInput: () => textInputRef.current?.focus(),
+          focusInput: () => {
+            onInputActivity?.("focus");
+            textInputRef.current?.focus();
+          },
           isDictationRecording: isDictationActive,
           markTranscriptForSend: () => {
             sendAfterTranscriptRef.current = true;
@@ -1669,12 +1678,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const handleInputChange = useCallback(
       (nextValue: string) => {
+        onInputActivity?.("typing");
         updateComposerHeightForText?.(valueRef.current, nextValue);
         valueRef.current = nextValue;
         updateLiveTextPresence(nextValue);
         onChangeText(nextValue);
       },
-      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
+      [onChangeText, onInputActivity, updateComposerHeightForText, updateLiveTextPresence],
     );
 
     const handleInputFocus = useCallback(() => {
@@ -1682,6 +1692,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       setIsInputFocused(true);
       onFocusChange?.(true);
     }, [onFocusChange]);
+    const handleUserInputFocus = useCallback(() => onInputActivity?.("focus"), [onInputActivity]);
 
     const handleInputBlur = useCallback(() => {
       isInputFocusedRef.current = false;
@@ -1811,6 +1822,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               accessibilityLabel={t(mode.accessibilityLabelKey)}
               onChangeText={handleInputChange}
               onFocus={handleInputFocus}
+              onUserFocus={handleUserInputFocus}
               onBlur={handleInputBlur}
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
               scrollEnabled={isComposerScrollEnabled}

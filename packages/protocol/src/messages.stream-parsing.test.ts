@@ -10,6 +10,60 @@ import {
 } from "./messages.js";
 
 describe("shared messages stream parsing", () => {
+  it("parses content-free input activity and guarded question responses", () => {
+    for (const permissionRequestId of [undefined, "question-1"]) {
+      expect(
+        SessionInboundMessageSchema.parse({
+          type: "agent.input.notify_activity.request",
+          agentId: "agent-1",
+          requestId: "rpc-1",
+          permissionRequestId,
+          kind: "typing",
+        }),
+      ).toMatchObject({ agentId: "agent-1", kind: "typing" });
+    }
+    expect(
+      SessionInboundMessageSchema.safeParse({
+        type: "agent.input.notify_activity.request",
+        agentId: "agent-1",
+        requestId: "rpc-1",
+        kind: "blur",
+      }).success,
+    ).toBe(false);
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.permission.respond_if_unstarted.request",
+        agentId: "agent-1",
+        requestId: "rpc-1",
+        permissionRequestId: "question-1",
+        response: { behavior: "deny" },
+      }).type,
+    ).toBe("agent.permission.respond_if_unstarted.request");
+    for (const type of [
+      "agent.input.notify_activity.response",
+      "agent.permission.respond_if_unstarted.response",
+    ]) {
+      expect(
+        SessionOutboundMessageSchema.parse({
+          type,
+          payload: {
+            requestId: "rpc-1",
+            agentId: "agent-1",
+            accepted: false,
+            error: "Response has started",
+          },
+        }).type,
+      ).toBe(type);
+    }
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent_permission_response",
+        agentId: "agent-1",
+        requestId: "question-1",
+        response: { behavior: "allow" },
+      }).type,
+    ).toBe("agent_permission_response");
+  });
   it("parses a full timeline prompt index response", () => {
     const parsed = AgentTimelineListPromptsResponseMessageSchema.parse({
       type: "agent.timeline.list_prompts.response",

@@ -278,6 +278,48 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("skills" in paseo.agents).toBe(false);
 });
 
+test("agent handles report content-free input activity and use the unattended answer guard", async () => {
+  const { client, ws } = await connectClient({
+    agentInputActivity: true,
+    ownedSubscriptions: true,
+  });
+  const agent = client.agents.ref("agent_sdk");
+  const activity = agent.notifyInputActivity({ kind: "focus" });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toEqual({
+    type: "agent.input.notify_activity.request",
+    agentId: "agent_sdk",
+    kind: "focus",
+    requestId: expect.any(String),
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.input.notify_activity.response",
+      payload: { requestId: request.requestId, agentId: "agent_sdk", accepted: true, error: null },
+    }),
+  );
+  await activity;
+  const response = agent.respondToPermission({
+    requestId: "question-1",
+    response: { behavior: "deny" },
+    expectedNoInputStarted: true,
+  });
+  const guarded = parseSentSessionMessage(ws.sent.at(-1));
+  expect(guarded).toMatchObject({
+    type: "agent.permission.respond_if_unstarted.request",
+    agentId: "agent_sdk",
+    permissionRequestId: "question-1",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.permission.respond_if_unstarted.response",
+      payload: { requestId: guarded.requestId, agentId: "agent_sdk", accepted: true, error: null },
+    }),
+  );
+  await response;
+  client.close();
+});
+
 test("agent handles send permission responses for their agent", async () => {
   const { client, ws } = await connectClient();
 

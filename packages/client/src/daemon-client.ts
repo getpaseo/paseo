@@ -5731,13 +5731,54 @@ export class DaemonClient {
     agentId: string,
     requestId: string,
     response: AgentPermissionResponse,
+    expectedNoInputStarted = false,
   ): Promise<void> {
+    if (expectedNoInputStarted) {
+      this.requireAgentInputActivity();
+      const payload =
+        await this.sendNamespacedCorrelatedSessionRequest<"agent.permission.respond_if_unstarted.response">(
+          {
+            message: {
+              type: "agent.permission.respond_if_unstarted.request",
+              agentId,
+              permissionRequestId: requestId,
+              response,
+            },
+          },
+        );
+      if (!payload.accepted) throw new Error(payload.error ?? "Permission response rejected");
+      return;
+    }
     this.sendSessionMessage({
       type: "agent_permission_response",
       agentId,
       requestId,
       response,
     });
+  }
+
+  private requireAgentInputActivity(): void {
+    // COMPAT(agentInputActivity): added in v0.10.0, remove after 2027-04-03 once daemon floor supports input activity.
+    if (this.lastServerInfoMessage?.features?.agentInputActivity !== true) {
+      throw new Error("Update the host to report agent input activity");
+    }
+  }
+
+  async notifyAgentInputActivity(
+    agentId: string,
+    options: { requestId?: string; kind: "focus" | "typing" },
+  ): Promise<void> {
+    this.requireAgentInputActivity();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.input.notify_activity.response">({
+        message: {
+          type: "agent.input.notify_activity.request",
+          agentId,
+          permissionRequestId: options.requestId,
+          kind: options.kind,
+        },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Input activity rejected");
   }
 
   async getPluginCatalog() {

@@ -73,6 +73,7 @@ export type StoredPluginTimelineItem = z.infer<typeof StoredPluginTimelineItemSc
 const STORED_AGENT_SCHEMA = z.object({
   acceptedUserMessages: z.array(AcceptedUserMessageSchema).optional(),
   pluginTimelineItems: z.array(StoredPluginTimelineItemSchema).optional(),
+  questionResponseStartedAt: z.record(z.string(), z.string()).optional(),
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),
@@ -139,6 +140,7 @@ function preserveSnapshotMetadata(
 ): void {
   record.acceptedUserMessages = existing?.acceptedUserMessages;
   record.pluginTimelineItems = existing?.pluginTimelineItems;
+  record.questionResponseStartedAt = existing?.questionResponseStartedAt;
   record.titleSource = existing?.titleSource;
   if (existing && existing.archivedAt !== undefined) record.archivedAt = existing.archivedAt;
 }
@@ -402,6 +404,21 @@ export class AgentStorage {
             ? [...messages, updated]
             : messages.map((entry, position) => (position === index ? updated : entry)),
       };
+    });
+  }
+
+  async setQuestionResponseStartedAt(
+    agentId: string,
+    requestId: string,
+    startedAt: string | null,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const starts = { ...existing.questionResponseStartedAt };
+      if (startedAt === null) delete starts[requestId];
+      else starts[requestId] = startedAt;
+      return { ...existing, questionResponseStartedAt: starts };
     });
   }
 

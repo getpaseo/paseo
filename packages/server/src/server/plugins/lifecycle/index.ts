@@ -21,6 +21,7 @@ export const lifecycleEventNames = [
   "agent.turn_started",
   "agent.turn_ended",
   "agent.permission_requested",
+  "agent.input_activity",
   "agent.permission_resolved",
   "agent.archived",
   "workspace.created",

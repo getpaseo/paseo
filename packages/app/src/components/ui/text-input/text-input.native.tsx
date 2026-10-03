@@ -14,6 +14,7 @@ import PasteInput, {
 } from "@mattermost/react-native-paste-input";
 import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
+import { useUserInputFocus } from "./user-focus";
 
 type NativeInput = (TextInput | PasteTextInputInstance) & {
   blur(): void;
@@ -28,10 +29,12 @@ type NativeInput = (TextInput | PasteTextInputInstance) & {
 
 export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextInputProps>(
   function EditingTextInputNative(allProps, ref) {
+    const userFocus = useUserInputFocus(allProps);
     const isInsideBottomSheet = useIsInsideBottomSheet();
     const {
       initialValue = "",
       onChangeText,
+      onUserFocus: ___,
       onPasteImages,
       onPasteError,
       variant = isInsideBottomSheet ? "bottom-sheet" : "default",
@@ -42,22 +45,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const inputRef = useRef<NativeInput | null>(null);
     const initialTextRef = useRef(initialValue);
     const textRef = useRef(initialTextRef.current);
-    // Resetting the editor swaps the native input to reset intrinsic multiline
-    // sizing. Text replacement (including an empty buffer) keeps the input mounted.
-    // Until React commits that swap, `inputRef` still points at the doomed
-    // instance: focusing it asks Android for the keyboard and then tears the
-    // focused view down, which cancels the show. Fabric also runs view
-    // commands before mount items, so a focus command sent alongside the swap
-    // reaches a view that is not attached yet and the IME ignores it. Focus is
-    // therefore carried by the replacement's `autoFocus`, which native applies
-    // once the view is attached.
     const isAwaitingReplacementRef = useRef(false);
     const [replacement, setReplacement] = useState({ revision: 0, autoFocus: false });
-    // Fabric re-measures the Android input when its `text` prop changes. A native edit only
-    // refreshes a cached spannable, and batched IME deletes (Gboard hold-to-delete) leave the
-    // measured height at the previous content, so an emptied draft keeps several lines. Render
-    // again after every edit so `defaultValue` carries the current text and the input is
-    // re-measured. Only this leaf renders; the composer stays isolated from typing.
     const [, bumpTextRevision] = useReducer((revision: number) => revision + 1, 0);
 
     const assignInputRef = useCallback((input: NativeInput | null) => {
@@ -72,9 +61,11 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     useImperativeHandle(ref, () => ({
       focus: () => {
         if (isAwaitingReplacementRef.current) {
+          userFocus.beforeProgrammaticFocus();
           setReplacementFocus(true);
           return;
         }
+        if (!inputRef.current?.isFocused?.()) userFocus.beforeProgrammaticFocus();
         inputRef.current?.focus();
       },
       blur: () => {
@@ -105,6 +96,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       reset: () => {
         textRef.current = "";
         const autoFocus = inputRef.current?.isFocused?.() ?? false;
+        if (autoFocus) userFocus.beforeProgrammaticFocus();
         if (inputRef.current?.replaceText) {
           inputRef.current.replaceText("");
         } else {
@@ -146,6 +138,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           ref={assignInputRef as React.Ref<PasteTextInputInstance>}
           defaultValue={textRef.current}
           onChangeText={handleChangeText}
+          onFocus={userFocus.onFocus}
+          onTouchStart={userFocus.onTouchStart}
+          onPressIn={userFocus.onPressIn}
+          onBlur={userFocus.onBlur}
           onPaste={handlePaste}
         />
       );
@@ -159,6 +155,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           ref={assignInputRef as unknown as React.Ref<never>}
           defaultValue={textRef.current}
           onChangeText={handleChangeText}
+          onFocus={userFocus.onFocus}
+          onTouchStart={userFocus.onTouchStart}
+          onPressIn={userFocus.onPressIn}
+          onBlur={userFocus.onBlur}
         />
       );
     }
@@ -170,6 +170,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
         ref={assignInputRef as React.Ref<TextInput>}
         defaultValue={textRef.current}
         onChangeText={handleChangeText}
+        onFocus={userFocus.onFocus}
+        onTouchStart={userFocus.onTouchStart}
+        onPressIn={userFocus.onPressIn}
+        onBlur={userFocus.onBlur}
       />
     );
   },

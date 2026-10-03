@@ -3586,8 +3586,15 @@ export class AgentManager {
     agentId: string,
     requestId: string,
     response: AgentPermissionResponse,
+    expectedNoInputStarted = false,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
+    if (expectedNoInputStarted) {
+      const request = agent.pendingPermissions.get(requestId);
+      if (!request || request.kind !== "question") throw new Error("Question is no longer pending");
+      if (request.metadata?.responseStartedAt)
+        throw new Error("A user has started answering this question");
+    }
     if (agent.inFlightPermissionResponses.has(requestId)) {
       throw new Error("A response to this permission request is already being submitted");
     }
@@ -3595,7 +3602,12 @@ export class AgentManager {
 
     try {
       const result = await agent.session.respondToPermission(requestId, response);
+      const responseWasStarted = Boolean(
+        agent.pendingPermissions.get(requestId)?.metadata?.responseStartedAt,
+      );
       agent.pendingPermissions.delete(requestId);
+      if (responseWasStarted)
+        await this.registry?.setQuestionResponseStartedAt(agentId, requestId, null);
 
       try {
         await this.refreshSessionState(agent);
@@ -3618,6 +3630,46 @@ export class AgentManager {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
     }
+  }
+
+  async notifyInputActivity(
+    agentId: string,
+    input: { requestId?: string; kind: "focus" | "typing" },
+  ): Promise<void> {
+    const id = validateAgentId(agentId, "notifyInputActivity");
+    const agent = this.agents.get(id);
+    const stored = agent ? null : await this.registry?.get(id);
+    const source = agent ?? stored;
+    if (!source || source.internal) throw new Error(`Unknown agent '${id}'`);
+    const occurredAt = new Date().toISOString();
+    const requests = agent ? Array.from(agent.pendingPermissions.values()) : [];
+    if (
+      input.requestId &&
+      !requests.some((request) => request.id === input.requestId && request.kind === "question")
+    ) {
+      throw new Error("Question is no longer pending");
+    }
+    const questions = requests.filter(
+      (request) =>
+        request.kind === "question" && (!input.requestId || request.id === input.requestId),
+    );
+    const startedQuestions = questions.map((request) => {
+      if (agent?.inFlightPermissionResponses.has(request.id))
+        throw new Error("A response to this question is already being submitted");
+      const responseStartedAt = request.metadata?.responseStartedAt ?? occurredAt;
+      request.metadata = { ...request.metadata, responseStartedAt };
+      return { id: request.id, responseStartedAt: String(responseStartedAt) };
+    });
+    if (agent) this.emitState(agent, { persist: false });
+    for (const request of startedQuestions) {
+      await this.registry?.setQuestionResponseStartedAt(id, request.id, request.responseStartedAt);
+    }
+    this.pluginLifecycle?.emit("agent.input_activity", {
+      agent: describeHookAgent({ ...source, title: agent ? agent.config.title : stored?.title }),
+      requestId: input.requestId,
+      kind: input.kind,
+      occurredAt,
+    });
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
@@ -4560,7 +4612,18 @@ export class AgentManager {
 
     try {
       const pending = agent.session.getPendingPermissions();
-      agent.pendingPermissions = new Map(pending.map((request) => [request.id, request]));
+      const stored = await this.registry?.get(agent.id);
+      agent.pendingPermissions = new Map(
+        pending.map((request) => {
+          const responseStartedAt =
+            agent.pendingPermissions.get(request.id)?.metadata?.responseStartedAt ??
+            stored?.questionResponseStartedAt?.[request.id];
+          if (request.kind === "question" && responseStartedAt) {
+            request = { ...request, metadata: { ...request.metadata, responseStartedAt } };
+          }
+          return [request.id, request];
+        }),
+      );
     } catch {
       agent.pendingPermissions.clear();
     }
@@ -5039,11 +5102,9 @@ export class AgentManager {
         this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, flags });
         return undefined;
       case "permission_requested":
-        this.onStreamPermissionRequested(agent, event);
-        return undefined;
+        return this.onStreamPermissionRequested(agent, event);
       case "permission_resolved":
-        this.onStreamPermissionResolved({ agent, event, options, flags });
-        return undefined;
+        return this.onStreamPermissionResolved({ agent, event, options, flags });
       default:
         return undefined;
     }
@@ -5758,11 +5819,22 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private onStreamPermissionRequested(
+  private async onStreamPermissionRequested(
     agent: ActiveManagedAgent,
     event: Extract<AgentStreamEvent, { type: "permission_requested" }>,
-  ): void {
+  ): Promise<void> {
     const hadPendingPermissions = agent.pendingPermissions.size > 0;
+    if (event.request.kind === "question") {
+      const stored = await this.registry?.get(agent.id);
+      const responseStartedAt =
+        agent.pendingPermissions.get(event.request.id)?.metadata?.responseStartedAt ??
+        stored?.questionResponseStartedAt?.[event.request.id];
+      if (responseStartedAt)
+        event.request = {
+          ...event.request,
+          metadata: { ...event.request.metadata, responseStartedAt },
+        };
+    }
     agent.pendingPermissions.set(event.request.id, event.request);
     this.refreshSessionPersistence(agent);
     if (!hadPendingPermissions && !agent.internal) {
@@ -5771,14 +5843,19 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private onStreamPermissionResolved(params: {
+  private async onStreamPermissionResolved(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "permission_resolved" }>;
     options: { fromHistory?: boolean } | undefined;
     flags: StreamEventFlags;
-  }): void {
+  }): Promise<void> {
     const { agent, event, options, flags } = params;
+    const responseWasStarted = Boolean(
+      agent.pendingPermissions.get(event.requestId)?.metadata?.responseStartedAt,
+    );
     agent.pendingPermissions.delete(event.requestId);
+    if (responseWasStarted)
+      await this.registry?.setQuestionResponseStartedAt(agent.id, event.requestId, null);
     this.refreshSessionPersistence(agent);
     if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
       agent.bufferedPermissionResolutions.set(event.requestId, event);

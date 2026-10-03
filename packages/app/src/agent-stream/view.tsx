@@ -61,6 +61,7 @@ import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
+import { useAgentInputActivity } from "@/hooks/use-agent-input-activity";
 import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { createStreamPresentation, getStreamItemMessageId } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
@@ -1507,6 +1508,11 @@ function PermissionRequestCard({
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const inputActivity = useAgentInputActivity({
+    client,
+    agentId: permission.agentId,
+    requestId: permission.request.id,
+  });
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
@@ -1639,6 +1645,7 @@ function PermissionRequestCard({
         permission={permission}
         onRespond={handleResponse}
         isResponding={isResponding}
+        onInputActivity={inputActivity.notify}
       />
     );
   }

@@ -133,6 +133,10 @@ import {
 } from "./workspace-labels/index.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import type {
+  AgentInputActivityRequestMessage,
+  AgentPermissionRespondIfUnstartedRequestMessage,
+} from "@getpaseo/protocol/messages";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -2881,6 +2885,17 @@ export class Session {
         return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
+      default:
+        return this.dispatchAgentInputMessage(msg);
+    }
+  }
+
+  private dispatchAgentInputMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.input.notify_activity.request":
+        return this.handleAgentInputActivity(msg);
+      case "agent.permission.respond_if_unstarted.request":
+        return this.handlePermissionRespondIfUnstarted(msg);
       default:
         return undefined;
     }
@@ -5844,6 +5859,44 @@ export class Session {
       });
       throw error;
     }
+  }
+
+  private async handleAgentInputActivity(msg: AgentInputActivityRequestMessage): Promise<void> {
+    let error: string | null = null;
+    try {
+      await this.agentManager.notifyInputActivity(msg.agentId, {
+        requestId: msg.permissionRequestId,
+        kind: msg.kind,
+      });
+    } catch (caught) {
+      error = getErrorMessage(caught);
+    }
+    this.emit({
+      type: "agent.input.notify_activity.response",
+      payload: { requestId: msg.requestId, agentId: msg.agentId, accepted: error === null, error },
+    });
+  }
+
+  private async handlePermissionRespondIfUnstarted(
+    msg: AgentPermissionRespondIfUnstartedRequestMessage,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      await respondToAgentPermission({
+        agentManager: this.agentManager,
+        agentId: msg.agentId,
+        requestId: msg.permissionRequestId,
+        response: msg.response,
+        expectedNoInputStarted: true,
+        logger: this.sessionLogger,
+      });
+    } catch (caught) {
+      error = getErrorMessage(caught);
+    }
+    this.emit({
+      type: "agent.permission.respond_if_unstarted.response",
+      payload: { requestId: msg.requestId, agentId: msg.agentId, accepted: error === null, error },
+    });
   }
 
   private async handleDirectorySuggestionsRequest(msg: DirectorySuggestionsRequest): Promise<void> {

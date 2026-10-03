@@ -9882,6 +9882,132 @@ test("permission request notifies once without forcing unread attention state", 
   expect(attentionReasons).toContain("permission");
 });
 
+test("input activity persists a question draft and atomically protects it from unattended answers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-input-activity-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const publish = vi.fn();
+  const sessions: InputSession[] = [];
+  class InputSession extends TestAgentSession {
+    responses = 0;
+    pending = true;
+    question = {
+      id: "question-1",
+      provider: "codex" as const,
+      kind: "question" as const,
+      name: "Clarify",
+      metadata: { providerMarker: "retained" },
+    };
+    override getPendingPermissions() {
+      return this.pending ? [this.question] : [];
+    }
+    override async respondToPermission() {
+      this.responses++;
+      this.pending = false;
+    }
+  }
+  class InputClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      const session = new InputSession(config);
+      sessions.push(session);
+      return session;
+    }
+    override async resumeSession() {
+      return this.createSession({ provider: "codex", cwd: workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new InputClient() },
+    registry: storage,
+    logger,
+    pluginLifecycle: { emit: publish, before: async (_name, request) => request },
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const notification = manager.notifyInputActivity(agent.id, {
+      requestId: "question-1",
+      kind: "typing",
+    });
+    await expect(
+      manager.respondToPermission(agent.id, "question-1", { behavior: "deny" }, true),
+    ).rejects.toThrow("A user has started answering");
+    await notification;
+    expect(sessions[0]?.responses).toBe(0);
+    const startedAt = manager.getAgent(agent.id)?.pendingPermissions.get("question-1")
+      ?.metadata?.responseStartedAt;
+    expect(startedAt).toEqual(expect.any(String));
+    expect(
+      (await new AgentStorage(storagePath, logger).get(agent.id))?.questionResponseStartedAt,
+    ).toEqual({ "question-1": startedAt });
+    expect(publish).toHaveBeenCalledWith("agent.input_activity", {
+      agent: expect.objectContaining({ id: agent.id }),
+      requestId: "question-1",
+      kind: "typing",
+      occurredAt: expect.any(String),
+    });
+    await manager.reloadAgentSession(agent.id);
+    expect(manager.getAgent(agent.id)?.pendingPermissions.get("question-1")?.metadata).toEqual({
+      providerMarker: "retained",
+      responseStartedAt: startedAt,
+    });
+    await expect(
+      manager.respondToPermission(agent.id, "question-1", { behavior: "deny" }, true),
+    ).rejects.toThrow("A user has started answering");
+    await manager.respondToPermission(agent.id, "question-1", { behavior: "allow" });
+    expect(sessions[1]?.responses).toBe(1);
+    expect((await storage.get(agent.id))?.questionResponseStartedAt).toEqual({});
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("input activity emits for an ordinary composer without granting a tool permission", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-composer-activity-"));
+  const publish = vi.fn();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    logger,
+    pluginLifecycle: { emit: publish, before: async (_name, request) => request },
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    manager.getAgent(agent.id)?.pendingPermissions.set("tool-1", {
+      id: "tool-1",
+      provider: "codex",
+      kind: "tool",
+      name: "Shell",
+    });
+    await manager.notifyInputActivity(agent.id, { kind: "focus" });
+    expect(publish).toHaveBeenCalledWith(
+      "agent.input_activity",
+      expect.objectContaining({
+        agent: expect.objectContaining({ id: agent.id }),
+        kind: "focus",
+        requestId: undefined,
+      }),
+    );
+    expect(manager.getAgent(agent.id)?.pendingPermissions.get("tool-1")?.metadata).toBeUndefined();
+    await expect(
+      manager.notifyInputActivity(agent.id, { requestId: "missing", kind: "typing" }),
+    ).rejects.toThrow("Question is no longer pending");
+    await expect(
+      manager.respondToPermission(agent.id, "tool-1", { behavior: "allow" }, true),
+    ).rejects.toThrow("Question is no longer pending");
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("respondToPermission updates currentModeId after plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

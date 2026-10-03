@@ -292,6 +292,12 @@ export type PaseoAgentPermissionResponse = AgentPermissionResponse;
 export interface PaseoAgentRespondToPermissionOptions {
   requestId: string;
   response: PaseoAgentPermissionResponse;
+  expectedNoInputStarted?: boolean;
+}
+
+export interface PaseoAgentInputActivityOptions {
+  requestId?: string;
+  kind: "focus" | "typing";
 }
 
 export interface PaseoAgentCommandsOptions {
@@ -366,6 +372,7 @@ export interface PaseoAgentHandle {
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
+  notifyInputActivity(options: PaseoAgentInputActivityOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -944,9 +951,10 @@ function createAgentHandleFactory(
       send: async (text, options) => {
         await daemonClient.sendAgentMessage(id, text, options);
       },
-      respondToPermission: async ({ requestId, response }) => {
-        await daemonClient.respondToPermission(id, requestId, response);
+      respondToPermission: async ({ requestId, response, expectedNoInputStarted }) => {
+        await daemonClient.respondToPermission(id, requestId, response, expectedNoInputStarted);
       },
+      notifyInputActivity: (options) => daemonClient.notifyAgentInputActivity(id, options),
       run: async (text, options) => {
         const { timeoutMs, ...sendOptions } = options ?? {};
         await daemonClient.sendAgentMessage(id, text, sendOptions);

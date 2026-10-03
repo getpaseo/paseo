@@ -2435,6 +2435,32 @@ export const AgentPermissionResponseMessageSchema = z.object({
   response: AgentPermissionResponseSchema,
 });
 
+export const AgentInputActivityRequestMessageSchema = z.object({
+  type: z.literal("agent.input.notify_activity.request"),
+  agentId: z.string(),
+  permissionRequestId: z.string().optional(),
+  kind: z.enum(["focus", "typing"]),
+  requestId: z.string(),
+});
+
+export const AgentInputActivityResponseMessageSchema = z.object({
+  type: z.literal("agent.input.notify_activity.response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
+export const AgentPermissionRespondIfUnstartedRequestMessageSchema = z.object({
+  type: z.literal("agent.permission.respond_if_unstarted.request"),
+  agentId: z.string(),
+  permissionRequestId: z.string(),
+  response: AgentPermissionResponseSchema,
+  requestId: z.string(),
+});
+
+export const AgentPermissionRespondIfUnstartedResponseMessageSchema = z.object({
+  type: z.literal("agent.permission.respond_if_unstarted.response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
 const CheckoutErrorCodeSchema = z.enum([
   "NOT_GIT_REPO",
   "NOT_ALLOWED",
@@ -3551,6 +3577,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentWorkspaceMoveRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
+  AgentInputActivityRequestMessageSchema,
+  AgentPermissionRespondIfUnstartedRequestMessageSchema,
   CheckoutStatusRequestSchema,
   CheckoutDiffGetRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
@@ -3834,6 +3862,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
+        agentInputActivity: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -7227,6 +7256,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
+  AgentInputActivityResponseMessageSchema,
+  AgentPermissionRespondIfUnstartedResponseMessageSchema,
   AgentHistoryListResponseMessageSchema,
   AgentWorkspaceMoveResponseMessageSchema,
   AgentRewindResponseMessageSchema,
@@ -7461,6 +7492,15 @@ export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingRes
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
+export type AgentInputActivityRequestMessage = z.infer<
+  typeof AgentInputActivityRequestMessageSchema
+>;
+export type AgentInputActivityResponseMessage = z.infer<
+  typeof AgentInputActivityResponseMessageSchema
+>;
+export type AgentPermissionRespondIfUnstartedRequestMessage = z.infer<
+  typeof AgentPermissionRespondIfUnstartedRequestMessageSchema
+>;
 export type AgentHistoryListResponseMessage = z.infer<typeof AgentHistoryListResponseMessageSchema>;
 export type AgentHistoryEntry = z.infer<typeof AgentHistoryEntrySchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;

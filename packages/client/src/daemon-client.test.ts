@@ -5013,6 +5013,78 @@ test("detaches an agent through the namespaced detach RPC", async () => {
   await expect(promise).resolves.toBeUndefined();
 });
 
+test("input activity sends no text and guards question responses on capable hosts", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "input-activity",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen({ features: { agentInputActivity: true } });
+  await connection;
+  const input = client.notifyAgentInputActivity("agent-1", {
+    requestId: "question-1",
+    kind: "typing",
+  });
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "agent.input.notify_activity.request",
+    agentId: "agent-1",
+    permissionRequestId: "question-1",
+    kind: "typing",
+    requestId: expect.any(String),
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.input.notify_activity.response",
+      payload: { requestId: request.requestId, agentId: "agent-1", accepted: true, error: null },
+    }),
+  );
+  await input;
+  const guarded = client.respondToPermission("agent-1", "question-1", { behavior: "deny" }, true);
+  const guardedRequest = parseSentFrame(mock.sent[1]);
+  expect(guardedRequest).toMatchObject({
+    type: "agent.permission.respond_if_unstarted.request",
+    permissionRequestId: "question-1",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.permission.respond_if_unstarted.response",
+      payload: {
+        requestId: guardedRequest.requestId,
+        agentId: "agent-1",
+        accepted: false,
+        error: "A user has started answering this question",
+      },
+    }),
+  );
+  await expect(guarded).rejects.toThrow("A user has started answering");
+});
+
+test("input activity refuses unsupported hosts without sending a new RPC", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "old-input-host",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen();
+  await connection;
+  await expect(client.notifyAgentInputActivity("agent-1", { kind: "focus" })).rejects.toThrow(
+    "Update the host",
+  );
+  await expect(
+    client.respondToPermission("agent-1", "question-1", { behavior: "deny" }, true),
+  ).rejects.toThrow("Update the host");
+  expect(mock.sent).toEqual([]);
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

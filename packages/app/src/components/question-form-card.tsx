@@ -26,6 +26,7 @@ interface QuestionFormCardProps {
   permission: PendingPermission;
   onRespond: (response: AgentPermissionResponse) => void;
   isResponding: boolean;
+  onInputActivity?: (kind: "focus" | "typing") => void;
 }
 
 const IS_WEB = isWeb;
@@ -266,6 +267,7 @@ interface QuestionOtherInputProps {
   isResponding: boolean;
   onChange: (qIndex: number, text: string) => void;
   onSubmit: () => void;
+  onFocus: () => void;
 }
 
 function QuestionOtherInput({
@@ -277,6 +279,7 @@ function QuestionOtherInput({
   isResponding,
   onChange,
   onSubmit,
+  onFocus,
 }: QuestionOtherInputProps) {
   const { theme } = useUnistyles();
   const handleChange = useCallback(
@@ -314,6 +317,7 @@ function QuestionOtherInput({
       placeholderTextColor={theme.colors.foregroundMuted}
       initialValue={value}
       onChangeText={handleChange}
+      onUserFocus={onFocus}
       onSubmitEditing={onSubmit}
       editable={!isResponding}
       blurOnSubmit={false}
@@ -321,7 +325,12 @@ function QuestionOtherInput({
   );
 }
 
-export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
+export function QuestionFormCard({
+  permission,
+  onRespond,
+  isResponding,
+  onInputActivity,
+}: QuestionFormCardProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -335,9 +344,11 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   const otherInputRef = useRef<EditingTextInputHandle | null>(null);
   const [respondingAction, setRespondingAction] = useState<"submit" | "dismiss" | null>(null);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const handleInputFocus = useCallback(() => onInputActivity?.("focus"), [onInputActivity]);
 
   const toggleOption = useCallback(
     (qIndex: number, optIndex: number, multiSelect: boolean) => {
+      onInputActivity?.("typing");
       const current = selections[qIndex] ?? new Set<number>();
       const next = new Set(current);
       if (multiSelect) {
@@ -355,10 +366,6 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
       setSelections((prev) => ({ ...prev, [qIndex]: next }));
 
-      // Single-select: an option and a custom answer replace each other, as in Claude Code.
-      // Multi-select keeps both. The editing surface owns its text and never replays state
-      // (docs/forms.md), so clearing state alone would leave stale text on screen that
-      // submit ignores; clear the surface explicitly.
       if (!multiSelect && otherTexts[qIndex]) {
         setOtherTexts((prev) => {
           const nextTexts = { ...prev };
@@ -372,11 +379,12 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
       }
     },
-    [activeQuestionIndex, otherTexts, questions, selections],
+    [activeQuestionIndex, otherTexts, questions, selections, onInputActivity],
   );
 
   const setOtherText = useCallback(
     (qIndex: number, text: string) => {
+      onInputActivity?.("typing");
       setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
       const multiSelect = questions?.[qIndex]?.multiSelect ?? false;
       if (!multiSelect && text.length > 0) {
@@ -386,7 +394,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         });
       }
     },
-    [questions],
+    [questions, onInputActivity],
   );
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
@@ -581,6 +589,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
               isResponding={isResponding}
               onChange={setOtherText}
               onSubmit={handlePrimaryAction}
+              onFocus={handleInputFocus}
             />
           ) : null}
         </View>

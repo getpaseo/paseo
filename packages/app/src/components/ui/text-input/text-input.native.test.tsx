@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
 import { EditingTextInput } from "./text-input.native";
+import { EditingTextInput as EditingTextInputWeb } from "./text-input.web";
 import type { EditingTextInputHandle } from "./types";
 
 const bottomSheetTextInputRender = vi.hoisted(() => vi.fn());
@@ -55,6 +56,34 @@ afterEach(() => {
 });
 
 function noop() {}
+
+describe.each([
+  ["native", EditingTextInput],
+  ["web", EditingTextInputWeb],
+] as const)("%s input user focus", (_platform, Input) => {
+  it("ignores autofocus and imperative focus but reports explicit keyboard focus and touches", () => {
+    const onUserFocus = vi.fn();
+    const handle = createRef<EditingTextInputHandle>();
+    act(() => {
+      root?.render(<Input ref={handle} autoFocus onUserFocus={onUserFocus} />);
+    });
+    expect(onUserFocus).not.toHaveBeenCalled();
+    act(() => {
+      handle.current?.blur();
+      handle.current?.focus();
+    });
+    expect(onUserFocus).not.toHaveBeenCalled();
+    const input = container?.querySelector("input");
+    if (!input) throw new Error("Input not rendered");
+    act(() => {
+      input.blur();
+      input.focus();
+    });
+    expect(onUserFocus).toHaveBeenCalledOnce();
+    act(() => input.dispatchEvent(new Event("touchstart", { bubbles: true })));
+    expect(onUserFocus).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("EditingTextInputNative", () => {
   it("uses the bottom-sheet input only inside a bottom sheet", () => {

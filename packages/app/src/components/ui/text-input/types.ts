@@ -18,6 +18,7 @@ export interface EditingTextInputProps extends Omit<
 > {
   initialValue?: string;
   onChangeText?: (text: string) => void;
+  onUserFocus?: () => void;
   onPasteImages?: (files: readonly NativePastedFile[]) => void;
   onPasteError?: (message: string) => void;
   variant?: "default" | "bottom-sheet";

@@ -90,6 +90,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
+import { useAgentInputActivity } from "@/hooks/use-agent-input-activity";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
@@ -1291,6 +1292,10 @@ function ComposerContentImpl({
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
+  const { notify: handleInputActivity, onFocusChange: resetInputActivity } = useAgentInputActivity({
+    client,
+    agentId,
+  });
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
@@ -1542,6 +1547,7 @@ function ComposerContentImpl({
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
+      resetInputActivity(false);
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
         await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
@@ -1557,7 +1563,7 @@ function ComposerContentImpl({
         appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
       );
     },
-    [appSettings.sendBehavior, cwd, onMessageSent, t],
+    [appSettings.sendBehavior, cwd, onMessageSent, t, resetInputActivity],
   );
 
   useEffect(() => {
@@ -2266,12 +2272,13 @@ function ComposerContentImpl({
 
   const handleFocusChange = useCallback(
     (focused: boolean) => {
+      if (!focused) resetInputActivity(false);
       setIsMessageInputFocused(focused);
       if (focused) {
         onAttentionInputFocus?.();
       }
     },
-    [onAttentionInputFocus],
+    [onAttentionInputFocus, resetInputActivity],
   );
 
   const handleLightboxClose = useCallback(() => {
@@ -2496,6 +2503,7 @@ function ComposerContentImpl({
                   onKeyPress={handleCommandKeyPress}
                   onSelectionChange={handleSelectionChange}
                   onFocusChange={handleFocusChange}
+                  onInputActivity={handleInputActivity}
                   onHeightChange={onComposerHeightChange}
                   inputWrapperStyle={inputWrapperStyle}
                   attachmentSlot={attachmentTray}

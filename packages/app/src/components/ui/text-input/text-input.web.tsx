@@ -1,6 +1,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { TextInput } from "react-native";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
+import { useUserInputFocus } from "./user-focus";
 
 interface WebTextInputElement extends TextInput {
   value?: string;
@@ -11,9 +12,11 @@ interface WebTextInputElement extends TextInput {
 
 export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextInputProps>(
   function EditingTextInputWeb(allProps, ref) {
+    const userFocus = useUserInputFocus(allProps);
     const {
       initialValue = "",
       onChangeText,
+      onUserFocus: ______,
       onPasteImages: _,
       onPasteError: __,
       variant: ___,
@@ -58,7 +61,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     }, []);
 
     useImperativeHandle(ref, () => ({
-      focus: () => inputRef.current?.focus(),
+      focus: () => {
+        if (document.activeElement !== inputRef.current) userFocus.beforeProgrammaticFocus();
+        inputRef.current?.focus();
+      },
       blur: () => inputRef.current?.blur(),
       isFocused: () => document.activeElement === inputRef.current,
       getText: () => {
@@ -89,6 +95,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
         ref={inputRef}
         defaultValue={initialTextRef.current}
         onChangeText={handleChangeText}
+        onFocus={userFocus.onFocus}
+        onTouchStart={userFocus.onTouchStart}
+        onPressIn={userFocus.onPressIn}
+        onBlur={userFocus.onBlur}
       />
     );
   },
