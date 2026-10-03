@@ -80,7 +80,7 @@ function discoverBlogRoutes(): string[] {
   return ["/blog", ...slugs.map((slug) => `/blog/${slug}`)];
 }
 
-// Registry entries change independently of website builds; only the directory is in the sitemap.
+// Author and detail URLs are served by /sitemap-plugins.xml as the registry changes.
 function discoverPluginRoutes(): string[] {
   return ["/plugins"];
 }

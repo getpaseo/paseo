@@ -49,6 +49,25 @@ export async function handlePluginRegistryRequest(
   const base = env.PLUGINS_REGISTRY_URL ?? "https://getpaseo.github.io/plugins";
   if (url.hostname === "plugins.paseo.sh" && url.pathname === "/index.json")
     return Response.json(await loadRegistryIndex(base, context));
+  if (url.pathname === "/sitemap-plugins.xml") {
+    const index = await loadRegistryIndex(base, context);
+    // IDs are validated owner/slug strings, so these paths contain no XML metacharacters.
+    const paths = new Set<string>(["/plugins"]);
+    for (const plugin of index.plugins) {
+      paths.add(`/plugins/${plugin.id.split("/")[0]}`);
+      paths.add(`/plugins/${plugin.id}`);
+    }
+    const urls = [...paths].sort().map((path) => `<url><loc>https://paseo.sh${path}</loc></url>`);
+    return new Response(
+      `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`,
+      {
+        headers: {
+          "content-type": "application/xml; charset=utf-8",
+          "cache-control": "public, max-age=300",
+        },
+      },
+    );
+  }
   if (url.pathname === "/api/plugins/installs") {
     const index = await loadRegistryIndex(base, context);
     const entries = await Promise.all(

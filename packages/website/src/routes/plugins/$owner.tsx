@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { useMemo } from "react";
 import { type BreadcrumbItem, Breadcrumbs } from "~/components/breadcrumbs";
@@ -18,36 +18,35 @@ import { PLUGIN_GRID_CLASS, PluginCard } from "~/plugins/plugin-card";
 import "~/styles.css";
 
 export const Route = createFileRoute("/plugins/$owner")({
-  head: ({ params }) =>
+  loader: async ({ params }) => {
+    const registry = await getRegistry();
+    const first = registry.plugins.find((plugin) => plugin.author.github === params.owner);
+    if (!first) throw notFound();
+    return { plugins: registry.plugins, author: getAuthor(first.author) };
+  },
+  head: ({ params, loaderData }) =>
     pageMeta(
-      `${params.owner} – Paseo plugins`,
-      `Paseo plugins published by ${params.owner}.`,
+      loaderData ? `${loaderData.author.name} – Paseo plugins` : "Author not found – Paseo",
+      loaderData ? `Paseo plugins published by ${loaderData.author.name}.` : "Author not found.",
       `/plugins/${params.owner}`,
     ),
-  loader: () => getRegistry(),
   component: AuthorPage,
+  notFoundComponent: () => (
+    <PluginsNotFound title="Author not found">
+      Nobody with that GitHub owner has a plugin listed.
+    </PluginsNotFound>
+  ),
 });
 
 const LINK_CLASS =
   "inline-flex items-center gap-1 text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
 function AuthorPage() {
-  const { owner: username } = Route.useParams();
-  const { plugins: allPlugins } = Route.useLoaderData();
-  const first = allPlugins.find((plugin) => plugin.author.github === username);
-  const author = first ? getAuthor(first.author) : null;
+  const { plugins: allPlugins, author } = Route.useLoaderData();
   const crumbs = useMemo<BreadcrumbItem[]>(
-    () => (author ? [{ label: "Plugins", href: "/plugins" }, { label: author.name }] : []),
+    () => [{ label: "Plugins", href: "/plugins" }, { label: author.name }],
     [author],
   );
-
-  if (!author) {
-    return (
-      <PluginsNotFound title="Author not found">
-        Nobody with that GitHub owner has a plugin listed.
-      </PluginsNotFound>
-    );
-  }
 
   const plugins = sortPlugins(getPluginsByAuthor(allPlugins, author.username), "popular");
   const github = authorGitHubUrl(author);

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, notFound } from "@tanstack/react-router";
 import { Download, ExternalLink } from "lucide-react";
 import { useMemo } from "react";
 import { type BreadcrumbItem, Breadcrumbs } from "~/components/breadcrumbs";
@@ -37,6 +37,7 @@ export const Route = createFileRoute("/plugins/$owner_/$slug")({
       getRegistry(),
       getRegistryPlugin({ data: `${params.owner}/${params.slug}` }),
     ]);
+    if (!plugin) throw notFound();
     return { plugins: registry.plugins, plugin };
   },
   head: ({ params, loaderData }) =>
@@ -44,8 +45,14 @@ export const Route = createFileRoute("/plugins/$owner_/$slug")({
       loaderData?.plugin ? `${loaderData.plugin.name} – Paseo plugin` : "Plugin not found – Paseo",
       loaderData?.plugin?.description ?? "Plugin not found.",
       `/plugins/${params.owner}/${params.slug}`,
+      loaderData?.plugin.screenshots[0],
     ),
   component: PluginPage,
+  notFoundComponent: () => (
+    <PluginsNotFound title="Plugin not found">
+      There is no plugin listed at this address.
+    </PluginsNotFound>
+  ),
 });
 
 const LINK_CLASS =
@@ -57,10 +64,9 @@ const CATEGORY_PILL_CLASS =
 
 function PluginPage() {
   const { plugins, plugin } = Route.useLoaderData();
-  const primaryCategory = plugin ? getCategory(plugin.categories[0]) : null;
+  const primaryCategory = getCategory(plugin.categories[0]);
 
   const crumbs = useMemo<BreadcrumbItem[]>(() => {
-    if (!plugin) return [];
     return [
       { label: "Plugins", href: "/plugins" },
       ...(primaryCategory
@@ -69,14 +75,6 @@ function PluginPage() {
       { label: plugin.name },
     ];
   }, [plugin, primaryCategory]);
-
-  if (!plugin) {
-    return (
-      <PluginsNotFound title="Plugin not found">
-        There is no plugin listed at this address.
-      </PluginsNotFound>
-    );
-  }
 
   const author = getAuthor(plugin.author);
   const count = plugin.installs;
