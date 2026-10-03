@@ -2286,13 +2286,9 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.activeForegroundQuery = this.query;
       this.activeForegroundInput = this.input;
-      this.startQueryPump();
       this.input.push(sdkMessage);
-      setTimeout(() => {
-        if (this.activeForegroundTurnId === turnId) {
-          this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
-        }
-      }, 0);
+      this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
+      this.startQueryPump();
     } catch (error) {
       this.finishForegroundTurn(
         this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
@@ -3150,6 +3146,9 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
 
+    // A fresh query already uses the current settings, even when there was no old query to retire.
+    this.queryRestartNeeded = false;
+
     // Preserve claudeSessionId across query recreation so buildOptions() passes
     // resume: sessionId and the new query continues the existing conversation.
     this.persistence = null;
@@ -3723,11 +3722,12 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private startQueryPump(): void {
-    if (this.closed || this.queryPumpPromise) {
+    if (this.closed || this.queryPumpPromise || !this.query) {
       return;
     }
 
-    const pump = this.runQueryPump().catch((error) => {
+    // Drain the initialized query; a pending settings change belongs to the next turn.
+    const pump = this.runQueryPump(this.query).catch((error) => {
       this.logger.trace(
         {
           agentId: this.agentId,
@@ -3748,25 +3748,7 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  private async runQueryPump(): Promise<void> {
-    let activeQuery: Query;
-    try {
-      activeQuery = await this.ensureQuery();
-    } catch (error) {
-      this.logger.trace(
-        {
-          agentId: this.agentId,
-          provider: "claude",
-          sessionId: this.claudeSessionId,
-          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
-          err: error,
-        },
-        "provider.claude.query_pump.init_failed",
-      );
-      this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
-      return;
-    }
-
+  private async runQueryPump(activeQuery: Query): Promise<void> {
     let consecutiveInterruptAbortRecoveries = 0;
     const logRawMessage = (message: SDKMessage): void => {
       this.logger.trace(
