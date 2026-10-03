@@ -82,6 +82,10 @@ const additionalInputs = [
         // resolveExternalCliEntrypoint() looks up the workspace through this
         // link at runtime; nft traces the target files but not the link.
         "node_modules/@getpaseo/cli",
+        // runtime-paths.js locates the server package root with
+        // require.resolve("@getpaseo/server"), which needs the package's main
+        // export to exist even though the desktop never loads it.
+        "packages/server/dist/server/server/exports.js",
       ]
     : []),
 ];
