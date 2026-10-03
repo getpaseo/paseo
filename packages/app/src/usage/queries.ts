@@ -34,12 +34,17 @@ import type { UsageReportEntry, UsageView } from "./types";
 // an explicit refresh passes `forceRefresh` and reaches the source's API.
 const REPORTS_STALE_TIME_MS = 60_000;
 
+/** Every report list of a host: its own and each agent's. */
+function hostUsageQueryKey(serverId: string) {
+  return ["usage", serverId] as const;
+}
+
 function usageReportsQueryKey(serverId: string) {
-  return ["usage", "reports", serverId] as const;
+  return [...hostUsageQueryKey(serverId), "reports"] as const;
 }
 
 function agentUsageQueryKey(serverId: string, agentId: string) {
-  return ["usage", "agent", serverId, agentId] as const;
+  return [...hostUsageQueryKey(serverId), "agent", agentId] as const;
 }
 
 function requireClient(serverId: string) {
@@ -209,8 +214,8 @@ export function useUsageHosts(): UsageHost[] {
 
 /**
  * Forces the source to fetch one report, and only that report. The result replaces the report
- * in its host's list, so every surface showing it moves together; until then the previous report
- * stays on screen.
+ * in every list of its host that holds it, the host's and each agent's, so every surface showing
+ * it moves together; until then the previous report stays on screen.
  */
 export function useReportRefresh(
   serverId: string,
@@ -220,8 +225,9 @@ export function useReportRefresh(
   const mutation = useMutation({
     mutationFn: () => getReport(serverId, reportId, true),
     onSuccess: (report) => {
-      queryClient.setQueryData<UsageReportEntry[]>(usageReportsQueryKey(serverId), (reports) =>
-        reports ? replaceReport(reports, reportId, report) : reports,
+      queryClient.setQueriesData<UsageReportEntry[]>(
+        { queryKey: hostUsageQueryKey(serverId) },
+        (reports) => (reports ? replaceReport(reports, reportId, report) : reports),
       );
     },
   });
