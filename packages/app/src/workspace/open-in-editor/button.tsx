@@ -94,6 +94,7 @@ export function WorkspaceOpenInEditorButton({
   const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
     useDesktopOpenTargets({
       isLocalExecution: isLocalDaemon,
+      workspacePath: cwd,
     });
 
   const resolvedFile = useMemo(
