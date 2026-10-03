@@ -832,7 +832,7 @@ describe("runWorktreeSetupInBackground", () => {
     expect(emitWorkspaceUpdateForWorkspaceId).toHaveBeenCalledWith("42");
   });
 
-  test("archives the pending workspace and emits a failed snapshot when setup cannot start", async () => {
+  test("keeps the workspace available and emits a failed snapshot when setup cannot start", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
@@ -857,7 +857,10 @@ describe("runWorktreeSetupInBackground", () => {
     const snapshots = new Map<string, unknown>();
     const logger = createLogger();
     const emitWorkspaceUpdateForWorkspaceId = vi.fn(async () => {});
-    const archiveWorkspaceRecord = vi.fn(async () => {});
+    const archivedWorkspaceIds: string[] = [];
+    const archiveWorkspaceRecord = async (id: string) => {
+      archivedWorkspaceIds.push(id);
+    };
     const workspaceId = "ws-broken-feature";
 
     await runWorktreeSetupInBackground(
@@ -901,7 +904,9 @@ describe("runWorktreeSetupInBackground", () => {
       status: "failed",
       error: expect.stringMatching(/Failed to parse paseo\.json at .*paseo\.json/),
     });
-    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
+    expect(archivedWorkspaceIds).toEqual([]);
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(readFileSync(path.join(worktreePath, "paseo.json"), "utf8")).toBe("{ invalid json\n");
     expect(emitWorkspaceUpdateForWorkspaceId).toHaveBeenCalledWith(workspaceId);
   });
 
