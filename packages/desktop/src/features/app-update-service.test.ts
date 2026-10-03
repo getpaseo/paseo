@@ -28,10 +28,15 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   } | null = null;
   checkCount = 0;
   downloadCallCount = 0;
+  cancelCount = 0;
   requestedDownloadVersions: string[] = [];
   downloadedVersions: string[] = [];
   installedVersions: string[] = [];
   installModes: Array<{ targetVersion: string; isSilent: boolean; isForceRunAfter: boolean }> = [];
+
+  get hasActiveDownload(): boolean {
+    return this.activeDownload !== null;
+  }
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
@@ -78,12 +83,15 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     this.configuration?.onUpdateDownloaded(info);
   }
 
-  beginUpdateDownload(info: RuntimeUpdateInfo): {
+  beginUpdateDownload(
+    info: RuntimeUpdateInfo,
+    options?: { announce?: boolean },
+  ): {
     resolve(): void;
     reject(error: Error): void;
   } {
     this.downloadableUpdate = info;
-    this.prepareUpdate(info);
+    if (options?.announce !== false) this.prepareUpdate(info);
     let resolvePromise!: () => void;
     let rejectPromise!: (error: Error) => void;
     const promise = new Promise<void>((resolve, reject) => {
@@ -104,9 +112,20 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
         this.activeDownload = null;
         rejectPromise(error);
       },
+      cancel: () => {
+        this.activeDownload = null;
+        rejectPromise(new Error("Download cancelled."));
+      },
     };
     this.activeDownload = activeDownload;
     return { resolve: activeDownload.resolve, reject: activeDownload.reject };
+  }
+
+  cancelDownload(): void {
+    const active = this.activeDownload;
+    if (!active) return;
+    this.cancelCount += 1;
+    active.cancel();
   }
 
   async checkForUpdates(): Promise<{
@@ -473,6 +492,103 @@ describe("app update service", () => {
     });
 
     expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("keeps the downloaded update when the before-quit wait is cancelled", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishWait!: (proceed: boolean) => void;
+    const waiting = new Promise<boolean>((resolve) => {
+      finishWait = resolve;
+    });
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable" },
+      () => waiting,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.installedVersions).toEqual([]);
+    finishWait(false);
+    expect(await installing).toMatchObject({ installed: false });
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("cancels a download that is still running", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    runtime.beginUpdateDownload(rolledOutUpdate);
+    const controller = new AbortController();
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable", signal: controller.signal },
+      async () => true,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(runtime.installedVersions).toEqual([]);
+    expect(runtime.cancelCount).toBe(1);
+    expect(runtime.hasActiveDownload).toBe(false);
+  });
+
+  it("keeps a quit-time download running when the deadline passes", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    runtime.beginUpdateDownload(newerUpdate, { announce: false });
+    const deadline = new AbortController();
+    const pending = service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: deadline.signal,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    deadline.abort();
+
+    await expect(pending).resolves.toBe(false);
+    expect(runtime.downloadCallCount).toBeGreaterThan(0);
+    expect(runtime.cancelCount).toBe(0);
+    expect(runtime.hasActiveDownload).toBe(true);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("installs only after the before-quit idle check allows it", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishWait!: (proceed: boolean) => void;
+    const waiting = new Promise<boolean>((resolve) => {
+      finishWait = resolve;
+    });
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable" },
+      () => waiting,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.installedVersions).toEqual([]);
+    finishWait(true);
+    expect(await installing).toMatchObject({ installed: true });
+    expect(runtime.installedVersions).toEqual([rolledOutUpdate.version]);
+  });
+
+  it("propagates an idle check failure without installing", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await expect(
+      service.downloadAndInstallUpdate(
+        { currentVersion: "1.2.3", releaseChannel: "stable" },
+        async () => {
+          throw new Error("Cannot verify agent activity");
+        },
+      ),
+    ).rejects.toThrow("Cannot verify agent activity");
     expect(runtime.installedVersions).toEqual([]);
   });
 

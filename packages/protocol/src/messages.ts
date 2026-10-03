@@ -1834,6 +1834,10 @@ export const RestartServerRequestMessageSchema = z.object({
 export const ShutdownServerRequestMessageSchema = z.object({
   type: z.literal("shutdown_server_request"),
   requestId: z.string(),
+  // COMPAT(shutdownIfIdle): added in v0.11.0, remove optional after 2027-03-22.
+  // Absent on older clients. An old daemon strips this field and would shut
+  // down anyway, so clients must not send it unless features.shutdownIfIdle.
+  onlyIfIdle: z.boolean().optional(),
 });
 
 export const DaemonUpdateRequestMessageSchema = z.object({
@@ -3590,6 +3594,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
+        // COMPAT(shutdownIfIdle): added in v0.11.0, remove gate after 2027-03-22.
+        shutdownIfIdle: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.

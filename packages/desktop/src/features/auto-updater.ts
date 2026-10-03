@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
-import { UUID } from "builder-util-runtime";
+import { CancellationToken, UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import {
@@ -142,6 +142,8 @@ export function shouldInstallAppUpdateOnQuit(input: {
 
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
+  private downloadCancellation: CancellationToken | null = null;
+  private observedDownload: Promise<Array<string>> | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     autoUpdater.autoDownload = true;
@@ -196,6 +198,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     try {
       const result = await autoUpdater.checkForUpdates();
       if (!result) return null;
+      this.noteDownloadCancellation(result.cancellationToken, result.downloadPromise ?? null);
       return {
         isUpdateAvailable: result.isUpdateAvailable,
         updateInfo: result.updateInfo as RuntimeUpdateInfo,
@@ -208,7 +211,35 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
   downloadUpdate(targetVersion: string): Promise<unknown> {
     updateLifecycleLog.downloadRequested(targetVersion);
-    return autoUpdater.downloadUpdate();
+    return autoUpdater.downloadUpdate(this.activeDownloadCancellation());
+  }
+
+  cancelDownload(): void {
+    const token = this.downloadCancellation;
+    if (!token || token.cancelled) return;
+    token.cancel();
+  }
+
+  // A check made while a download is already running returns a new token that
+  // electron-updater ignores. Keep the token that belongs to the running download.
+  private noteDownloadCancellation(
+    token: CancellationToken | undefined,
+    download: Promise<Array<string>> | null,
+  ): void {
+    if (!token) return;
+    if (download && download !== this.observedDownload) {
+      this.downloadCancellation = token;
+      this.observedDownload = download;
+      return;
+    }
+    if (!download) this.downloadCancellation = token;
+  }
+
+  private activeDownloadCancellation(): CancellationToken {
+    if (!this.downloadCancellation || this.downloadCancellation.cancelled) {
+      this.downloadCancellation = new CancellationToken();
+    }
+    return this.downloadCancellation;
   }
 
   quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
@@ -273,14 +304,16 @@ export async function downloadAndInstallUpdate(
   {
     currentVersion,
     releaseChannel,
+    signal,
   }: {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
+    signal?: AbortSignal;
   },
-  onBeforeQuit?: () => Promise<void>,
+  onBeforeQuit?: () => Promise<boolean>,
 ): Promise<AppUpdateInstallResult> {
   return appUpdateService.downloadAndInstallUpdate(
-    { currentVersion, releaseChannel },
+    { currentVersion, releaseChannel, signal },
     onBeforeQuit,
   );
 }

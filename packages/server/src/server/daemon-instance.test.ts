@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { readDaemonInstance, stopDaemonInstance } from "./daemon-instance.js";
 import { acquirePidLock, getPidLockInfo, isLocked, type PidLockInfo } from "./pid-lock.js";
@@ -92,5 +92,63 @@ describe("daemon instance identity across a reboot", () => {
     expect(existsSync(signalMarker)).toBe(false);
     expect(exited).toBe(false);
     await expect(readFile(join(paseoHome, "paseo.pid"), "utf-8")).rejects.toThrow(/ENOENT/);
+  });
+});
+
+describe("stopDaemonInstance requireLifecycleRpc", () => {
+  const children: Array<{ kill: (signal?: NodeJS.Signals) => boolean }> = [];
+
+  afterEach(() => {
+    for (const child of children.splice(0)) child.kill("SIGKILL");
+    vi.restoreAllMocks();
+  });
+
+  test("a refused lifecycle RPC does not fall through to SIGTERM", async () => {
+    const home = await mkdtemp(join(tmpdir(), "paseo-idle-stop-"));
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    children.push(child);
+    const pid = child.pid;
+    if (!pid) throw new Error("sleep child has no pid");
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const original = process.kill.bind(process);
+    vi.spyOn(process, "kill").mockImplementation(((
+      target: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      signals.push(signal);
+      if (signal === "SIGTERM" || signal === "SIGKILL") return true;
+      return original(target, signal);
+    }) as typeof process.kill);
+
+    try {
+      await writeFile(
+        join(home, "paseo.pid"),
+        JSON.stringify({
+          pid,
+          startedAt: new Date().toISOString(),
+          hostname: "test",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:9",
+        }),
+      );
+
+      await expect(
+        stopDaemonInstance(home, {
+          requireLifecycleRpc: true,
+          timeoutMs: 1_000,
+          requestShutdown: async () => {
+            throw Object.assign(new Error("Agents are busy"), { code: "AGENTS_BUSY" });
+          },
+        }),
+      ).rejects.toThrow(/Agents are busy/);
+
+      expect(signals).not.toContain("SIGTERM");
+      expect(signals).not.toContain("SIGKILL");
+      expect(original(pid, 0)).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
