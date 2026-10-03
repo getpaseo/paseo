@@ -144,28 +144,58 @@ function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImagePars
     return null;
   }
 
-  const closeIndex = findMatchingClose(tokens, start, token.name);
-  if (closeIndex === null) {
-    return null;
-  }
+  return parseWrappedImageAt(tokens, start);
+}
 
-  // Consume image-only wrappers together so splitting at the image never leaves
-  // their opening tags in a separate markdown part. Pictures use their img fallback;
-  // source media queries and srcset selection belong to a browser's image loader.
-  const children = tokens.slice(start + 1, closeIndex).filter((child) => {
+function parseWrappedImageAt(tokens: HtmlToken[], start: number): InlineImageParseResult | null {
+  // Walk an image-only wrapper chain once. Recursing over copied child slices
+  // makes deeply nested review HTML quadratic and can exhaust the JS stack.
+  const wrappers: string[] = [];
+  let image: MarkdownInlineImagePart | null = null;
+  let href: string | undefined;
+  let hasLink = false;
+
+  for (let index = start; index < tokens.length; index += 1) {
+    const child = tokens[index];
     if (child.kind === "comment" || isWhitespaceText(child)) {
-      return false;
+      continue;
     }
-    return !(token.name === "picture" && isOpenTag(child, "source"));
-  });
-  const image = parseInlineImageAt(children, 0);
-  if (!image || image.end !== children.length) {
-    return null;
+    if (child.kind !== "tag") {
+      return null;
+    }
+    if (child.closing) {
+      if (!image || wrappers.pop() !== child.name) {
+        return null;
+      }
+      if (wrappers.length === 0) {
+        return { part: image, end: index + 1 };
+      }
+      continue;
+    }
+    // Pictures use their img fallback, not responsive source selection.
+    if (child.name === "source" && wrappers.at(-1) === "picture") {
+      continue;
+    }
+    if (image) {
+      return null;
+    }
+    if (child.name === "img") {
+      image = imageTokenToInlineImage(child, href);
+      if (!image) {
+        return null;
+      }
+      continue;
+    }
+    if (child.name !== "a" && child.name !== "picture" && !isImageBlockWrapper(child)) {
+      return null;
+    }
+    if (child.name === "a" && !hasLink) {
+      href = safeHref(child.attributes.href);
+      hasLink = true;
+    }
+    wrappers.push(child.name);
   }
-
-  const part =
-    token.name === "a" ? { ...image.part, href: safeHref(token.attributes.href) } : image.part;
-  return { part, end: closeIndex + 1 };
+  return null;
 }
 
 function isImageBlockWrapper(token: HtmlToken | undefined): boolean {

@@ -180,6 +180,18 @@ describe("splitHtmlishMarkdown", () => {
     ]);
   });
 
+  it("handles deeply nested image wrappers without exhausting the stack", () => {
+    const source = `${"<div>".repeat(10000)}<a href="https://example.com/page"><picture><img src="https://example.com/image.svg" alt="Image"></picture></a>${"</div>".repeat(10000)}`;
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        src: "https://example.com/image.svg",
+        alt: "Image",
+        href: "https://example.com/page",
+      },
+    ]);
+  });
+
   it("preserves inline image parts inside details bodies", () => {
     expect(
       splitHtmlishMarkdown(
