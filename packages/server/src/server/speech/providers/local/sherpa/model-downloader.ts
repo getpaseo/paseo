@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -111,18 +111,19 @@ export async function ensureSherpaOnnxModel(
 
   const spec = getSherpaOnnxModelSpec(options.modelId);
   const modelDir = path.join(options.modelsDir, spec.extractedDir);
-  if (await hasRequiredFiles(modelDir, spec.requiredFiles)) {
+  const downloadsDir = path.join(options.modelsDir, ".downloads");
+  const archiveFilename = path.basename(new URL(spec.archiveUrl).pathname);
+  const archivePath = path.join(downloadsDir, archiveFilename);
+  const hasArchive = await isNonEmptyFile(archivePath);
+  // Older versions extracted in place and left the archive behind if interrupted.
+  if (!hasArchive && (await hasRequiredFiles(modelDir, spec.requiredFiles))) {
     return modelDir;
   }
 
   logger.info({ modelsDir: options.modelsDir }, "Starting model download");
 
   try {
-    const downloadsDir = path.join(options.modelsDir, ".downloads");
-    const archiveFilename = path.basename(new URL(spec.archiveUrl).pathname);
-    const archivePath = path.join(downloadsDir, archiveFilename);
-
-    if (!(await isNonEmptyFile(archivePath))) {
+    if (!hasArchive) {
       await downloadToFile({
         url: spec.archiveUrl,
         outputPath: archivePath,
@@ -138,19 +139,20 @@ export async function ensureSherpaOnnxModel(
       },
       "Extracting model archive",
     );
-    await extractTarArchive(archivePath, options.modelsDir, options.signal);
-
-    logger.info(
-      {
-        modelId: options.modelId,
-        modelDir,
-      },
-      "Verifying downloaded model files",
-    );
-    if (!(await hasRequiredFiles(modelDir, spec.requiredFiles))) {
-      throw new Error(
-        `Downloaded and extracted ${archiveFilename}, but required files are still missing in ${modelDir}.`,
-      );
+    const stagingDir = await mkdtemp(path.join(options.modelsDir, ".extract-"));
+    try {
+      await extractTarArchive(archivePath, stagingDir, options.signal);
+      const stagedModelDir = path.join(stagingDir, spec.extractedDir);
+      logger.info({ modelId: options.modelId, modelDir }, "Verifying downloaded model files");
+      if (!(await hasRequiredFiles(stagedModelDir, spec.requiredFiles))) {
+        throw new Error(
+          `Downloaded and extracted ${archiveFilename}, but required files are still missing in ${stagedModelDir}.`,
+        );
+      }
+      await rm(modelDir, { recursive: true, force: true });
+      await rename(stagedModelDir, modelDir);
+    } finally {
+      await rm(stagingDir, { recursive: true, force: true });
     }
 
     logger.info(
