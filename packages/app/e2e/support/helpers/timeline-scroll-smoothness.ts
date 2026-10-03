@@ -27,12 +27,14 @@ interface ScrollFrame {
   anchor: string | null;
   wheelTotal: number;
   lastWheelAt: number;
+  inputFinishedAt: number | null;
   imageLoads: number;
   mounted: number;
   unmounted: number;
 }
 interface Recording {
   frames: ScrollFrame[];
+  finishInput(): void;
   stop(): void;
 }
 interface TimelinePage {
@@ -167,6 +169,7 @@ export async function recordUpwardTraversal(
     let frame = 0;
     let wheelTotal = 0;
     let lastWheelAt = -Infinity;
+    let inputFinishedAt: number | null = null;
     let imageLoads = 0;
     let mounted = 0;
     let unmounted = 0;
@@ -220,6 +223,7 @@ export async function recordUpwardTraversal(
         loading: !!scroll.querySelector('[data-testid="load-older-history-spinner"]'),
         wheelTotal,
         lastWheelAt,
+        inputFinishedAt,
         imageLoads,
         mounted,
         unmounted,
@@ -236,6 +240,9 @@ export async function recordUpwardTraversal(
     };
     const recording: Recording = {
       frames,
+      finishInput() {
+        inputFinishedAt = performance.now();
+      },
       stop() {
         cancelAnimationFrame(frame);
         resizeObserver.disconnect();
@@ -253,6 +260,9 @@ export async function recordUpwardTraversal(
     await page.mouse.wheel(0, -cadence.delta);
     await page.waitForTimeout(cadence.intervalMs);
   }
+  await page.evaluate(() => {
+    (Reflect.get(window, "__timelineScrollRecording") as Recording).finishInput();
+  });
   await page.waitForTimeout(1500);
   await stopTrace();
   return page.evaluate(() => {
@@ -271,9 +281,20 @@ export async function reportScrollJumps(
   const jumps = frames.flatMap((current, index) => {
     const previous = frames[index - 1];
     if (!previous?.anchor) return [];
+    // Wheel input can move the reading line onto an image before it expands.
+    // Follow that intended row, not text now below the image.
+    const inputDelta = current.wheelTotal - previous.wheelTotal;
+    const readingLine = 8 - Math.min(inputDelta, previous.scrollTop);
     const currentRows = new Map(current.rows.map((row) => [row.id, row]));
-    const before = currentRows.has(previous.anchor)
-      ? previous.rows.find((row) => row.id === previous.anchor)!
+    const intendedRow = previous.rows.find((row) => row.top + row.height > readingLine);
+    const intendedHeight = intendedRow && currentRows.get(intendedRow.id)?.height;
+    const enteredRowGrowth =
+      inputDelta > 0 && intendedRow && intendedHeight !== undefined
+        ? Math.max(0, intendedHeight - intendedRow.height)
+        : 0;
+    const anchor = previous.anchor;
+    const before = currentRows.has(anchor)
+      ? previous.rows.find((row) => row.id === anchor)!
       : previous.rows
           .filter((row) => currentRows.has(row.id))
           .sort((left, right) => Math.abs(left.top - 8) - Math.abs(right.top - 8))[0];
@@ -282,10 +303,12 @@ export async function reportScrollJumps(
     }
     const after = currentRows.get(before.id)!;
     const movement = after.top - before.top;
-    const idle = current.at - current.lastWheelAt > 250;
+    // A busy main thread can deliver wheel movement hundreds of milliseconds
+    // after its event. Only assert idle stability after the driver stops input.
+    const idle = current.inputFinishedAt !== null && previous.at - current.inputFinishedAt > 250;
     const recent = frames.findLast((frame) => frame.at <= previous.at - 100);
     const wheelBudget = current.wheelTotal - (recent?.wheelTotal ?? 0);
-    const excessForward = movement > wheelBudget + 32;
+    const excessForward = movement > wheelBudget + enteredRowGrowth + 32;
     // Upward wheel input moves the same text DOWN the viewport. A negative move
     // is a reversal, independent of legitimate scrollTop compensation on prepend.
     if (movement >= -8 && (!idle || Math.abs(movement) <= 8) && !excessForward) return [];
