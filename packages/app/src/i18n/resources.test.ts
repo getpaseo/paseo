@@ -183,6 +183,23 @@ describe("translation resources", () => {
     expect(ko.desktop.daemon.status.notRunning).toBe("실행 중이 아님");
   });
 
+  it("uses the French navigation and Git meanings for reported labels", () => {
+    expect(fr.common.back).toBe("Retour");
+    expect(fr.common.actions.back).toBe("Retour");
+    expect(fr.common.actions.copy).toBe("Copier");
+    expect(fr.common.states.starting).toBe("Démarrage…");
+    expect(fr.common.connectionStatus.connecting).toBe("Connexion…");
+    expect(fr.workspace.git.pr.sections.checks).toBe("Vérifications");
+    expect(fr.sidebar.display.show.checks).toBe("Vérifications");
+  });
+
+  it("separates French interpolation placeholders from neighboring words", () => {
+    const glued = Object.entries(flattenStrings(fr)).filter(([, value]) =>
+      /\p{L}\{\{|\}\}\p{L}{2,}/u.test(value),
+    );
+    expect(glued).toEqual([]);
+  });
+
   it("labels the immediate add-to-chat action without an ellipsis", () => {
     expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
   });
