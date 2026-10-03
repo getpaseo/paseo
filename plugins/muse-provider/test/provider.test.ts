@@ -351,6 +351,132 @@ for (const cursor of [undefined, "v:old:7"]) {
     ).toMatchObject({ sessionId: "saved-session", ...(cursor ? { cursor } : {}) });
   });
 }
+
+test("dedicated history reads Muse data without opening a provider session", async () => {
+  const h = await harness("resume-without-cursor", { MUSE_TEST_HISTORY_READ: "1" });
+  const result = await h.provider.readSessionHistory!({
+    persistence: {
+      version: 1,
+      data: { sessionId: "saved-session", cursor: "v:saved-session:latest" },
+    },
+    cwd: h.root,
+    launch: h.launch,
+  });
+  expect(result.coverage).toEqual({ kind: "complete" });
+  expect(result.items).toContainEqual(
+    expect.objectContaining({
+      item: expect.objectContaining({ type: "assistant_message", text: "RESUME_MARKER_OK" }),
+    }),
+  );
+  expect((await h.recorded()).find((frame) => frame.method === "session/read").params).toEqual(
+    expect.objectContaining({ sessionId: "saved-session", excludeItems: false }),
+  );
+  expect((await h.recorded()).filter((frame) => frame.method).map((frame) => frame.method)).toEqual(
+    ["initialize", "initialized", "session/read"],
+  );
+});
+
+test("dedicated history reads all Muse history pages when inline items are unavailable", async () => {
+  const h = await harness("phase3-child-read", { MUSE_TEST_HISTORY_PAGE_SIZE: "3" });
+  const result = await h.provider.readSessionHistory!({
+    persistence: {
+      version: 1,
+      data: { sessionId: "fixture-child", cursor: "v:fixture-child:latest" },
+    },
+    cwd: h.root,
+    launch: h.launch,
+  });
+  expect(result).toEqual({
+    items: [
+      {
+        item: {
+          type: "user_message",
+          id: "1760316b-a42f-4a78-85ac-3adfe53e8b38",
+          text: "Role: phase0-check\nObjective: Reply with exactly SUBAGENT_PHASE0_OK. Do not use any tools. Just reply that string.",
+        },
+        timestamp: "2026-09-29T17:47:37.899528Z",
+      },
+      {
+        item: {
+          type: "assistant_message",
+          id: "6ce6a79f-6af5-4cdb-a863-b19c74286aa3",
+          text: "SUBAGENT_PHASE0_OK",
+        },
+        timestamp: "2026-09-29T17:47:39.943222Z",
+      },
+    ],
+    coverage: { kind: "complete" },
+  });
+  const methods = (await h.recorded()).filter((frame) => frame.method).map((frame) => frame.method);
+  expect(methods).toEqual(["initialize", "initialized", "session/read", "view/page", "view/page"]);
+});
+
+test("dedicated history reads Muse child transcripts without opening them interactively", async () => {
+  const h = await harness("phase3-child-read", {
+    MUSE_TEST_HISTORY_READ: "1",
+    MUSE_TEST_HISTORY_CHILD: "1",
+  });
+  const result = await h.provider.readSessionHistory!({
+    persistence: { version: 1, data: { sessionId: "fixture-parent" } },
+    cwd: h.root,
+    launch: h.launch,
+  });
+  expect(result.children).toEqual([
+    expect.objectContaining({
+      sessionId: "fixture-child",
+      parentSessionId: null,
+      toolCallId: expect.any(String),
+      title: "History child",
+      cwd: "/tmp/muse-phase0/child",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          item: expect.objectContaining({ type: "assistant_message", text: "SUBAGENT_PHASE0_OK" }),
+        }),
+      ]),
+    }),
+  ]);
+  expect((await h.recorded()).filter((frame) => frame.method === "session/open")).toEqual([]);
+  expect((await h.recorded()).filter((frame) => frame.method === "session/read")).toHaveLength(2);
+  expect((await h.recorded()).filter((frame) => frame.method === "view/page")).toHaveLength(2);
+});
+
+test("dedicated history keeps the parent when a Muse child is unavailable", async () => {
+  const h = await harness("phase3-child-read", {
+    MUSE_TEST_HISTORY_READ: "1",
+    MUSE_TEST_HISTORY_CHILD: "1",
+    MUSE_TEST_HISTORY_CHILD_MISSING: "1",
+  });
+  const result = await h.provider.readSessionHistory!({
+    persistence: { version: 1, data: { sessionId: "fixture-parent" } },
+    cwd: h.root,
+    launch: h.launch,
+  });
+  expect(result.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        item: expect.objectContaining({ type: "assistant_message", text: "SUBAGENT_PHASE0_OK" }),
+      }),
+    ]),
+  );
+  expect(result.children).toBeUndefined();
+  expect((await h.recorded()).filter((frame) => frame.method === "session/read")).toHaveLength(2);
+});
+
+test("dedicated history propagates non-missing Muse child read failures", async () => {
+  const h = await harness("phase3-child-read", {
+    MUSE_TEST_HISTORY_READ: "1",
+    MUSE_TEST_HISTORY_CHILD: "1",
+    MUSE_TEST_HISTORY_CHILD_ERROR: "1",
+  });
+  await expect(
+    h.provider.readSessionHistory!({
+      persistence: { version: 1, data: { sessionId: "fixture-parent" } },
+      cwd: h.root,
+      launch: h.launch,
+    }),
+  ).rejects.toMatchObject({ kind: "overloaded", message: "busy" });
+});
+
 test("steer sends ifBusy steer and joins the running turn", async () => {
   const h = await harness("steer");
   await h.open();

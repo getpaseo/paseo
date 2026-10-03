@@ -89,39 +89,9 @@ function controlResponse(frame) {
   return false;
 }
 function parityResponse(frame) {
+  if (historyReadResponse(frame)) return true;
   if (workflowResponse(frame)) return true;
-  if (frame.method === "view/page") {
-    let result;
-    if (process.env.MUSE_TEST_GAP || process.env.MUSE_TEST_SILENT) {
-      result = {
-        events: replace(
-          rows
-            .filter(
-              (row) =>
-                row.dir === "in" &&
-                row.msg.method &&
-                row.msg.params?.viewCursor &&
-                !row.msg.id &&
-                row.msg.method !== "item/delta",
-            )
-            .map((row) => ({ method: row.msg.method, params: row.msg.params })),
-        ),
-        nextCursor: null,
-      };
-    } else {
-      result = replace(
-        responseFor(
-          readFixture(
-            frame.params.sessionId === "fixture-child" ? "phase3-child-read" : "phase3-controls",
-          ),
-          "view/page",
-        ),
-      );
-      for (const event of result.events) event.params.sessionId = frame.params.sessionId;
-    }
-    respond(frame, result);
-    return true;
-  }
+  if (frame.method === "view/page") return historyPageResponse(frame);
   if (frame.method === "session/read") {
     const result = responseFor(readFixture("phase3-child-read"), "session/read");
     result.session.sessionId = frame.params.sessionId;
@@ -176,6 +146,93 @@ function parityResponse(frame) {
   }
   if (skillResponse(frame)) return true;
   return false;
+}
+
+function historyReadResponse(frame) {
+  if (frame.method !== "session/read" || !process.env.MUSE_TEST_HISTORY_READ) return false;
+  const child = process.env.MUSE_TEST_HISTORY_CHILD;
+  if (process.env.MUSE_TEST_HISTORY_CHILD_MISSING && frame.params.sessionId === "fixture-child") {
+    rpcError(frame, -32020, "sessionNotFound", "missing");
+    return true;
+  }
+  if (process.env.MUSE_TEST_HISTORY_CHILD_ERROR && frame.params.sessionId === "fixture-child") {
+    rpcError(frame, -32001, "overloaded", "busy");
+    return true;
+  }
+  const source = child ? readFixture("phase3-child-read") : rows;
+  const result = responseFor(source, child ? "session/read" : "session/resume");
+  result.session.sessionId = frame.params.sessionId;
+  if (child && frame.params.sessionId === "fixture-child") {
+    result.session.title = "History child";
+    result.session.workspaceRoot = "/tmp/muse-phase0/child";
+  }
+  respond(frame, result);
+  return true;
+}
+
+function historyPageResponse(frame) {
+  let result;
+  if (process.env.MUSE_TEST_GAP || process.env.MUSE_TEST_SILENT) {
+    result = {
+      events: replace(
+        rows
+          .filter(
+            (row) =>
+              row.dir === "in" &&
+              row.msg.method &&
+              row.msg.params?.viewCursor &&
+              !row.msg.id &&
+              row.msg.method !== "item/delta",
+          )
+          .map((row) => ({ method: row.msg.method, params: row.msg.params })),
+      ),
+      nextCursor: null,
+    };
+  } else {
+    result = replace(
+      responseFor(
+        readFixture(
+          frame.params.sessionId === "fixture-child" || process.env.MUSE_TEST_HISTORY_CHILD
+            ? "phase3-child-read"
+            : "phase3-controls",
+        ),
+        "view/page",
+      ),
+    );
+    if (process.env.MUSE_TEST_HISTORY_CHILD && frame.params.sessionId !== "fixture-child") {
+      const childItems = readFixture("subagent")
+        .filter(
+          (row) =>
+            row.dir === "in" &&
+            (row.msg.method === "item/started" || row.msg.method === "item/completed") &&
+            row.msg.params?.item?.tool === "subagent_spawn",
+        )
+        .map((row) => ({
+          method: row.msg.method,
+          params: {
+            ...row.msg.params,
+            item: { ...row.msg.params.item, childSessionId: "fixture-child" },
+          },
+        }));
+      result.events.push(...childItems);
+    }
+    for (const event of result.events) event.params.sessionId = frame.params.sessionId;
+  }
+  if (process.env.MUSE_TEST_HISTORY_PAGE_SIZE) {
+    const offset =
+      result.events.findIndex((event) => event.params.viewCursor === frame.params.cursor) + 1;
+    const events = result.events.slice(
+      offset,
+      offset + Number(process.env.MUSE_TEST_HISTORY_PAGE_SIZE),
+    );
+    result = {
+      events,
+      nextCursor:
+        offset + events.length < result.events.length ? events.at(-1).params.viewCursor : null,
+    };
+  }
+  respond(frame, result);
+  return true;
 }
 function skillResponse(frame) {
   if (frame.method === "skill/list") {

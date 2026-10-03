@@ -46,6 +46,7 @@ interface PluginRuntimePort {
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   getProviderStatus?: PluginRuntime["getProviderStatus"];
+  getProviderHistory?: PluginRuntime["getProviderHistory"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -623,6 +624,13 @@ export class PluginService {
                 if (!this.runtime.getProviderStatus)
                   throw new Error("Plugin runtime cannot resolve provider status");
                 return this.runtime.getProviderStatus(pluginId, provider.id, request);
+              }
+            : undefined,
+          readSessionHistory: provider.hasHistoryReader
+            ? (request) => {
+                if (!this.runtime.getProviderHistory)
+                  throw new Error("Plugin runtime cannot resolve provider history");
+                return this.runtime.getProviderHistory(pluginId, provider.id, request);
               }
             : undefined,
           getCatalogCacheKey: provider.hasCatalogCacheKey

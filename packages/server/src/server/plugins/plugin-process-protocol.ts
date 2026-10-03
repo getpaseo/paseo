@@ -2,6 +2,7 @@ import type {
   ProviderConnectRequest,
   ProviderCatalogOptions,
   ProviderEvent,
+  ProviderHistoryReadRequest,
   ProviderInput,
   ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
@@ -15,6 +16,7 @@ import { z } from "zod";
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
+  hasHistoryReader?: boolean;
   command?: readonly [string, ...string[]];
   id: string;
   label: string;
@@ -34,6 +36,12 @@ export type PluginProcessRequest =
       requestId: string;
       providerId: string;
       request: ProviderStatusRequest;
+    }
+  | {
+      type: "provider.history";
+      requestId: string;
+      providerId: string;
+      request: ProviderHistoryReadRequest;
     }
   | {
       type: "initialize";
@@ -113,6 +121,7 @@ const providerMetadataSchema = z
     iconPath: z.string().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
+    hasHistoryReader: z.boolean().optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
@@ -144,6 +153,23 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.history"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z
+          .object({
+            persistence: z
+              .object({ version: z.number().int().nonnegative(), data: z.json() })
+              .strip(),
+            cwd: z.string(),
+            env: z.record(z.string(), z.string()).optional(),
+            launch: ProviderLaunchSchema.optional(),
+          })
+          .strict(),
       })
       .strict(),
     z

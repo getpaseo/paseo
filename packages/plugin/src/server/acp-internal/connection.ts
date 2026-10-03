@@ -39,6 +39,8 @@ import {
   type ProviderConnectRequest,
   type ProviderConnection,
   type ProviderEvent,
+  type ProviderHistoryReadRequest,
+  type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderLaunch,
   type ProviderPermissionResponse,
@@ -141,6 +143,34 @@ export async function createAcpProviderConnection(
       return closePromise;
     },
   };
+}
+
+export async function readAcpProviderHistory(
+  options: RunAcpProviderOptions,
+  request: ProviderHistoryReadRequest,
+): Promise<ProviderHistoryReadResult> {
+  const items: ProviderHistoryReadResult["items"] = [];
+  const runtime = await AcpRuntime.start({
+    options,
+    launch: request.launch,
+    boundarySessionId: "history-read",
+    env: request.env ?? {},
+    emit: (event) => {
+      if (event.type === "timeline.item") {
+        items.push({
+          item: event.item,
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        });
+      }
+    },
+  });
+  try {
+    await runtime.readHistory(request.persistence, request.cwd);
+    await runtime.drainNotifications();
+    return { items, coverage: { kind: "complete" } };
+  } finally {
+    await runtime.closeSession();
+  }
 }
 
 interface AcpConnectionState {
@@ -542,6 +572,19 @@ class AcpRuntime {
     }
     this.emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
     return sessionCapabilities;
+  }
+
+  async readHistory(persistence: ProviderPersistence, cwd: string): Promise<void> {
+    const nativeSessionId = readNativeSessionId(persistence);
+    if (!nativeSessionId) throw new Error("ACP history read requires a native session handle");
+    this.nativeSessionId = nativeSessionId;
+    await this.call(
+      this.connection.loadSession({
+        sessionId: nativeSessionId,
+        cwd,
+        mcpServers: [],
+      }),
+    );
   }
 
   async discover(cwd = process.cwd()): Promise<ProviderCatalog> {

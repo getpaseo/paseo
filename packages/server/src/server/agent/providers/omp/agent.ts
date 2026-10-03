@@ -9,6 +9,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentFeature,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -2419,6 +2421,41 @@ export class OmpAgentClient implements AgentClient {
         throw error;
       }
     };
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const sessionFile = handle.nativeHandle;
+    if (!sessionFile) {
+      throw new Error("OMP history read requires a native session file handle");
+    }
+
+    const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
+    // History reads replay the transcript straight off disk. Launching an OMP runtime
+    // here would re-initialize the session and mutate the archived agent, so this path
+    // reuses the runtime-free history session instead.
+    const session = new OmpHistorySession(
+      handle,
+      buildResumeConfig(
+        persistenceMetadata,
+        context?.cwd ? { cwd: context.cwd } : undefined,
+        this.provider,
+      ),
+      sessionFile,
+      this.provider,
+      persistenceMetadata.bridgedTools,
+    );
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        events.push(event);
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
   }
 
   async fetchCatalog(

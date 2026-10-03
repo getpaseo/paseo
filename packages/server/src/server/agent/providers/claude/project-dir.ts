@@ -13,6 +13,14 @@ const PROJECT_DIR_LENGTH_CAP = 200;
 
 export interface ClaudeProjectDirOptions {
   configDir?: string;
+  runtimeSettings?: { env?: Record<string, string> };
+  /**
+   * Per-launch environment, including anything a plugin rewrote for this open.
+   * `createProviderEnv` overlays it on top of the profile settings, so config-dir
+   * resolution has to prefer it the same way or a transcript read lands in a
+   * different directory than the session it belongs to.
+   */
+  launchEnv?: Record<string, string>;
 }
 
 export async function claudeProjectDir(
@@ -71,6 +79,15 @@ export function claudeConfigDir(env: NodeJS.ProcessEnv): string {
   return env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 }
 
+export function resolveClaudeConfigDir(options?: ClaudeProjectDirOptions): string {
+  return (
+    options?.configDir ??
+    options?.launchEnv?.CLAUDE_CONFIG_DIR ??
+    options?.runtimeSettings?.env?.CLAUDE_CONFIG_DIR ??
+    claudeConfigDir(process.env)
+  );
+}
+
 function resolveConfigDir(options?: ClaudeProjectDirOptions): string {
-  return options?.configDir ?? claudeConfigDir(process.env);
+  return resolveClaudeConfigDir(options);
 }
