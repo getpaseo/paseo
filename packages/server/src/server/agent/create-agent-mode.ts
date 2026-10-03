@@ -46,6 +46,13 @@ export function resolveAndValidateCreateAgentMode(
   const { requestedMode, targetProvider, parent, availableModes } = input;
 
   if (requestedMode !== undefined) {
+    // Modeless providers accept no modes at all. Ignore a stale explicit mode
+    // (e.g. a globally-remembered preference from before the provider dropped
+    // its modes) instead of rejecting creation with no way to clear it
+    // client-side. Matches the cross-provider leniency below.
+    if (availableModes?.length === 0) {
+      return undefined;
+    }
     if (availableModes !== undefined && !availableModes.includes(requestedMode)) {
       throw new Error(
         `Invalid mode '${requestedMode}' for provider '${targetProvider}'. Available modes: ${listModes(availableModes)}`,
