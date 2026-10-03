@@ -9,8 +9,10 @@ import {
 describe("parseAppLanguage", () => {
   it("accepts system and all supported language locales", () => {
     expect(
-      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
-    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+      ["system", "ar", "en", "es", "fr", "it", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(
+        parseAppLanguage,
+      ),
+    ).toEqual(["system", "ar", "en", "es", "fr", "it", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
   });
 
   it("returns null for unknown values", () => {
@@ -25,6 +27,7 @@ describe("parseAppLanguage", () => {
       "en",
       "es",
       "fr",
+      "it",
       "ja",
       "ko",
       "pt-BR",
@@ -147,4 +150,9 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("system", ["de-DE"])).toBe("en");
     expect(resolveSupportedLocale("system", [])).toBe("en");
   });
+});
+
+it("resolves Italian regional locales", () => {
+  expect(resolveSupportedLocale("system", ["it-IT"])).toBe("it");
+  expect(resolveSupportedLocale("system", ["it-CH"])).toBe("it");
 });

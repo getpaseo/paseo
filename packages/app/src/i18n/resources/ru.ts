@@ -2126,6 +2126,7 @@ export const ru: TranslationResources = {
         label: "Язык",
         description: "Язык приложения",
         options: {
+          it: "Italiano",
           system: "Как в системе",
           ar: "العربية",
           en: "English",
