@@ -167,10 +167,24 @@ jobs:
       - name: Build server dependencies
         run: npm run build:server-deps
 
+      - name: Cache SenseVoice model
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/local-speech/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
+          key: ${{ runner.os }}-sensevoice-${{ hashFiles('packages/server/src/server/speech/providers/local/sherpa/model-catalog.ts') }}
+
+      - name: Prepare SenseVoice model
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm run speech:download --workspace=@getpaseo/server -- --model sensevoice-small-int8
+        env:
+          PASEO_LOCAL_MODELS_DIR: ${{ runner.temp }}/local-speech
+
       - name: Run server tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: npm run test --workspace=@getpaseo/server
         env:
+          PASEO_LOCAL_MODELS_DIR: ${{ runner.temp }}/local-speech
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
