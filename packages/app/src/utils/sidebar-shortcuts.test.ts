@@ -126,6 +126,9 @@ describe("buildSidebarShortcutModel", () => {
       collapsedProjectKeys: new Set<string>(),
     });
 
+    expect(model.workspaceTargets).toEqual(
+      workspaces.map(({ serverId, workspaceId }) => ({ serverId, workspaceId })),
+    );
     expect(model.shortcutTargets).toHaveLength(9);
     expect(model.shortcutTargets[0]).toEqual({ serverId: "s", workspaceId: "ws-1" });
     expect(model.shortcutTargets[8]).toEqual({ serverId: "s", workspaceId: "ws-9" });
