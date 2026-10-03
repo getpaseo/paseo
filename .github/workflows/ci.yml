@@ -185,6 +185,7 @@ jobs:
         run: npm run test --workspace=@getpaseo/server
         env:
           PASEO_LOCAL_MODELS_DIR: ${{ runner.temp }}/local-speech
+          PASEO_SPEECH_E2E_DOWNLOAD: "1"
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
