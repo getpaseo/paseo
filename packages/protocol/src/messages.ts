@@ -6124,6 +6124,7 @@ export const ListProviderFeaturesResponseMessageSchema = z.object({
   payload: z.object({
     provider: AgentProviderSchema,
     features: z.array(AgentFeatureSchema).optional(),
+    selectedModel: z.string().nullable().optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
     requestId: z.string(),

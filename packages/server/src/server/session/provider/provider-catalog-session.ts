@@ -14,6 +14,7 @@ import {
 import {
   filterSelectableAgentModels,
   type AgentFeature,
+  type AgentFeatureSnapshot,
   type AgentProvider,
   type AgentSessionConfig,
   type ProviderSnapshotEntry,
@@ -50,6 +51,7 @@ export interface ProviderCatalogSessionHost {
   publishSnapshot(project: () => SessionOutboundMessage | null): void;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listDraftFeatureSnapshot?(config: AgentSessionConfig): Promise<AgentFeatureSnapshot>;
 }
 
 export interface ProviderCatalogSessionOptions {
@@ -357,12 +359,15 @@ export class ProviderCatalogSession {
     const fetchedAt = new Date().toISOString();
     try {
       const sessionConfig = this.buildDraftAgentSessionConfig(msg.draftConfig);
-      const features = await this.host.listDraftFeatures(sessionConfig);
+      const snapshot = this.host.listDraftFeatureSnapshot
+        ? await this.host.listDraftFeatureSnapshot(sessionConfig)
+        : { features: await this.host.listDraftFeatures(sessionConfig), selectedModel: null };
       this.host.emit({
         type: "list_provider_features_response",
         payload: {
           provider: msg.draftConfig.provider,
-          features,
+          features: snapshot.features,
+          selectedModel: snapshot.selectedModel,
           error: null,
           fetchedAt,
           requestId: msg.requestId,

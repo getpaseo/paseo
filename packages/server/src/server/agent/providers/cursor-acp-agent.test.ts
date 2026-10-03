@@ -154,7 +154,10 @@ describe("CursorACPAgentClient model discovery", () => {
   test("exposes Cursor fast mode through provider features", async () => {
     const client = new TestCursorACPAgentClient({
       sessionId: "session-1",
-      models: null,
+      models: {
+        currentModelId: "composer-2.5",
+        availableModels: [{ modelId: "composer-2.5", name: "Composer 2.5" }],
+      },
       configOptions: [fastConfigOption("false")],
     });
 

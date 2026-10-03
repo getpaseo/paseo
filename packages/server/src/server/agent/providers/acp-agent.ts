@@ -66,6 +66,7 @@ import {
   type AgentClient,
   type AgentCreateConfigUnattendedInput,
   type AgentFeature,
+  type AgentFeatureSnapshot,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -674,6 +675,8 @@ interface ACPModelSelection {
   configOption: SelectConfigOption | null;
   configChoice: SelectConfigChoice | null;
   hasAvailableModels: boolean;
+  /** Model id after qualification against the provider's advertised options. */
+  resolvedModelId: string;
 }
 
 export interface ACPProviderModeWriterContext {
@@ -730,18 +733,65 @@ export function resolveACPModelSelection({
   modelId,
   availableModels,
   configOptions,
+  provider,
 }: {
   modelId: string;
   availableModels: AvailableACPModel[] | null | undefined;
   configOptions: SessionConfigOption[] | null | undefined;
+  provider?: string;
 }): ACPModelSelection {
   const configOption = findSelectConfigOption({ configOptions, category: "model" });
+  const resolvedModelId = qualifyACPModelId({ modelId, provider, availableModels, configOption });
   return {
-    availableModel: availableModels?.find((model) => model.modelId === modelId) ?? null,
+    availableModel: availableModels?.find((model) => model.modelId === resolvedModelId) ?? null,
     configOption,
-    configChoice: findSelectConfigChoice({ option: configOption, value: modelId }),
+    configChoice: findSelectConfigChoice({ option: configOption, value: resolvedModelId }),
     hasAvailableModels: Boolean(availableModels?.length),
+    resolvedModelId,
   };
+}
+
+/**
+ * Providers advertise model ids either bare (`deepseek-v4.1-flash`) or
+ * provider-qualified (`opencode-go/deepseek-v4.1-flash`). Selection only ever
+ * succeeds against an advertised value, so a bare request resolves against the
+ * provider's own option list before it is used.
+ *
+ * Resolution order: exact match, then provider-qualified, then a unique
+ * provider-suffix match. Anything ambiguous is returned unchanged so the caller
+ * reports the invalid selection instead of guessing.
+ */
+function qualifyACPModelId({
+  modelId,
+  provider,
+  availableModels,
+  configOption,
+}: {
+  modelId: string;
+  provider?: string;
+  availableModels?: AvailableACPModel[] | null;
+  configOption?: SelectConfigOption | null;
+}): string {
+  if (!modelId) {
+    return modelId;
+  }
+  const candidates = [
+    ...new Set([
+      ...(configOption
+        ? flattenSelectOptions(configOption.options).map((option) => option.value)
+        : []),
+      ...(availableModels ?? []).map((model) => model.modelId),
+    ]),
+  ];
+  if (candidates.length === 0 || candidates.includes(modelId) || modelId.includes("/")) {
+    return modelId;
+  }
+  const providerQualified = provider ? `${provider}/${modelId}` : "";
+  if (providerQualified && candidates.includes(providerQualified)) {
+    return providerQualified;
+  }
+  const matches = candidates.filter((candidate) => candidate.endsWith(`/${modelId}`));
+  return matches.length === 1 ? matches[0] : modelId;
 }
 
 export function deriveModesFromACP(
@@ -1154,14 +1204,35 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return (await this.listFeatureSnapshot(config)).features;
+  }
+
+  async listFeatureSnapshot(config: AgentSessionConfig): Promise<AgentFeatureSnapshot> {
     const autoAcceptFeature = buildACPAutoAcceptFeature(config);
-    if (this.configFeatureOptions.length === 0) {
-      return [autoAcceptFeature];
+    if (this.configFeatureOptions.length === 0 && !config.model) {
+      return { features: [autoAcceptFeature], selectedModel: null };
     }
 
     this.assertProvider(config);
-    const probe = await this.spawnProcess(PROBE_ENV);
     let probeSessionId: string | null = null;
+    let selectingModel = false;
+    let updatedConfigOptions: SessionConfigOption[] | null = null;
+    let resolveUpdate!: (options: SessionConfigOption[]) => void;
+    const configUpdate = new Promise<SessionConfigOption[]>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const probe = await this.spawnProcess(PROBE_ENV, {
+      client: this.buildProbeClient((notification) => {
+        if (
+          selectingModel &&
+          notification.sessionId === probeSessionId &&
+          notification.update.sessionUpdate === "config_option_update"
+        ) {
+          updatedConfigOptions = notification.update.configOptions;
+          resolveUpdate(updatedConfigOptions);
+        }
+      }),
+    });
     try {
       const response = await this.runACPRequest(() =>
         probe.connection.newSession({
@@ -1171,10 +1242,72 @@ export class ACPAgentClient implements AgentClient {
       );
       probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
-      return [
-        autoAcceptFeature,
-        ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
-      ];
+      let configOptions = transformed.configOptions ?? [];
+      const modelFromOptions = (options: SessionConfigOption[]): string | null => {
+        const value = findSelectConfigOption({
+          configOptions: options,
+          category: "model",
+        })?.currentValue;
+        return typeof value === "string" && value.length > 0 ? value : null;
+      };
+      let selectedModel =
+        modelFromOptions(configOptions) ?? transformed.models?.currentModelId ?? null;
+      if (config.model) {
+        const selection = resolveACPModelSelection({
+          modelId: config.model,
+          provider: this.provider,
+          availableModels: transformed.models?.availableModels,
+          configOptions,
+        });
+        if (!selection.availableModel && !selection.configChoice) {
+          throw new Error(`Model '${config.model}' is not advertised by ${this.provider}`);
+        }
+        if (selectedModel !== selection.resolvedModelId) {
+          selectingModel = true;
+          if (selection.configOption && selection.configChoice) {
+            const changed = await this.runACPRequest(() =>
+              probe.connection.setSessionConfigOption({
+                sessionId: response.sessionId,
+                configId: selection.configOption!.id,
+                value: selection.resolvedModelId,
+              }),
+            );
+            configOptions = this.configOptionsTransformer
+              ? this.configOptionsTransformer(changed.configOptions)
+              : changed.configOptions;
+          } else if (selection.availableModel) {
+            await this.runACPRequest(() =>
+              probe.connection.unstable_setSessionModel({
+                sessionId: response.sessionId,
+                modelId: selection.resolvedModelId,
+              }),
+            );
+            const updated =
+              updatedConfigOptions ??
+              (await withTimeout(
+                configUpdate,
+                1500,
+                `${this.provider} did not report model-bound feature options`,
+              ));
+            configOptions = this.configOptionsTransformer
+              ? this.configOptionsTransformer(updated)
+              : updated;
+          }
+          selectedModel = modelFromOptions(configOptions);
+          if (selectedModel !== selection.resolvedModelId) {
+            throw new Error(
+              `${this.provider} did not confirm the selected model '${selection.resolvedModelId}' for feature discovery`,
+            );
+          }
+        }
+      }
+      return {
+        selectedModel,
+        features: [
+          autoAcceptFeature,
+          ...(selectedModel ? deriveFeaturesFromACP(configOptions, this.configFeatureOptions) : []),
+        ],
+      };
     } finally {
       await this.closeProbe(probe, probeSessionId);
     }
@@ -2175,6 +2308,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       modelId,
       availableModels: this.availableModels,
       configOptions: this.configOptions,
+      provider: this.provider,
     });
     await this.setModelWithSelection({ modelId, selection });
   }
@@ -2189,20 +2323,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
+    modelId = selection.resolvedModelId ?? modelId;
 
     if (selection.hasAvailableModels) {
       if (!selection.availableModel) {
-        this.warnInvalidSelection(
-          modelId,
-          `is not a valid ${this.provider} model. Available options: ${this.availableModels
+        throw new Error(
+          `Model '${modelId}' is not a valid ${this.provider} model. Valid options: ${this.availableModels
             ?.map((model) => model.modelId)
             .join(", ")}`,
         );
-        return;
       }
 
       if (typeof this.connection.unstable_setSessionModel !== "function") {
-        throw new Error(this.modelSelectionUnavailableMessage());
+        throw new Error(
+          `${this.modelSelectionUnavailableMessage()} for '${modelId}'. Valid options: ${this.availableModels?.map((model) => model.modelId).join(", ")}`,
+        );
       }
 
       try {
@@ -2224,18 +2359,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const modelOption = selection.configOption;
     if (!modelOption) {
-      throw new Error(this.modelSelectionUnavailableMessage());
+      throw new Error(
+        `${this.modelSelectionUnavailableMessage()} for '${modelId}'. Valid options: none`,
+      );
     }
     if (!selection.configChoice) {
-      this.warnInvalidSelection(
-        modelId,
-        `is not a valid ${this.provider} model config option. Available options: ${flattenSelectOptions(
+      throw new Error(
+        `Model '${modelId}' is not a valid ${this.provider} model config option. Valid options: ${flattenSelectOptions(
           modelOption.options,
         )
           .map((option) => option.value)
           .join(", ")}`,
       );
-      return;
     }
 
     const { connection, sessionId } = this;
@@ -2246,6 +2381,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         value: modelId,
       }),
     );
+    const reportedOption = response.configOptions?.find(
+      (option: SessionConfigOption) => option.id === modelOption.id && option.type === "select",
+    );
+    if (reportedOption?.type === "select" && reportedOption.currentValue !== modelId) {
+      throw new Error(
+        `${this.provider} did not confirm requested model '${modelId}': reported '${reportedOption.currentValue}'. Valid options: ${flattenSelectOptions(
+          modelOption.options,
+        )
+          .map((option) => option.value)
+          .join(", ")}`,
+      );
+    }
     this.currentModel = this.applyConfigOptionResponse({
       response,
       configId: modelOption.id,
@@ -2282,13 +2429,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const option = findSelectConfigOption({
-      configOptions: this.configOptions,
-      category: "thought_level",
-    });
-    if (!option) {
-      throw new Error(`${this.provider} does not expose ACP thought-level selection`);
-    }
+    const option = this.requireAdvertisedThinkingOption(thinkingOptionId);
     const { connection, sessionId } = this;
     const response = await this.runACPRequest(() =>
       connection.setSessionConfigOption({
@@ -2874,6 +3015,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.modeIdTransformer ? this.modeIdTransformer(modeId) : modeId;
   }
 
+  private requireAdvertisedThinkingOption(thinkingOptionId: string): SelectConfigOption {
+    const option = findSelectConfigOption({
+      configOptions: this.configOptions,
+      category: "thought_level",
+    });
+    if (!option || !findSelectConfigChoice({ option, value: thinkingOptionId })) {
+      const valid = option
+        ? flattenSelectOptions(option.options)
+            .map((choice) => choice.value)
+            .join(", ")
+        : "none";
+      throw new Error(
+        `Thinking option '${thinkingOptionId}' is not advertised by ${this.provider}. Valid options: ${valid}`,
+      );
+    }
+    return option;
+  }
+
   private async applyConfiguredOverrides(): Promise<void> {
     const configuredModeId = this.config.modeId;
     if (configuredModeId && configuredModeId !== this.currentMode) {
@@ -2891,22 +3050,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         modelId: configuredModelId,
         availableModels: this.availableModels,
         configOptions: this.configOptions,
+        provider: this.provider,
       });
-      try {
-        await this.setModelWithSelection({ modelId: configuredModelId, selection });
-        switchedModel = true;
-      } catch (error) {
-        if (!this.isModelSelectionUnavailableError(error)) {
-          throw error;
-        }
-        this.logger.warn(
-          { value: configuredModelId },
-          `${this.provider} does not expose ACP model selection; using provider default model`,
-        );
-      }
+      await this.setModelWithSelection({ modelId: configuredModelId, selection });
+      switchedModel = true;
     }
-    if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
-      await this.setThinkingOption(this.config.thinkingOptionId);
+    if (this.config.thinkingOptionId) {
+      if (!this.thinkingOptionWriter)
+        this.requireAdvertisedThinkingOption(this.config.thinkingOptionId);
+      if (this.config.thinkingOptionId !== this.thinkingOptionId) {
+        await this.setThinkingOption(this.config.thinkingOptionId);
+      }
     }
     const configuredFeatureValues = this.config.featureValues ?? {};
     for (const featureOption of this.configFeatureOptions) {
@@ -2952,10 +3106,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private modelSelectionUnavailableMessage(): string {
     return `${this.provider} does not expose ACP model selection`;
-  }
-
-  private isModelSelectionUnavailableError(error: unknown): boolean {
-    return error instanceof Error && error.message === this.modelSelectionUnavailableMessage();
   }
 
   private featureUnavailableMessage(featureId: string): string {

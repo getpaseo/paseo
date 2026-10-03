@@ -193,6 +193,7 @@ function createSessionWithConfig(
     provider?: string;
     modeId?: string | null;
     model?: string | null;
+    thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
@@ -203,6 +204,7 @@ function createSessionWithConfig(
       cwd: "/tmp/paseo-acp-test",
       modeId: config.modeId ?? undefined,
       model: config.model ?? undefined,
+      thinkingOptionId: config.thinkingOptionId ?? undefined,
       featureValues: config.featureValues,
     },
     {
@@ -475,11 +477,7 @@ test("ACP setModel only uses config-option fallback when the matching select cho
 
   setSessionConfigOption.mockClear();
 
-  await expect(session.setModel("new-provider-model")).resolves.toBeUndefined();
-  expect(childLogger.warn).toHaveBeenCalledWith(
-    { value: "new-provider-model" },
-    expect.stringContaining("is not a valid claude-acp model config option"),
-  );
+  await expect(session.setModel("new-provider-model")).rejects.toThrow("new-provider-model");
   expect(setSessionConfigOption).not.toHaveBeenCalled();
 });
 
@@ -896,6 +894,270 @@ describe("deriveModesFromACP", () => {
 });
 
 describe("ACP selection validity helpers", () => {
+  test("invalid thinking choices are rejected before an ACP write and after stored-state restoration", async () => {
+    const session = createSessionWithConfig({ thinkingOptionId: "xhigh" });
+    const { internals, setSessionConfigOption } = prepareConfiguredOverrideSession(session, {
+      currentModel: "model-a",
+      availableModels: [{ modelId: "model-a", name: "A", description: null }],
+      configOptions: [selectConfigOption("thought_level", ["low", "high"], "low")],
+    });
+    await expect(session.setThinkingOption("xhigh")).rejects.toThrow("xhigh");
+    await expect(internals.applyConfiguredOverrides()).rejects.toThrow("xhigh");
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    await expect(session.getRuntimeInfo()).resolves.toBeDefined();
+  });
+
+  test("feature discovery selects the requested model before deriving its options", async () => {
+    const modelOption = (currentValue: string): SessionConfigOption => ({
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue,
+      options: [
+        { value: "vendor/model-a", name: "A" },
+        { value: "vendor/model-b", name: "B" },
+      ],
+    });
+    const setModel = vi.fn(async () => ({
+      configOptions: [modelOption("vendor/model-b"), copilotAgentConfigOption("Model B Agent")],
+    }));
+    class Client extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          initialize: { agentCapabilities: {} },
+          connection: {
+            newSession: vi.fn(async () => ({
+              sessionId: "feature-model-probe",
+              models: {
+                currentModelId: "vendor/model-a",
+                availableModels: [
+                  { modelId: "vendor/model-a", name: "A" },
+                  { modelId: "vendor/model-b", name: "B" },
+                ],
+              },
+              configOptions: [
+                modelOption("vendor/model-a"),
+                copilotAgentConfigOption("Model A Agent"),
+              ],
+            })),
+            setSessionConfigOption: setModel,
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+      protected override async closeProbe(): Promise<void> {}
+    }
+    const client = new Client({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["fake-acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+    });
+    const snapshot = await client.listFeatureSnapshot({
+      provider: "copilot",
+      cwd: "/tmp",
+      model: "model-b",
+    });
+    expect(snapshot.selectedModel).toBe("vendor/model-b");
+    const features = snapshot.features;
+    expect(setModel).toHaveBeenCalledWith({
+      sessionId: "feature-model-probe",
+      configId: "model",
+      value: "vendor/model-b",
+    });
+    expect(features).toContainEqual(
+      expect.objectContaining({ id: "agent", value: "Model B Agent" }),
+    );
+    expect(features).not.toContainEqual(
+      expect.objectContaining({ id: "agent", value: "Model A Agent" }),
+    );
+  });
+
+  test("feature discovery rejects an unknown requested model instead of reporting default model options", async () => {
+    class Client extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          initialize: { agentCapabilities: {} },
+          connection: {
+            newSession: vi.fn(async () => ({
+              sessionId: "probe",
+              models: {
+                currentModelId: "model-a",
+                availableModels: [{ modelId: "model-a", name: "A" }],
+              },
+              configOptions: [copilotAgentConfigOption("Model A Agent")],
+            })),
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+      protected override async closeProbe(): Promise<void> {}
+    }
+    const client = new Client({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["fake-acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+    });
+    await expect(
+      client.listFeatures({ provider: "copilot", cwd: "/tmp", model: "model-b" }),
+    ).rejects.toThrow("advertised");
+  });
+
+  test.each([true, false])(
+    "native model feature probes require a fresh model-bound config update (reported=%s)",
+    async (reported) => {
+      class Client extends ACPAgentClient {
+        protected override async spawnProcess(
+          _env?: Record<string, string>,
+          options?: { client?: import("@agentclientprotocol/sdk").Client },
+        ): Promise<SpawnedACPProcess> {
+          return {
+            child: createProbeChildStub(),
+            initialize: { agentCapabilities: {} },
+            connection: {
+              newSession: vi.fn(async () => ({
+                sessionId: "native-feature-probe",
+                models: {
+                  currentModelId: "vendor/a",
+                  availableModels: [
+                    { modelId: "vendor/a", name: "A" },
+                    { modelId: "vendor/b", name: "B" },
+                  ],
+                },
+                configOptions: [copilotAgentConfigOption("A Agent")],
+              })),
+              unstable_setSessionModel: vi.fn(async () => {
+                if (reported)
+                  await options?.client?.sessionUpdate({
+                    sessionId: "native-feature-probe",
+                    update: {
+                      sessionUpdate: "config_option_update",
+                      configOptions: [
+                        {
+                          id: "model",
+                          name: "Model",
+                          category: "model",
+                          type: "select",
+                          currentValue: "vendor/b",
+                          options: [{ value: "vendor/b", name: "B" }],
+                        },
+                        copilotAgentConfigOption("B Agent"),
+                      ],
+                    },
+                  });
+                return {};
+              }),
+            },
+          } as unknown as SpawnedACPProcess;
+        }
+        protected override async closeProbe(): Promise<void> {}
+      }
+      const client = new Client({
+        provider: "copilot",
+        logger: createTestLogger(),
+        defaultCommand: ["fake-acp"],
+        configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+      });
+      const snapshot = client.listFeatureSnapshot({
+        provider: "copilot",
+        cwd: "/tmp",
+        model: "vendor/b",
+      });
+      if (reported) {
+        await expect(snapshot).resolves.toMatchObject({
+          selectedModel: "vendor/b",
+          features: expect.arrayContaining([
+            expect.objectContaining({ id: "agent", value: "B Agent" }),
+          ]),
+        });
+      } else {
+        await expect(snapshot).rejects.toThrow("model-bound feature options");
+      }
+    },
+  );
+
+  test.each([
+    ["muse-spark", ["opencode/muse-spark"], "opencode", "opencode/muse-spark"],
+    ["muse-spark", ["vendor/muse-spark"], "opencode", "vendor/muse-spark"],
+    ["muse-spark", ["first/muse-spark", "second/muse-spark"], "opencode", "muse-spark"],
+    ["muse-spark", ["first/muse-spark", "opencode/muse-spark"], "opencode", "opencode/muse-spark"],
+    ["muse-spark", ["muse-spark", "opencode/muse-spark"], "opencode", "muse-spark"],
+    ["missing", ["opencode/muse-spark"], "opencode", "missing"],
+    ["vendor/muse-spark", ["other/vendor/muse-spark"], "opencode", "vendor/muse-spark"],
+    [
+      "muse-spark-contributor",
+      ["vendor/muse-spark-contributor-free", "vendor/muse-spark-contributor"],
+      "opencode",
+      "vendor/muse-spark-contributor",
+    ],
+    [
+      "muse-spark-contributor",
+      ["vendor/muse-spark-contributor-free"],
+      "opencode",
+      "muse-spark-contributor",
+    ],
+  ])(
+    "resolves requested %s against advertised options %j",
+    (modelId, ids, provider, resolvedModelId) => {
+      const result = resolveACPModelSelection({
+        modelId,
+        provider,
+        availableModels: ids.map((id) => ({ modelId: id, name: id })),
+        configOptions: [],
+      });
+      expect(result).toMatchObject({ resolvedModelId });
+      expect(result.availableModel?.modelId ?? null).toBe(
+        ids.includes(resolvedModelId) ? resolvedModelId : null,
+      );
+    },
+  );
+
+  test("counts the same advertised model once across model and config surfaces", () => {
+    const result = resolveACPModelSelection({
+      modelId: "muse-spark",
+      provider: "opencode",
+      availableModels: [{ modelId: "vendor/muse-spark", name: "Muse" }],
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          type: "select",
+          category: "model",
+          currentValue: "vendor/muse-spark",
+          options: [{ value: "vendor/muse-spark", name: "Muse" }],
+        },
+      ],
+    });
+    expect(result).toMatchObject({
+      resolvedModelId: "vendor/muse-spark",
+      availableModel: { modelId: "vendor/muse-spark" },
+      configChoice: { value: "vendor/muse-spark" },
+    });
+  });
+
+  test("sends the provider-advertised qualified id for explicit and stored selections", async () => {
+    const session = createSessionWithConfig({ model: "muse-spark" });
+    const { internals, unstableSetSessionModel } = prepareConfiguredOverrideSession(session, {
+      currentModel: "vendor/default",
+      availableModels: [{ modelId: "vendor/muse-spark", name: "Muse", description: null }],
+    });
+    await session.setModel("muse-spark");
+    expect(unstableSetSessionModel).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modelId: "vendor/muse-spark",
+    });
+    expect(internals.currentModel).toBe("vendor/muse-spark");
+    unstableSetSessionModel.mockClear();
+    internals.currentModel = "vendor/default";
+    await internals.applyConfiguredOverrides();
+    expect(unstableSetSessionModel).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modelId: "vendor/muse-spark",
+    });
+  });
+
   test("classifies advertised ACP modes and select config option choices", () => {
     const result = resolveACPModeSelection({
       modeId: "plan",
@@ -1015,16 +1277,12 @@ describe("ACPAgentSession Zed parity", () => {
       availableModels: [{ modelId: "sonnet", name: "Sonnet", description: null }],
     });
 
-    await expect(invalid.internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    await expect(invalid.internals.applyConfiguredOverrides()).rejects.toThrow("opus");
     expect(invalid.setSessionMode).not.toHaveBeenCalled();
     expect(invalid.unstableSetSessionModel).not.toHaveBeenCalled();
     expect(childLogger.warn).toHaveBeenCalledWith(
       { value: expect.stringContaining("acceptEdits") },
       expect.stringContaining("not valid"),
-    );
-    expect(childLogger.warn).toHaveBeenCalledWith(
-      { value: expect.stringContaining("opus") },
-      expect.stringContaining("not a valid"),
     );
   });
 
@@ -1044,7 +1302,7 @@ describe("ACPAgentSession Zed parity", () => {
     expect(setSessionConfigOption).not.toHaveBeenCalled();
   });
 
-  test("does not fail session start when configured model cannot be applied by ACP", async () => {
+  test("rejects session start when the configured model cannot be applied by ACP", async () => {
     const logger = createTestLogger();
     const childLogger = { trace: vi.fn(), warn: vi.fn() };
     vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
@@ -1060,13 +1318,11 @@ describe("ACPAgentSession Zed parity", () => {
         connection: { unstable_setSessionModel: undefined },
       });
 
-    await expect(internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    await expect(internals.applyConfiguredOverrides()).rejects.toThrow(
+      "does not expose ACP model selection",
+    );
     expect(unstableSetSessionModel).not.toHaveBeenCalled();
     expect(setSessionConfigOption).not.toHaveBeenCalled();
-    expect(childLogger.warn).toHaveBeenCalledWith(
-      { value: "deepseek/v4" },
-      "deepseek-tui does not expose ACP model selection; using provider default model",
-    );
   });
 
   test("routes config_option_update and refreshes derived mode, model, and thinking state", async () => {
@@ -1193,7 +1449,7 @@ describe("ACPAgentSession Zed parity", () => {
     ]);
   });
 
-  test("uses canonical model returned by setSessionConfigOption response", async () => {
+  test("rejects a contradictory model returned by setSessionConfigOption response", async () => {
     const session = createSession();
     const internals = asInternals<ACPModelSelectionInternals>(session);
     const events: AgentStreamEvent[] = [];
@@ -1206,15 +1462,12 @@ describe("ACPAgentSession Zed parity", () => {
       })),
     };
 
-    await session.setModel("claude-sonnet");
+    await expect(session.setModel("claude-sonnet")).rejects.toThrow(
+      "did not confirm requested model",
+    );
     unsubscribe();
 
-    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "sonnet" });
-    expect(events).toContainEqual({
-      type: "model_changed",
-      provider: "claude-acp",
-      runtimeInfo: expect.objectContaining({ model: "sonnet" }),
-    });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "model_changed" }));
   });
 
   test("uses canonical thinking option returned by setSessionConfigOption response", async () => {
@@ -2093,6 +2346,10 @@ describe("ACPAgentClient config features", () => {
           connection: {
             newSession: vi.fn().mockResolvedValue({
               sessionId: "session-1",
+              models: {
+                currentModelId: "model-a",
+                availableModels: [{ modelId: "model-a", name: "A" }],
+              },
               configOptions: [copilotAgentConfigOption("Probe Agent")],
             }),
           },

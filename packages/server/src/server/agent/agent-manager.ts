@@ -30,6 +30,7 @@ import {
   type AgentResumePurpose,
   type AgentResumeSessionOptions,
   type AgentFeature,
+  type AgentFeatureSnapshot,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -1126,10 +1127,14 @@ export class AgentManager {
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return (await this.listDraftFeatureSnapshot(config)).features;
+  }
+
+  async listDraftFeatureSnapshot(config: AgentSessionConfig): Promise<AgentFeatureSnapshot> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model && !client.listFeatures) {
-      return [];
+    if (!normalizedConfig.model && !client.listFeatures && !client.listFeatureSnapshot) {
+      return { features: [], selectedModel: null };
     }
     const available = await client.isAvailable();
     if (!available) {
@@ -1138,13 +1143,17 @@ export class AgentManager {
       );
     }
 
+    if (client.listFeatureSnapshot) {
+      return await client.listFeatureSnapshot(normalizedConfig);
+    }
     if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
+      return { features: await client.listFeatures(normalizedConfig), selectedModel: null };
     }
 
     const session = await client.createSession(normalizedConfig);
     try {
-      return session.features ?? [];
+      const runtimeInfo = await session.getRuntimeInfo();
+      return { features: session.features ?? [], selectedModel: runtimeInfo.model ?? null };
     } finally {
       try {
         await session.close();
@@ -1934,9 +1943,10 @@ export class AgentManager {
     }
     await this.drainSessionEvents(agentId);
 
-    agent.config.model = normalizedModelId ?? undefined;
+    const reportedModelId = (await agent.session.getRuntimeInfo()).model ?? null;
+    agent.config.model = reportedModelId ?? undefined;
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
+      agent.runtimeInfo = { ...agent.runtimeInfo, model: reportedModelId };
     }
     this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
@@ -3949,6 +3959,7 @@ export class AgentManager {
         newInfo.sessionId !== agent.runtimeInfo?.sessionId ||
         newInfo.modeId !== agent.runtimeInfo?.modeId;
       agent.runtimeInfo = newInfo;
+      this.adoptReportedModel(agent, newInfo.model);
       if (!agent.persistence && newInfo.sessionId) {
         agent.persistence = attachPersistenceCwd(
           { provider: agent.provider, sessionId: newInfo.sessionId },
@@ -3961,6 +3972,12 @@ export class AgentManager {
       }
     } catch {
       // Keep existing runtimeInfo if refresh fails.
+    }
+  }
+
+  private adoptReportedModel(agent: ActiveManagedAgent, model: string | null | undefined): void {
+    if (agent.config.model !== undefined && typeof model === "string" && model.length > 0) {
+      agent.config.model = model;
     }
   }
 
@@ -4311,6 +4328,7 @@ export class AgentManager {
         return undefined;
       case "model_changed":
         agent.runtimeInfo = event.runtimeInfo;
+        this.adoptReportedModel(agent, event.runtimeInfo.model);
         if (!agent.persistence && event.runtimeInfo.sessionId) {
           agent.persistence = attachPersistenceCwd(
             { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },

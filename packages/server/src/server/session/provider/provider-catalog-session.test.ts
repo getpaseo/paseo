@@ -15,6 +15,7 @@ import {
 } from "../../agent/provider-snapshot-manager.js";
 import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
 import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
+import { ListProviderFeaturesResponseMessageSchema } from "@getpaseo/protocol/messages";
 
 type SnapshotChangeHandler = (transition: ProviderSnapshotTransition) => void;
 
@@ -293,6 +294,37 @@ describe("ProviderCatalogSession", () => {
     expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
       cwd: undefined,
       providers: ["codex"],
+    });
+  });
+
+  it("preserves the model binding through the outbound feature schema", () => {
+    const message = ListProviderFeaturesResponseMessageSchema.parse({
+      type: "list_provider_features_response",
+      payload: {
+        provider: "copilot",
+        features: [],
+        selectedModel: "vendor/model-b",
+        fetchedAt: "2026-10-02T00:00:00Z",
+        requestId: "binding",
+      },
+    });
+    expect(message.payload).toMatchObject({ selectedModel: "vendor/model-b" });
+  });
+
+  it("preserves the genuinely reported model in the feature response", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      host: {
+        listDraftFeatureSnapshot: async () => ({ features: [], selectedModel: "vendor/model-b" }),
+      } as unknown as Partial<ProviderCatalogSessionHost>,
+    });
+    await subsystem.handleListProviderFeaturesRequest({
+      type: "list_provider_features_request",
+      requestId: "binding",
+      draftConfig: { provider: "copilot", cwd: "/tmp", model: "model-b" },
+    });
+    expect(findByType(emitted, "list_provider_features_response")?.payload).toMatchObject({
+      provider: "copilot",
+      selectedModel: "vendor/model-b",
     });
   });
 

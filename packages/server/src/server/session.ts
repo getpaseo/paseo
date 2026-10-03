@@ -990,6 +990,7 @@ export class Session {
           this.supports(CLIENT_CAPS.providerSnapshotReferences),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
         listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+        listDraftFeatureSnapshot: (config) => this.agentManager.listDraftFeatureSnapshot(config),
       },
       providerSnapshotManager,
       logger: this.sessionLogger,

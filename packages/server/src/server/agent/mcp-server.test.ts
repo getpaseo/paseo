@@ -248,6 +248,7 @@ function buildAgentManagerSpies() {
     getPendingPermissions: vi.fn(),
     getRegisteredProviderIds: vi.fn().mockReturnValue(["claude"]),
     listDraftFeatures: vi.fn(),
+    listDraftFeatureSnapshot: vi.fn(),
   };
 }
 
@@ -5480,14 +5481,17 @@ describe("provider MCP tools", () => {
 
   it("inspects provider features for a draft agent configuration", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.listDraftFeatures.mockResolvedValue([
-      {
-        type: "toggle",
-        id: "fast_mode",
-        label: "Fast mode",
-        value: false,
-      },
-    ]);
+    spies.agentManager.listDraftFeatureSnapshot.mockResolvedValue({
+      selectedModel: "vendor/gpt-5.4",
+      features: [
+        {
+          type: "toggle",
+          id: "fast_mode",
+          label: "Fast mode",
+          value: false,
+        },
+      ],
+    });
     const provStub = createProviderSnapshotManagerStub();
     provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
     const codexEntry = buildSnapshotEntry({
@@ -5520,7 +5524,7 @@ describe("provider MCP tools", () => {
 
     const response = await tool.handler(input);
 
-    expect(spies.agentManager.listDraftFeatures).toHaveBeenCalledWith({
+    expect(spies.agentManager.listDraftFeatureSnapshot).toHaveBeenCalledWith({
       provider: "codex",
       cwd: expect.stringContaining("repo"),
       modeId: "full-access",
@@ -5535,7 +5539,7 @@ describe("provider MCP tools", () => {
       enabled: true,
       status: "available",
       modes: [{ id: "full-access", label: "Full Access", description: "Can edit files" }],
-      selectedModel: "gpt-5.4",
+      selectedModel: "vendor/gpt-5.4",
       features: [
         {
           type: "toggle",

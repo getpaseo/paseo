@@ -507,6 +507,11 @@ class TestAgentSession implements AgentSession {
 
   async setMode(): Promise<void> {}
 
+  async setModel(model: string | null): Promise<void> {
+    this.config.model = model ?? undefined;
+    this.runtimeModel = model;
+  }
+
   getPendingPermissions() {
     return [];
   }
@@ -4865,6 +4870,9 @@ test("model changes persist the resolved thinking and fresh provider handle befo
     }
     describePersistence() {
       return { provider: "codex" as const, sessionId: this.id, metadata: { ...this.selection } };
+    }
+    override async getRuntimeInfo() {
+      return { ...(await super.getRuntimeInfo()), model: this.selection.model };
     }
   }
   class ModelClient extends TestAgentClient {
