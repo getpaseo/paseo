@@ -2394,6 +2394,21 @@ export const ptBR: TranslationResources = {
             blue: "Azul",
           },
         },
+        icon: {
+          label: "Ícone",
+          accessibilityLabel: "Ícone, {{value}}",
+          options: {
+            server: "Servidor",
+            cloud: "VM na nuvem",
+            desktop: "Desktop",
+            laptop: "Notebook",
+            workstation: "Estação de trabalho",
+            board: "Placa única",
+            container: "Contêiner",
+            home: "Servidor doméstico",
+            office: "Escritório",
+          },
+        },
         badge: {
           label: "Selo da barra lateral",
           accessibilityLabel: "Selo da barra lateral, {{value}}",

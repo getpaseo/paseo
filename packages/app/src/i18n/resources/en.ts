@@ -2481,6 +2481,21 @@ export const en = {
             blue: "Blue",
           },
         },
+        icon: {
+          label: "Icon",
+          accessibilityLabel: "Icon, {{value}}",
+          options: {
+            server: "Server",
+            cloud: "Cloud VM",
+            desktop: "Desktop",
+            laptop: "Laptop",
+            workstation: "Workstation",
+            board: "Single-board PC",
+            container: "Container",
+            home: "Home server",
+            office: "Office",
+          },
+        },
         badge: {
           label: "Sidebar badge",
           accessibilityLabel: "Sidebar badge, {{value}}",

@@ -2412,6 +2412,21 @@ export const es: TranslationResources = {
             blue: "Azul",
           },
         },
+        icon: {
+          label: "Icono",
+          accessibilityLabel: "Icono, {{value}}",
+          options: {
+            server: "Servidor",
+            cloud: "VM en la nube",
+            desktop: "Escritorio",
+            laptop: "Portátil",
+            workstation: "Estación de trabajo",
+            board: "Placa única",
+            container: "Contenedor",
+            home: "Servidor doméstico",
+            office: "Oficina",
+          },
+        },
         badge: {
           label: "Insignia de la barra lateral",
           accessibilityLabel: "Insignia de la barra lateral, {{value}}",

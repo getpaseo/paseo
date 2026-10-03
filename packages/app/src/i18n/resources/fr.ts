@@ -2418,6 +2418,21 @@ export const fr: TranslationResources = {
             blue: "Bleu",
           },
         },
+        icon: {
+          label: "Icône",
+          accessibilityLabel: "Icône, {{value}}",
+          options: {
+            server: "Serveur",
+            cloud: "VM cloud",
+            desktop: "Ordinateur de bureau",
+            laptop: "Portable",
+            workstation: "Station de travail",
+            board: "Nano-ordinateur",
+            container: "Conteneur",
+            home: "Serveur domestique",
+            office: "Bureau",
+          },
+        },
         badge: {
           label: "Badge de la barre latérale",
           accessibilityLabel: "Badge de la barre latérale, {{value}}",

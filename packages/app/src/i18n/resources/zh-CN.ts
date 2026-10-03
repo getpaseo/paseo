@@ -2330,6 +2330,21 @@ export const zhCN: TranslationResources = {
             blue: "蓝色",
           },
         },
+        icon: {
+          label: "图标",
+          accessibilityLabel: "图标，{{value}}",
+          options: {
+            server: "服务器",
+            cloud: "云虚拟机",
+            desktop: "台式机",
+            laptop: "笔记本电脑",
+            workstation: "工作站",
+            board: "单板机",
+            container: "容器",
+            home: "家庭服务器",
+            office: "办公室",
+          },
+        },
         badge: {
           label: "侧边栏徽章",
           accessibilityLabel: "侧边栏徽章，{{value}}",
