@@ -253,6 +253,19 @@ export async function fillDirectHostUri(page: Page, uri: string): Promise<void> 
   await page.getByTestId("direct-host-uri-input").fill(uri);
 }
 
+export async function fillDirectHostFields(
+  page: Page,
+  fields: { host: string; port: string },
+): Promise<void> {
+  await page.getByTestId("direct-host-input").fill(fields.host);
+  await page.getByTestId("direct-port-input").fill(fields.port);
+}
+
+export async function connectDirectHost(page: Page): Promise<void> {
+  await page.getByTestId("direct-host-submit").click();
+  await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
+}
+
 export async function expectDirectHostFormValues(
   page: Page,
   fields: { host: string; port: string; password: string },
