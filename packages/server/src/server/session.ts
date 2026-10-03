@@ -4329,15 +4329,19 @@ export class Session {
       if (internal && createdAgentId) {
         // A public agent that fails after registration stays visible for the
         // user to deal with. A hidden one would leak its runtime, so it is
-        // closed here, and the worktree cleanup below treats it as never made.
+        // closed here. Only once it is closed does the worktree cleanup below
+        // treat it as never made; a runtime that would not close keeps its
+        // directory.
         const leakedAgentId = createdAgentId;
-        createdAgentId = null;
-        await this.agentManager.archiveAgent(leakedAgentId).catch((archiveError) => {
+        try {
+          await this.agentManager.archiveAgent(leakedAgentId);
+          createdAgentId = null;
+        } catch (archiveError) {
           this.sessionLogger.warn(
             { err: archiveError, agentId: leakedAgentId },
             "Failed to close internal agent after create_agent_request failed",
           );
-        });
+        }
       }
       await this.createAgentLifecycleDispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
         createdWorktree: createdWorktreeForCleanup,

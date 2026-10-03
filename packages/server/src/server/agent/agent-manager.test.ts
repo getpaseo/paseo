@@ -7799,6 +7799,44 @@ test("archiveAgent on an internal parent still archives its attached children", 
   expect(await storage.get(parentAgentId)).toBeNull();
 });
 
+test("archiveAgent on a parent archives its live internal children", async () => {
+  const parentAgentId = "00000000-0000-4000-8000-000000000111";
+  const childAgentId = "00000000-0000-4000-8000-000000000112";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const ids = [parentAgentId, childAgentId];
+  let agentCounter = 0;
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => ids[agentCounter++] ?? randomUUID(),
+  });
+
+  await manager.createAgent({ provider: "codex", cwd: workdir, title: "Parent" }, undefined, {
+    workspaceId: undefined,
+  });
+  // An internal child is never in storage, so only the live scan can reach it.
+  await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Internal Child", internal: true },
+    undefined,
+    { workspaceId: undefined, labels: { "paseo.parent-agent-id": parentAgentId } },
+  );
+  expect(manager.getAgent(childAgentId)).not.toBeNull();
+
+  await manager.archiveAgent(parentAgentId);
+
+  expect(manager.getAgent(parentAgentId)).toBeNull();
+  expect(manager.getAgent(childAgentId)).toBeNull();
+  expect(manager.getRetiredInternalAgent(childAgentId)?.record.archivedAt).toEqual(
+    expect.any(String),
+  );
+  expect(await storage.get(childAgentId)).toBeNull();
+});
+
 test("subscribe does not emit state events for internal agents to global subscribers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

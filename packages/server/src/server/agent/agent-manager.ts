@@ -1886,6 +1886,21 @@ export class AgentManager {
         }
       });
     }
+    // Internal children never reach storage, so the scan above cannot see them.
+    // They have no tab to keep open and no listing to detach into, so they
+    // always archive with the parent.
+    for (const child of Array.from(this.agents.values())) {
+      if (!child.internal || getParentAgentIdFromLabels(child.labels) !== parentAgentId) {
+        continue;
+      }
+      await this.runLifecycleMutation(child.id, async () => {
+        const current = this.agents.get(child.id);
+        if (!current || getParentAgentIdFromLabels(current.labels) !== parentAgentId) {
+          return;
+        }
+        await this.archiveAgentUnlocked(current.id);
+      });
+    }
   }
 
   private async markRecordArchived(
