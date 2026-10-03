@@ -3,8 +3,6 @@ name: Desktop Packages
 on:
   push:
     branches: [main]
-  # Packaging leaves ordinary PR CI, but a PR that changes what gets packaged
-  # or how it is smoked still proves the real artifacts before merge.
   pull_request:
     branches: [main]
     paths:
@@ -41,7 +39,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth rpm
 
       - name: Build Linux desktop artifacts
-        # Smoke package contents and installation without spending minutes on xz compression.
         run: |
           printf '{"extends":"%s/packages/desktop/electron-builder.yml","deb":{"compression":"gz"},"rpm":{"fpm":["--rpm-compression=gzip"]}}' "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/desktop-smoke-builder.json"
           npm run build:desktop -- --publish never --linux --x64 --config "$RUNNER_TEMP/desktop-smoke-builder.json"
@@ -73,8 +70,6 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
           sudo dpkg --remove paseo
-          # Ubuntu supplies the runtime libraries under Debian package names.
-          # RPM still performs the real payload installation and postinstall.
           sudo rpm --install --nodeps packages/desktop/release/*.rpm
           node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release disabled --installed-only
         env:
@@ -86,5 +81,76 @@ jobs:
         with:
           name: desktop-packaged-smoke-linux-x64
           path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build and smoke macOS ARM64 desktop
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          if (process.arch !== "arm64") throw new Error("Expected an ARM64 runner");
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "desktop-macos-builder.json"), JSON.stringify({
+            extends: path.join(process.env.GITHUB_WORKSPACE, "packages/desktop/electron-builder.yml"),
+            mac: { notarize: false },
+          }));
+          NODE
+          npm run build:desktop -- --publish never --mac --arm64 --dir --config "$RUNNER_TEMP/desktop-macos-builder.json"
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          NODE_OPTIONS: --max-old-space-size=4096
+          PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke-macos-arm64
+
+      - name: Archive verified macOS app
+        run: |
+          artifact_directory="$RUNNER_TEMP/desktop-packaged-macos-arm64"
+          mkdir -p "$artifact_directory"
+          ditto -c -k --sequesterRsrc --keepParent packages/desktop/release/mac-arm64/PandaOS.app "$artifact_directory/PandaOS-arm64.zip"
+          (cd "$artifact_directory" && shasum -a 256 PandaOS-arm64.zip > SHA256SUMS)
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const { execFileSync } = require("node:child_process");
+          const metadata = {
+            sourceSha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+            version: require("./packages/desktop/package.json").version,
+            platform: "macos",
+            architecture: "arm64",
+            signing: "ad-hoc",
+            notarized: false,
+            runId: process.env.GITHUB_RUN_ID,
+          };
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "desktop-packaged-macos-arm64/build-metadata.json"), `${JSON.stringify(metadata, null, 2)}\n`);
+          NODE
+
+      - name: Upload packaged macOS app
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-packaged-macos-arm64
+          path: ${{ runner.temp }}/desktop-packaged-macos-arm64
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS smoke diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: desktop-packaged-smoke-macos-arm64
+          path: ${{ runner.temp }}/desktop-smoke-macos-arm64
           if-no-files-found: ignore
           retention-days: 7

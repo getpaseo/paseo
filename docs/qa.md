@@ -60,6 +60,11 @@ You aren't expected to own every device. You are expected to say what you covere
 | Desktop Windows |        |       |
 | Desktop Linux   |        |       |
 
+Development stays on Zotac; the MacBook is a client. The [Desktop Packages workflow](../.github/workflows/desktop-packages.yml)
+builds and smokes the macOS ARM64 app on a GitHub-hosted runner. Its `desktop-packaged-macos-arm64`
+artifact contains the app ZIP, SHA-256 checksum and source commit metadata, retained for seven days.
+This build is ad-hoc signed and is not notarized or published as a release.
+
 Install what you reasonably can. An iOS simulator and an Android emulator cover most of the gap on a single machine, see [development.md](development.md) and [android.md](android.md).
 
 For the rules about which code runs where, read the platform gating section in [CLAUDE.md](../CLAUDE.md). The recurring traps have their own docs: [hover.md](hover.md), [unistyles.md](unistyles.md), [floating-panels.md](floating-panels.md), [mobile-panels.md](mobile-panels.md), [expo-router.md](expo-router.md).
