@@ -237,7 +237,7 @@ export async function readExplorerFileBytes({
   root,
   relativePath,
 }: ReadFileParams): Promise<FileExplorerFileBytes> {
-  const filePath = await resolveScopedPath({ root, relativePath });
+  const filePath = await resolveReadPath({ root, relativePath });
   const handle = await openFileForRead(filePath.resolvedPath);
 
   try {
@@ -292,7 +292,7 @@ export async function streamExplorerFile(
   { root, relativePath }: ReadFileParams,
   consume: (file: FileExplorerFileStream) => Promise<void>,
 ): Promise<void> {
-  const filePath = await resolveScopedPath({ root, relativePath });
+  const filePath = await resolveReadPath({ root, relativePath });
   const handle = await openFileForRead(filePath.resolvedPath);
 
   try {
@@ -397,7 +397,7 @@ export async function getExplorerFileVersion({
 }: ReadFileParams): Promise<ExplorerFileVersion> {
   const cwd = expandUserPath(root);
   try {
-    const filePath = await resolveScopedPath({ root, relativePath });
+    const filePath = await resolveReadPath({ root, relativePath });
     const stats = await fs.stat(filePath.resolvedPath, { bigint: true });
     if (!stats.isFile()) {
       return { status: "error", cwd, path: relativePath, error: "Requested path is not a file" };
@@ -427,7 +427,7 @@ export async function resolveExplorerFilePath({
   root,
   relativePath,
 }: ReadFileParams): Promise<string> {
-  return (await resolveScopedPath({ root, relativePath })).resolvedPath;
+  return (await resolveReadPath({ root, relativePath })).resolvedPath;
 }
 
 export async function writeExplorerFile({
@@ -538,7 +538,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   mimeType: string;
   size: number;
 }> {
-  const filePath = await resolveScopedPath({ root, relativePath });
+  const filePath = await resolveReadPath({ root, relativePath });
   const handle = await openFileForRead(filePath.resolvedPath);
 
   try {
@@ -798,6 +798,17 @@ async function isCaseOnlyRename(
       !targetStats.isSymbolicLink() &&
       (await fs.realpath(targetPath)) === source.resolvedPath;
   return isSameEntry && source.requestedPath.toLowerCase() === targetPath.toLowerCase();
+}
+
+async function resolveReadPath({ root, relativePath }: ReadFileParams): Promise<ScopedPath> {
+  const requestedPath = resolvePathFromBase(expandUserPath(root), relativePath);
+
+  try {
+    return { requestedPath, resolvedPath: await fs.realpath(requestedPath) };
+  } catch (error) {
+    if (!isMissingEntryError(error)) throw error;
+    return { requestedPath, resolvedPath: requestedPath };
+  }
 }
 
 async function resolveScopedPath({
