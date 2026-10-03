@@ -1889,6 +1889,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    // Per-turn token counts belong to the previous turn; a `usage_update` that
+    // arrives before this turn's prompt response must not relabel them with the
+    // new turn's id. The context-window bounds are session-wide, so they carry
+    // forward and keep the meter lit between turns.
+    if (this.currentTurnUsage) {
+      const {
+        inputTokens: _i,
+        cachedInputTokens: _c,
+        outputTokens: _o,
+        ...carried
+      } = this.currentTurnUsage;
+      this.currentTurnUsage =
+        carried.contextWindowMaxTokens || carried.contextWindowUsedTokens ? carried : undefined;
+    }
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -3017,8 +3031,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, ...this.handleUsageUpdate(update)];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -3178,12 +3191,40 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent[] {
+    // ACP reports context occupancy out of band from the prompt response, so the
+    // composer's context meter cannot read it from `turn_completed`. Forward it as
+    // the same `usage_updated` snapshot the native adapters emit. `usage_updated`
+    // replaces `agent.lastUsage` wholesale in the manager, so merge with the turn
+    // usage already recorded: the two channels carry disjoint fields. The meter
+    // renders a percentage, so both bounds must be valid to be worth publishing.
+    if (!Number.isFinite(update.size) || update.size <= 0 || !Number.isFinite(update.used)) {
+      return [];
+    }
+    const usage: AgentUsage = {
+      ...this.currentTurnUsage,
+      contextWindowMaxTokens: update.size,
+      contextWindowUsedTokens: update.used,
+    };
+    this.currentTurnUsage = usage;
+    return [
+      {
+        type: "usage_updated",
+        provider: this.provider,
+        usage,
+        turnId: this.activeForegroundTurnId ?? undefined,
+      },
+    ];
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    // Merge, don't replace: `mapACPUsage` maps only per-turn token counts and would
+    // drop the context-window fields that `handleUsageUpdate` merged in, blanking
+    // the composer meter the moment the turn completes.
+    const responseUsage = mapACPUsage(response.usage);
+    if (responseUsage) {
+      this.currentTurnUsage = { ...this.currentTurnUsage, ...responseUsage };
+    }
 
     switch (response.stopReason) {
       case "cancelled":
