@@ -578,12 +578,7 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
 
-function isTurnTerminalEvent(
-  event: AgentStreamEvent,
-): event is Extract<
-  AgentStreamEvent,
-  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
-> {
+function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
   return (
     event.type === "turn_completed" ||
     event.type === "turn_failed" ||
@@ -2590,15 +2585,15 @@ export class AgentManager {
         if (isAcceptedTurnStart || stagedEvent === stagedSubmittedPromptEcho) {
           continue;
         }
-        // A terminal event staged across the handoff closed the superseded turn, not the one that
-        // just opened; without its identity the replay would attribute it to the new turn.
-        const needsSupersededIdentity =
-          supersededTurnId != null && getAgentStreamEventTurnId(stagedEvent) === undefined;
+        // The completion a provider absorbs inside startTurn closed the superseded turn, not the
+        // one that just opened; without an identity the replay would attribute it to the new turn.
+        const absorbsSupersededCompletion =
+          supersededTurnId != null &&
+          stagedEvent.type === "turn_completed" &&
+          getAgentStreamEventTurnId(stagedEvent) === undefined;
         this.enqueueSessionEvent(
           agent.id,
-          needsSupersededIdentity && isTurnTerminalEvent(stagedEvent)
-            ? { ...stagedEvent, turnId: supersededTurnId }
-            : stagedEvent,
+          absorbsSupersededCompletion ? { ...stagedEvent, turnId: supersededTurnId } : stagedEvent,
         );
       }
       this.emitState(agent);
