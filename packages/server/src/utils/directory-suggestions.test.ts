@@ -696,6 +696,105 @@ describe("absolute directory-path configuration", () => {
   });
 });
 
+describe("home search with excluded discovery paths", () => {
+  let homeDir: string;
+  let libraryDir: string;
+
+  beforeEach(() => {
+    homeDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-excluded-")));
+    libraryDir = path.join(homeDir, "Library");
+    mkdirSync(path.join(libraryDir, "sub", "match-me"), { recursive: true });
+    mkdirSync(path.join(homeDir, "projects", "other"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  function searchHome(query: string) {
+    return searchDirectoryEntries({
+      root: homeDir,
+      query,
+      pathFormat: "absolute",
+      includeDirectories: true,
+      includeFiles: false,
+      pathQueryPolicy: "rooted",
+      rootAliases: ["~"],
+      blankQueryBehavior: "none",
+      confidentResultScanThreshold: 5_000,
+      excludedDiscoveryPaths: [libraryDir],
+    }).then((entries) => entries.map((entry) => entry.path));
+  }
+
+  it("does not discover entries inside an excluded path", async () => {
+    await expect(searchHome("match")).resolves.toEqual([]);
+    await expect(searchHome("~")).resolves.toEqual([path.join(homeDir, "projects")]);
+  });
+
+  it("excludes by path, so a nested directory with the same name is still discovered", async () => {
+    const nested = path.join(homeDir, "projects", "game", "Library", "match-me");
+    mkdirSync(nested, { recursive: true });
+
+    await expect(searchHome("match")).resolves.toEqual([nested]);
+  });
+
+  // POSIX-only: creates and follows a symlink fixture.
+  it.skipIf(isWindows)("does not discover an excluded path through a symlink", async () => {
+    symlinkSync(path.join(libraryDir, "sub"), path.join(homeDir, "link"), "dir");
+
+    await expect(searchHome("match")).resolves.toEqual([]);
+  });
+
+  it("resolves an exact typed path inside an excluded path", async () => {
+    await expect(searchHome("~/Library/sub/match-me")).resolves.toEqual([
+      path.join(libraryDir, "sub", "match-me"),
+    ]);
+  });
+
+  it("lists one level when browsing inside an excluded path", async () => {
+    await expect(searchHome("~/Library/")).resolves.toEqual([
+      libraryDir,
+      path.join(libraryDir, "sub"),
+    ]);
+    await expect(searchHome("~/Library/su")).resolves.toEqual([path.join(libraryDir, "sub")]);
+  });
+});
+
+describe("rooted queries with a typed parent", () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-typed-parent-")));
+    mkdirSync(path.join(homeDir, "Developer", "pasta"), { recursive: true });
+    mkdirSync(path.join(homeDir, "Archive", "Developer", "pasta"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("walks only under the typed parent when it exists", async () => {
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pas" }),
+    ).resolves.toEqual([path.join(homeDir, "Developer", "pasta")]);
+  });
+
+  it("matches the whole tree when the typed parent does not exist", async () => {
+    await expect(searchAbsoluteDirectoryPaths({ homeDir, query: "~/Devel/pas" })).resolves.toEqual([
+      path.join(homeDir, "Developer", "pasta"),
+      path.join(homeDir, "Archive", "Developer", "pasta"),
+    ]);
+  });
+
+  it("returns the typed directory first", async () => {
+    mkdirSync(path.join(homeDir, "Developer", "pasta-extra"));
+
+    const results = await searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pasta" });
+
+    expect(results[0]).toBe(path.join(homeDir, "Developer", "pasta"));
+  });
+});
+
 describe("relative typed-entry configuration", () => {
   let tempRoot: string;
   let workspaceDir: string;
