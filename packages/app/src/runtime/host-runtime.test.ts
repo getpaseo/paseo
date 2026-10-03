@@ -17,6 +17,7 @@ import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { useSessionStore, type Agent } from "@/stores/session-store";
+import { createUserMessage } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
@@ -2894,6 +2895,91 @@ describe("HostRuntimeStore", () => {
     expect(
       Array.from(useSessionStore.getState().sessions[host.serverId]?.queuedMessages.values() ?? []),
     ).toEqual([[], []]);
+
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("keeps the next queued message while a sent message replaces the running turn", async () => {
+    const host = makeHost({
+      serverId: "srv_queue_replacement",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const running = makeFetchAgentsEntry({
+      id: "agent",
+      cwd: "/repo",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    });
+    fakeClient.fetchAgentsResponses.push(
+      makeFetchAgentsPayload({
+        entries: [{ ...running, agent: { ...running.agent, status: "running" } }],
+      }),
+    );
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_queue_replacement",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: null,
+      features: { canonicalSubmittedPrompts: true },
+    });
+    store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({ serverId: host.serverId, subscribe: {} });
+    store.applyAgentTurnLiveness(host.serverId, "agent", {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt: null },
+    });
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "second", text: "keep me queued", attachments: [] }]]]),
+    );
+
+    // "Send now" on the first queued message is in flight; the daemon replaces the turn.
+    const sentNow = createUserMessage({
+      clientMessageId: "sent-now",
+      text: "sent now",
+      timestamp: new Date(),
+    });
+    sessionStore.beginAgentMessageSubmission(host.serverId, "agent", sentNow);
+    store.applyAgentTurnLiveness(host.serverId, "agent", {
+      type: "stream_close",
+      turnId: "turn-1",
+    });
+    store.applyAgentTurnLiveness(host.serverId, "agent", {
+      type: "stream_open",
+      turn: { turnId: "turn-2", startedAt: null },
+    });
+
+    expect(fakeClient.sentAgentMessages).toEqual([]);
+    expect(useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent")).toEqual(
+      [{ id: "second", text: "keep me queued", attachments: [] }],
+    );
+
+    // Once the replacement turn ends, the queue drains as usual.
+    sessionStore.acceptAgentMessageSubmission(host.serverId, "agent", "sent-now");
+    sessionStore.setAgentStreamState(host.serverId, "agent", {
+      acknowledgedClientMessageIds: ["sent-now"],
+    });
+    store.applyAgentTurnLiveness(host.serverId, "agent", {
+      type: "stream_close",
+      turnId: "turn-2",
+    });
+    await fakeClient.waitForSentMessages(1);
+    expect(fakeClient.sentAgentMessages.map(([, text]) => text)).toEqual(["keep me queued"]);
 
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
