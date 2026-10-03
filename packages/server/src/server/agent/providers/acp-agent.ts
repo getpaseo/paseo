@@ -951,7 +951,7 @@ export class ACPAgentClient implements AgentClient {
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
-    this.waitForInitialCommands = options.waitForInitialCommands ?? false;
+    this.waitForInitialCommands = options.waitForInitialCommands ?? true;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
     this.now = options.now ?? Date.now;
@@ -1754,7 +1754,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentModel = config.model ?? null;
     this.thinkingOptionId = config.thinkingOptionId ?? null;
     this.currentTitle = config.title ?? null;
-    this.waitForInitialCommands = options.waitForInitialCommands ?? false;
+    this.waitForInitialCommands = options.waitForInitialCommands ?? true;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
   }
