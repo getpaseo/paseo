@@ -43,14 +43,14 @@ export const AGENT_PAGES = [
       "Open source mobile and desktop app for OpenCode. Launch agents on your machine, watch them work, ship code from anywhere. Self-hosted.",
   },
   {
-    slug: "copilot",
-    name: "GitHub Copilot",
-    title: "Open source app for GitHub Copilot",
+    slug: "pi",
+    name: "Pi Agent",
+    title: "Open source app for the Pi coding agent",
     subtitle:
-      "Drive GitHub Copilot from your phone or desktop. Same account, same machine, ship without sitting down at your desk.",
-    metaTitle: "GitHub Copilot Mobile and Desktop App, Open Source",
+      "Run the Pi coding agent on your machine, drive it from your phone or desktop. Self-hosted and open source.",
+    metaTitle: "Pi Agent Mobile and Desktop App, Open Source",
     metaDescription:
-      "Open source mobile and desktop app for GitHub Copilot. Launch sessions on your machine, monitor progress, merge from anywhere.",
+      "Open source mobile and desktop app for the Pi coding agent. Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",
   },
   {
     slug: "omp",
@@ -63,14 +63,14 @@ export const AGENT_PAGES = [
       "Open source mobile and desktop app for OMP (Oh My Pi). Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",
   },
   {
-    slug: "pi",
-    name: "Pi Agent",
-    title: "Open source app for the Pi coding agent",
+    slug: "cursor",
+    name: "Cursor",
+    title: "Open source app for Cursor",
     subtitle:
-      "Run the Pi coding agent on your machine, drive it from your phone or desktop. Self-hosted and open source.",
-    metaTitle: "Pi Agent Mobile and Desktop App, Open Source",
+      "Send tasks to Cursor on your machine, drive it from your phone or desktop. Review the diff anywhere.",
+    metaTitle: "Cursor Mobile and Desktop App, Open Source",
     metaDescription:
-      "Open source mobile and desktop app for the Pi coding agent. Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",
+      "Open source mobile and desktop app for Cursor. Launch tasks on your machine, monitor output, review diffs, and merge from anywhere. Self-hosted.",
   },
   {
     slug: "muse-code",
@@ -83,14 +83,24 @@ export const AGENT_PAGES = [
       "Open source mobile and desktop app for Meta Muse Code. Run your installed Muse CLI, watch streamed turns, and answer approvals. See setup and version limitations in the docs.",
   },
   {
-    slug: "cursor",
-    name: "Cursor",
-    title: "Open source app for Cursor",
+    slug: "antigravity",
+    name: "Antigravity",
+    title: "Open source app for Antigravity",
     subtitle:
-      "Send tasks to Cursor on your machine, drive it from your phone or desktop. Review the diff anywhere.",
-    metaTitle: "Cursor Mobile and Desktop App, Open Source",
+      "Run your installed Antigravity CLI on your machine and drive it from your phone or desktop.",
+    metaTitle: "Antigravity Mobile and Desktop App, Open Source",
     metaDescription:
-      "Open source mobile and desktop app for Cursor. Launch tasks on your machine, monitor output, review diffs, and merge from anywhere. Self-hosted.",
+      "Run your installed Antigravity CLI through Paseo. Watch agents work and review changes from your phone or desktop. Self-hosted, your code stays on your machine.",
+  },
+  {
+    slug: "copilot",
+    name: "GitHub Copilot",
+    title: "Open source app for GitHub Copilot",
+    subtitle:
+      "Drive GitHub Copilot from your phone or desktop. Same account, same machine, ship without sitting down at your desk.",
+    metaTitle: "GitHub Copilot Mobile and Desktop App, Open Source",
+    metaDescription:
+      "Open source mobile and desktop app for GitHub Copilot. Launch sessions on your machine, monitor progress, merge from anywhere.",
   },
   {
     slug: "gemini",

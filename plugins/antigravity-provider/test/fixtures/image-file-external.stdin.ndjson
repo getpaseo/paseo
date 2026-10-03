@@ -1,0 +1,1 @@
+{"t_ms": 320, "stream": "stdin", "data": {"event": "user", "message": {"content": "Use view_file to open the attached image at <CAPTURE>/owned/attachment.png. Describe the shapes and colors visible. Do not use shell or code to infer the pixels."}}}

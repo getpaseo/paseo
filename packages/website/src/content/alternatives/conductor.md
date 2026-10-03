@@ -27,7 +27,7 @@ Conductor runs local workspaces through its macOS app and cloud workspaces in ma
 
 ## Providers
 
-Paseo runs Claude Code, Codex, OpenCode, Pi, and Muse Code natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
+Paseo runs Claude Code, Codex, OpenCode, Pi, Antigravity, and Muse Code natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
 
 Conductor supports Claude Code, Codex, Cursor, and OpenCode.
 
@@ -79,21 +79,21 @@ Paseo supports local speech-to-text and text-to-speech. Conductor does not curre
 
 ## Comparison
 
-|                              | Paseo                                                                      | Conductor                            |
-| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------ |
-| License                      | Open source (Apache-2.0)                                                   | Closed source                        |
-| Platforms                    | macOS, Linux, Windows                                                      | macOS only                           |
-| Native mobile                | iOS, Android                                                               | Coming soon under Pro                |
-| Providers                    | Claude Code, Codex, OpenCode, Pi, Muse Code + 30+ via ACP catalog + custom | Claude Code, Codex, Cursor, OpenCode |
-| Git worktrees                | Yes                                                                        | Yes                                  |
-| Per-worktree dev server URLs | Yes                                                                        | —                                    |
-| Split panes and tabs         | Yes                                                                        | —                                    |
-| In-app terminal              | Yes                                                                        | Yes                                  |
-| In-app browser               | Yes                                                                        | —                                    |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                   | Yes                                  |
-| CLI                          | Run, `--host`, ls, send, schedule, loop                                    | —                                    |
-| Application plugins          | Server code and native client components                                   | No                                   |
-| Local voice                  | Yes                                                                        | Not documented                       |
-| Self-hosted daemon           | Yes                                                                        | —                                    |
+|                              | Paseo                                                                                   | Conductor                            |
+| ---------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------ |
+| License                      | Open source (Apache-2.0)                                                                | Closed source                        |
+| Platforms                    | macOS, Linux, Windows                                                                   | macOS only                           |
+| Native mobile                | iOS, Android                                                                            | Coming soon under Pro                |
+| Providers                    | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code + 30+ via ACP catalog + custom | Claude Code, Codex, Cursor, OpenCode |
+| Git worktrees                | Yes                                                                                     | Yes                                  |
+| Per-worktree dev server URLs | Yes                                                                                     | —                                    |
+| Split panes and tabs         | Yes                                                                                     | —                                    |
+| In-app terminal              | Yes                                                                                     | Yes                                  |
+| In-app browser               | Yes                                                                                     | —                                    |
+| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                                | Yes                                  |
+| CLI                          | Run, `--host`, ls, send, schedule, loop                                                 | —                                    |
+| Application plugins          | Server code and native client components                                                | No                                   |
+| Local voice                  | Yes                                                                                     | Not documented                       |
+| Self-hosted daemon           | Yes                                                                                     | —                                    |
 
 See also: [Paseo vs Superset](/alternatives/superset), [Paseo vs OpenChamber](/alternatives/openchamber), [Paseo vs Happy Coder](/alternatives/happy-coder).

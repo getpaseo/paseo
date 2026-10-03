@@ -1,0 +1,1 @@
+{"t_ms": 294, "stream": "stdin", "data": {"event": "user", "message": {"role": "user", "content": "Reply with exactly PHASE0_HELLO. No tools."}}}

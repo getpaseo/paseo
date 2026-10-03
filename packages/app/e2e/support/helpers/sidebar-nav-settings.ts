@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
@@ -162,7 +163,6 @@ async function expectVerticalOrder<Key extends string>(
 
 /** Persisted footer row key -> the testID the app shell renders that row with. */
 function shellFooterTestID(key: string): string {
-  // With nothing pinned the Usage item is the plain Usage row.
   if (key === "usage") return "sidebar-usage";
   const [, pluginId, itemId] = key.split(":");
   return `plugin-sidebar-footer-${pluginId}-${itemId}`;
@@ -218,24 +218,69 @@ export async function expectFooterItemHidden(page: Page, key: string): Promise<v
 }
 
 const FOOTER_ICON_TEST_IDS = [
+  "sidebar-add-project",
+  "sidebar-usage-icon",
   "sidebar-hosts-trigger",
-  "sidebar-import-session",
   "sidebar-help",
   "sidebar-settings",
 ];
 
-/** The fixed icon row: Hosts, Import session, Help and support, Settings, left to right. */
+// Browser layout boxes include floating-point rounding, even for whole-pixel styles.
+const FOOTER_GEOMETRY_TOLERANCE = 0.01;
+
+/**
+ * One line of same-size icons: Add project, Usage and Hosts together on the left, Help and
+ * Settings together at the end.
+ */
 export async function expectFooterIconRow(page: Page): Promise<void> {
-  const boxes = await Promise.all(
-    FOOTER_ICON_TEST_IDS.map((testID) =>
-      page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
-    ),
-  );
-  const [first, ...rest] = boxes.map((box) => box!);
-  let previous = first;
-  for (const box of rest) {
-    expect(Math.abs(box.y - first.y)).toBeLessThan(2);
-    expect(box.x).toBeGreaterThan(previous.x);
-    previous = box;
+  const boxes = (
+    await Promise.all(
+      FOOTER_ICON_TEST_IDS.map((testID) =>
+        page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
+      ),
+    )
+  ).map((box) => box!);
+  const [first] = boxes;
+  for (const box of boxes) {
+    expect(Math.abs(box.y + box.height / 2 - first!.y - first!.height / 2)).toBeLessThan(2);
+    expect(Math.abs(box.width - first!.width)).toBeLessThan(FOOTER_GEOMETRY_TOLERANCE);
   }
+  const gaps = boxes.slice(1).map((box, index) => box.x - (boxes[index]!.x + boxes[index]!.width));
+  for (const index of [0, 1, 3]) {
+    expect(Math.abs(gaps[index]!)).toBeLessThan(FOOTER_GEOMETRY_TOLERANCE);
+  }
+  expect(gaps[2]).toBeGreaterThan(first!.width);
+}
+
+export async function expectFooterSeparator(page: Page, shown: boolean): Promise<void> {
+  await expect(page.locator('[data-testid="sidebar-footer"]:visible')).toHaveCSS(
+    "border-top-width",
+    "1px",
+  );
+  await expect(page.locator('[data-testid="sidebar-footer-bottom-line"]:visible')).toHaveCSS(
+    "border-top-width",
+    "0px",
+  );
+  const separator = page.locator('[data-testid="sidebar-footer-separator"]:visible');
+  await expect(separator).toHaveCount(shown ? 1 : 0);
+  expect(
+    await separator.evaluateAll((elements) =>
+      elements.map((element) => getComputedStyle(element).borderBottomWidth),
+    ),
+  ).toEqual(shown ? ["1px"] : []);
+}
+
+export async function hoverFooterAddProject(page: Page): Promise<void> {
+  await page.locator('[data-testid="sidebar-add-project"]:visible').hover();
+  const tooltip = page.getByTestId("sidebar-add-project-tooltip");
+  await expect(tooltip.getByText("Add project", { exact: true })).toBeVisible();
+  await expect(tooltip.getByText("Ctrl+O", { exact: true })).toBeVisible();
+}
+
+export async function footerScreenshot(page: Page, name: string): Promise<void> {
+  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
+  if (!directory) return;
+  await page.waitForTimeout(600);
+  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
+  await page.screenshot({ path: path.join(directory, `${name}.png`) });
 }

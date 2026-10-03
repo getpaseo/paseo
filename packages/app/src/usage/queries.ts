@@ -1,6 +1,6 @@
 import { supportsUsageReports } from "@getpaseo/client/internal/daemon-client";
 import { useCallback, useMemo } from "react";
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { skipToken, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/shallow";
 import { useFetchQuery } from "@/data/query";
 import {
@@ -93,6 +93,22 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     query: toQueryState(query),
   });
   return { view, refresh };
+}
+
+const NO_REPORTS: UsageReportEntry[] = [];
+
+/**
+ * The reports of the sidebar's usage host, which is connected and reports usage; none until they
+ * load, or without a host.
+ */
+export function useUsageHostReports(serverId: string | null): UsageReportEntry[] {
+  const query = useFetchQuery({
+    queryKey: usageReportsQueryKey(serverId ?? ""),
+    queryFn: serverId ? () => listReports(serverId) : skipToken,
+    dataShape: "list",
+    staleTimeMs: REPORTS_STALE_TIME_MS,
+  });
+  return query.data ?? NO_REPORTS;
 }
 
 /** Every host with whether it is connected and reports usage, in host order. */

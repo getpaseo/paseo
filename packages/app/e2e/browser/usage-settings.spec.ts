@@ -3,14 +3,24 @@ import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
-import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import {
+  installUsageReportsFixture,
+  type UsageReportsFixture,
+} from "../support/helpers/usage-reports";
+import { refreshAllUsage, showUsageAs } from "../support/helpers/usage-sidebar-item";
 
 const ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
+
+function forcedRefreshCount(usage: UsageReportsFixture): number {
+  return usage.listRequests().filter((request) => request.forceRefresh).length;
+}
 
 function report(input: {
   sourceId: string;
   sourceLabel: string;
-  report: Partial<UsageReportEntry["report"]>;
+  report:
+    | Partial<Extract<UsageReportEntry["report"], { status: "available" }>>
+    | Exclude<UsageReportEntry["report"], { status: "available" }>;
 }): UsageReportEntry {
   return {
     id: `${input.sourceId}:account`,
@@ -19,11 +29,14 @@ function report(input: {
     sourceId: input.sourceId,
     sourceLabel: input.sourceLabel,
     icon: ICON,
-    report: {
-      status: "available",
-      windows: [],
-      ...input.report,
-    },
+    report:
+      input.report.status === "error" || input.report.status === "unavailable"
+        ? input.report
+        : {
+            status: "available",
+            windows: [],
+            ...input.report,
+          },
   };
 }
 
@@ -69,7 +82,6 @@ test.describe("usage settings", () => {
 
     await gotoAppShell(page);
     await openSettings(page);
-    expect(usage.listRequests()).toHaveLength(0);
     await openSettingsHostSection(page, serverId, "usage");
     await usage.waitForListRequests(1);
 
@@ -83,7 +95,12 @@ test.describe("usage settings", () => {
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
 
-    await card.getByTestId("usage-display-remaining").click();
+    // Percentages now live on the Usage screen, and still apply to the host section.
+    await expect(card.getByTestId("usage-options-toggle")).toHaveCount(0);
+    const hostUsageUrl = page.url();
+    await page.goto("/usage");
+    await showUsageAs(page, "remaining");
+    await page.goto(hostUsageUrl);
     await expect(card.getByText("30% left")).toBeVisible();
     await expect(card.getByText("93% left")).toBeVisible();
   });
@@ -92,20 +109,14 @@ test.describe("usage settings", () => {
     test.setTimeout(120_000);
     const serverId = getServerId();
     const windows = (usedPct: number) => [{ id: "w", label: "Weekly", usedPct }];
+    // The sidebar summary and the section each load reports; only Refresh forces one.
     const usage = await installUsageReportsFixture(page, {
       lists: [
-        [
+        (request) => [
           report({
             sourceId: "alpha",
             sourceLabel: "Alpha plan",
-            report: { windows: windows(23) },
-          }),
-        ],
-        [
-          report({
-            sourceId: "alpha",
-            sourceLabel: "Alpha plan",
-            report: { windows: windows(64) },
+            report: { windows: windows(request.forceRefresh ? 64 : 23) },
           }),
         ],
       ],
@@ -114,13 +125,12 @@ test.describe("usage settings", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
-    await expect(page.getByText("23%")).toBeVisible({ timeout: 10_000 });
+    const card = page.getByTestId("usage-card");
+    await expect(card.getByText("23%")).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await usage.waitForListRequests(2);
-
-    expect(usage.listRequests().at(-1)).toEqual({ forceRefresh: true });
-    await expect(page.getByText("64%")).toBeVisible();
+    await refreshAllUsage(page);
+    await expect.poll(() => forcedRefreshCount(usage)).toBe(1);
+    await expect(card.getByText("64%")).toBeVisible();
   });
 
   test("asks to update a host without usage support and never calls it", async ({ page }) => {

@@ -45,7 +45,7 @@ Orca's main interface is the agent's terminal. Its Chat UI is an experimental vi
 
 Orca runs any CLI agent in a terminal and lists more than 30 supported agents.
 
-Paseo runs Claude Code, Codex, OpenCode, Pi, and Muse Code through native structured harnesses, plus 30+ agents through its ACP catalog and any custom CLI agent. See [all supported providers](/agents).
+Paseo runs Claude Code, Codex, OpenCode, Pi, Antigravity, and Muse Code through native structured harnesses, plus 30+ agents through its ACP catalog and any custom CLI agent. See [all supported providers](/agents).
 
 ## Application plugins
 
@@ -89,24 +89,24 @@ Orca does not require an account for local use. Orca Relay and shared artifacts 
 
 ## Comparison
 
-|                              | Paseo                                                                      | Orca                                  |
-| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
-| License                      | Open source (Apache-2.0)                                                   | Open source (MIT)                     |
-| Funding                      | Independent                                                                | Venture-funded (Y Combinator)         |
-| Desktop platforms            | macOS, Linux, Windows                                                      | macOS, Linux, Windows                 |
-| Native mobile                | iOS, Android                                                               | iOS, Android APK (beta)               |
-| Main interface               | Agent chat                                                                 | Terminal, with experimental Chat UI   |
-| Remote machines              | Daemon on any machine, direct, SSH, or relay                               | SSH worktrees, Remote Orca Server     |
-| Relay                        | Optional, end-to-end encrypted, no account                                 | Beta, Orca account required           |
-| Agent harnesses              | Claude Code, Codex, OpenCode, Pi, Muse Code + 30+ via ACP catalog + custom | Any CLI agent in a terminal           |
-| Application plugins          | Server code and native client components on every client                   | Experimental, desktop only            |
-| In-app terminal              | Yes                                                                        | Yes                                   |
-| In-app browser               | Yes                                                                        | Yes, with Design Mode                 |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                   | Yes, plus GitLab, Bitbucket, and more |
-| Git worktrees                | Yes                                                                        | Yes                                   |
-| Per-worktree dev server URLs | Yes                                                                        | Port forwarding for SSH worktrees     |
-| Automation                   | CLI, SDK, MCP                                                              | CLI, automations                      |
-| Voice                        | Local dictation and realtime voice                                         | Dictation                             |
-| Telemetry                    | None                                                                       | Anonymous usage data, opt-out         |
+|                              | Paseo                                                                                   | Orca                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| License                      | Open source (Apache-2.0)                                                                | Open source (MIT)                     |
+| Funding                      | Independent                                                                             | Venture-funded (Y Combinator)         |
+| Desktop platforms            | macOS, Linux, Windows                                                                   | macOS, Linux, Windows                 |
+| Native mobile                | iOS, Android                                                                            | iOS, Android APK (beta)               |
+| Main interface               | Agent chat                                                                              | Terminal, with experimental Chat UI   |
+| Remote machines              | Daemon on any machine, direct, SSH, or relay                                            | SSH worktrees, Remote Orca Server     |
+| Relay                        | Optional, end-to-end encrypted, no account                                              | Beta, Orca account required           |
+| Agent harnesses              | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code + 30+ via ACP catalog + custom | Any CLI agent in a terminal           |
+| Application plugins          | Server code and native client components on every client                                | Experimental, desktop only            |
+| In-app terminal              | Yes                                                                                     | Yes                                   |
+| In-app browser               | Yes                                                                                     | Yes, with Design Mode                 |
+| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                                | Yes, plus GitLab, Bitbucket, and more |
+| Git worktrees                | Yes                                                                                     | Yes                                   |
+| Per-worktree dev server URLs | Yes                                                                                     | Port forwarding for SSH worktrees     |
+| Automation                   | CLI, SDK, MCP                                                                           | CLI, automations                      |
+| Voice                        | Local dictation and realtime voice                                                      | Dictation                             |
+| Telemetry                    | None                                                                                    | Anonymous usage data, opt-out         |
 
 See also: [Paseo vs Conductor](/alternatives/conductor), [Paseo vs Superset](/alternatives/superset), [Paseo vs OpenChamber](/alternatives/openchamber).

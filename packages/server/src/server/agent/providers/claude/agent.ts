@@ -4882,10 +4882,15 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private loadPersistedHistory(sessionId: string): void {
+    let historyPath: string | null = null;
     try {
       this.taskState.reset();
-      const historyPath = this.resolveHistoryPath(sessionId);
+      historyPath = this.resolveHistoryPath(sessionId);
       if (!historyPath || !fs.existsSync(historyPath)) {
+        this.logger.info(
+          { sessionId, cwd: this.config.cwd, historyPath },
+          "No Claude transcript to load history from",
+        );
         return;
       }
       const content = fs.readFileSync(historyPath, "utf8");
@@ -4894,8 +4899,11 @@ class ClaudeAgentSession implements AgentSession {
         readClaudeSidechainHistory(historyPath),
       );
       this.ingestPersistedHistory(content, replay);
-    } catch {
-      // ignore history load failures
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId, historyPath },
+        "Failed to load Claude history from transcript",
+      );
     }
   }
 

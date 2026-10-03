@@ -794,6 +794,56 @@ async function withObservedProvider(
   }
 }
 
+test("commits notices emitted during session open as the initial timeline with stable history timestamps", async () => {
+  await withObservedProvider(
+    {
+      openChildren(sessionId, emit) {
+        emit({
+          type: "session.notice",
+          sessionId,
+          notice: {
+            id: "startup",
+            severity: "warning",
+            title: "Full access",
+            description: "Tools run without asking.",
+          },
+        });
+        emit({
+          type: "session.notice",
+          sessionId,
+          notice: { id: "dismissed", severity: "info", title: "Hidden", dismissed: true },
+        });
+      },
+    },
+    async (client) => {
+      const session = await client.createSession({ provider: client.provider, cwd: "/workspace" });
+      try {
+        expect(session.initialTimeline).toEqual([
+          {
+            timestamp: expect.any(String),
+            item: {
+              type: "notification",
+              level: "warning",
+              message: "Full access\nTools run without asking.",
+            },
+          },
+        ]);
+        const history: AgentStreamEvent[] = [];
+        for await (const event of session.streamHistory()) history.push(event);
+        expect(
+          history.filter(
+            (event) => event.type === "timeline" && event.item.type === "notification",
+          ),
+        ).toEqual([
+          { type: "timeline", provider: client.provider, ...session.initialTimeline![0] },
+        ]);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+});
+
 describe("pending provider responses", () => {
   test.each<RequestKind>(["session.open", "catalog", "session.configure", "session.prompt"])(
     "preserves the send error for %s",

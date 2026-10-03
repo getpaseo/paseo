@@ -5,6 +5,13 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 export interface UsageWindow {
   id: string;
   label: string;
+  /**
+   * A few characters naming the window where space is tight, e.g. "5h" or "wk". An empty string
+   * shows the percent alone; leaving it out shows `label`.
+   */
+  shortLabel?: string;
+  /** Shown in the usage summary until the user pins windows of their own. */
+  summary?: boolean;
   usedPct?: number | null;
   remainingPct?: number | null;
   resetsAt?: string | null;
@@ -31,13 +38,28 @@ export interface UsageDetail {
   tone?: UsageWindow["tone"];
 }
 
-export interface UsageReport {
-  status: "available" | "unavailable" | "error";
-  planLabel?: string;
-  windows: UsageWindow[];
-  balances?: UsageBalance[];
-  details?: UsageDetail[];
-  error?: string;
+export type UsageProblem =
+  | { kind: "expired"; expiresAt: string; refreshedBy?: string }
+  | { kind: "rejected"; status: number; refreshedBy?: string }
+  | { kind: "no_quota"; detail: string };
+
+export type UsageReport =
+  | {
+      status: "available";
+      planLabel?: string;
+      windows: UsageWindow[];
+      balances?: UsageBalance[];
+      details?: UsageDetail[];
+    }
+  | { status: "unavailable"; problem: UsageProblem }
+  | { status: "error"; error: string };
+
+export interface UsageAccount {
+  /** Stable across token rotation; [A-Za-z0-9._-]{1,128}. Never a credential or raw email. */
+  key: string;
+  label?: string;
+  /** Store locator, opaque to the daemon. */
+  input: JsonValue;
 }
 
 export interface UsageSourceRegistration {
@@ -45,15 +67,17 @@ export interface UsageSourceRegistration {
   label: string;
   icon?: string;
   input: ZodType;
-  /** Stable account identity, resolved without fetching usage. */
-  identify(input: unknown): Promise<{ key: string; label?: string } | null>;
+  /** Every account whose login exists on this machine. Empty when none. */
+  discover(): Promise<UsageAccount[]>;
+  /** Re-reads the login store; never writes it. */
   fetch(input: unknown): Promise<UsageReport>;
-  discover(): Promise<JsonValue[]>;
 }
 
 export function windowFromUsedPct(input: {
   id: string;
   label: string;
+  shortLabel?: string;
+  summary?: boolean;
   utilizationPct: number | null | undefined;
   resetsAt?: string | null;
   tone?: UsageWindow["tone"];
@@ -66,8 +90,59 @@ export function windowFromUsedPct(input: {
     remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
     resetsAt: input.resetsAt ?? null,
   };
+  if (input.shortLabel !== undefined) window.shortLabel = input.shortLabel;
+  if (input.summary) window.summary = true;
   if (input.tone) window.tone = input.tone;
   return window;
+}
+
+/**
+ * Numeric provider windows have one identity and vocabulary, independent of response slots.
+ * Pass null when the provider omits the duration; reset countdowns are not window lengths.
+ * Named API fields (weekly, monthly, etc.) use windowFromUsedPct instead.
+ */
+export function windowFromReportedDuration(input: {
+  durationSeconds: number | null;
+  /** Stable quota identity and provider name for a model- or feature-scoped limit. */
+  scope?: { id: string; label: string };
+  /** Neutral identity and names when the provider does not report a positive duration. */
+  unknown: { id: string; label: string; shortLabel: string };
+  utilizationPct: number | null | undefined;
+  resetsAt?: string | null;
+  summary?: boolean;
+  tone?: UsageWindow["tone"];
+}): UsageWindow {
+  const duration = input.durationSeconds;
+  const name =
+    duration !== null && Number.isFinite(duration) && duration > 0
+      ? durationWindowName(duration)
+      : input.unknown;
+  const scope = input.scope;
+  return windowFromUsedPct({
+    id: scope ? `${scope.id}:${name.id}` : name.id,
+    label: scope ? `${scope.label} · ${name.label}` : name.label,
+    shortLabel: scope
+      ? `${scope.label}${name.shortLabel ? ` ${name.shortLabel}` : ""}`
+      : name.shortLabel,
+    utilizationPct: input.utilizationPct,
+    resetsAt: input.resetsAt,
+    summary: input.summary,
+    tone: input.tone,
+  });
+}
+
+function durationWindowName(seconds: number): { id: string; label: string; shortLabel: string } {
+  if (seconds === 604800) return { id: "weekly", label: "Weekly", shortLabel: "wk" };
+  const id = seconds === 18000 ? "five_hour" : `${seconds}s`;
+  const units = [
+    [86400, "day", "d"],
+    [3600, "hour", "h"],
+    [60, "minute", "m"],
+    [1, "second", "s"],
+  ] as const;
+  const unit = units.find(([size]) => seconds % size === 0) ?? units[units.length - 1]!;
+  const amount = seconds / unit[0];
+  return { id, label: `${amount}-${unit[1]}`, shortLabel: `${amount}${unit[2]}` };
 }
 
 /**
@@ -111,11 +186,6 @@ export function hashAccountKey(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function unavailableUsage(): UsageReport {
-  return {
-    status: "unavailable",
-    windows: [],
-    balances: [],
-    details: [],
-  };
+export function unavailable(problem: UsageProblem): UsageReport {
+  return { status: "unavailable", problem };
 }

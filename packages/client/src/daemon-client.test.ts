@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -6573,100 +6574,84 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   });
 });
 
-test("maps released-host usage reports and filters report IDs", async () => {
-  const mock = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger: createMockLogger(),
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-  const connected = client.connect();
-  mock.triggerOpen({ features: { providerUsageList: true } });
-  await connected;
-  const providers = [
-    {
-      providerId: "claude",
-      displayName: "Claude",
+test.each([
+  {
+    status: "available",
+    report: {
       status: "available",
-      planLabel: null,
-      fetchedAt: null,
-      windows: [{ id: "session", label: "Session", usedPct: 25 }],
-      error: null,
-    },
-    {
-      providerId: "codex",
-      displayName: "Codex",
-      status: "error",
-      planLabel: "Pro",
-      fetchedAt: "2026-09-29T00:00:00.000Z",
       windows: [],
-      balances: [],
-      details: [],
-      error: "unavailable",
+      balances: undefined,
+      details: undefined,
+      planLabel: undefined,
     },
-  ];
-  const reports = [
-    {
-      id: "claude",
-      sourceId: "claude",
-      sourceLabel: "Claude",
-      account: {},
-      fetchedAt: "2026-09-30T00:00:00.000Z",
-      report: {
-        status: "available",
-        planLabel: undefined,
-        windows: providers[0]!.windows,
-        balances: undefined,
-        details: undefined,
-        error: undefined,
-      },
-    },
-    {
-      id: "codex",
-      sourceId: "codex",
-      sourceLabel: "Codex",
-      account: {},
-      fetchedAt: "2026-09-29T00:00:00.000Z",
-      report: {
-        status: "error",
-        planLabel: "Pro",
-        windows: [],
-        balances: [],
-        details: [],
-        error: "unavailable",
-      },
-    },
-  ];
-  for (const reportIds of [undefined, ["codex", "missing"], []]) {
+  },
+  { status: "error", report: { status: "error", error: "" } },
+  {
+    status: "unavailable",
+    report: { status: "unavailable", problem: { kind: "no_quota", detail: "" } },
+  },
+] as const)(
+  "maps released-host $status usage and filters report IDs",
+  async ({ status, report }) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { providerUsageList: true } });
+    await connected;
     const result = client.listUsageReports({
       requestId: "legacy-usage",
-      reportIds,
+      reportIds: ["claude"],
       forceRefresh: true,
     });
-    expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    expect(parseSentFrame(mock.sent[0])).toEqual({
       type: "provider.usage.list.request",
       requestId: "legacy-usage",
     });
+    const provider = {
+      providerId: "claude",
+      displayName: "Claude",
+      status,
+      windows: [],
+      planLabel: null,
+      fetchedAt: null,
+      error: null,
+    };
     mock.triggerMessage(
       wrapSessionMessage({
         type: "provider.usage.list.response",
         payload: {
           requestId: "legacy-usage",
           fetchedAt: "2026-09-30T00:00:00.000Z",
-          providers,
+          providers: [provider, { ...provider, providerId: "codex" }],
         },
       }),
     );
     expect(await result).toStrictEqual({
       requestId: "legacy-usage",
-      reports:
-        reportIds === undefined ? reports : reports.filter((entry) => reportIds.includes(entry.id)),
+      reports: [
+        {
+          id: "claude",
+          sourceId: "claude",
+          sourceLabel: "Claude",
+          icon: readFileSync(
+            new URL("../../../plugins/claude-usage-source/icon.svg", import.meta.url),
+            "utf8",
+          ),
+          account: {},
+          fetchedAt: "2026-09-30T00:00:00.000Z",
+          report,
+        },
+      ],
     });
-  }
-});
+  },
+);
 
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();

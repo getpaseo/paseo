@@ -4,8 +4,8 @@ import type { PluginSidebarSection } from "@/plugins/types";
 export type SidebarSection = PluginSidebarSection;
 
 /**
- * Each section's built-in items in their default order. The footer's Add project row and its
- * icon row (Hosts, Import session, Help and support, Settings) are fixed and not items.
+ * Each section's built-in items in their default order. The footer's bottom line
+ * (Add project and the Hosts, Help and support, Settings icons) is fixed.
  */
 export const BUILTIN_SIDEBAR_ITEM_IDS = {
   header: ["new-workspace", "history", "search", "schedules"],
@@ -69,6 +69,16 @@ export function builtinSidebarNavShortcutAction(id: BuiltinSidebarItemId): strin
   return BUILTIN_SHORTCUT_ACTIONS[id];
 }
 
+/**
+ * Builtins that start hidden on compact layouts, until the user turns them on. A phone's footer
+ * has no room to spare for the Usage summary.
+ */
+const HIDDEN_BY_DEFAULT_ON_COMPACT: ReadonlySet<BuiltinSidebarItemId> = new Set(["usage"]);
+
+function builtinVisibleByDefault(id: BuiltinSidebarItemId, compact: boolean): boolean {
+  return !(compact && HIDDEN_BY_DEFAULT_ON_COMPACT.has(id));
+}
+
 export function pluginSidebarNavKey(
   group: Pick<PluginSidebarGroup, "pluginId" | "contributionId">,
 ): string {
@@ -85,6 +95,8 @@ function isBuiltinSidebarItemId<Section extends SidebarSection>(
 
 export function resolveSidebarNavItems<Section extends SidebarSection>(input: {
   section: Section;
+  /** Compact layouts start some builtins hidden; a stored preference always wins. */
+  compact: boolean;
   pluginGroups: readonly PluginSidebarGroup[];
   preferences: readonly SidebarNavPreference[];
 }): SidebarNavItem<Section>[] {
@@ -115,7 +127,12 @@ export function resolveSidebarNavItems<Section extends SidebarSection>(input: {
 
   for (const id of builtinIds) {
     if (placed.has(id)) continue;
-    items.push({ kind: "builtin", key: id, id, visible: true });
+    items.push({
+      kind: "builtin",
+      key: id,
+      id,
+      visible: builtinVisibleByDefault(id, input.compact),
+    });
   }
   for (const [key, group] of groupsByKey) {
     if (placed.has(key)) continue;

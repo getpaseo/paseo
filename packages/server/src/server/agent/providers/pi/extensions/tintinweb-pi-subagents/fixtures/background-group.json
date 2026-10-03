@@ -1,0 +1,419 @@
+{
+  "provenance": {
+    "package": "@tintinweb/pi-subagents",
+    "version": "0.19.0",
+    "sourceCommit": "4f572eaa04c09d3dbc16e4a5f13a16b295e84e14",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-10-01"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_277173",
+      "toolName": "Agent",
+      "args": {
+        "run_in_background": true,
+        "description": "Test agent 1",
+        "prompt": "reply with exactly OK",
+        "subagent_type": "general-purpose"
+      }
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_277176",
+      "toolName": "Agent",
+      "args": {
+        "prompt": "reply with exactly OK",
+        "run_in_background": true,
+        "description": "Test agent 2",
+        "subagent_type": "general-purpose"
+      }
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_277179",
+      "toolName": "Agent",
+      "args": {
+        "subagent_type": "general-purpose",
+        "description": "Test agent 3",
+        "prompt": "reply with exactly OK",
+        "run_in_background": true
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_277173",
+      "toolName": "Agent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent started in background.\nAgent ID: 4b4fd01d-aaa8-46d\nType: Agent\nDescription: Test agent 1\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/4b4fd01d-aaa8-46d.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+          }
+        ],
+        "details": {
+          "displayName": "Agent",
+          "description": "Test agent 1",
+          "subagentType": "general-purpose",
+          "modelName": "google: gemini 3.6 flash",
+          "tags": ["twin", "background"],
+          "toolUses": 0,
+          "tokens": "",
+          "durationMs": 0,
+          "status": "background",
+          "agentId": "4b4fd01d-aaa8-46d"
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_277176",
+      "toolName": "Agent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent started in background.\nAgent ID: a92b022c-cd9e-41e\nType: Agent\nDescription: Test agent 2\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/a92b022c-cd9e-41e.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+          }
+        ],
+        "details": {
+          "displayName": "Agent",
+          "description": "Test agent 2",
+          "subagentType": "general-purpose",
+          "modelName": "google: gemini 3.6 flash",
+          "tags": ["twin", "background"],
+          "toolUses": 0,
+          "tokens": "",
+          "durationMs": 0,
+          "status": "background",
+          "agentId": "a92b022c-cd9e-41e"
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_277179",
+      "toolName": "Agent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent started in background.\nAgent ID: 13336b9f-79c3-49e\nType: Agent\nDescription: Test agent 3\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/13336b9f-79c3-49e.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+          }
+        ],
+        "details": {
+          "displayName": "Agent",
+          "description": "Test agent 3",
+          "subagentType": "general-purpose",
+          "modelName": "google: gemini 3.6 flash",
+          "tags": ["twin", "background"],
+          "toolUses": 0,
+          "tokens": "",
+          "durationMs": 0,
+          "status": "background",
+          "agentId": "13336b9f-79c3-49e"
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "subagent-notification",
+        "content": "Background agent group completed: 3 agent(s) finished\n\n<task-notification>\n<task-id>4b4fd01d-aaa8-46d</task-id>\n<tool-use-id>call_277173</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/4b4fd01d-aaa8-46d.output</output-file>\n<status>Done</status>\n<summary>Agent \"Test agent 1\" completed</summary>\n<result>OK</result>\n<usage><total_tokens>10186</total_tokens><tool_uses>0</tool_uses><context_percent>1</context_percent><duration_ms>1054</duration_ms></usage>\n</task-notification>\n\n<task-notification>\n<task-id>a92b022c-cd9e-41e</task-id>\n<tool-use-id>call_277176</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/a92b022c-cd9e-41e.output</output-file>\n<status>Done</status>\n<summary>Agent \"Test agent 2\" completed</summary>\n<result>OK</result>\n<usage><total_tokens>10186</total_tokens><tool_uses>0</tool_uses><context_percent>1</context_percent><duration_ms>1182</duration_ms></usage>\n</task-notification>\n\n<task-notification>\n<task-id>13336b9f-79c3-49e</task-id>\n<tool-use-id>call_277179</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/13336b9f-79c3-49e.output</output-file>\n<status>Done</status>\n<summary>Agent \"Test agent 3\" completed</summary>\n<result>OK</result>\n<usage><total_tokens>10186</total_tokens><tool_uses>0</tool_uses><context_percent>1</context_percent><duration_ms>1472</duration_ms></usage>\n</task-notification>\n\nUse get_subagent_result for full output.",
+        "display": true,
+        "details": {
+          "id": "4b4fd01d-aaa8-46d",
+          "description": "Test agent 1",
+          "status": "completed",
+          "toolUses": 0,
+          "turnCount": 0,
+          "totalTokens": 10186,
+          "totalCost": 0.007642500000000001,
+          "durationMs": 1054,
+          "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/4b4fd01d-aaa8-46d.output",
+          "resultPreview": "OK",
+          "others": [
+            {
+              "id": "a92b022c-cd9e-41e",
+              "description": "Test agent 2",
+              "status": "completed",
+              "toolUses": 0,
+              "turnCount": 0,
+              "totalTokens": 10186,
+              "totalCost": 0.007642500000000001,
+              "durationMs": 1182,
+              "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/a92b022c-cd9e-41e.output",
+              "resultPreview": "OK"
+            },
+            {
+              "id": "13336b9f-79c3-49e",
+              "description": "Test agent 3",
+              "status": "completed",
+              "toolUses": 0,
+              "turnCount": 0,
+              "totalTokens": 10186,
+              "totalCost": 0.007642500000000001,
+              "durationMs": 1472,
+              "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/13336b9f-79c3-49e.output",
+              "resultPreview": "OK"
+            }
+          ]
+        },
+        "timestamp": 1790833737082
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "thinkingSignature": "[{\"type\":\"reasoning.encrypted\",\"data\":\"AY89a19lxhI31c8Kjto2eEqQuEoAa1jXk+6WHw4RxcJiLq9eTkm6UtOU0r9mP+xFrs3A9GkNyIfpaIzLUGuPKjiYw648QdaOOVbR7jCqPVFA+CEYQH0V\",\"format\":\"google-gemini-v1\",\"id\":\"call_277173\",\"index\":0}]"
+        },
+        {
+          "type": "toolCall",
+          "id": "call_277173",
+          "name": "Agent",
+          "arguments": {
+            "run_in_background": true,
+            "description": "Test agent 1",
+            "prompt": "reply with exactly OK",
+            "subagent_type": "general-purpose"
+          }
+        },
+        {
+          "type": "toolCall",
+          "id": "call_277176",
+          "name": "Agent",
+          "arguments": {
+            "prompt": "reply with exactly OK",
+            "run_in_background": true,
+            "description": "Test agent 2",
+            "subagent_type": "general-purpose"
+          }
+        },
+        {
+          "type": "toolCall",
+          "id": "call_277179",
+          "name": "Agent",
+          "arguments": {
+            "subagent_type": "general-purpose",
+            "description": "Test agent 3",
+            "prompt": "reply with exactly OK",
+            "run_in_background": true
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 13147,
+        "output": 135,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 13282,
+        "cost": {
+          "input": 0.009860250000000001,
+          "output": 0.00050625,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.0103665
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790833733536,
+      "responseId": "gen-1790833733-Qo0mjOAU6129xnYfl8rM",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_277173",
+      "toolName": "Agent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent started in background.\nAgent ID: 4b4fd01d-aaa8-46d\nType: Agent\nDescription: Test agent 1\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/4b4fd01d-aaa8-46d.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+        }
+      ],
+      "details": {
+        "displayName": "Agent",
+        "description": "Test agent 1",
+        "subagentType": "general-purpose",
+        "modelName": "google: gemini 3.6 flash",
+        "tags": ["twin", "background"],
+        "toolUses": 0,
+        "tokens": "",
+        "durationMs": 0,
+        "status": "background",
+        "agentId": "4b4fd01d-aaa8-46d"
+      },
+      "isError": false,
+      "timestamp": 1790833735411
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_277176",
+      "toolName": "Agent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent started in background.\nAgent ID: a92b022c-cd9e-41e\nType: Agent\nDescription: Test agent 2\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/a92b022c-cd9e-41e.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+        }
+      ],
+      "details": {
+        "displayName": "Agent",
+        "description": "Test agent 2",
+        "subagentType": "general-purpose",
+        "modelName": "google: gemini 3.6 flash",
+        "tags": ["twin", "background"],
+        "toolUses": 0,
+        "tokens": "",
+        "durationMs": 0,
+        "status": "background",
+        "agentId": "a92b022c-cd9e-41e"
+      },
+      "isError": false,
+      "timestamp": 1790833735412
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_277179",
+      "toolName": "Agent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent started in background.\nAgent ID: 13336b9f-79c3-49e\nType: Agent\nDescription: Test agent 3\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/13336b9f-79c3-49e.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+        }
+      ],
+      "details": {
+        "displayName": "Agent",
+        "description": "Test agent 3",
+        "subagentType": "general-purpose",
+        "modelName": "google: gemini 3.6 flash",
+        "tags": ["twin", "background"],
+        "toolUses": 0,
+        "tokens": "",
+        "durationMs": 0,
+        "status": "background",
+        "agentId": "13336b9f-79c3-49e"
+      },
+      "isError": false,
+      "timestamp": 1790833735412
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I have spawned the 3 background agents and am waiting for their completion notifications."
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 2004,
+        "output": 16,
+        "cacheRead": 11743,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 13763,
+        "cost": {
+          "input": 0.001503,
+          "output": 6e-5,
+          "cacheRead": 0.000880725,
+          "cacheWrite": 0,
+          "total": 0.002443725
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1790833735412,
+      "responseId": "gen-1790833735-adM3whTd4mLRXnKi2Xu0",
+      "rawStopReason": "stop"
+    },
+    {
+      "role": "custom",
+      "customType": "subagent-notification",
+      "content": "Background agent group completed: 3 agent(s) finished\n\n<task-notification>\n<task-id>4b4fd01d-aaa8-46d</task-id>\n<tool-use-id>call_277173</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/4b4fd01d-aaa8-46d.output</output-file>\n<status>Done</status>\n<summary>Agent \"Test agent 1\" completed</summary>\n<result>OK</result>\n<usage><total_tokens>10186</total_tokens><tool_uses>0</tool_uses><context_percent>1</context_percent><duration_ms>1054</duration_ms></usage>\n</task-notification>\n\n<task-notification>\n<task-id>a92b022c-cd9e-41e</task-id>\n<tool-use-id>call_277176</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/a92b022c-cd9e-41e.output</output-file>\n<status>Done</status>\n<summary>Agent \"Test agent 2\" completed</summary>\n<result>OK</result>\n<usage><total_tokens>10186</total_tokens><tool_uses>0</tool_uses><context_percent>1</context_percent><duration_ms>1182</duration_ms></usage>\n</task-notification>\n\n<task-notification>\n<task-id>13336b9f-79c3-49e</task-id>\n<tool-use-id>call_277179</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/13336b9f-79c3-49e.output</output-file>\n<status>Done</status>\n<summary>Agent \"Test agent 3\" completed</summary>\n<result>OK</result>\n<usage><total_tokens>10186</total_tokens><tool_uses>0</tool_uses><context_percent>1</context_percent><duration_ms>1472</duration_ms></usage>\n</task-notification>\n\nUse get_subagent_result for full output.",
+      "display": true,
+      "details": {
+        "id": "4b4fd01d-aaa8-46d",
+        "description": "Test agent 1",
+        "status": "completed",
+        "toolUses": 0,
+        "turnCount": 0,
+        "totalTokens": 10186,
+        "totalCost": 0.007642500000000001,
+        "durationMs": 1054,
+        "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/4b4fd01d-aaa8-46d.output",
+        "resultPreview": "OK",
+        "others": [
+          {
+            "id": "a92b022c-cd9e-41e",
+            "description": "Test agent 2",
+            "status": "completed",
+            "toolUses": 0,
+            "turnCount": 0,
+            "totalTokens": 10186,
+            "totalCost": 0.007642500000000001,
+            "durationMs": 1182,
+            "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/a92b022c-cd9e-41e.output",
+            "resultPreview": "OK"
+          },
+          {
+            "id": "13336b9f-79c3-49e",
+            "description": "Test agent 3",
+            "status": "completed",
+            "toolUses": 0,
+            "turnCount": 0,
+            "totalTokens": 10186,
+            "totalCost": 0.007642500000000001,
+            "durationMs": 1472,
+            "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-subagent-fixture/01a0f602-2dd3-7755-8969-96e4d126cd2e/tasks/13336b9f-79c3-49e.output",
+            "resultPreview": "OK"
+          }
+        ]
+      },
+      "timestamp": 1790833737082
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "DONE"
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 2740,
+        "output": 1,
+        "cacheRead": 11762,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 14503,
+        "cost": {
+          "input": 0.002055,
+          "output": 3.75e-6,
+          "cacheRead": 0.00088215,
+          "cacheWrite": 0,
+          "total": 0.0029408999999999998
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1790833737083,
+      "responseId": "gen-1790833737-3IfsB2wLuE8DMNlJMgmI",
+      "rawStopReason": "stop"
+    }
+  ]
+}

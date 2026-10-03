@@ -9,7 +9,7 @@ import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
-import { HostSwitcher } from "@/components/hosts/host-switcher";
+import { HostFilter } from "@/components/hosts/host-filter";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
@@ -82,7 +82,7 @@ function SurfaceRenderer({
 
 const ThemedSurfaceRenderer = withUnistyles(SurfaceRenderer);
 
-function PluginHostSwitcher({
+function PluginHostFilter({
   serverId,
   pluginId,
   identity,
@@ -117,13 +117,12 @@ function PluginHostSwitcher({
   if (!show) return null;
 
   return (
-    <HostSwitcher
+    <HostFilter
       hosts={hosts}
-      value={serverId}
-      onSelect={selectHost}
-      title="Choose plugin host"
-      accessibilityLabel="Plugin host"
-      testID="plugin-host-switcher"
+      selectedHost={serverId}
+      onSelectHost={selectHost}
+      includeAllHost={false}
+      triggerTestID="plugin-host-filter-trigger"
     />
   );
 }
@@ -192,7 +191,7 @@ export function PluginSurfaceScreen() {
     () => (
       <>
         {identity ? (
-          <PluginHostSwitcher
+          <PluginHostFilter
             serverId={serverId}
             pluginId={pluginId}
             identity={identity}

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   hashAccountKey,
+  unavailable,
+  type UsageAccount,
   toneFromUsedPct,
   windowFromUsedPct,
   type UsageReport,
@@ -44,44 +46,40 @@ export async function readDefaultKey(path = authPath()): Promise<string | null> 
   }
 }
 
-export async function discover(path = authPath()): Promise<Array<{}>> {
-  return (await readDefaultKey(path)) ? [{}] : [];
+export async function discover(path = authPath()): Promise<UsageAccount[]> {
+  return (await readDefaultKey(path)) ? [{ key: hashAccountKey(path), input: { path } }] : [];
 }
 
 export async function fetchUsage(
-  _input: Input,
+  input: Input,
   fetchApi: typeof fetch = fetch,
-  path = authPath(),
 ): Promise<UsageReport> {
-  const apiKey = await readDefaultKey(path);
-  if (!apiKey) return { status: "unavailable", windows: [] };
+  const apiKey = await readDefaultKey(input.path);
+  if (!apiKey) throw new Error("OpenCode Go login store no longer exists");
   const response = await fetchApi("https://opencode.ai/zen/go/v1/usage", {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
     signal: AbortSignal.timeout(15_000),
   });
   if (response.status === 401 || response.status === 403)
-    return { status: "unavailable", windows: [] };
+    return unavailable({ kind: "rejected", status: response.status, refreshedBy: "opencode" });
   if (!response.ok) throw new Error(`OpenCode Go usage API returned ${response.status}`);
   const data = responseSchema.parse(await response.json());
   const windows = (
     [
-      ["rolling", "Rolling", data.usage.rolling],
-      ["weekly", "Weekly", data.usage.weekly],
-      ["monthly", "Monthly", data.usage.monthly],
+      // The rolling window's length is not reported, so its percent stands without a name.
+      ["rolling", "Rolling", "", data.usage.rolling],
+      ["weekly", "Weekly", "wk", data.usage.weekly],
+      ["monthly", "Monthly", "mo", data.usage.monthly],
     ] as const
-  ).map(([id, label, value]) =>
+  ).map(([id, label, shortLabel, value]) =>
     windowFromUsedPct({
       id,
       label,
+      shortLabel,
       utilizationPct: value.percent,
       resetsAt: value.resetsAt,
       tone: toneFromUsedPct(value.percent),
     }),
   );
   return { status: "available", planLabel: "Go", windows };
-}
-
-export async function identify(_input: Input, path = authPath()) {
-  const key = await readDefaultKey(path);
-  return key ? { key: hashAccountKey(key) } : null;
 }

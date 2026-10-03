@@ -6,7 +6,7 @@ server integrations.
 ## Plugin providers
 
 Keep a bundled provider in `plugins/<id>/` and register it through
-`@getpaseo/plugin/server/provider`. Muse Code follows this pattern. Built-in loading and SDK
+`@getpaseo/plugin/server/provider`. Antigravity and Muse Code follow this pattern. Built-in loading and SDK
 import rules belong to [plugins.md](plugins.md#built-in-plugins); the
 [public provider guide](../public-docs/plugins/providers.md) covers the provider contract.
 
@@ -15,9 +15,10 @@ executable resolution and applies `agents.providers.<provider-id>.command` and `
 connecting. Register the provider's icon with the plugin rather than adding it to the app's
 provider icon map. You do not need a core manifest entry or provider factory.
 
-| Provider  | Transport                                  | Setup and limitations                    |
-| --------- | ------------------------------------------ | ---------------------------------------- |
-| Muse Code | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md) |
+| Provider    | Transport                                  | Setup and limitations                                            |
+| ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
+| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
 
 ## Provider-native session options
 
@@ -186,15 +187,10 @@ promise for completion: equal results, including equal discovery timestamps, emi
 
 ## Usage sources
 
-Usage is fetched on demand from plugin usage sources. Each source registers through `server.registerUsageSource()` with an input schema, `fetch(input)`, and required `discover()`. The daemon discovers configured accounts, validates inputs in the plugin runtime, caches each source/input result for five minutes, and returns `usage.list_reports.response`. A source report has an account key, availability status, plan label, windows, balances, and details.
-
-Create a built-in source under `plugins/<name>-usage-source/` with the same manifest, entry, `server/`, `shared/`, and `icon.svg` layout as an external plugin. Add its ID to `builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. Keep credential discovery, API parsing, and normalization inside the source; use helpers from `@getpaseo/plugin/server/usage`. The wire shape remains source agnostic. See [plugin usage sources](plugins.md#usage-sources).
-
-`provider.usage.list` remains a compatibility RPC for older apps. It maps discovered reports to `ProviderUsage`. New clients use `usage.list_reports` after checking `server_info.features.usageSources`.
-
-### Credentials are read only
-
-A source reads provider credentials without writing them. On 401 or 403 it returns `unavailable` and leaves refresh to the provider CLI. Redeeming a refresh token here would invalidate the CLI's copy; rewriting a parsed credential file could drop fields the source does not model.
+See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the
+contract, account and window identity, provider-derived period names, login fallback, and
+read-only credential rules. Usage adapters own the interpretation of provider fields; the app
+renders their names and resolves pins without provider-specific duration guesses.
 
 ---
 

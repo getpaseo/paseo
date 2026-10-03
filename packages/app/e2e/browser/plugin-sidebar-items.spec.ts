@@ -24,6 +24,8 @@ import {
 } from "../support/helpers/sidebar-nav-settings";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import { claudeAndCodexReports } from "../support/helpers/usage-sidebar-item";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -40,22 +42,21 @@ async function qaScreenshot(page: Page, name: string, area?: Locator) {
   else await page.screenshot({ path: file });
 }
 
-/** Footer rows sit between the fixed Add project row and the fixed icon row, full width. */
+/** Footer rows sit above the fixed bottom line, spanning it from Add project to Settings. */
 async function expectFooterRow(page: Page, row: Locator) {
   // Polled: on compact the drawer is still sliding in when the row first shows.
   await expect
     .poll(async () => {
       const addProject = (await visibleTestId(page, "sidebar-add-project").boundingBox())!;
-      const hosts = (await visibleTestId(page, "sidebar-hosts-trigger").boundingBox())!;
+      const settings = (await visibleTestId(page, "sidebar-settings").boundingBox())!;
       const box = (await row.boundingBox())!;
       return {
-        belowAddProject: box.y >= addProject.y + addProject.height,
-        aboveIconRow: box.y + box.height <= hosts.y,
+        aboveBottomLine: box.y + box.height <= addProject.y,
         alignedLeft: Math.abs(box.x - addProject.x) < 1,
-        fullWidth: Math.abs(box.width - addProject.width) < 1,
+        alignedRight: Math.abs(box.x + box.width - (settings.x + settings.width)) < 1,
       };
     })
-    .toEqual({ belowAddProject: true, aboveIconRow: true, alignedLeft: true, fullWidth: true });
+    .toEqual({ aboveBottomLine: true, alignedLeft: true, alignedRight: true });
 }
 
 function botRow(page: Page, rowId: string): Locator {
@@ -153,6 +154,8 @@ test.describe("Plugin sidebar items", () => {
     page,
   }) => {
     test.setTimeout(180_000);
+    // The Usage item shows only with summary data.
+    await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);
     const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
@@ -188,7 +191,7 @@ test.describe("Plugin sidebar items", () => {
       await expect(page.getByText("Deploys screen body", { exact: true })).toHaveCount(0);
     });
 
-    await test.step("the footer row renders as a row between Add project and the icon row", async () => {
+    await test.step("the footer row renders as a row above the bottom line", async () => {
       await expect(sync).toHaveAccessibleName("Sync");
       await expectFooterRow(page, sync);
       await expect(visibleTestId(page, "sidebar-usage")).toBeVisible();
