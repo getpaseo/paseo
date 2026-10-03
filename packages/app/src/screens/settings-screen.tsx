@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
@@ -7,6 +7,8 @@ import {
   Text,
   View,
   type PressableStateCallbackType,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -923,6 +925,13 @@ interface SettingsSidebarProps {
   layout: "desktop" | "mobile";
 }
 
+// Settings routes replace the screen, so the sidebar's offset must outlive its mount.
+let settingsSidebarScrollOffset = 0;
+
+function rememberSettingsSidebarScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+  settingsSidebarScrollOffset = event.nativeEvent.contentOffset.y;
+}
+
 function SettingsSidebar({
   view,
   onSelectSection,
@@ -944,6 +953,12 @@ function SettingsSidebar({
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => isSectionAvailable(item, isDesktopApp));
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const scrollRef = useRef<ScrollView>(null);
+  useLayoutEffect(() => {
+    if (isDesktop) {
+      scrollRef.current?.scrollTo({ y: settingsSidebarScrollOffset, animated: false });
+    }
+  }, [isDesktop]);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -1058,6 +1073,9 @@ function SettingsSidebar({
             style={sidebarStyles.scrollBody}
             showsVerticalScrollIndicator={false}
             testID="settings-sidebar-scroll-body"
+            ref={scrollRef}
+            onScroll={rememberSettingsSidebarScroll}
+            scrollEventThrottle={16}
           >
             {sidebarBody}
           </ScrollView>
