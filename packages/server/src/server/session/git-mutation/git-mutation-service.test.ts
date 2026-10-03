@@ -10,6 +10,10 @@ import type {
   WorkspaceGitService,
 } from "../../workspace-git-service.js";
 import { createGitMutationService } from "./git-mutation-service.js";
+import {
+  resolveBranchCheckout,
+  resolveRepositoryDefaultBranch,
+} from "../../../utils/checkout-git.js";
 
 // The production module reads only WorkspaceGitService.{validateBranchRef,getSnapshot,
 // hasLocalBranch,invalidateForge}. The fake below implements exactly that slice as an
@@ -177,6 +181,39 @@ describe("checkoutExistingBranch", () => {
 });
 
 describe("createBranchFromBase", () => {
+  test("creates from the validated remote when the local default branch is absent", async () => {
+    const dir = initClonedRepo();
+    execFileSync("git", ["checkout", "--detach"], { cwd: dir, stdio: "pipe" });
+    execFileSync("git", ["branch", "-D", "main"], { cwd: dir, stdio: "pipe" });
+    const remoteHead = execFileSync("git", ["rev-parse", "origin/main"], { cwd: dir })
+      .toString()
+      .trim();
+    const resolution = await resolveBranchCheckout(dir, "main");
+    expect(resolution).toEqual({ kind: "remote-only", name: "main", remoteRef: "origin/main" });
+    const { service } = buildService({ resolution });
+    await service.createBranchFromBase({
+      cwd: dir,
+      baseBranch: "main",
+      newBranchName: "from-remote",
+    });
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir }).toString().trim()).toBe(
+      remoteHead,
+    );
+    expect(upstreamOf(dir, "from-remote")).toBe("");
+    const defaultBase = await resolveRepositoryDefaultBranch(dir);
+    expect(defaultBase).toBe("origin/main");
+    if (!defaultBase) throw new Error("Missing default base");
+    await service.createBranchFromBase({
+      cwd: dir,
+      baseBranch: defaultBase,
+      newBranchName: "from-default",
+    });
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir }).toString().trim()).toBe(
+      remoteHead,
+    );
+    expect(upstreamOf(dir, "from-default")).toBe("");
+  });
+
   test("rejects an unsafe new-branch ref before touching git", async () => {
     const { service } = buildService({ resolution: { kind: "local", name: "main" } });
     await expect(
