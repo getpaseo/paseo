@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect } from "@playwright/test";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 
 export function seedPluginLinks(paseoHome, workspaceId, url, remoteWorkspaceId) {
   const directory = path.join(paseoHome, "link-plugin");
@@ -40,7 +41,10 @@ export default function(client) { client.addSurface("main", Links); client.addSi
 
 export async function runPluginLinksRegression({
   page,
+  daemonPort,
+  paseoHome,
   remotePort,
+  remoteHome,
   workspaceId,
   remoteWorkspaceId,
   url,
@@ -90,13 +94,16 @@ export async function runPluginLinksRegression({
   await expect(page.getByText("Browser available", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open workspace browser", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
-  await expectPresentedBrowser(page, url, workspaceId);
+  await expectPresentedBrowser(page, url, workspaceId, { port: daemonPort, home: paseoHome });
   expect(popups).toHaveLength(0);
   await page.screenshot({ path: path.join(artifactDir, "plugin-workspace-browser.png") });
   await pluginEntry.click();
   await page.getByRole("button", { name: "Open remote workspace browser", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/h/plugin-links-remote/workspace/${remoteWorkspaceId}`));
-  await expectPresentedBrowser(page, url, remoteWorkspaceId);
+  await expectPresentedBrowser(page, url, remoteWorkspaceId, {
+    port: remotePort,
+    home: remoteHome,
+  });
   await page.screenshot({ path: path.join(artifactDir, "plugin-remote-workspace-browser.png") });
   return {
     remoteWorkspaceId,
@@ -107,7 +114,7 @@ export async function runPluginLinksRegression({
   };
 }
 
-async function expectPresentedBrowser(page, url, workspaceId) {
+async function expectPresentedBrowser(page, url, workspaceId, host) {
   const deck = page
     .locator(`[data-testid^="workspace-deck-entry-"][data-testid$=":${workspaceId}"]`)
     .filter({ visible: true });
@@ -122,6 +129,86 @@ async function expectPresentedBrowser(page, url, workspaceId) {
       ),
     )
     .toBe(true);
+
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${host.port}/ws`,
+    clientId: `plugin-links-${crypto.randomUUID()}`,
+    clientType: "cli",
+    appVersion: "0.10.0",
+    localCredential: () => fs.readFileSync(path.join(host.home, "local-credential"), "utf8").trim(),
+    reconnect: { enabled: false },
+  });
+  try {
+    await client.connect();
+    if (client.getLastServerInfoMessage()?.features?.browserScreencast === true) {
+      const frame = deck
+        .locator('[data-testid^="remote-browser-frame-"]')
+        .filter({ visible: true });
+      await expect(frame).toHaveCount(1, { timeout: 90_000 });
+      const localBrowserId = (await frame.getAttribute("data-testid")).slice(
+        "remote-browser-frame-".length,
+      );
+      let browserId;
+      await expect
+        .poll(async () => {
+          browserId = await page.evaluate((id) => {
+            const saved = JSON.parse(localStorage.getItem("workspace-browser-store"));
+            return saved?.state?.browsersById[id]?.remoteBrowserId ?? null;
+          }, localBrowserId);
+          return typeof browserId === "string";
+        })
+        .toBe(true);
+      await expect
+        .poll(() =>
+          frame
+            .locator("img")
+            .evaluateAll((images) =>
+              images.some(
+                (image) =>
+                  image.src.startsWith("data:image/") &&
+                  image.complete &&
+                  image.naturalWidth > 0 &&
+                  image.naturalHeight > 0,
+              ),
+            ),
+        )
+        .toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const response = await client.executeRemoteBrowserCommand({
+              workspaceId,
+              command: {
+                command: "evaluate",
+                args: {
+                  browserId,
+                  function: `() => document.readyState === 'complete' && location.href === ${JSON.stringify(url)} && document.title === 'Desktop browser target' && Boolean(document.getElementById('bridge-target')) && Boolean(document.getElementById('typing-target'))`,
+                },
+              },
+            });
+            expect(response.ok, JSON.stringify(response.error)).toBe(true);
+            expect(response.result.command).toBe("evaluate");
+            expect(response.result.browserId).toBe(browserId);
+            return JSON.parse(response.result.resultJson);
+          },
+          { timeout: 90_000 },
+        )
+        .toBe(true);
+      const screenshot = await client.executeRemoteBrowserCommand({
+        workspaceId,
+        command: { command: "screenshot", args: { browserId, ephemeral: true } },
+      });
+      expect(screenshot.ok).toBe(true);
+      expect(screenshot.result.command).toBe("screenshot");
+      expect(screenshot.result.browserId).toBe(browserId);
+      expect(screenshot.result.dataBase64).toMatch(/^iVBORw0KGgo/);
+      expect(screenshot.result.width).toBeGreaterThan(0);
+      expect(screenshot.result.height).toBeGreaterThan(0);
+      return;
+    }
+  } finally {
+    await client.close();
+  }
 
   let browserId;
   await expect

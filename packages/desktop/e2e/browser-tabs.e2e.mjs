@@ -1342,7 +1342,10 @@ async function main() {
     const checkPluginLinks = () =>
       runPluginLinksRegression({
         page,
+        daemonPort,
+        paseoHome,
         remotePort,
+        remoteHome,
         workspaceId: workspaceIds[0],
         remoteWorkspaceId: workspaceIds[1],
         url: target.url,
