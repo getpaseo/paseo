@@ -412,6 +412,9 @@ export const ru: TranslationResources = {
       loading: "Загрузка недавних сессий...",
       failedProvider: "Не удалось загрузить сессии провайдера {{provider}}",
       failedImport: "Не удалось импортировать выбранную сессию.",
+      failedImportDetails: "Не удалось импортировать выбранную сессию. {{message}}",
+      codexSessionInUse:
+        "Этот сеанс Codex уже используется. Закройте терминал или клиент Codex, в котором открыт этот сеанс, и повторите импорт.",
     },
     actions: {
       refresh: "Обновить список сессий",

@@ -408,6 +408,9 @@ export const ar: TranslationResources = {
       loading: "جارٍ تحميل الجلسات الأخيرة...",
       failedProvider: "تعذر تحميل جلسات {{provider}}",
       failedImport: "تعذر استيراد الجلسة المحددة.",
+      failedImportDetails: "تعذر استيراد الجلسة المحددة. {{message}}",
+      codexSessionInUse:
+        "جلسة Codex هذه قيد الاستخدام. أغلق طرفية Codex أو العميل الذي فتح هذه الجلسة، ثم أعد محاولة الاستيراد.",
     },
     actions: {
       refresh: "تحديث الجلسات",

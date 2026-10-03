@@ -29,6 +29,7 @@ import {
   computeEmptyState,
   type DirectoryProject,
   formatDirectoryLabel,
+  getImportErrorMessage,
   getPromptPreview,
   getSessionTitle,
   hasMoreSessions,
@@ -136,7 +137,7 @@ interface SheetStatusMessagesProps {
   hasNoImportableProviders: boolean;
   isLoadingSessions: boolean;
   hasRows: boolean;
-  importErrored: boolean;
+  importError: Error | null;
 }
 
 function SheetStatusMessages({
@@ -145,7 +146,7 @@ function SheetStatusMessages({
   hasNoImportableProviders,
   isLoadingSessions,
   hasRows,
-  importErrored,
+  importError,
 }: SheetStatusMessagesProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -166,8 +167,8 @@ function SheetStatusMessages({
           <Text style={styles.statusText}>{t("importSession.status.loading")}</Text>
         </View>
       ) : null}
-      {importErrored ? (
-        <Text style={styles.statusText}>{t("importSession.status.failedImport")}</Text>
+      {importError ? (
+        <Text style={styles.statusText}>{getImportErrorMessage(importError)}</Text>
       ) : null}
     </>
   );
@@ -776,7 +777,7 @@ export function ImportSessionSheet({
         hasNoImportableProviders={hasNoImportableProviders}
         isLoadingSessions={isLoadingSessions}
         hasRows={visibleEntries.length > 0}
-        importErrored={importMutation.isError}
+        importError={importMutation.error}
       />
       {providerErrorRows.length > 0 ? (
         <ProviderErrorBanner rows={providerErrorRows} onRetry={handleRetryProvider} />
