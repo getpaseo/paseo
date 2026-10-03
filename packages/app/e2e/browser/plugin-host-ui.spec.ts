@@ -322,6 +322,7 @@ for (const compact of [false, true]) {
       "base64",
     );
     const prompt = "Build a new Kin product with its own application";
+    const editedPrompt = `${prompt}, including a login screen`;
     try {
       const original = await openProjectViaDaemon(client, source.path);
       await client.patchDaemonConfig({ pluginsEnabled: true });
@@ -374,6 +375,7 @@ for (const compact of [false, true]) {
       await expect(decision).not.toBeVisible();
       expect(await readdir(parent)).toEqual([]);
       await expect(page.getByRole("textbox", { name: "Message agent..." })).toHaveValue(prompt);
+      await fillNewWorkspaceDraft(page, editedPrompt);
       await page.getByTestId("workspace-create-submit").click();
       await expect(decision).toBeVisible();
       await page.getByRole("textbox", { name: "New project name" }).fill("kin-product");
@@ -406,7 +408,7 @@ for (const compact of [false, true]) {
       expect(intent.agentRequests).toHaveLength(1);
       expect(intent.agentRequests[0]).toMatchObject({
         config: { provider: "mock", model: "ten-second-stream" },
-        initialPrompt: prompt,
+        initialPrompt: editedPrompt,
         images: [{ data: png.toString("base64"), mimeType: "image/png" }],
       });
       expect((await client.fetchAgents()).entries.map((entry) => entry.agent.provider)).toEqual([

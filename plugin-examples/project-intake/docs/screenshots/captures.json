@@ -1,0 +1,31 @@
+{
+  "capture": "Actual isolated PandaOS browser UI, desktop and compact",
+  "hostCoreCommit": "0e5b7b73eb9c85721d8e214f16cc09e72256cd19",
+  "providers": ["mock/ten-second-stream"],
+  "liveModelCalls": 0,
+  "systemOneEnabled": false,
+  "verified": [
+    "Cancel preserves draft and creates no project/workspace/agent",
+    "Edited preserved prompt can be submitted again",
+    "Editing the project name pauses automatic selection",
+    "Separate project has independent Git root and one logical workspace",
+    "Original image and manually selected model reach agent creation"
+  ],
+  "sourceSha256": {
+    "client/check.ts": "5023481c3a32557d737b7d4024a0e32cee21cb3006f0a94d93475e3f20ae2b4e",
+    "client/settings.tsx": "7e9b6f6546660f6171ced0869b11f7dfbba37eae1b10ba838c5f73c01f51677a",
+    "index.client.tsx": "1634f3b61fcfc7b1224c5641206590422b6e0cf8c6d6fd7f68ce78c967a1cca2",
+    "index.server.ts": "5100d828362118025e94031a7be10a945df68b94f4935448487ee98b53cc45ec",
+    "server/decision.test.ts": "caea5161ea9cf21048c7467aafbc186284e11b04e2e893362706fc0959d76d01",
+    "server/decision.ts": "5a3e1c25e991019ad4f4f96c51a8809fead2b0a176055aa08190c0387e1e5516",
+    "server/service.test.ts": "659b14ba256588b29dc2b8f96d313ea7f3e70c20331d0f3a56aba4d58cfcaefd",
+    "server/service.ts": "14d6ffc43e31c5d7bdf905b92255e7e10409e05149e5ac85c01302f83b733f70",
+    "shared/contracts.ts": "d7d5485f4d89364867ff2874ac69c5fffc710dc3f9e4395c6222390ab5e9619d",
+    "shared/policy.ts": "64cbd2fa8fbee695d472ea6b7367707832eeaa0bf65bf9cc73392c7beaf5b3b7",
+    "shared/preferences.ts": "bec26210c4f531ae65a08822f1c8d9c625af882b74fa14bc0f59d0a6e5bceabf"
+  },
+  "screenshotsSha256": {
+    "compact.png": "d65cb64b4667b3b14b8a0fb92f1431e7ee6506ab0a6ce58a6efb6dc6139712a4",
+    "desktop.png": "a2859783ab30d8d9c2b38adf54f94071c425a5f50b6633f03429dc7eacdd50e4"
+  }
+}
