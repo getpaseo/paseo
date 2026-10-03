@@ -87,27 +87,27 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 ### Agents
 
-| Tool                 | Function                                                                                |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`.     |
-| `send_agent_prompt`  | Send a prompt to an existing agent using its `agentId` and a `prompt`.                  |
-| `get_agent_status`   | Return the latest snapshot for an agent.                                                |
-| `list_agents`        | List recent agents as compact metadata.                                                 |
-| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                  |
-| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                |
-| `kill_agent`         | Terminate an agent session permanently.                                                 |
-| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features. |
-| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                              |
-| `set_agent_mode`     | Switch an agent's session mode.                                                         |
+| Tool                 | Function                                                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. `internal: true` hides it from every listing and History. |
+| `send_agent_prompt`  | Send a prompt to an existing agent using its `agentId` and a `prompt`.                                                                        |
+| `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                      |
+| `list_agents`        | List recent agents as compact metadata.                                                                                                       |
+| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                                                                        |
+| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                                                                      |
+| `kill_agent`         | Terminate an agent session permanently.                                                                                                       |
+| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features.                                                       |
+| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                    |
+| `set_agent_mode`     | Switch an agent's session mode.                                                                                                               |
 
 ### Workspaces
 
-| Tool                | Function                                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| `create_workspace`  | Create a local or worktree-isolated workspace. Worktrees can branch off, check out a branch, or a PR. |
-| `list_workspaces`   | List active workspaces and their directories and isolation.                                           |
-| `rename_workspace`  | Change the user-visible name of the current or specified workspace.                                   |
-| `archive_workspace` | Archive a workspace and the sessions it owns.                                                         |
+| Tool                | Function                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_workspace`  | Create a local or worktree-isolated workspace. Worktrees can branch off, check out a branch, or a PR. `internal: true` hides it and makes every agent inside it internal. |
+| `list_workspaces`   | List active workspaces and their directories and isolation. Internal workspaces are left out.                                                                             |
+| `rename_workspace`  | Change the user-visible name of the current or specified workspace.                                                                                                       |
+| `archive_workspace` | Archive a workspace and the sessions it owns.                                                                                                                             |
 
 For worktree isolation, `create_workspace` accepts the same useful choices as the app: branch off from a base, check out an existing branch, or check out a pull request. The worktree remains an implementation detail of the workspace lifecycle.
 

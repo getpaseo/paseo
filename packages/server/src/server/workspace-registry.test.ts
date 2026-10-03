@@ -28,6 +28,23 @@ describe("resolveWorkspaceName", () => {
     );
   });
 
+  test("createPersistedWorkspaceRecord keeps internal only when set", () => {
+    const base = {
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      cwd: "/tmp/repo",
+      kind: "local_checkout" as const,
+      displayName: "main",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    expect(createPersistedWorkspaceRecord(base)).not.toHaveProperty("internal");
+    expect(createPersistedWorkspaceRecord({ ...base, internal: false })).not.toHaveProperty(
+      "internal",
+    );
+    expect(createPersistedWorkspaceRecord({ ...base, internal: true }).internal).toBe(true);
+  });
+
   test("resolveWorkspaceDisplayName applies the same rule over the persisted record", () => {
     const record = createPersistedWorkspaceRecord({
       workspaceId: "ws-1",

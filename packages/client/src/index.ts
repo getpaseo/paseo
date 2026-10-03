@@ -257,6 +257,12 @@ export interface PaseoAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /**
+   * An ephemeral helper. The daemon never persists, lists, flags or announces
+   * an internal agent, plugin lifecycle hooks skip it, and its provider session
+   * is not kept. Requires a host that advertises `features.internalAgents`.
+   */
+  internal?: CreateAgentRequestMessage["internal"];
   requestId?: string;
   labels?: Record<string, string>;
 }
@@ -780,9 +786,12 @@ function createWorkspaceHandleFactory(
     const refresh = async (options?: { requestId?: string }) => {
       let cursor: string | undefined;
       let requestId = options?.requestId;
+      // A ref addresses one workspace by id, so an internal one resolves too.
+      const filter = daemonClient.supportsInternalWorkspaces() ? { includeInternal: true } : {};
       do {
         const result = await daemonClient.fetchWorkspaces({
           requestId,
+          filter,
           page: { limit: 200, ...(cursor ? { cursor } : {}) },
         });
         const match = result.entries.find((entry) => entry.id === id);

@@ -23,6 +23,12 @@ describe("buildAgentLsFetchOptions", () => {
     });
   });
 
+  it("asks the daemon for internal agents only with --internal", () => {
+    expect(buildAgentLsFetchOptions({ internal: true, global: true })).toEqual({
+      filter: { includeInternal: true },
+    });
+  });
+
   it("fetches global non-archived agents for -g", () => {
     expect(buildAgentLsFetchOptions({ global: true })).toEqual({});
   });

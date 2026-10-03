@@ -46,7 +46,7 @@ See the [MCP reference](/docs/mcp) for tool configuration and the full catalog. 
 Agents with shell access can also use the Paseo CLI. This route does not require enabling tool injection. With Paseo installed, a running host, and Codex configured:
 
 ```bash
-paseo run --provider codex --background \
+paseo run --provider codex --no-wait \
   "Review this branch without changing files"
 paseo ls -a
 ```

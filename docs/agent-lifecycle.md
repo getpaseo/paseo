@@ -84,6 +84,54 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
+## Internal agents
+
+An internal agent is an ephemeral helper. The daemon creates them for its own branch-name and
+commit-message generators; clients create them with `internal: true` on the create request, which
+reaches the SDK as `agents.create({ internal: true })`, the CLI as `paseo run --internal`, and the
+MCP tool as `create_agent({ internal: true })`. The contract:
+
+- `AgentManager` never persists one, so it is never in History and does not survive a daemon
+  restart. The provider session is not kept either (`persistSession: false`; Claude deletes the
+  transcript on close).
+- It is left out of agent lists, global subscriptions, attention tracking, notifications, and
+  plugin lifecycle hooks. Only its exact id reaches it, so prefix and title matching stay public.
+- Archiving one is closing it: the runtime is closed, the committed timeline is dropped, and
+  attached children are archived as for any parent. Live internal children are scanned separately,
+  since the storage scan cannot see them.
+- A one-shot helper can finish and auto-archive before its creator's `waitForFinish` arrives, so the
+  archived snapshot and last message stay readable by exact id for ten minutes after archive.
+  Storage plays that role for public agents.
+- Hidden means opt-in, not unreachable. `fetch_agents_request` with `filter.includeInternal`
+  returns live internal agents and, with `includeArchived`, the retained archived ones; the
+  snapshot carries `internal: true`. The CLI exposes it as `paseo ls --internal`. The app never
+  passes the flag, so a "show internal agents" setting is one filter field away.
+
+The flag lives on `create_agent_request`, not in `AgentSessionConfig` on the wire, because that
+config schema is reused for update overrides. The `agent.create` transform hook cannot set it
+either: the manager re-pins `internal` from the original request after the hook runs, so a plugin
+cannot hide an agent another client asked for. Clients gate on `features.internalAgents`.
+
+### Internal workspaces
+
+`workspace.create.request` takes `internal: true` as well (`workspaces.create({ internal: true })`,
+`paseo workspace create --internal`, `create_workspace({ internal: true })`). The record is
+persisted like any workspace, with `internal: true`, so it survives a restart and archives
+normally. What changes:
+
+- `fetch_workspaces_request` and workspace update subscriptions leave it out unless
+  `filter.includeInternal` is set; sequenced sync reads carry no filter and never include it.
+  A project whose only workspaces are internal reads as empty to a caller that did not opt in.
+- Opening a directory by path (`open_project`, `paseo run` without `--workspace`) never adopts an
+  internal workspace; it mints a visible one beside it.
+- Plugin `workspace.create`, `workspace.created`, and `workspace.archived` hooks skip it.
+- Every agent created inside it is internal. `AgentManager` applies this from the workspace id on
+  every create path (session, MCP, schedule, hub) before the plugin hook, so a creator cannot opt
+  an agent out. `paseo run --internal` with `--new-workspace` creates the workspace internal too.
+
+Archive and shutdown enumerate agents with `includeInternal` so nothing inside an internal
+workspace outlives it. Clients gate on `features.internalWorkspaces`.
+
 ## Archive
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.

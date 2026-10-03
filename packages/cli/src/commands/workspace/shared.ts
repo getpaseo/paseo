@@ -7,6 +7,7 @@ export interface WorkspaceRow {
   name: string;
   isolation: "local" | "worktree";
   cwd: string;
+  internal: boolean;
 }
 
 export const workspaceSchema: OutputSchema<WorkspaceRow> = {
@@ -20,6 +21,15 @@ export const workspaceSchema: OutputSchema<WorkspaceRow> = {
   ],
 };
 
+/** `--internal` listings add a column so hidden workspaces stand out. */
+export const workspaceWithInternalSchema: OutputSchema<WorkspaceRow> = {
+  ...workspaceSchema,
+  columns: [
+    ...workspaceSchema.columns,
+    { header: "INTERNAL", field: (row) => (row.internal ? "yes" : ""), width: 8 },
+  ],
+};
+
 export function toWorkspaceRow(workspace: WorkspaceDescriptorPayload): WorkspaceRow {
   return {
     workspaceId: workspace.id,
@@ -27,5 +37,6 @@ export function toWorkspaceRow(workspace: WorkspaceDescriptorPayload): Workspace
     name: workspace.name,
     isolation: workspace.workspaceKind === "worktree" ? "worktree" : "local",
     cwd: workspace.workspaceDirectory,
+    internal: workspace.internal === true,
   };
 }

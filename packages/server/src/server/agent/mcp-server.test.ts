@@ -1338,6 +1338,42 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("passes internal through to the manager config", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "internal-helper",
+      provider: "codex",
+      cwd: existingCwd,
+      workspaceId: "workspace-created",
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Helper" },
+      internal: true,
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate,
+      logger,
+    });
+
+    await registeredTool(server, "create_agent").handler({
+      title: "Helper",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Summarize",
+      background: true,
+      internal: true,
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: existingCwd, internal: true }),
+      undefined,
+      { workspaceId: "workspace-created" },
+    );
+  });
+
   it("rejects partial explicit workspace shape", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
@@ -3053,6 +3089,47 @@ describe("create_agent MCP tool", () => {
     expect(response.structuredContent.workspaces).toEqual([
       expect.objectContaining({ workspaceId: "ws-feature", isolation: "worktree" }),
     ]);
+  });
+
+  it("creates an internal local workspace and leaves it out of list_workspaces", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const createCalls: Array<{ cwd: string; context: { internal?: boolean } | undefined }> = [];
+    const internalWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-internal",
+      projectId: "project-1",
+      cwd: process.cwd(),
+      kind: "directory",
+      displayName: "helper",
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:00:00.000Z",
+      internal: true,
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      workspaceRegistry: {
+        get: vi.fn(async () => internalWorkspace),
+        list: vi.fn(async () => [internalWorkspace]),
+        upsert: vi.fn(async () => undefined),
+      },
+      createDirectoryWorkspace: async (cwd, _title, _projectId, context) => {
+        createCalls.push({ cwd, context });
+        return internalWorkspace;
+      },
+      logger,
+    });
+
+    const created = await invokeToolWithParsedInput(registeredTool(server, "create_workspace"), {
+      isolation: "local",
+      path: process.cwd(),
+      internal: true,
+    });
+    expect(created.structuredContent.workspaceId).toBe("ws-internal");
+    expect(createCalls).toEqual([{ cwd: process.cwd(), context: { internal: true } }]);
+
+    const listed = await registeredTool(server, "list_workspaces").handler({});
+    expect(listed.structuredContent.workspaces).toEqual([]);
   });
 
   it("accepts custom provider IDs in create_agent input validation", async () => {

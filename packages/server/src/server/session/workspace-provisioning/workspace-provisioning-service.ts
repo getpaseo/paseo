@@ -50,6 +50,7 @@ export interface CreateWorktreeWorkspaceInput {
   title: string | null;
   expectsInitialAgent?: boolean;
   untrustedSource?: UntrustedWorkspaceSource;
+  internal?: boolean;
 }
 
 export interface WorkspaceProvisioningService {
@@ -63,7 +64,7 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean; workspaceId?: string },
+    context?: { expectsInitialAgent?: boolean; workspaceId?: string; internal?: boolean },
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -219,7 +220,7 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean; workspaceId?: string },
+    context?: { expectsInitialAgent?: boolean; workspaceId?: string; internal?: boolean },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
@@ -235,9 +236,12 @@ export function createWorkspaceProvisioningService(deps: {
       title: title?.trim() || null,
       createdAt: timestamp,
       updatedAt: timestamp,
+      internal: context?.internal,
     });
-    await workspaceRegistry.upsert(workspace, context);
-    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
+    await workspaceRegistry.upsert(workspace, {
+      expectsInitialAgent: context?.expectsInitialAgent,
+    });
+    emitWorkspaceCreated(workspace);
     return workspace;
   }
 
@@ -269,12 +273,19 @@ export function createWorkspaceProvisioningService(deps: {
       createdAt: timestamp,
       updatedAt: timestamp,
       ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),
+      internal: input.internal,
     });
     await workspaceRegistry.upsert(workspace, {
       expectsInitialAgent: input.expectsInitialAgent,
     });
-    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
+    emitWorkspaceCreated(workspace);
     return workspace;
+  }
+
+  // Plugins never hear about internal workspaces, same as internal agents.
+  function emitWorkspaceCreated(workspace: PersistedWorkspaceRecord): void {
+    if (workspace.internal) return;
+    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
   }
 
   async function resolveSourceProjectForWorktree(input: {
@@ -323,7 +334,10 @@ export function createWorkspaceProvisioningService(deps: {
     const workspaces = await workspaceRegistry.list();
     const active = workspaces
       .filter(
-        (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, normalizedCwd),
+        (workspace) =>
+          !workspace.archivedAt &&
+          !workspace.internal &&
+          areEquivalentPaths(workspace.cwd, normalizedCwd),
       )
       .sort(
         (left, right) =>

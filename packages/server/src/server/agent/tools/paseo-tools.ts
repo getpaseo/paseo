@@ -123,6 +123,7 @@ export interface PaseoToolHostDependencies {
     cwd: string,
     title?: string | null,
     projectId?: string,
+    context?: { internal?: boolean },
   ) => Promise<PersistedWorkspaceRecord>;
   workspaceScripts?: Pick<WorkspaceScriptsService, "list" | "launch" | "stop">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
@@ -1016,6 +1017,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
+    internal: z
+      .boolean()
+      .optional()
+      .describe(
+        "Create an internal agent: hidden from every listing, History, and the subagents track, and never persisted. Use for short-lived helpers whose result only you need.",
+      ),
   };
   const legacyCreateAgentPlacementFields = {
     relationship: AgentRelationshipInputSchema.describe(
@@ -1249,6 +1256,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           ),
         projectId: z.string().optional().describe("Existing project id to own the workspace."),
         title: z.string().trim().min(1).optional(),
+        internal: z
+          .boolean()
+          .optional()
+          .describe(
+            "Hide the workspace from every listing; every agent created inside it is internal.",
+          ),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
           .optional()
@@ -1287,6 +1300,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       path,
       projectId,
       title,
+      internal,
       mode,
       worktreeSlug,
       branchName,
@@ -1316,7 +1330,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         if (!options.createDirectoryWorkspace) {
           throw new Error("Workspace provisioning is not configured");
         }
-        workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
+        workspace = await options.createDirectoryWorkspace(cwd, title, projectId, {
+          internal,
+        });
       } else {
         let cwd =
           path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
@@ -1347,6 +1363,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
+            ...(internal ? { internal: true } : {}),
           },
         );
         if (!result.ok) {
@@ -1375,7 +1392,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Workspace registry is not configured");
       }
       const workspaces = (await options.workspaceRegistry.list())
-        .filter((workspace) => !workspace.archivedAt)
+        .filter((workspace) => !workspace.archivedAt && !workspace.internal)
         .map(toWorkspaceAutomationSummary);
       return {
         content: [],
@@ -1493,6 +1510,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           mode: parsedArgs.settings?.modeId,
           background: requestedBackground,
           notifyOnFinish,
+          internal: parsedArgs.internal,
           detached: resolvedArgs.detached,
           callerAgentId,
           callerContext,
