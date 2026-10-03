@@ -7,18 +7,27 @@ import { useAgentUsage } from "./queries";
 import type { UsageReportEntry } from "./types";
 
 /**
- * The usage of the account an agent runs under, for its context window popover: one card per
+ * The usage of the account an agent runs under, for its context window details: one card per
  * report as it streams in, without pins. Nothing on hosts that cannot report usage, or for an
  * agent with no account to report.
  */
-export function AgentUsage({ serverId, agentId }: { serverId: string; agentId: string }) {
+export function AgentUsage({
+  serverId,
+  agentId,
+  refreshable,
+}: {
+  serverId: string;
+  agentId: string;
+  /** Whether each card has a Refresh button; a surface that cannot be pressed hides it. */
+  refreshable: boolean;
+}) {
   const view = useAgentUsage(serverId, agentId);
   if (view.kind === "none") return null;
   return (
     <>
       <View style={styles.divider} />
       {view.kind === "ready" ? (
-        <AgentUsageCards serverId={serverId} reports={view.reports} />
+        <AgentUsageCards serverId={serverId} reports={view.reports} refreshable={refreshable} />
       ) : (
         <Text style={styles.message} testID="agent-usage-message">
           {view.kind === "loading" ? usageCopy.loading : view.message}
@@ -31,9 +40,11 @@ export function AgentUsage({ serverId, agentId }: { serverId: string; agentId: s
 function AgentUsageCards({
   serverId,
   reports,
+  refreshable,
 }: {
   serverId: string;
   reports: readonly UsageReportEntry[];
+  refreshable: boolean;
 }) {
   const { display } = useUsageDisplay(reports);
   return reports.map((entry) => (
@@ -44,7 +55,7 @@ function AgentUsageCards({
       display={display}
       compact
       pinnable={false}
-      refreshable={false}
+      refreshable={refreshable}
     />
   ));
 }

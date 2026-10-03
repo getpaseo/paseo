@@ -164,8 +164,8 @@ export function useUsageHostReports(serverId: string | null): UsageReportEntry[]
 }
 
 /**
- * The reports of the account an agent runs under, as its meter popover shows them. Fetched while
- * the popover is mounted, so only while it is open.
+ * The reports of the account an agent runs under, as its meter's tooltip or sheet shows them.
+ * Fetched while either is mounted, so only while it is open.
  */
 export function useAgentUsage(serverId: string, agentId: string): AgentUsageView {
   const queryClient = useQueryClient();
@@ -177,7 +177,7 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
     enabled: canReport,
     // Another agent's reports never stand in while this one's load.
     dataShape: "value",
-    // The daemon's errors (an unknown agent) do not heal on retry, and reopening the popover
+    // The daemon's errors (an unknown agent) do not heal on retry, and reopening the details
     // fetches again; retrying would hold the loading sentence for seconds instead.
     retry: false,
     staleTimeMs: REPORTS_STALE_TIME_MS,
