@@ -1,11 +1,14 @@
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentUsage } from "@/usage";
 import { formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
+  serverId: string;
+  agentId: string;
   maxTokens: number | null;
   usedTokens: number | null;
   totalCostUsd?: number | null;
@@ -91,6 +94,8 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
 }
 
 export function ContextWindowMeter({
+  serverId,
+  agentId,
   maxTokens,
   usedTokens,
   totalCostUsd,
@@ -100,6 +105,8 @@ export function ContextWindowMeter({
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const { width } = useWindowDimensions();
+  const popoverWidth = Math.min(360, width - 24);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const geometry = getMeterGeometry(showPercentage, glyphSize);
@@ -187,7 +194,14 @@ export function ContextWindowMeter({
           ) : null}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8} testID="context-window-meter-tooltip">
+      <TooltipContent
+        side="top"
+        align="center"
+        offset={8}
+        maxWidth={popoverWidth}
+        style={[styles.popover, { width: popoverWidth }]}
+        testID="context-window-meter-tooltip"
+      >
         <View style={styles.tooltipContent}>
           <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
           <Text style={styles.tooltipText}>
@@ -205,6 +219,7 @@ export function ContextWindowMeter({
             </Text>
           ) : null}
         </View>
+        <AgentUsage serverId={serverId} agentId={agentId} />
       </TooltipContent>
     </Tooltip>
   );
@@ -237,6 +252,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface3,
   },
+  popover: { padding: theme.spacing[4], gap: theme.spacing[4] },
   tooltipContent: {
     gap: theme.spacing[1.5],
     minWidth: 200,

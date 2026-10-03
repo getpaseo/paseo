@@ -61,6 +61,16 @@ export function replaceReport(
   return reports.map((report) => (report.id === reportId ? refreshed : report));
 }
 
+/** A report list with one streamed report in place of its previous copy, or appended if new. */
+export function upsertReport(
+  reports: readonly UsageReportEntry[] | undefined,
+  report: UsageReportEntry,
+): UsageReportEntry[] {
+  if (!reports) return [report];
+  if (!reports.some((entry) => entry.id === report.id)) return [...reports, report];
+  return replaceReport(reports, report.id, report);
+}
+
 export interface UsageQueryState {
   data: UsageReportEntry[] | undefined;
   error: unknown;
@@ -86,6 +96,29 @@ export function resolveUsageView(input: {
       kind: "error",
       message: query.error instanceof Error ? query.error.message : String(query.error),
     };
+  }
+  return { kind: "loading" };
+}
+
+/** What a meter popover shows of its agent's usage: nothing while the host cannot say. */
+export type AgentUsageView =
+  | { kind: "none" }
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; reports: UsageReportEntry[] };
+
+export function resolveAgentUsageView(input: {
+  canReport: boolean;
+  query: UsageQueryState;
+}): AgentUsageView {
+  const { canReport, query } = input;
+  if (!canReport) return { kind: "none" };
+  if (query.data) {
+    return query.data.length === 0 ? { kind: "none" } : { kind: "ready", reports: query.data };
+  }
+  if (query.error) {
+    const reason = query.error instanceof Error ? query.error.message : String(query.error);
+    return { kind: "error", message: usageCopy.agentError(reason) };
   }
   return { kind: "loading" };
 }

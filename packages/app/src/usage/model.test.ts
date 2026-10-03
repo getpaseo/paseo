@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   displayPercent,
   formatUsageFreshness,
+  resolveAgentUsageView,
   replaceReport,
   resolveUsageRefresh,
   resolveUsageHostId,
   resolveUsageScreenHostId,
   resolveUsageView,
+  upsertReport,
   usageWindowRowLabel,
   type UsageHost,
   type UsageQueryState,
@@ -214,5 +216,62 @@ describe("replaceReport", () => {
 
   it("drops a report the daemon no longer knows", () => {
     expect(replaceReport([alpha, beta], alpha.id, null)).toEqual([beta]);
+  });
+});
+
+describe("upsertReport", () => {
+  const alpha = entry({ sourceId: "alpha", planLabel: "Old" });
+  const beta = entry({ sourceId: "beta" });
+
+  it("starts a list from the first streamed report", () => {
+    expect(upsertReport(undefined, alpha)).toEqual([alpha]);
+  });
+
+  it("appends a report the list does not have yet", () => {
+    expect(upsertReport([alpha], beta)).toEqual([alpha, beta]);
+  });
+
+  it("replaces a report the list already has, in place", () => {
+    const streamed = entry({ sourceId: "alpha", planLabel: "New" });
+    expect(upsertReport([alpha, beta], streamed)).toEqual([streamed, beta]);
+  });
+});
+
+describe("resolveAgentUsageView", () => {
+  const report = entry({ sourceId: "claude" });
+  const idle: UsageQueryState = { data: undefined, error: null, isFetching: false };
+
+  it("shows nothing on a host that cannot report usage", () => {
+    expect(resolveAgentUsageView({ canReport: false, query: idle })).toEqual({ kind: "none" });
+  });
+
+  it("loads until the first report streams in", () => {
+    expect(
+      resolveAgentUsageView({ canReport: true, query: { ...idle, isFetching: true } }),
+    ).toEqual({ kind: "loading" });
+  });
+
+  it("shows each report as it streams in, before the request finishes", () => {
+    expect(
+      resolveAgentUsageView({
+        canReport: true,
+        query: { data: [report], error: null, isFetching: true },
+      }),
+    ).toEqual({ kind: "ready", reports: [report] });
+  });
+
+  it("shows nothing for an agent with no account to report", () => {
+    expect(resolveAgentUsageView({ canReport: true, query: { ...idle, data: [] } })).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("says why a failed request has nothing to show", () => {
+    expect(
+      resolveAgentUsageView({
+        canReport: true,
+        query: { ...idle, error: new Error("Unknown agent") },
+      }),
+    ).toEqual({ kind: "error", message: "Unable to load usage: Unknown agent" });
   });
 });
