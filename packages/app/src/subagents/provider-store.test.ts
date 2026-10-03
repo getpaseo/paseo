@@ -1,8 +1,14 @@
-import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
-import { afterEach, describe, expect, test } from "vitest";
+import { DaemonConnectionError, type DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type {
+  ProviderSubagentDescriptorPayload,
+  SessionOutboundMessage,
+} from "@getpaseo/protocol/messages";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  handleProviderSubagentUpdate,
   observeProviderSubagentTimeline,
   providerSubagentKey,
+  refreshMissingProviderSubagent,
   useProviderSubagentStore,
 } from "./provider-store";
 
@@ -725,5 +731,117 @@ describe("projected child history", () => {
     expect([...current().tail, ...current().head]).toHaveLength(1);
     expect(JSON.stringify(current()).length).toBeLessThan(1_000_000);
     expect(current().lastSeq).toBe(2000);
+  });
+});
+
+type ProviderSubagentUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.update" }
+>["payload"];
+type TimelineUpdatePayload = Extract<ProviderSubagentUpdatePayload, { kind: "timeline" }>;
+
+describe("missing descriptor self-heal", () => {
+  const descriptor: ProviderSubagentDescriptorPayload = {
+    id: SUBAGENT_ID,
+    parentAgentId: PARENT_ID,
+    provider: "opencode",
+    title: "explore",
+    description: "explore opencode subagents",
+    status: "running",
+    createdAt: "2026-09-29T02:25:58.000Z",
+    updatedAt: "2026-09-29T02:25:58.000Z",
+    toolCallId: null,
+  };
+
+  function timelinePayload(seq: number): TimelineUpdatePayload {
+    return {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "opencode",
+      epoch: "epoch-1",
+      seq,
+      timestamp: "2026-09-29T02:26:00.000Z",
+      item: { type: "assistant_message", text: "working" },
+    };
+  }
+
+  function listClient(subagents: ProviderSubagentDescriptorPayload[]) {
+    return {
+      listProviderSubagents: vi.fn<DaemonClient["listProviderSubagents"]>().mockResolvedValue({
+        requestId: "req-1",
+        parentAgentId: PARENT_ID,
+        subagents,
+        error: null,
+      }),
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("heals a missing descriptor when its first timeline update arrives", async () => {
+    const client = listClient([descriptor]);
+    handleProviderSubagentUpdate(client, SERVER_ID, timelinePayload(1));
+    await vi.waitFor(() => {
+      expect(client.listProviderSubagents).toHaveBeenCalledWith(PARENT_ID);
+    });
+    await vi.waitFor(() => {
+      expect(
+        useProviderSubagentStore
+          .getState()
+          .descriptors.has(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID)),
+      ).toBe(true);
+    });
+  });
+
+  test("skips the heal when the descriptor is already present", () => {
+    useProviderSubagentStore
+      .getState()
+      .applyUpdate(SERVER_ID, { kind: "upsert", subagent: descriptor });
+    const client = listClient([]);
+    handleProviderSubagentUpdate(client, SERVER_ID, timelinePayload(1));
+    expect(client.listProviderSubagents).not.toHaveBeenCalled();
+    expect(refreshMissingProviderSubagent(client, SERVER_ID, PARENT_ID, SUBAGENT_ID)).toBeNull();
+  });
+
+  test("an upsert never triggers a heal fetch", () => {
+    const client = listClient([]);
+    handleProviderSubagentUpdate(client, SERVER_ID, { kind: "upsert", subagent: descriptor });
+    expect(client.listProviderSubagents).not.toHaveBeenCalled();
+    expect(
+      useProviderSubagentStore
+        .getState()
+        .descriptors.has(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID)),
+    ).toBe(true);
+  });
+
+  test("throttles repeated heals while the descriptor stays missing", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const client = listClient([]);
+    handleProviderSubagentUpdate(client, SERVER_ID, timelinePayload(1));
+    handleProviderSubagentUpdate(client, SERVER_ID, timelinePayload(2));
+    await vi.waitFor(() => {
+      expect(client.listProviderSubagents).toHaveBeenCalledTimes(1);
+    });
+    // Let the in-flight heal settle so the next attempt is not deduped onto it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    now.mockReturnValue(1_000_000 + 60_000);
+    handleProviderSubagentUpdate(client, SERVER_ID, timelinePayload(3));
+    await vi.waitFor(() => {
+      expect(client.listProviderSubagents).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("a failed heal resolves quietly", async () => {
+    const client = {
+      listProviderSubagents: vi
+        .fn<DaemonClient["listProviderSubagents"]>()
+        .mockRejectedValue(new Error("daemon down")),
+    };
+    await refreshMissingProviderSubagent(client, SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    expect(client.listProviderSubagents).toHaveBeenCalledTimes(1);
+    expect(useProviderSubagentStore.getState().descriptors.size).toBe(0);
   });
 });
