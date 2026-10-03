@@ -25,14 +25,18 @@ import {
   resolveTerminalCustomGlyphCellTransform,
   resolveTerminalGridMetricsMeasurement,
   resolveTerminalCursorOffset,
+  resolveTerminalTextLetterSpacing,
   type TerminalGridCellMetrics,
 } from "./terminal-grid-metrics";
 import {
   buildRows,
+  TERMINAL_WIDE_GLYPH_CLASSES,
   type TerminalCustomGlyphCell,
   type TerminalCustomGlyphRun,
   type TerminalRowModel,
   type TerminalRun,
+  type TerminalTextRun,
+  type TerminalWideGlyphClass,
 } from "./terminal-row-model";
 import type { TerminalSelectionRange } from "./terminal-selection";
 
@@ -40,11 +44,15 @@ const MEASURE_TEXT = "mmmmmmmmmm";
 const DEFAULT_FONT_SIZE = 12;
 const INITIAL_CELL_WIDTH_RATIO = 0.62;
 const INITIAL_CELL_HEIGHT_RATIO = 1.35;
+// Room a fallback glyph (emoji, symbols) gets to spill past its cells instead of being clipped.
+const ISOLATED_GLYPH_OVERFLOW_CELLS = 2;
 
 interface CellMetrics {
   cellWidth: number;
   cellHeight: number;
 }
+
+type TerminalWideGlyphStyles = Readonly<Record<TerminalWideGlyphClass, TextStyle>>;
 
 interface TerminalGridViewport {
   width: number;
@@ -57,6 +65,8 @@ interface TerminalGridRowProps {
   cellHeight: number;
   fontFamily?: string;
   fontSize: number;
+  letterSpacing: number;
+  wideGlyphStyles: TerminalWideGlyphStyles;
   styleEpoch: string;
 }
 
@@ -65,6 +75,7 @@ interface TerminalGridRunProps {
   cellWidth: number;
   cellHeight: number;
   textStyle: StyleProp<TextStyle>;
+  wideGlyphStyles: TerminalWideGlyphStyles;
 }
 
 export interface TerminalGridViewProps {
@@ -99,21 +110,58 @@ function resolveVisibleCols(input: {
   return Math.min(input.gridCols, Math.max(1, Math.floor(input.viewportWidth / input.cellWidth)));
 }
 
-function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGridRunProps) {
+function renderTerminalTextSegments(
+  run: TerminalTextRun,
+  wideGlyphStyles: TerminalWideGlyphStyles,
+) {
+  if (!run.segments.some((segment) => segment.wideGlyphClass)) {
+    return run.text;
+  }
+  let offset = 0;
+  return run.segments.map((segment) => {
+    const key = `${offset}:${segment.wideGlyphClass ?? "font"}`;
+    offset += segment.text.length;
+    return (
+      <Text
+        key={key}
+        style={segment.wideGlyphClass ? wideGlyphStyles[segment.wideGlyphClass] : undefined}
+      >
+        {segment.text}
+      </Text>
+    );
+  });
+}
+
+function TerminalGridRun({
+  run,
+  cellWidth,
+  cellHeight,
+  textStyle,
+  wideGlyphStyles,
+}: TerminalGridRunProps) {
+  const isolated = run.renderKind === "text" && run.isolated;
   const runStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
-      styles.run,
+      isolated ? styles.isolatedRun : styles.run,
       {
         backgroundColor: run.style.backgroundColor,
         height: cellHeight,
         width: run.cellCount * cellWidth,
       },
     ],
-    [cellHeight, cellWidth, run.cellCount, run.style.backgroundColor],
+    [cellHeight, cellWidth, isolated, run.cellCount, run.style.backgroundColor],
   );
   const runTextStyle = useMemo<StyleProp<TextStyle>>(
-    () => [textStyle, run.style],
-    [run.style, textStyle],
+    () =>
+      isolated
+        ? [
+            textStyle,
+            run.style,
+            styles.isolatedText,
+            { width: (run.cellCount + ISOLATED_GLYPH_OVERFLOW_CELLS) * cellWidth },
+          ]
+        : [textStyle, run.style],
+    [cellWidth, isolated, run.cellCount, run.style, textStyle],
   );
 
   return (
@@ -122,7 +170,7 @@ function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGrid
         <TerminalGridCustomGlyphRun run={run} cellWidth={cellWidth} cellHeight={cellHeight} />
       ) : (
         <Text numberOfLines={1} style={runTextStyle}>
-          {run.text}
+          {renderTerminalTextSegments(run, wideGlyphStyles)}
         </Text>
       )}
     </View>
@@ -225,7 +273,8 @@ const MemoTerminalGridRun = memo(TerminalGridRun, (previous, next) => {
     previous.run === next.run &&
     previous.cellWidth === next.cellWidth &&
     previous.cellHeight === next.cellHeight &&
-    previous.textStyle === next.textStyle
+    previous.textStyle === next.textStyle &&
+    previous.wideGlyphStyles === next.wideGlyphStyles
   );
 });
 
@@ -235,6 +284,8 @@ function TerminalGridRow({
   cellHeight,
   fontFamily,
   fontSize,
+  letterSpacing,
+  wideGlyphStyles,
 }: TerminalGridRowProps) {
   const rowStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.row, { height: cellHeight }],
@@ -248,9 +299,10 @@ function TerminalGridRow({
         lineHeight: cellHeight,
         fontFamily,
         fontSize,
+        letterSpacing,
       },
     ],
-    [cellHeight, fontFamily, fontSize],
+    [cellHeight, fontFamily, fontSize, letterSpacing],
   );
   const accessibilityLabel = useMemo(
     () =>
@@ -275,6 +327,7 @@ function TerminalGridRow({
           cellWidth={cellWidth}
           cellHeight={cellHeight}
           textStyle={textStyle}
+          wideGlyphStyles={wideGlyphStyles}
         />
       ))}
     </View>
@@ -288,9 +341,37 @@ const MemoTerminalGridRow = memo(TerminalGridRow, (previous, next) => {
     previous.cellHeight === next.cellHeight &&
     previous.fontFamily === next.fontFamily &&
     previous.fontSize === next.fontSize &&
+    previous.letterSpacing === next.letterSpacing &&
+    previous.wideGlyphStyles === next.wideGlyphStyles &&
     previous.styleEpoch === next.styleEpoch
   );
 });
+
+interface TerminalWideGlyphMeasureProps {
+  glyphClass: TerminalWideGlyphClass;
+  sample: string;
+  style: StyleProp<TextStyle>;
+  onMeasure: (glyphClass: TerminalWideGlyphClass, measuredTextWidth: number) => void;
+}
+
+// Measures one wide script's advance in the terminal font's fallback, like MEASURE_TEXT does for
+// the terminal font itself.
+function TerminalWideGlyphMeasure({
+  glyphClass,
+  sample,
+  style,
+  onMeasure,
+}: TerminalWideGlyphMeasureProps) {
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => onMeasure(glyphClass, event.nativeEvent.layout.width),
+    [glyphClass, onMeasure],
+  );
+  return (
+    <Text onLayout={handleLayout} pointerEvents="none" style={style}>
+      {sample.repeat(MEASURE_TEXT.length)}
+    </Text>
+  );
+}
 
 export function TerminalGridView({
   state,
@@ -303,6 +384,10 @@ export function TerminalGridView({
 }: TerminalGridViewProps) {
   const [metrics, setMetrics] = useState<CellMetrics>(() => estimateCellMetrics(fontSize));
   const measuredMetricsRef = useRef<TerminalGridCellMetrics | null>(null);
+  const [letterSpacing, setLetterSpacing] = useState(0);
+  const [wideGlyphWidths, setWideGlyphWidths] = useState<
+    Partial<Record<TerminalWideGlyphClass, number>>
+  >({});
   const [viewport, setViewport] = useState<TerminalGridViewport | null>(null);
   const resolvedFontFamily = useMemo(
     () => resolveNativeTerminalFontFamily(fontFamily),
@@ -381,6 +466,14 @@ export function TerminalGridView({
         measureTextLength: MEASURE_TEXT.length,
         roundToNearestPixel: (value) => PixelRatio.roundToNearestPixel(value),
       });
+      setLetterSpacing(
+        resolveTerminalTextLetterSpacing({
+          measuredTextWidth: event.nativeEvent.layout.width,
+          measureTextLength: MEASURE_TEXT.length,
+          cellWidth: nextMetrics.cellWidth,
+          cellsPerGlyph: 1,
+        }),
+      );
       const changedMetrics = resolveTerminalGridMetricsMeasurement(
         measuredMetricsRef.current,
         nextMetrics,
@@ -394,6 +487,35 @@ export function TerminalGridView({
     },
     [onCellMetricsChange],
   );
+
+  const handleWideGlyphMeasure = useCallback(
+    (glyphClass: TerminalWideGlyphClass, measuredTextWidth: number) => {
+      setWideGlyphWidths((current) =>
+        current[glyphClass] === measuredTextWidth
+          ? current
+          : { ...current, [glyphClass]: measuredTextWidth },
+      );
+    },
+    [],
+  );
+  const wideGlyphStyles = useMemo(() => {
+    const entries = TERMINAL_WIDE_GLYPH_CLASSES.map((spec) => {
+      const measuredTextWidth = wideGlyphWidths[spec.name];
+      const spacingStyle: TextStyle = {
+        letterSpacing:
+          measuredTextWidth === undefined
+            ? 0
+            : resolveTerminalTextLetterSpacing({
+                measuredTextWidth,
+                measureTextLength: MEASURE_TEXT.length,
+                cellWidth: metrics.cellWidth,
+                cellsPerGlyph: 2,
+              }),
+      };
+      return [spec.name, spacingStyle] as const;
+    });
+    return Object.fromEntries(entries) as TerminalWideGlyphStyles;
+  }, [metrics.cellWidth, wideGlyphWidths]);
 
   const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -411,6 +533,15 @@ export function TerminalGridView({
         <Text onLayout={handleMeasure} pointerEvents="none" style={measureStyle}>
           {MEASURE_TEXT}
         </Text>
+        {TERMINAL_WIDE_GLYPH_CLASSES.map((spec) => (
+          <TerminalWideGlyphMeasure
+            key={spec.name}
+            glyphClass={spec.name}
+            sample={spec.sample}
+            style={measureStyle}
+            onMeasure={handleWideGlyphMeasure}
+          />
+        ))}
         {rows.map((row) => (
           <MemoTerminalGridRow
             key={row.index}
@@ -419,6 +550,8 @@ export function TerminalGridView({
             cellHeight={metrics.cellHeight}
             fontFamily={resolvedFontFamily}
             fontSize={fontSize}
+            letterSpacing={letterSpacing}
+            wideGlyphStyles={wideGlyphStyles}
             styleEpoch={resolver.themeKey}
           />
         ))}
@@ -440,6 +573,17 @@ const styles = StyleSheet.create({
   },
   run: {
     overflow: "hidden",
+  },
+  isolatedRun: {
+    overflow: "visible",
+  },
+  // The run box keeps the cell width and paints the background; the wider text only draws the
+  // glyph, so a fallback glyph wider than its cells spills over the next cell like in a terminal.
+  isolatedText: {
+    backgroundColor: "transparent",
+    left: 0,
+    position: "absolute",
+    top: 0,
   },
   customGlyphRun: {
     flex: 1,
