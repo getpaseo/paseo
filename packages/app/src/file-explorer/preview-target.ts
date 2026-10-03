@@ -1,38 +1,8 @@
-import { isAbsolutePath } from "@/utils/path";
+import { isAbsolutePath, isHomeRelativePath, isPathWithinRoot } from "@/utils/path";
 
 export interface FilePreviewReadTarget {
   cwd: string;
   path: string;
-}
-
-function trimTrailingSeparators(value: string): string {
-  if (value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) {
-    return value.replace(/\\/g, "/");
-  }
-  return value.replace(/[\\/]+$/, "");
-}
-
-function normalizeForPathComparison(value: string): string {
-  const normalized = trimTrailingSeparators(value.replace(/\\/g, "/"));
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    return `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`;
-  }
-  return normalized;
-}
-
-function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
-  const candidate = normalizeForPathComparison(candidatePath);
-  const root = normalizeForPathComparison(rootPath);
-  if (!candidate || !root) {
-    return false;
-  }
-  if (root === "/") {
-    return candidate.startsWith("/");
-  }
-  if (candidate === root) {
-    return true;
-  }
-  return candidate.startsWith(`${root}/`);
 }
 
 function deriveFilesystemRootFromAbsolutePath(value: string): string | null {
@@ -51,10 +21,6 @@ function deriveFilesystemRootFromAbsolutePath(value: string): string | null {
   }
 
   return null;
-}
-
-function isHomeRelativePath(value: string): boolean {
-  return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
 }
 
 export function resolveFilePreviewReadTarget(input: {

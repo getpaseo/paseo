@@ -1024,3 +1024,27 @@ describe("home-tree scan cost", () => {
     },
   );
 });
+
+describe("absolute queries the search root cannot reach", () => {
+  it("drops a query naming a file outside the root, which is why file search re-roots it", async () => {
+    // The daemon only resolves absolute queries that stay inside the root it was handed, so a file
+    // named by a path outside the workspace reads as "no matches". The command center's file search
+    // answers that by re-rooting the query on the typed path's own directory.
+    const insideRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "paseo-inside-")));
+    const outsideRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "paseo-outside-")));
+    try {
+      writeFileSync(path.join(outsideRoot, "outside-notes.md"), "# outside\n");
+      await expect(
+        searchRelativeDirectoryEntries({
+          cwd: insideRoot,
+          query: path.join(outsideRoot, "outside-notes.md"),
+          includeFiles: true,
+          includeDirectories: false,
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      rmSync(insideRoot, { recursive: true, force: true });
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+});
