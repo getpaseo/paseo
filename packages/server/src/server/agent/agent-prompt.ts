@@ -338,16 +338,21 @@ export async function sendPromptToAgent(
   });
 }
 
+export interface StartCreatedAgentInitialPromptResult {
+  liveSnapshot: ManagedAgent;
+  observedRunStart: boolean;
+}
+
 export async function startCreatedAgentInitialPrompt(
   params: StartCreatedAgentInitialPromptParams,
-): Promise<ManagedAgent> {
+): Promise<StartCreatedAgentInitialPromptResult> {
   const currentSnapshot = params.agentManager.getAgent(params.agentId) ?? params.snapshot ?? null;
   if (!currentSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
 
   if (params.prompt === null) {
-    return currentSnapshot;
+    return { liveSnapshot: currentSnapshot, observedRunStart: false };
   }
 
   const dispatchResult = await startAgentRun(
@@ -360,15 +365,17 @@ export async function startCreatedAgentInitialPrompt(
     },
   );
 
+  let observedRunStart = false;
   if (dispatchResult.disposition === "turn_started") {
     await waitForAgentRunStartWithTimeout(params.agentManager, params.agentId);
+    observedRunStart = true;
   }
 
   const refreshedSnapshot = params.agentManager.getAgent(params.agentId) ?? params.snapshot ?? null;
   if (!refreshedSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
-  return refreshedSnapshot;
+  return { liveSnapshot: refreshedSnapshot, observedRunStart };
 }
 
 export interface SetupFinishNotificationParams {
@@ -377,6 +384,7 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
+  initialRunStartObserved?: boolean;
   logger: Logger;
 }
 
@@ -437,6 +445,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     childAgentId,
     callerAgentId,
     requireParentOwnership = false,
+    initialRunStartObserved = false,
     logger,
   } = params;
   let hasSeenRunning = false;
@@ -584,5 +593,13 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
     notifySafely("errored");
+  } else if (
+    childSnapshot.lifecycle === "idle" &&
+    initialRunStartObserved &&
+    childSnapshot.pendingPermissions.size === 0 &&
+    childSnapshot.attention.requiresAttention &&
+    childSnapshot.attention.attentionReason === "finished"
+  ) {
+    notifySafely("finished");
   }
 }

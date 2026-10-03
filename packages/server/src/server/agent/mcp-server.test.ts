@@ -3224,6 +3224,95 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("notifies the caller when a created child finishes before the finish watcher is armed", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-create-fast-child-finish-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    let releaseObservedStart!: () => void;
+    const observedStart = new Promise<void>((resolve) => {
+      releaseObservedStart = resolve;
+    });
+    let releaseCreate!: () => void;
+    const createMayContinue = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+
+    const waitForAgentRunStart = agentManager.waitForAgentRunStart.bind(agentManager);
+    agentManager.waitForAgentRunStart = async (agentId, options) => {
+      await waitForAgentRunStart(agentId, options);
+      releaseObservedStart();
+      await createMayContinue;
+    };
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const pendingCreate = invokeToolWithParsedInput(registeredTool(server, "create_agent"), {
+        ...subagentCurrentWorkspace(),
+        title: "Fast Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Finish immediately",
+      });
+
+      await observedStart;
+      expect(agentManager.listAgents()).toEqual([
+        expect.objectContaining({ id: parent.id, lifecycle: "idle" }),
+        expect.objectContaining({ lifecycle: "running" }),
+      ]);
+
+      const childSession = childClient.sessions[0];
+      expect(childSession).toBeDefined();
+      childSession!.finishTurn();
+
+      await vi.waitFor(() => {
+        expect(
+          agentManager
+            .listAgents()
+            .find((agent) => agent.id !== parent.id),
+        ).toEqual(
+          expect.objectContaining({
+            lifecycle: "idle",
+            attention: expect.objectContaining({
+              requiresAttention: true,
+              attentionReason: "finished",
+            }),
+          }),
+        );
+      });
+
+      releaseCreate();
+      const response = await pendingCreate;
+      const childId = z.object({ agentId: z.string() }).parse(response.structuredContent).agentId;
+
+      await vi.waitFor(() => {
+        expect(parentClient.sessions[0]?.prompts).toHaveLength(1);
+      });
+      expect(parentClient.sessions[0]?.prompts[0]).toContain(childId);
+      expect(parentClient.sessions[0]?.prompts[0]).toContain("finished");
+    } finally {
+      releaseCreate();
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
   it("creates detached caller agents without a parent label", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
