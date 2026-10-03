@@ -47,7 +47,7 @@ test("a new daemon browser tab opens once, even while its page is still loading"
   try {
     const warmup = await client.executeRemoteBrowserCommand({
       workspaceId: seeded.workspaceId,
-      command: { command: "new_tab", args: { url: "about:blank" } },
+      command: { command: "new_tab", args: {} },
     });
     if (!warmup.ok || warmup.result.command !== "new_tab") {
       throw new Error("The daemon did not initialize the browser context");
