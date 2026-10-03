@@ -367,6 +367,8 @@ export const ko: TranslationResources = {
       failedRetry: "받아쓰기에 실패했습니다. 다시 시도하려면 누르세요.",
     },
     question: {
+      sendToChat: "채팅으로 보내기",
+      chatDeliveryWarning: "답변이 채팅에 표시됩니다. 비밀번호나 비밀 정보를 입력하지 마세요.",
       submit: "제출",
       next: "다음",
       answerPlaceholder: "답변을 입력하세요...",

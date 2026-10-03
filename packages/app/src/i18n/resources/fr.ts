@@ -372,6 +372,9 @@ export const fr: TranslationResources = {
       failedRetry: "La dictée a échoué. Appuyez sur réessayer.",
     },
     question: {
+      sendToChat: "Envoyer dans le chat",
+      chatDeliveryWarning:
+        "Votre réponse apparaîtra dans le chat. Ne saisissez pas de mot de passe ni d'information secrète.",
       submit: "Soumettre",
       next: "Suivant",
       answerPlaceholder: "Tapez votre réponse...",

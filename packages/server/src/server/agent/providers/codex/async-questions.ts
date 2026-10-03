@@ -17,12 +17,20 @@ const ItemSchema = z.object({
 });
 const RecordSchema = z.object({
   item: ItemSchema,
-  resolution: z.union([z.literal("dismissed"), z.array(z.string())]).optional(),
+  resolution: z
+    .union([z.literal("dismissed"), z.literal("answered"), z.array(z.string())])
+    .optional(),
 });
 type QuestionRecord = z.infer<typeof RecordSchema>;
 
 function requestId(itemId: string): string {
   return `permission-${itemId}`;
+}
+
+function resolutionLabel(resolution: QuestionRecord["resolution"]): string {
+  if (resolution === "dismissed") return "\n\nDismissed";
+  if (resolution === undefined) return "";
+  return "\n\nAnswered in chat";
 }
 
 function toPermission(record: QuestionRecord): AgentPermissionRequest {
@@ -45,7 +53,6 @@ function toPermission(record: QuestionRecord): AgentPermissionRequest {
 }
 
 function toTimeline(record: QuestionRecord): ToolCallTimelineItem {
-  const answers = Array.isArray(record.resolution) ? record.resolution : undefined;
   return {
     type: "tool_call",
     callId: record.item.id,
@@ -57,12 +64,10 @@ function toTimeline(record: QuestionRecord): ToolCallTimelineItem {
       icon: "brain",
       text:
         record.item.questions
-          .map((question, index) =>
-            [question.title, answers ? answers[index] : (question.options ?? []).join(", ")]
-              .filter(Boolean)
-              .join("\n"),
+          .map((question) =>
+            [question.title, (question.options ?? []).join(", ")].filter(Boolean).join("\n"),
           )
-          .join("\n\n") + (record.resolution === "dismissed" ? "\n\nDismissed" : ""),
+          .join("\n\n") + resolutionLabel(record.resolution),
     },
   };
 }
@@ -79,7 +84,12 @@ export class CodexAsyncQuestions {
   constructor(saved: unknown) {
     const parsed = z.array(RecordSchema).safeParse(saved);
     if (parsed.success) {
-      for (const record of parsed.data) this.records.set(requestId(record.item.id), record);
+      for (const record of parsed.data) {
+        this.records.set(requestId(record.item.id), {
+          ...record,
+          resolution: Array.isArray(record.resolution) ? "answered" : record.resolution,
+        });
+      }
     }
   }
 
@@ -109,16 +119,16 @@ export class CodexAsyncQuestions {
     const record = this.records.get(id);
     if (!record || record.resolution !== undefined)
       throw new Error("Question is no longer pending");
-    let resolution: QuestionRecord["resolution"] = "dismissed";
+    let resolution: "dismissed" | "answered" = "dismissed";
     let prompt: string | undefined;
     if (response.behavior === "allow") {
       const answers = z.record(z.string(), z.string()).parse(response.updatedInput?.answers);
-      resolution = record.item.questions.map((_, index) => {
+      const values = record.item.questions.map((_, index) => {
         const answer = answers[`Question ${index + 1}`]?.trim();
         if (!answer) throw new Error(`Answer Question ${index + 1} before submitting`);
         return answer;
       });
-      const values = resolution;
+      resolution = "answered";
       prompt =
         "Answers to your questions:\n\n" +
         record.item.questions

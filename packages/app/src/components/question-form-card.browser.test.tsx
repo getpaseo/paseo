@@ -33,21 +33,29 @@ afterEach(() => {
   }
 });
 
-function buildPermission(question: Record<string, unknown>): PendingPermission {
+function buildPermission(
+  question: Record<string, unknown>,
+  provider: "claude" | "codex" = "claude",
+  name = "AskUserQuestion",
+): PendingPermission {
   return {
     key: "perm-1",
     agentId: "agent-1",
     request: {
       id: "perm-1",
-      provider: "claude",
-      name: "AskUserQuestion",
+      provider,
+      name,
       kind: "question",
       input: { questions: [question] },
     },
   };
 }
 
-function mountCard(question: Record<string, unknown>) {
+function mountCard(
+  question: Record<string, unknown>,
+  provider: "claude" | "codex" = "claude",
+  name = "AskUserQuestion",
+) {
   const onRespond = vi.fn<(response: AgentPermissionResponse) => void>();
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -55,7 +63,7 @@ function mountCard(question: Record<string, unknown>) {
   act(() =>
     root.render(
       <QuestionFormCard
-        permission={buildPermission(question)}
+        permission={buildPermission(question, provider, name)}
         onRespond={onRespond}
         isResponding={false}
       />,
@@ -83,7 +91,7 @@ function mountCard(question: Record<string, unknown>) {
     if (!response || response.behavior !== "allow") throw new Error("card did not submit");
     return (response.updatedInput as { answers: Record<string, string> }).answers;
   };
-  return { check, type, otherInput, submit, submittedAnswers };
+  return { check, type, otherInput, submit, submittedAnswers, view };
 }
 
 const multiSelectQuestion = {
@@ -145,5 +153,31 @@ describe("QuestionFormCard other answers", () => {
     expect(card.otherInput().value).toBe("");
     card.submit();
     expect(card.submittedAnswers()).toEqual({ Provider: "Codex" });
+  });
+});
+
+describe("Codex question delivery", () => {
+  it("labels an async answer as a chat message before submission", () => {
+    const card = mountCard(
+      { question: "What should I use?", header: "Question 1", options: [], isOther: true },
+      "codex",
+      "request_user_input_async",
+    );
+
+    expect(card.view.getByTestId("question-form-chat-delivery-warning").textContent).toContain(
+      "Your answer will appear in chat",
+    );
+    expect(card.view.getByRole("button", { name: "Send to chat" })).toBeTruthy();
+  });
+
+  it("masks a native Codex secret answer", () => {
+    const card = mountCard(
+      { question: "Password?", header: "Password", options: [], isSecret: true },
+      "codex",
+      "request_user_input",
+    );
+
+    expect(card.view.getByLabelText<HTMLInputElement>("Password?").type).toBe("password");
+    expect(card.view.queryByTestId("question-form-chat-delivery-warning")).toBeNull();
   });
 });

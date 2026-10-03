@@ -44,6 +44,20 @@ function getQuestionInputPlaceholder({
   );
 }
 
+function questionSubmitLabel(isChatDelivered: boolean, t: ReturnType<typeof useTranslation>["t"]) {
+  return t(isChatDelivered ? "message.question.sendToChat" : "message.question.submit");
+}
+
+function ChatDeliveryNotice({ visible }: { visible: boolean }) {
+  const { t } = useTranslation();
+  if (!visible) return null;
+  return (
+    <Text testID="question-form-chat-delivery-warning" style={styles.deliveryWarning}>
+      {t("message.question.chatDeliveryWarning")}
+    </Text>
+  );
+}
+
 interface QuestionOptionRowProps {
   qIndex: number;
   optIndex: number;
@@ -264,6 +278,7 @@ interface QuestionOtherInputProps {
   value: string;
   placeholder: string;
   isResponding: boolean;
+  isSecret: boolean;
   onChange: (qIndex: number, text: string) => void;
   onSubmit: () => void;
 }
@@ -275,6 +290,7 @@ function QuestionOtherInput({
   value,
   placeholder,
   isResponding,
+  isSecret,
   onChange,
   onSubmit,
 }: QuestionOtherInputProps) {
@@ -316,6 +332,7 @@ function QuestionOtherInput({
       onChangeText={handleChange}
       onSubmitEditing={onSubmit}
       editable={!isResponding}
+      secureTextEntry={isSecret}
       blurOnSubmit={false}
     />
   );
@@ -329,6 +346,9 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     () => parseQuestionFormQuestions(permission.request.input),
     [permission.request.input],
   );
+  const isChatDelivered =
+    permission.request.provider === "codex" &&
+    permission.request.name === "request_user_input_async";
 
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
@@ -471,7 +491,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
   const primaryDisabled = isResponding || (isLastQuestion ? !allAnswered : !activeQuestionAnswered);
   const primaryActionLabel = isLastQuestion
-    ? t("message.question.submit")
+    ? questionSubmitLabel(isChatDelivered, t)
     : t("message.question.next");
   const submitButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -548,6 +568,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
           {activeQuestion?.question}
         </Text>
       </View>
+      <ChatDeliveryNotice visible={isChatDelivered} />
 
       {activeQuestion ? (
         <View key={activeQuestion.question} style={styles.questionBlock}>
@@ -579,6 +600,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
                 otherPlaceholder: t("message.question.otherPlaceholder"),
               })}
               isResponding={isResponding}
+              isSecret={activeQuestion.isSecret}
               onChange={setOtherText}
               onSubmit={handlePrimaryAction}
             />
@@ -650,6 +672,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     lineHeight: 22,
+  },
+  deliveryWarning: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    paddingHorizontal: theme.spacing[3],
   },
   optionsWrap: {
     gap: theme.spacing[1],
