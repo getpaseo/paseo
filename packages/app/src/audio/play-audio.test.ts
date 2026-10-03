@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { createPlayAudio } from "./play-audio";
-import { playPcm16 } from "./pcm";
+import { playPcm16, parsePcmSampleRate, resampleToPcm16 } from "./pcm";
 import { playFile, type FilePlaybackStatus, type FilePlayer } from "./file-playback";
 
 const source = { base64: "UklGRg==", mimeType: "audio/wav" };
@@ -160,43 +160,43 @@ test("native cancellation releases playback and settles the caller", async () =>
   expect(h.removed()).toBe(true);
 });
 
-test.each([
-  "audio/pcm;rate=16000;bits=16",
-  "audio/PCM;rate=16000;bits=16",
-  'AUDIO/PCM; rate = "16000"; bits=16',
-  "audio/pcm; rate=16000; bits=16",
-])("plugin PCM parameters become a WAV without initializing capture: %s", async (type) => {
-  let received = "";
-  let wav: ArrayBuffer | undefined;
-  const play = createPlayAudio(
-    {
-      play: async (audio) => {
-        received = audio.type;
-        wav = await audio.arrayBuffer();
-        return 0;
-      },
-    },
-    new AbortController().signal,
-  );
-  await play({ base64: "AAAAAA==", mimeType: type });
-  expect(received).toBe("audio/wav");
-  expect(new DataView(wav!).getUint32(24, true)).toBe(16000);
-  expect(new Uint8Array(wav!).slice(44)).toEqual(new Uint8Array(4));
-});
-
-test.each(["rate=invalid", "rate=0", "bits=8", "channels=2"])(
-  "rejects unsupported PCM parameters before decoding: %s",
-  async (parameter) => {
+test.each(["audio/pcm;rate=16000;bits=16", "AUDIO/PCM; rate=16000"])(
+  "rejects raw PCM instead of initializing voice capture: %s",
+  async (mimeType) => {
     const play = createPlayAudio(
       {
         play: async () => {
-          throw new Error("Reached decoder");
+          throw new Error("Reached engine");
         },
       },
       new AbortController().signal,
     );
-    await expect(play({ base64: "AAAAAA==", mimeType: `audio/pcm; ${parameter}` })).rejects.toThrow(
-      "Invalid PCM16 audio",
+    await expect(play({ base64: "AAAAAA==", mimeType })).rejects.toThrow(
+      "Pass an audio file, such as WAV or MP3",
     );
   },
 );
+
+// Voice capture and browser dictation use this same PCM boundary.
+test("capture PCM preserves clipping, signed samples, and empty input", () => {
+  expect(resampleToPcm16(new Float32Array([-2, -1, -0.5, 0, 0.5, 1, 2]), 16000, 16000)).toEqual(
+    new Int16Array([-32768, -32768, -16384, 0, 16384, 32767, 32767]),
+  );
+  expect(resampleToPcm16(new Float32Array(), 48000, 16000)).toEqual(new Int16Array());
+});
+
+test("capture PCM resamples with interpolation and preserves the last sample", () => {
+  expect(resampleToPcm16(new Float32Array([-1, 0, 1]), 24000, 16000)).toEqual(
+    new Int16Array([-32768, 16384]),
+  );
+  expect(resampleToPcm16(new Float32Array([0, 1]), 8000, 16000)).toEqual(
+    new Int16Array([0, 16384, 32767, 32767]),
+  );
+});
+
+test("voice playback shares PCM sample-rate parsing", () => {
+  expect(parsePcmSampleRate("audio/pcm;rate=16000;bits=16")).toBe(16000);
+  expect(parsePcmSampleRate("audio/PCM;RATE=48000")).toBe(48000);
+  expect(parsePcmSampleRate("audio/pcm")).toBeNull();
+  expect(parsePcmSampleRate("audio/pcm;rate=0")).toBeNull();
+});

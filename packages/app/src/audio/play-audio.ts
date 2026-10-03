@@ -1,5 +1,4 @@
 import { Buffer } from "buffer";
-import { pcmToWav } from "./pcm";
 import type { AudioEngine } from "./audio-engine-types";
 
 /** RPC-friendly file input. No browser Blob, URL, or platform knowledge is needed. */
@@ -21,13 +20,11 @@ export function createPlayAudio(engine: Pick<AudioEngine, "play">, signal: Abort
     ) {
       throw new Error("Audio must have an audio MIME type, such as audio/wav");
     }
-    let bytes = Uint8Array.from(Buffer.from(source.base64, "base64"));
+    const bytes = Uint8Array.from(Buffer.from(source.base64, "base64"));
     const [mediaType, ...parameters] = source.mimeType.split(";");
-    let type = [mediaType.trim().toLowerCase(), ...parameters].join(";");
+    const type = [mediaType.trim().toLowerCase(), ...parameters].join(";");
     if (mediaType.trim().toLowerCase() === "audio/pcm") {
-      // Plugin playback must remain independent of microphone initialization.
-      bytes = pcmToWav(bytes, type);
-      type = "audio/wav";
+      throw new Error("Pass an audio file, such as WAV or MP3; raw PCM is not supported");
     }
     await engine.play(
       {

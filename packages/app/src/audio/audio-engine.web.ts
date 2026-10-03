@@ -1,3 +1,4 @@
+import { parsePcmSampleRate, resampleToPcm16 } from "./pcm";
 import { isElectronRuntime } from "@/desktop/host";
 import type { AudioEngine, AudioEngineCallbacks, AudioPlaybackSource } from "./audio-engine-types";
 
@@ -11,40 +12,6 @@ function getAudioContextCtor(): typeof AudioContext | null {
     webkitAudioContext?: typeof AudioContext;
   };
   return browserWindow.AudioContext ?? browserWindow.webkitAudioContext ?? null;
-}
-
-function floatToInt16(sample: number): number {
-  const clamped = Math.max(-1, Math.min(1, sample));
-  return clamped < 0 ? Math.round(clamped * 0x8000) : Math.round(clamped * 0x7fff);
-}
-
-function resampleToPcm16(input: Float32Array, inputRate: number, outputRate: number): Uint8Array {
-  if (input.length === 0) {
-    return new Uint8Array(0);
-  }
-
-  const ratio = inputRate / outputRate;
-  const outputLength = Math.max(1, Math.round(input.length / ratio));
-  const output = new Int16Array(outputLength);
-  for (let i = 0; i < outputLength; i += 1) {
-    const sourceIndex = i * ratio;
-    const i0 = Math.floor(sourceIndex);
-    const i1 = Math.min(input.length - 1, i0 + 1);
-    const frac = sourceIndex - i0;
-    const sample = input[i0] * (1 - frac) + input[i1] * frac;
-    output[i] = floatToInt16(sample);
-  }
-
-  return new Uint8Array(output.buffer, output.byteOffset, output.byteLength);
-}
-
-function parsePcmSampleRate(mimeType: string): number | null {
-  const match = /rate=(\d+)/i.exec(mimeType);
-  if (!match) {
-    return null;
-  }
-  const rate = Number(match[1]);
-  return Number.isFinite(rate) && rate > 0 ? rate : null;
 }
 
 function pcm16LeToAudioBuffer(
@@ -305,7 +272,8 @@ export function createAudioEngine(
             return;
           }
 
-          callbacks.onCaptureData(resampleToPcm16(input, context.sampleRate, 16000));
+          const pcm = resampleToPcm16(input, context.sampleRate, 16000);
+          callbacks.onCaptureData(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
         };
 
         source.connect(processor);

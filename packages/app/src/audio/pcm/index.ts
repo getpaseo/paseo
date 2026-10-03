@@ -1,4 +1,39 @@
-function parsePcmSampleRate(mimeType: string): number | null {
+const floatToInt16 = (sample: number): number => {
+  const clamped = Math.max(-1, Math.min(1, sample));
+  return clamped < 0 ? Math.round(clamped * 0x8000) : Math.round(clamped * 0x7fff);
+};
+
+export const resampleToPcm16 = (
+  input: Float32Array,
+  inputRate: number,
+  outputRate: number,
+): Int16Array => {
+  if (input.length === 0) {
+    return new Int16Array(0);
+  }
+  if (inputRate === outputRate) {
+    const out = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      out[i] = floatToInt16(input[i]);
+    }
+    return out;
+  }
+
+  const ratio = inputRate / outputRate;
+  const outputLength = Math.max(1, Math.round(input.length / ratio));
+  const out = new Int16Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const sourceIndex = i * ratio;
+    const i0 = Math.floor(sourceIndex);
+    const i1 = Math.min(input.length - 1, i0 + 1);
+    const frac = sourceIndex - i0;
+    const sample = input[i0] * (1 - frac) + input[i1] * frac;
+    out[i] = floatToInt16(sample);
+  }
+  return out;
+};
+
+export function parsePcmSampleRate(mimeType: string): number | null {
   const match = /rate=(\d+)/i.exec(mimeType);
   if (!match) {
     return null;
@@ -86,54 +121,4 @@ export function playPcm16(
       reject(error);
     }
   });
-}
-
-/** Wrap the voice protocol's mono PCM16 LE bytes for a file decoder. */
-export function pcmToWav(bytes: Uint8Array, mimeType: string): Uint8Array<ArrayBuffer> {
-  const parameters = new Map(
-    mimeType
-      .split(";")
-      .slice(1)
-      .map((parameter) => {
-        const separator = parameter.indexOf("=");
-        return [
-          parameter.slice(0, separator).trim().toLowerCase(),
-          parameter
-            .slice(separator + 1)
-            .trim()
-            .replace(/^"(.*)"$/, "$1"),
-        ];
-      }),
-  );
-  const sampleRate = Number(parameters.get("rate") ?? 24000);
-  if (
-    !Number.isSafeInteger(sampleRate) ||
-    sampleRate <= 0 ||
-    sampleRate > 192000 ||
-    bytes.length % 2 ||
-    Number(parameters.get("bits") ?? 16) !== 16 ||
-    Number(parameters.get("channels") ?? 1) !== 1
-  ) {
-    throw new Error("Invalid PCM16 audio");
-  }
-  const wav = new Uint8Array(44 + bytes.length);
-  const view = new DataView(wav.buffer);
-  const tag = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i++) wav[offset + i] = value.charCodeAt(i);
-  };
-  tag(0, "RIFF");
-  view.setUint32(4, 36 + bytes.length, true);
-  tag(8, "WAVE");
-  tag(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  tag(36, "data");
-  view.setUint32(40, bytes.length, true);
-  wav.set(bytes, 44);
-  return wav;
 }
