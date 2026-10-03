@@ -4,6 +4,12 @@ export interface CollapsedProjectsState {
   collapsedProjectKeys: Set<string>;
   collapsedWorkspaceGroupKeys: Set<string>;
   collapsedPinned: boolean;
+  /**
+   * Workspace tab folders are stored expanded-key-first, the inverse of everything else here,
+   * because their default is closed. Storing collapsed keys would mean writing a row for every
+   * workspace the user has never touched, and a workspace created later would arrive expanded.
+   */
+  expandedTabWorkspaceKeys: Set<string>;
 }
 
 export interface PersistedCollapsedProjects {
@@ -11,6 +17,7 @@ export interface PersistedCollapsedProjects {
   collapsedWorkspaceGroupKeys?: string[];
   collapsedStatusGroupKeys?: string[];
   collapsedPinned?: boolean;
+  expandedTabWorkspaceKeys?: string[];
 }
 
 export const PersistedCollapsedProjectsSchema: z.ZodType<PersistedCollapsedProjects> =
@@ -20,6 +27,7 @@ export const PersistedCollapsedProjectsSchema: z.ZodType<PersistedCollapsedProje
     // COMPAT(sidebarWorkspaceGroupCollapse): added in v0.4.0, remove after 2027-02-14.
     collapsedStatusGroupKeys: z.array(z.string()).optional(),
     collapsedPinned: z.boolean().optional(),
+    expandedTabWorkspaceKeys: z.array(z.string()).optional(),
   });
 
 export function togglePinnedCollapsed(state: CollapsedProjectsState): CollapsedProjectsState {
@@ -52,6 +60,31 @@ export function toggleWorkspaceGroupCollapsed(
   return { ...state, collapsedWorkspaceGroupKeys: next };
 }
 
+export function toggleWorkspaceTabsExpanded(
+  state: CollapsedProjectsState,
+  workspaceKey: string,
+): CollapsedProjectsState {
+  const next = new Set(state.expandedTabWorkspaceKeys);
+  if (next.has(workspaceKey)) {
+    next.delete(workspaceKey);
+  } else {
+    next.add(workspaceKey);
+  }
+  return { ...state, expandedTabWorkspaceKeys: next };
+}
+
+/** Returns the same state when nothing changes, so opening an already-open folder does not re-render. */
+export function setWorkspaceTabsExpanded(
+  state: CollapsedProjectsState,
+  workspaceKey: string,
+  expanded: boolean,
+): CollapsedProjectsState {
+  if (state.expandedTabWorkspaceKeys.has(workspaceKey) === expanded) {
+    return state;
+  }
+  return toggleWorkspaceTabsExpanded(state, workspaceKey);
+}
+
 export function setProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
@@ -70,11 +103,13 @@ export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
   collapsedWorkspaceGroupKeys: string[];
   collapsedPinned: boolean;
+  expandedTabWorkspaceKeys: string[];
 } {
   return {
     collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
     collapsedWorkspaceGroupKeys: Array.from(state.collapsedWorkspaceGroupKeys),
     collapsedPinned: state.collapsedPinned,
+    expandedTabWorkspaceKeys: Array.from(state.expandedTabWorkspaceKeys),
   };
 }
 
@@ -96,9 +131,13 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
       Array.from(current.collapsedWorkspaceGroupKeys),
   );
   const restoredPinned = persisted.collapsedPinned ?? current.collapsedPinned;
+  const restoredExpandedTabs = deserializeCollapsedKeys(
+    persisted.expandedTabWorkspaceKeys ?? Array.from(current.expandedTabWorkspaceKeys),
+  );
   if (
     areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
     areSetsEqual(current.collapsedWorkspaceGroupKeys, restoredWorkspaceGroups) &&
+    areSetsEqual(current.expandedTabWorkspaceKeys, restoredExpandedTabs) &&
     current.collapsedPinned === restoredPinned
   ) {
     return current;
@@ -108,6 +147,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     collapsedProjectKeys: restoredProjects,
     collapsedWorkspaceGroupKeys: restoredWorkspaceGroups,
     collapsedPinned: restoredPinned,
+    expandedTabWorkspaceKeys: restoredExpandedTabs,
   };
 }
 

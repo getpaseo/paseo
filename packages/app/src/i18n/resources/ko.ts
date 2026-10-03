@@ -1096,6 +1096,9 @@ export const ko: TranslationResources = {
   },
   sidebar: {
     display: {
+      tabRows: {
+        label: "탭",
+      },
       trigger: "표시 설정",
       heading: "표시",
       grouping: {
@@ -1209,6 +1212,11 @@ export const ko: TranslationResources = {
       },
     },
     workspace: {
+      tabs: {
+        open: "{{name}} 열기",
+        expand: "탭 표시",
+        collapse: "탭 숨기기",
+      },
       status: {
         serviceRunning: "서비스 {{name}} 실행 중",
         serviceUnhealthy: "서비스 {{name}} 비정상",

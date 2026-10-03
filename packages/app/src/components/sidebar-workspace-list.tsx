@@ -98,6 +98,11 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import {
+  useSidebarTabTierEnabled,
+  WorkspaceTabRows,
+  WorkspaceTabsLeading,
+} from "@/components/sidebar/workspace-tab-rows";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
@@ -1176,6 +1181,7 @@ function WorkspaceRowInner({
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                LeadingWrapper={WorkspaceTabsLeading}
               >
                 <WorkspaceRowRightGroup
                   workspace={workspace}
@@ -1597,6 +1603,7 @@ function ProjectBlock({
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(project.workspaces);
+  const tabTierEnabled = useSidebarTabTierEnabled();
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1630,27 +1637,44 @@ function ProjectBlock({
       },
     ) => {
       return (
-        <MemoWorkspaceRowItem
-          workspace={item}
-          workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
-          hostBadge={hostBadgeByServerId.get(item.serverId) ?? null}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={project.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(item.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(item.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          onWorkspacePress={onWorkspacePress}
-          drag={input?.drag}
-          isDragging={input?.isDragging}
-          dragHandleProps={input?.dragHandleProps}
-        />
+        <>
+          <MemoWorkspaceRowItem
+            workspace={item}
+            workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
+            hostBadge={hostBadgeByServerId.get(item.serverId) ?? null}
+            shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
+            showShortcutBadge={showShortcutBadges}
+            canCopyBranchName={project.projectKind === "git"}
+            canPin={supportsPinningByServerId.get(item.serverId) === true}
+            onToggleWorkspacePin={onToggleWorkspacePin}
+            isCreating={creatingWorkspaceIds.has(item.workspaceId)}
+            selectionEnabled={selectionEnabled}
+            activeWorkspaceSelection={activeWorkspaceSelection}
+            onWorkspacePress={onWorkspacePress}
+            drag={input?.drag}
+            isDragging={input?.isDragging}
+            dragHandleProps={input?.dragHandleProps}
+          />
+          {/* Outside the row, not inside it: the folder is a sibling list, and nesting it in the
+          row would put it inside the row's press target and its hover envelope. */}
+          <WorkspaceTabRows
+            workspaceKey={item.workspaceKey}
+            serverId={item.serverId}
+            workspaceId={item.workspaceId}
+            selected={isWorkspaceSelected({
+              selection: activeWorkspaceSelection,
+              serverId: item.serverId,
+              workspaceId: item.workspaceId,
+              enabled: selectionEnabled,
+            })}
+            enabled={tabTierEnabled}
+          />
+        </>
       );
     },
     [
       project.projectKind,
+      tabTierEnabled,
       onToggleWorkspacePin,
       supportsPinningByServerId,
       activeWorkspaceSelection,

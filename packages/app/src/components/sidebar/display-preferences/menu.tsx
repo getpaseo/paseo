@@ -21,6 +21,7 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  ListTree,
   Server,
   Settings2,
   Tag,
@@ -56,6 +57,7 @@ import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-dis
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
 
@@ -64,6 +66,7 @@ const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMute
 const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
+const ThemedListTree = withUnistyles(ListTree);
 const ThemedCircle = withUnistyles(Circle);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
@@ -164,6 +167,7 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
 export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
+  const isCompact = useIsCompactFormFactor();
   const hosts = useHosts();
   // `allProjects`, never `projects`: the model's `projects` is already filtered, so a picker fed
   // from it would lose the row that undoes the filter as soon as the filter narrowed to one.
@@ -318,6 +322,10 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           <MenuSubTrigger id="show" testID="sidebar-display-show">
             {t("sidebar.display.show.label")}
           </MenuSubTrigger>
+          {/* Desktop only — see `useSidebarTabTierEnabled`. Not on the Show page: that page decides which facts a row states about itself, and
+            this adds a tier of rows underneath it. A structural change does not belong in a
+            column of row facts you tick on and off. */}
+          {isCompact ? null : <TabRowsItem preferences={preferences} />}
           {showHostFilter ? (
             <>
               <MenuSeparator />
@@ -467,6 +475,29 @@ function LabelFilterItem({
       testID={testID}
     >
       {label}
+    </MenuItem>
+  );
+}
+
+/**
+ * Opening a workspace row as a folder of its tabs. It sits at the menu root rather than on the
+ * Show page because it adds rows rather than facts — see the comment at its call site.
+ */
+function TabRowsItem({ preferences }: { preferences: Preferences }): ReactElement {
+  const { t } = useTranslation();
+  const leading = useMemo(
+    () => <ThemedListTree size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />,
+    [],
+  );
+  return (
+    <MenuItem
+      selected={preferences.tabRows}
+      leading={leading}
+      closeOnSelect={false}
+      onSelect={preferences.toggleTabRows}
+      testID="sidebar-display-tab-rows"
+    >
+      {t("sidebar.display.tabRows.label")}
     </MenuItem>
   );
 }

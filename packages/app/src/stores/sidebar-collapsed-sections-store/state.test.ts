@@ -7,6 +7,8 @@ import {
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
+  setWorkspaceTabsExpanded,
+  toggleWorkspaceTabsExpanded,
 } from "@/stores/sidebar-collapsed-sections-store/state";
 
 function emptyState(): CollapsedProjectsState {
@@ -14,6 +16,7 @@ function emptyState(): CollapsedProjectsState {
     collapsedProjectKeys: new Set(),
     collapsedWorkspaceGroupKeys: new Set(),
     collapsedPinned: false,
+    expandedTabWorkspaceKeys: new Set(),
   };
 }
 
@@ -35,12 +38,14 @@ describe("sidebar collapsed projects transitions", () => {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedWorkspaceGroupKeys: new Set(["running"]),
       collapsedPinned: true,
+      expandedTabWorkspaceKeys: new Set(["srv:ws-1"]),
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedWorkspaceGroupKeys: ["running"],
       collapsedPinned: true,
+      expandedTabWorkspaceKeys: ["srv:ws-1"],
     });
   });
 
@@ -70,5 +75,28 @@ describe("sidebar collapsed projects transitions", () => {
     expect(mergePersistedCollapsedProjects({ collapsedProjectKeys: [] }, currentState)).toBe(
       currentState,
     );
+  });
+
+  it("toggles a workspace tab folder and restores it from storage", () => {
+    let state = toggleWorkspaceTabsExpanded(emptyState(), "srv:ws-1");
+    expect(Array.from(state.expandedTabWorkspaceKeys)).toEqual(["srv:ws-1"]);
+
+    state = toggleWorkspaceTabsExpanded(state, "srv:ws-1");
+    expect(Array.from(state.expandedTabWorkspaceKeys)).toEqual([]);
+
+    const restored = mergePersistedCollapsedProjects(
+      { expandedTabWorkspaceKeys: ["srv:ws-2"] },
+      emptyState(),
+    );
+    expect(Array.from(restored.expandedTabWorkspaceKeys)).toEqual(["srv:ws-2"]);
+  });
+
+  it("sets a workspace tab folder open without churning state that already matches", () => {
+    const opened = setWorkspaceTabsExpanded(emptyState(), "srv:ws-1", true);
+    expect(Array.from(opened.expandedTabWorkspaceKeys)).toEqual(["srv:ws-1"]);
+    expect(setWorkspaceTabsExpanded(opened, "srv:ws-1", true)).toBe(opened);
+
+    const closed = setWorkspaceTabsExpanded(opened, "srv:ws-1", false);
+    expect(Array.from(closed.expandedTabWorkspaceKeys)).toEqual([]);
   });
 });
