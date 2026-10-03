@@ -98,6 +98,19 @@ describe("tool call detail-level projection", () => {
     expect(result.groupsByHostId.size).toBe(0);
   });
 
+  it("keeps image reads visible between overview tool call groups", () => {
+    const before = toolCall("1", { type: "read", filePath: "/repo/notes.md" });
+    const image = toolCall("2", { type: "read", filePath: "/repo/figure.PNG" });
+    const after = toolCall("3", { type: "shell", command: "echo done" });
+
+    const result = project({ level: "overview", tail: [before, image, after] });
+
+    expect(result.tail).toEqual([before, image, after]);
+    expect(result.groupsByHostId.has(image.id)).toBe(false);
+    expect(result.groupsByHostId.has(before.id)).toBe(true);
+    expect(result.groupsByHostId.has(after.id)).toBe(true);
+  });
+
   it("keeps one stable overview host as a run grows", () => {
     const firstCall = toolCall("1", { type: "shell", command: "one" });
     const secondCall = toolCall("2", { type: "read", filePath: "/repo/a.ts" });

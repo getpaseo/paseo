@@ -795,6 +795,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
+              imageOccurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
+              client={client}
+              workspaceRoot={workspaceRoot}
+              serverId={resolvedServerId}
             />
           );
         }
@@ -814,7 +818,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [
+        agentId,
+        client,
+        context.cwd,
+        handleToolCallOpenFile,
+        resolvedServerId,
+        setInlineDetailsExpanded,
+        workspaceRoot,
+      ],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity

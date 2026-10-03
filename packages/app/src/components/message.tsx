@@ -92,6 +92,7 @@ import {
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
+import { isRasterImagePath } from "@/attachments/file-types";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -759,6 +760,8 @@ interface AssistantMessageProps {
   phase: MarkdownPhase;
 }
 
+const READ_IMAGE_THUMBNAIL_SIZE = 160;
+
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     paddingVertical: theme.spacing[3],
@@ -781,6 +784,15 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     minHeight: 160,
     marginHorizontal: -theme.spacing[1],
+  },
+  readImageThumbnail: {
+    width: READ_IMAGE_THUMBNAIL_SIZE,
+    height: READ_IMAGE_THUMBNAIL_SIZE,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    overflow: "hidden",
   },
   imageSurface: {
     width: "100%",
@@ -824,6 +836,7 @@ function AssistantMarkdownImage({
   client,
   workspaceRoot,
   serverId,
+  variant = "inline",
 }: {
   source: string;
   occurrenceKey: string;
@@ -832,6 +845,7 @@ function AssistantMarkdownImage({
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
+  variant?: "inline" | "thumbnail";
 }) {
   const { t } = useTranslation();
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -856,8 +870,11 @@ function AssistantMarkdownImage({
   const imageUri = binding?.uri ?? "";
   const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
   const frameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageFrame, containerStyle],
-    [containerStyle],
+    () =>
+      variant === "thumbnail"
+        ? assistantMessageStylesheet.readImageThumbnail
+        : [assistantMessageStylesheet.imageFrame, containerStyle],
+    [containerStyle, variant],
   );
   const imageSizeStyle = useMemo<ViewStyle>(() => {
     if (aspectRatio) {
@@ -866,8 +883,11 @@ function AssistantMarkdownImage({
     return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
   }, [aspectRatio]);
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
-    [imageSizeStyle],
+    () =>
+      variant === "thumbnail"
+        ? assistantMessageStylesheet.image
+        : [assistantMessageStylesheet.imageSurface, imageSizeStyle],
+    [imageSizeStyle, variant],
   );
   const lightboxSource = useMemo<ImageLightboxSource | null>(() => {
     if (!viewerOpen || !imageUri) return null;
@@ -880,12 +900,16 @@ function AssistantMarkdownImage({
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
-      assistantMessageStylesheet.imageFrame,
-      containerStyle,
-      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      ...(variant === "thumbnail"
+        ? [assistantMessageStylesheet.readImageThumbnail]
+        : [
+            assistantMessageStylesheet.imageFrame,
+            containerStyle,
+            { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+          ]),
       assistantMessageStylesheet.imageState,
     ],
-    [containerStyle],
+    [containerStyle, variant],
   );
 
   if (image.status === "failed") {
@@ -922,7 +946,7 @@ function AssistantMarkdownImage({
             ref={binding.onRef}
             source={imageSource}
             style={assistantMessageStylesheet.image}
-            resizeMode="contain"
+            resizeMode={variant === "thumbnail" ? "cover" : "contain"}
             onLoad={binding.onLoad}
             onError={binding.onError}
           />
@@ -1109,6 +1133,10 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   containerLastInSequence: {
     marginBottom: theme.spacing[4],
+  },
+  inlineContent: {
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: theme.spacing[2],
   },
   pressable: {
     borderRadius: theme.borderRadius.lg,
@@ -2325,6 +2353,7 @@ interface ExpandableBadgeProps {
   onOpenFile?: () => void;
   onDetailHoverChange?: (hovered: boolean) => void;
   renderDetails?: () => ReactNode;
+  renderInlineContent?: () => ReactNode;
   isLoading?: boolean;
   isError?: boolean;
   isLastInSequence?: boolean;
@@ -2688,6 +2717,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   onOpenFile,
   onDetailHoverChange,
   renderDetails,
+  renderInlineContent,
   isLoading = false,
   isError = false,
   isLastInSequence = false,
@@ -2702,6 +2732,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const isInteractive = Boolean(onToggle);
   const hasDetailContent = Boolean(renderDetails);
   const detailContent = hasDetailContent && isExpanded ? renderDetails?.() : null;
+  const inlineContent = renderInlineContent?.();
   const detailWrapperRef = useRef<View | null>(null);
 
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
@@ -2989,6 +3020,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
           />
         </View>
       </Pressable>
+      {inlineContent ? (
+        <View style={expandableBadgeStylesheet.inlineContent}>{inlineContent}</View>
+      ) : null}
       {detailContent ? (
         <Pressable
           ref={detailWrapperRef}
@@ -3019,6 +3053,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.onOpenFile !== next.onOpenFile) return false;
   if (previous.onDetailHoverChange !== next.onDetailHoverChange) return false;
   if (previous.renderDetails !== next.renderDetails) return false;
+  if (previous.renderInlineContent !== next.renderInlineContent) return false;
   return true;
 }
 
@@ -3039,6 +3074,18 @@ interface ToolCallProps {
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
+  imageOccurrenceKey?: string;
+  client?: DaemonClient | null;
+  workspaceRoot?: string;
+  serverId?: string;
+}
+
+function resolveReadImagePath(
+  status: ToolCallProps["status"],
+  detail: ToolCallDetail | undefined,
+): string | null {
+  if (status !== "completed" || detail?.type !== "read") return null;
+  return isRasterImagePath(detail.filePath) ? detail.filePath : null;
 }
 
 export const ToolCall = memo(function ToolCall({
@@ -3058,6 +3105,10 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
+  imageOccurrenceKey,
+  client,
+  workspaceRoot,
+  serverId,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
@@ -3078,6 +3129,7 @@ export const ToolCall = memo(function ToolCall({
     }
     return undefined;
   }, [detail, args, result]);
+  const imagePath = resolveReadImagePath(status, effectiveDetail);
 
   const presentation = useMemo(
     () =>
@@ -3174,6 +3226,22 @@ export const ToolCall = memo(function ToolCall({
     maxDetailHeight,
   ]);
 
+  const renderInlineImage = useCallback(() => {
+    if (!imagePath || !imageOccurrenceKey) return null;
+    return (
+      <AssistantMarkdownImage
+        source={imagePath}
+        occurrenceKey={imageOccurrenceKey}
+        alt={imagePath}
+        hasLeadingContent={false}
+        client={client}
+        workspaceRoot={workspaceRoot}
+        serverId={serverId}
+        variant="thumbnail"
+      />
+    );
+  }, [client, imageOccurrenceKey, imagePath, serverId, workspaceRoot]);
+
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
     return (
       <PlanCard
@@ -3195,6 +3263,7 @@ export const ToolCall = memo(function ToolCall({
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
       renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
+      renderInlineContent={renderInlineImage}
       isLoading={status === "running" || status === "executing"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
@@ -3219,5 +3288,9 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
+  if (previous.imageOccurrenceKey !== next.imageOccurrenceKey) return false;
+  if (previous.client !== next.client) return false;
+  if (previous.workspaceRoot !== next.workspaceRoot) return false;
+  if (previous.serverId !== next.serverId) return false;
   return true;
 }

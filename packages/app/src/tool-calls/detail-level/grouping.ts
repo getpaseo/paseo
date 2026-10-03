@@ -1,4 +1,5 @@
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import { isRasterImagePath } from "@/attachments/file-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
 
 export interface ToolCallDescriptor {
@@ -67,7 +68,11 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
     return false;
   }
   const descriptor = describeToolCall(item);
-  return descriptor.detail.type !== "plan" && descriptor.name.trim().toLowerCase() !== "speak";
+  return (
+    descriptor.detail.type !== "plan" &&
+    !(descriptor.detail.type === "read" && isRasterImagePath(descriptor.detail.filePath)) &&
+    descriptor.name.trim().toLowerCase() !== "speak"
+  );
 }
 
 function createRun(calls: readonly ToolCallItem[], isSealed: boolean): ToolCallRun {
