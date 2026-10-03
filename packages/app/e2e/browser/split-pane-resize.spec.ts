@@ -30,7 +30,13 @@ async function dragDivider(divider: Locator, deltaX: number): Promise<void> {
   await page.mouse.up();
 }
 
-async function expectDividerFollowsDrag(page: Page, index: number): Promise<void> {
+async function expectDividerFollowsDrag({
+  page,
+  index,
+}: {
+  page: Page;
+  index: number;
+}): Promise<void> {
   const divider = splitDividers(page).nth(index);
   const before = await dividerX(divider);
   await dragDivider(divider, DRAG_DISTANCE);
@@ -41,7 +47,13 @@ async function expectDividerFollowsDrag(page: Page, index: number): Promise<void
     .toBeLessThan(DRAG_DISTANCE * 0.75);
 }
 
-async function splitRight(page: Page, expectedDividers: number): Promise<void> {
+async function splitRight({
+  page,
+  expectedDividers,
+}: {
+  page: Page;
+  expectedDividers: number;
+}): Promise<void> {
   await runWorkspaceActionFromCommandCenter(page, "Split pane right");
   await expect(splitDividers(page)).toHaveCount(expectedDividers);
 }
@@ -54,12 +66,12 @@ test.describe("Split pane resize", () => {
       await gotoWorkspace(page, workspace.workspaceId);
       await waitForWorkspaceTabsVisible(page);
       await clickNewChat(page);
-      await splitRight(page, 1);
-      await splitRight(page, 2);
-      await splitRight(page, 3);
+      await splitRight({ page, expectedDividers: 1 });
+      await splitRight({ page, expectedDividers: 2 });
+      await splitRight({ page, expectedDividers: 3 });
 
       for (const index of [0, 1, 2]) {
-        await expectDividerFollowsDrag(page, index);
+        await expectDividerFollowsDrag({ page, index });
       }
     } finally {
       await workspace.cleanup();
@@ -73,14 +85,14 @@ test.describe("Split pane resize", () => {
       await gotoWorkspace(page, workspace.workspaceId);
       await waitForWorkspaceTabsVisible(page);
       await clickNewChat(page);
-      await splitRight(page, 1);
-      await expectDividerFollowsDrag(page, 0);
+      await splitRight({ page, expectedDividers: 1 });
+      await expectDividerFollowsDrag({ page, index: 0 });
 
-      await splitRight(page, 2);
-      await splitRight(page, 3);
+      await splitRight({ page, expectedDividers: 2 });
+      await splitRight({ page, expectedDividers: 3 });
 
       for (const index of [0, 1, 2]) {
-        await expectDividerFollowsDrag(page, index);
+        await expectDividerFollowsDrag({ page, index });
       }
     } finally {
       await workspace.cleanup();
