@@ -29,7 +29,7 @@ export function AgentUsage({
       {view.kind === "ready" ? (
         <AgentUsageCards serverId={serverId} reports={view.reports} refreshable={refreshable} />
       ) : (
-        <Text style={styles.message} testID="agent-usage-message">
+        <Text style={styles.message}>
           {view.kind === "loading" ? usageCopy.loading : view.message}
         </Text>
       )}

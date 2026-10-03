@@ -61,11 +61,12 @@ export function ContextWindowSheet({
       <BottomSheetScrollView
         contentContainerStyle={scrollContentStyle}
         showsVerticalScrollIndicator={false}
-        testID="context-window-sheet"
       >
-        <SheetHeaderView header={header} onClose={onClose} />
-        {/* The inset sits on a View: a themed contentContainerStyle resolves to nothing on web. */}
-        <View style={styles.body}>{children}</View>
+        <View role="dialog" aria-label={header.title}>
+          <SheetHeaderView header={header} onClose={onClose} />
+          {/* The inset sits on a View: a themed contentContainerStyle resolves to nothing on web. */}
+          <View style={styles.body}>{children}</View>
+        </View>
       </BottomSheetScrollView>
     </ThemedBottomSheetModal>
   );
