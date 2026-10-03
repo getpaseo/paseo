@@ -2180,11 +2180,23 @@ export const en = {
             "When the agent is running, Enter steers the active turn. Command/Ctrl+Enter queues.",
           queue: "When the agent is running, Enter queues. Command/Ctrl+Enter submits.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "When the agent is running, {{modifier}}+Enter interrupts. Enter inserts a new line.",
+          steer:
+            "When the agent is running, {{modifier}}+Enter steers the active turn. Enter inserts a new line.",
+          queue: "When the agent is running, {{modifier}}+Enter queues. Enter inserts a new line.",
+        },
         options: {
           interrupt: "Interrupt",
           steer: "Steer",
           queue: "Queue",
         },
+      },
+      commandEnterToSend: {
+        label: "Send with {{modifier}}+Enter",
+        description:
+          "Enter and Shift+Enter insert a new line. {{modifier}}+Enter sends the message.",
       },
       serviceUrls: {
         options: {

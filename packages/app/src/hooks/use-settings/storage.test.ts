@@ -198,6 +198,39 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("disables command enter to send by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.commandEnterToSend).toBe(false);
+    expect(DEFAULT_CLIENT_SETTINGS.commandEnterToSend).toBe(false);
+  });
+
+  it("loads an enabled command enter to send preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ commandEnterToSend: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.commandEnterToSend).toBe(true);
+  });
+
+  it("falls back to the disabled default when the stored command enter to send value is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ commandEnterToSend: "yes" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.commandEnterToSend).toBe(false);
+  });
+
   it("defaults sidebar navigation items to an empty preference list", async () => {
     const deps = makeDeps();
 

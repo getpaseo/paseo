@@ -2067,11 +2067,23 @@ export const ko: TranslationResources = {
           queue:
             "에이전트가 실행 중일 때 Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 제출합니다.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 중단합니다. Enter는 줄바꿈합니다.",
+          steer:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 현재 턴에 지시합니다. Enter는 줄바꿈합니다.",
+          queue:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 대기열에 추가합니다. Enter는 줄바꿈합니다.",
+        },
         options: {
           interrupt: "중단",
           steer: "지시",
           queue: "대기열",
         },
+      },
+      commandEnterToSend: {
+        label: "{{modifier}}+Enter로 보내기",
+        description: "Enter와 Shift+Enter는 줄바꿈합니다. {{modifier}}+Enter로 메시지를 보냅니다.",
       },
       serviceUrls: {
         options: {
