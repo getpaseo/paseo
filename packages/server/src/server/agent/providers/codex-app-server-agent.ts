@@ -4933,6 +4933,19 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.ensureThread();
     }
 
+    const targetTurnId = this.userMessageProviderTurnIds.get(input.messageId);
+    if (targetTurnId) {
+      const firstMessageId = this.userMessageTurnIds.find(
+        (messageId) => this.userMessageProviderTurnIds.get(messageId) === targetTurnId,
+      );
+      // Codex forks at turn boundaries; a steer cannot be removed independently.
+      if (firstMessageId !== input.messageId) {
+        throw new Error(
+          "Codex cannot rewind a message sent during a turn without removing earlier messages. Select the first message in the turn instead.",
+        );
+      }
+    }
+
     await revertCodexConversation({
       client: this.client,
       threadId: this.currentThreadId,
