@@ -29,7 +29,7 @@ const FENCE_LINE_RE = /^ {0,3}([`~]{3,})[^\n\r]*(?:\r?\n|$)/gm;
 const BACKTICK_RUN_RE = /`+/g;
 const SAFE_IMAGE_SRC_RE = /^(https?:\/\/|data:image\/(?:png|gif|jpe?g);base64,)/i;
 const SAFE_LINK_HREF_RE = /^(https?:\/\/|#(?:$|[\w-]))/i;
-const VOID_HTML_TAGS = new Set(["br", "img"]);
+const VOID_HTML_TAGS = new Set(["br", "img", "source"]);
 const MARKDOWN_TAG_WRAPPERS: Readonly<Record<string, readonly [string, string]>> = {
   b: ["**", "**"],
   del: ["~~", "~~"],
@@ -140,22 +140,32 @@ function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImagePars
     return image ? { part: image, end: start + 1 } : null;
   }
 
-  if (token.name !== "a") {
+  if (token.name !== "a" && token.name !== "picture" && !isHeadingTag(token)) {
     return null;
   }
 
-  const closeIndex = findMatchingClose(tokens, start, "a");
+  const closeIndex = findMatchingClose(tokens, start, token.name);
   if (closeIndex === null) {
     return null;
   }
 
-  const image = getSingleImageChild(tokens.slice(start + 1, closeIndex));
-  if (!image) {
+  // Consume image-only wrappers together so splitting at the image never leaves
+  // their opening tags in a separate markdown part. Pictures use their img fallback;
+  // source media queries and srcset selection belong to a browser's image loader.
+  const children = tokens.slice(start + 1, closeIndex).filter((child) => {
+    if (child.kind === "comment" || isWhitespaceText(child)) {
+      return false;
+    }
+    return !(token.name === "picture" && isOpenTag(child, "source"));
+  });
+  const image = parseInlineImageAt(children, 0);
+  if (!image || image.end !== children.length) {
     return null;
   }
 
-  const inlineImage = imageTokenToInlineImage(image, safeHref(token.attributes.href));
-  return inlineImage ? { part: inlineImage, end: closeIndex + 1 } : null;
+  const part =
+    token.name === "a" ? { ...image.part, href: safeHref(token.attributes.href) } : image.part;
+  return { part, end: closeIndex + 1 };
 }
 
 function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number): boolean {

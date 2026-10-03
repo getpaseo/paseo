@@ -113,6 +113,53 @@ describe("splitHtmlishMarkdown", () => {
     ]);
   });
 
+  it("renders a linked picture inside a heading without exposing its HTML", () => {
+    const source = [
+      '<h2><a href="https://example.com/retrigger?id=73851569"><picture>',
+      '<source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.svg">',
+      '<source media="(prefers-color-scheme: light)" srcset="https://example.com/light.svg">',
+      '<img alt="Retrigger" src="https://example.com/default.svg" width="85" height="24">',
+      "</picture></a></h2>",
+      "",
+      "Confidence Score: 5/5",
+      "",
+      "<details><summary>Summary</summary>No outstanding findings.</details>",
+    ].join("\n");
+
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        alt: "Retrigger",
+        src: "https://example.com/default.svg",
+        href: "https://example.com/retrigger?id=73851569",
+        width: 85,
+        height: 24,
+      },
+      { kind: "markdown", text: "\n\nConfidence Score: 5/5\n\n" },
+      { kind: "details", summary: "Summary", body: "No outstanding findings." },
+    ]);
+  });
+
+  it.each([
+    ["", ""],
+    ["<h3>", "</h3>"],
+    ['<a href="javascript:alert(1)">', "</a>"],
+  ])("uses the picture fallback without activating unsafe links (%s)", (wrapper, closing) => {
+    const picture =
+      '<picture><source srcset="https://example.com/alternate.svg"/><img src="https://example.com/default.svg" alt="Image"></picture>';
+
+    expect(splitHtmlishMarkdown(`${wrapper}${picture}${closing}`)).toEqual([
+      { kind: "inlineImage", src: "https://example.com/default.svg", alt: "Image" },
+    ]);
+  });
+
+  it("keeps picture examples literal inside inline and fenced code", () => {
+    const picture =
+      '<picture><source srcset="https://example.com/alternate.svg"><img src="https://example.com/default.svg"></picture>';
+    const source = `Use \`${picture}\`\n\n\`\`\`html\n${picture}\n\`\`\``;
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
   it("preserves inline image parts inside details bodies", () => {
     expect(
       splitHtmlishMarkdown(
