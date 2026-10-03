@@ -177,15 +177,23 @@ function createNewlineLineReader(
   onLine: (line: string) => void,
 ): { close(): void } {
   const decoder = new StringDecoder("utf8");
-  let buffer = "";
+  // Text after the last "\n", kept as parts and joined once its line ends, so a large line
+  // arriving in many chunks is scanned and copied once instead of once per chunk.
+  let unterminated: string[] = [];
   const onData = (chunk: Buffer | string): void => {
-    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
-    let index = buffer.indexOf("\n");
+    const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
+    let lineStart = 0;
+    let index = text.indexOf("\n");
     while (index !== -1) {
-      const line = buffer.slice(0, index).replace(/\r$/, "");
-      buffer = buffer.slice(index + 1);
-      onLine(line);
-      index = buffer.indexOf("\n");
+      unterminated.push(text.slice(lineStart, index));
+      const line = unterminated.join("");
+      unterminated = [];
+      onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+      lineStart = index + 1;
+      index = text.indexOf("\n", lineStart);
+    }
+    if (lineStart < text.length) {
+      unterminated.push(text.slice(lineStart));
     }
   };
   input.on("data", onData);

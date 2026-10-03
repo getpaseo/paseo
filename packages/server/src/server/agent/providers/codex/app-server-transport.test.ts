@@ -41,6 +41,28 @@ describe("Codex app-server transport", () => {
     child.stdin.end();
   });
 
+  test("reads a multi-megabyte JSON message arriving in small chunks in linear time", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+
+    const request = client.request("thread/resume", {});
+    // A resumed long thread arrives as one large line, split into 64 KB stdout chunks.
+    const text = "x".repeat(32 * 1024 * 1024);
+    const bytes = Buffer.from(`{"id":1,"result":{"text":"${text}"}}\n`, "utf8");
+    const chunkSize = 64 * 1024;
+    const startedAt = performance.now();
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      child.stdout.write(bytes.subarray(offset, offset + chunkSize));
+    }
+
+    await expect(request).resolves.toEqual({ text });
+    // Rescanning the accumulated line on every chunk takes several seconds here.
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test("dispose rejects pending requests instead of leaving them hanging", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
