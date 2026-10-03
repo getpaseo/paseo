@@ -25,6 +25,7 @@ import {
   readPaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
 import { UnknownBranchError } from "../utils/worktree.js";
+import { resolveWorktreeCreationBaseBranch } from "../utils/checkout-git.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
 
@@ -136,6 +137,36 @@ function createGitRepoWithOriginMain(): { tempDir: string; repoDir: string; pase
   execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir, paseoHome };
+}
+
+// Local main is one commit behind origin/main, the shape of a checkout the user has not pulled.
+function createGitRepoWithStaleLocalMain(): {
+  tempDir: string;
+  repoDir: string;
+  paseoHome: string;
+  localMainSha: string;
+  originMainSha: string;
+} {
+  const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginMain();
+  const localMainSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
+    .toString()
+    .trim();
+  writeFileSync(path.join(repoDir, "README.md"), "pushed but not pulled\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "remote-only"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["push", "origin", "main"], { cwd: repoDir, stdio: "pipe" });
+  const originMainSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
+    .toString()
+    .trim();
+  execFileSync("git", ["reset", "--hard", localMainSha], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  return { tempDir, repoDir, paseoHome, localMainSha, originMainSha };
 }
 
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string; paseoHome: string } {
@@ -418,6 +449,49 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.created).toBe(true);
       expect(result.worktree.branchName).toBe("legacy-rpc");
       expect(existsSync(result.worktree.worktreePath)).toBe(true);
+    });
+
+    test("branches off origin main, not stale local main, when no base is given", async () => {
+      const { tempDir, repoDir, paseoHome, localMainSha, originMainSha } =
+        createGitRepoWithStaleLocalMain();
+      cleanupPaths.push(tempDir);
+      expect(localMainSha).not.toBe(originMainSha);
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "fresh-base",
+          paseoHome,
+          runSetup: false,
+        },
+        {
+          ...createCoreDeps(),
+          resolveDefaultBranch: async (repoRoot) => {
+            const base = await resolveWorktreeCreationBaseBranch(repoRoot);
+            if (!base) throw new Error("no default branch");
+            return base;
+          },
+        },
+      );
+
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "origin/main",
+        branchName: "fresh-base",
+      });
+      expect(result.worktree.comparisonBaseRef).toBe("refs/remotes/origin/main");
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: result.worktree.worktreePath,
+          stdio: "pipe",
+        })
+          .toString()
+          .trim(),
+      ).toBe(originMainSha);
+      expect(readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8")).toBe(
+        "pushed but not pulled\n",
+      );
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
     });
 
     test("creates branch-off worktrees from origin main without tracking origin main", async () => {
