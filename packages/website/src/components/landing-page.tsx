@@ -1,3 +1,4 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import * as React from "react";
 import {
   ArrowRight,
@@ -5,6 +6,7 @@ import {
   Bot,
   BookOpen,
   Braces,
+  Coffee,
   Compass,
   ExternalLink,
   Gem,
@@ -821,7 +823,15 @@ interface ExtensibleCardLink {
 
 const PLUGIN_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
   { href: "/docs/plugins", label: "Plugin documentation", icon: BookOpen },
-  { href: "/plugins", label: "Community plugins", icon: Blocks, accent: true },
+  PLUGINS_LINKED
+    ? { href: "/plugins", label: "Community plugins", icon: Blocks, accent: true }
+    : {
+        href: "https://paseo.cafe",
+        label: "Community plugins",
+        icon: Coffee,
+        external: true,
+        accent: true,
+      },
 ];
 
 const FORK_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [

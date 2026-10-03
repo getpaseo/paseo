@@ -68,6 +68,17 @@ describe("plugin registry", () => {
   it("offers a registry command and an exact explicit command", () => {
     expect(installCommand(plugin)).toBe("paseo plugin install acme/example");
     expect(pinnedInstallCommand(plugin)).toBe("paseo plugin install npm:paseo-example@1.2.3");
+    expect(
+      pinnedInstallCommand({
+        ...plugin,
+        artifact: {
+          kind: "git",
+          remote: "https://github.com/acme/plugins.git",
+          commit: "a".repeat(40),
+          pluginPath: "packages/example",
+        },
+      }),
+    ).toBe(`paseo plugin install github:acme/plugins:packages/example --ref ${"a".repeat(40)}`);
     expect(formatInstalls(1250)).toBe("1.3k");
   });
 });

@@ -1,3 +1,4 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import "~/styles.css";
 import { DiscordIcon, GitHubIcon } from "~/components/brand-icons";
 import { useStars } from "~/routes/__root";
@@ -23,12 +24,14 @@ export function SiteHeader() {
         >
           Docs
         </a>
-        <a
-          href="/plugins"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Plugins
-        </a>
+        {PLUGINS_LINKED && (
+          <a
+            href="/plugins"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Plugins
+          </a>
+        )}
         <a
           href="/changelog"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"

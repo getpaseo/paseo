@@ -275,6 +275,16 @@ describe("managed Git plugin sources", () => {
 describe("registry plugin sources", () => {
   it("installs a bare id from a private registry and polls its pin without install intent", async () => {
     const repository = await createRepository();
+    await mkdir(path.join(repository, "packages/example"), { recursive: true });
+    await rename(
+      path.join(repository, "paseo-plugin.json"),
+      path.join(repository, "packages/example/paseo-plugin.json"),
+    );
+    await rename(
+      path.join(repository, "index.server.ts"),
+      path.join(repository, "packages/example/index.server.ts"),
+    );
+    await commitAll(repository, "move plugin into monorepo");
     const revision = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
     const commit = revision.stdout.trim();
     const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-home-"));
@@ -299,7 +309,12 @@ describe("registry plugin sources", () => {
           categories: [],
           author: { github: "acme" },
           repository: { url: "https://github.com/acme/example" },
-          artifact: { kind: "git", remote: pathToFileURL(repository).href, commit },
+          artifact: {
+            kind: "git",
+            remote: pathToFileURL(repository).href,
+            commit,
+            pluginPath: "packages/example",
+          },
           screenshots: [],
           submittedAt: "2026-10-03",
           reviewedAt: "2026-10-03",
@@ -321,6 +336,9 @@ describe("registry plugin sources", () => {
       });
       let candidate = await sources.prepareInstall({ source: "acme/example" });
       candidate = await sources.place("managed-example", candidate);
+      expect(
+        JSON.parse(await readFile(path.join(candidate.directory, "paseo-plugin.json"), "utf8")).id,
+      ).toBe("managed-example");
       await sources.verifyCandidate("managed-example", candidate);
       sources.commit("managed-example", candidate.record);
       const preview = await sources.preview("managed-example", candidate.directory);
@@ -328,7 +346,7 @@ describe("registry plugin sources", () => {
       expect(preview.current?.identity).toEqual({
         kind: "git",
         remote: pathToFileURL(repository).href,
-        pluginPath: ".",
+        pluginPath: "packages/example",
         registry: { url, id: "acme/example" },
       });
       expect(requests).toEqual([
