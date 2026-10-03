@@ -843,7 +843,6 @@ export class MockLoadTestAgentSession implements AgentSession {
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
-    const assistantResponse = this.assistantResponses.shift() ?? this.assistantResponse;
     const steeringReplayShape = parseSteeringReplayShape(prompt);
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
@@ -852,8 +851,11 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
         this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
-      } else if (assistantResponse !== null) {
-        this.scheduleSettledAssistantTurn(turn, assistantResponse);
+      } else if (this.assistantResponses.length > 0 || this.assistantResponse !== null) {
+        this.scheduleSettledAssistantTurn(
+          turn,
+          (this.assistantResponses.shift() ?? this.assistantResponse)!,
+        );
       } else if (structuredBranchName) {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {

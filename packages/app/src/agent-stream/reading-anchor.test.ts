@@ -65,6 +65,19 @@ describe("reading anchor", () => {
     expect(anchor.getRowId()).toBe("new");
   });
 
+  it("retains the reader while the virtualizer initializes its mounted range", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(600, rows);
+    anchor.reconcile(600, [rows[2]!]);
+    expect(anchor.getRowId()).toBe("reading");
+    expect(
+      anchor.reconcile(
+        600,
+        rows.map((row) => ({ ...row, top: row.top + 2000 })),
+      ),
+    ).toBe(2600);
+  });
+
   it("releases the old reading position for explicit navigation", () => {
     const anchor = createReadingAnchor();
     anchor.reconcile(600, rows);

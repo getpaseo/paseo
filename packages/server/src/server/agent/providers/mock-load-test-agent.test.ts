@@ -456,6 +456,7 @@ describe("MockLoadTestAgentClient", () => {
       model: "e2e-fast-stream",
       featureValues: { mockAssistantResponses: ["First response", "![Second](second.png)"] },
     });
+    await session.run("Emit a synthetic turn failure.");
     expect((await session.run("First prompt")).finalText).toBe("First response");
     expect((await session.run("Second prompt")).finalText).toBe("![Second](second.png)");
   });

@@ -271,9 +271,16 @@ export async function reportScrollJumps(
   const jumps = frames.flatMap((current, index) => {
     const previous = frames[index - 1];
     if (!previous?.anchor) return [];
-    const before = previous.rows.find((row) => row.id === previous.anchor)!;
-    const after = current.rows.find((row) => row.id === previous.anchor);
-    if (!after) return [];
+    const currentRows = new Map(current.rows.map((row) => [row.id, row]));
+    const before = currentRows.has(previous.anchor)
+      ? previous.rows.find((row) => row.id === previous.anchor)!
+      : previous.rows
+          .filter((row) => currentRows.has(row.id))
+          .sort((left, right) => Math.abs(left.top - 8) - Math.abs(right.top - 8))[0];
+    if (!before) {
+      throw new Error(`No shared reading geometry between frames ${index - 1} and ${index}`);
+    }
+    const after = currentRows.get(before.id)!;
     const movement = after.top - before.top;
     const idle = current.at - current.lastWheelAt > 250;
     const recent = frames.findLast((frame) => frame.at <= previous.at - 100);

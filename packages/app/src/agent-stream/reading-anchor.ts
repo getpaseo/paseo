@@ -15,6 +15,9 @@ export function createReadingAnchor() {
     },
     reconcile(scrollTop: number, rows: readonly RowGeometry[], userScrolled = false): number {
       const previous = anchor && rows.find((row) => row.id === anchor?.id);
+      // The first virtualized commit can precede its mounted range. Keep the
+      // pinned reader until it mounts, rather than adopting an unrelated row.
+      if (anchor && !previous && !userScrolled) return scrollTop;
       const correctedTop = scrollTop + (previous && anchor ? previous.top - anchor.top : 0);
       // A prepend can expose the bottom of an estimated row above the reader.
       // Do not transfer ownership to it until the user moves the reading position.
