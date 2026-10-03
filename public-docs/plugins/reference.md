@@ -665,6 +665,7 @@ plans, and mode changes; requesting permission does not end the turn.
 
 Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
 closing an agent that is already closed does not emit another `agent.closed` event.
+During daemon shutdown, pending event hooks have up to five seconds to finish before plugins stop.
 `workspace.created` is not a setup barrier before agent startup.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
