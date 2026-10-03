@@ -1,6 +1,11 @@
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
 import { createImageSourceCacheKey } from "@/attachments/utils";
 
+export interface AssistantImageContext {
+  serverId?: string;
+  workspaceRoot?: string;
+}
+
 export interface AssistantImageMetadata {
   width: number;
   height: number;
@@ -66,11 +71,9 @@ function parseAssistantImageMarkdown(markdown: string): {
   };
 }
 
-function getAssistantImageMetadataKey(input: {
-  source: string;
-  workspaceRoot?: string;
-  serverId?: string;
-}): string | null {
+function getAssistantImageMetadataKey(
+  input: AssistantImageContext & { source: string },
+): string | null {
   const resolution = resolveAssistantImageSource({
     source: input.source,
     workspaceRoot: input.workspaceRoot,
@@ -89,11 +92,9 @@ function getAssistantImageMetadataKey(input: {
   return JSON.stringify(["file", input.serverId, resolution.cwd, resolution.path]);
 }
 
-export function getAssistantImageMetadata(input: {
-  source: string;
-  workspaceRoot?: string;
-  serverId?: string;
-}): AssistantImageMetadata | null {
+export function getAssistantImageMetadata(
+  input: AssistantImageContext & { source: string },
+): AssistantImageMetadata | null {
   const key = getAssistantImageMetadataKey(input);
   const metadata = key ? assistantImageMetadataCache.get(key) : undefined;
   if (!key || !metadata) {
@@ -104,11 +105,7 @@ export function getAssistantImageMetadata(input: {
 }
 
 export function setAssistantImageMetadata(
-  input: {
-    source: string;
-    workspaceRoot?: string;
-    serverId?: string;
-  },
+  input: AssistantImageContext & { source: string },
   dimensions: { width: number; height: number },
 ): AssistantImageMetadata | null {
   const { width, height } = dimensions;
@@ -158,6 +155,7 @@ export function extractAssistantImageSources(markdown: string): string[] {
 export function estimateAssistantMessageHeightFromCache(
   markdown: string,
   contentMaxWidth: number,
+  imageContext?: AssistantImageContext,
 ): number | null {
   const parsed = assistantImageParseCache.get(markdown) ?? parseAssistantImageMarkdown(markdown);
   if (parsed.sources.length === 0) {
@@ -166,7 +164,8 @@ export function estimateAssistantMessageHeightFromCache(
 
   const imageHeights = parsed.sources.map((source) => {
     const aspectRatio =
-      getAssistantImageMetadata({ source })?.aspectRatio ?? ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO;
+      getAssistantImageMetadata({ source, ...imageContext })?.aspectRatio ??
+      ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO;
     return Math.max(
       ASSISTANT_IMAGE_MIN_HEIGHT,
       Math.round((contentMaxWidth - ASSISTANT_IMAGE_INSET) / aspectRatio),

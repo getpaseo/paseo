@@ -149,6 +149,29 @@ describe("estimateStreamItemHeight", () => {
     expect(estimateStreamItemHeight(item, DEFAULT_CONTENT_MAX_WIDTH)).toBe(220);
   });
 
+  it("uses local image dimensions only from the row's server and workspace", () => {
+    clearAssistantImageMetadataCache();
+    const imageContext = { serverId: "server-one", workspaceRoot: "/workspace/one" };
+    setAssistantImageMetadata(
+      { source: "portrait.png", ...imageContext },
+      { width: 800, height: 1600 },
+    );
+    const item: StreamItem = {
+      kind: "assistant_message",
+      id: "local-image",
+      text: "![Portrait](portrait.png)",
+      timestamp: createTimestamp(2),
+    };
+
+    expect(estimateStreamItemHeight(item, 608, imageContext)).toBe(1264);
+    expect(
+      estimateStreamItemHeight(item, 608, { ...imageContext, workspaceRoot: "/workspace/two" }),
+    ).toBe(464);
+    expect(estimateStreamItemHeight(item, 608, { ...imageContext, serverId: "server-two" })).toBe(
+      464,
+    );
+  });
+
   it("uses cached assistant image metadata when available", () => {
     clearAssistantImageMetadataCache();
     setAssistantImageMetadata(
