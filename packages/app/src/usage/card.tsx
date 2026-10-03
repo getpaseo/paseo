@@ -47,11 +47,14 @@ export function UsageCard({
   serverId,
   entry,
   display,
+  pinnable,
   compact = false,
 }: {
   serverId: string;
   entry: UsageReportEntry;
   display: UsageDisplay;
+  /** Whether each window row pins the window to the sidebar. */
+  pinnable: boolean;
   compact?: boolean;
 }) {
   const isCompact = useIsCompactFormFactor();
@@ -111,7 +114,13 @@ export function UsageCard({
       {windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
           {windows.map((window) => (
-            <PinnableWindowBar key={window.id} entry={entry} window={window} display={display} />
+            <CardWindowBar
+              key={window.id}
+              entry={entry}
+              window={window}
+              display={display}
+              pinnable={pinnable}
+            />
           ))}
           {balances.map((balance) => (
             <UsageBalanceBar key={balance.id} balance={balance} />
@@ -158,14 +167,16 @@ export function UsageCard({
   );
 }
 
-function PinnableWindowBar({
+function CardWindowBar({
   entry,
   window,
   display,
+  pinnable,
 }: {
   entry: UsageReportEntry;
   window: UsageWindow;
   display: UsageDisplay;
+  pinnable: boolean;
 }) {
   const pin = useMemo(
     () => ({ sourceId: entry.sourceId, windowId: window.id }),
@@ -177,6 +188,7 @@ function PinnableWindowBar({
     <UsageWindowBar
       window={window}
       displayAs={display.displayAs}
+      pinnable={pinnable}
       pinned={display.isPinned(pin)}
       onTogglePin={toggle}
       pinLabel={`${usageCopy.pin} ${entry.sourceLabel} ${window.label}`}

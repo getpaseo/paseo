@@ -19,7 +19,7 @@ export function UsageList({
     <View style={styles.list}>
       {reports.map((entry) => (
         <View key={entry.id} style={settingsStyles.card}>
-          <UsageCard serverId={serverId} entry={entry} display={display} />
+          <UsageCard serverId={serverId} entry={entry} display={display} pinnable />
         </View>
       ))}
     </View>
