@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, test } from "../support/fixtures";
+import { expect, test as base } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import {
   type AgentUsageScript,
@@ -9,17 +9,30 @@ import {
   expiredLogin,
   gate,
   hoverContextWindowMeter,
+  type MockAgentSession,
   onWorkLogin,
-  openAgentWithContextWindow,
+  openAgent,
   pressContextWindowMeter,
   qaScreenshot,
   refreshUsageCard,
   reloadAgent,
   scriptAgentUsage,
+  seedAgentWithContextWindow,
   usageCard,
 } from "../support/helpers/context-window";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { claudeAndCodexReports, expectUnpinnableRows } from "../support/helpers/usage-sidebar-item";
+
+const test = base.extend<{ agent: MockAgentSession }>({
+  agent: async ({ page: _page }, provide) => {
+    const agent = await seedAgentWithContextWindow();
+    try {
+      await provide(agent);
+    } finally {
+      await agent.cleanup();
+    }
+  },
+});
 
 // Where the progress arc is painted, as its centroid relative to the ring's centre in pixels.
 // Reads the rendered pixels, so any rotation that does not reach the screen counts as none.
@@ -162,88 +175,81 @@ async function expectOnlyContextWindowWithoutUsage(
 }
 
 for (const theme of ["light", "dark"] as const) {
-  test(`the context window tooltip shows the agent's usage (${theme})`, async ({ page }) => {
+  test(`the context window tooltip shows the agent's usage (${theme})`, async ({ page, agent }) => {
     test.setTimeout(240_000);
     const [claude] = claudeAndCodexReports();
     const usage = await scriptAgentUsage(page);
     await page.emulateMedia({ colorScheme: theme });
     await page.setViewportSize(DESKTOP);
-    const session = await openAgentWithContextWindow(page);
+    await openAgent(page, agent);
     const shot: Shot = (state) => qaScreenshot(page, `tooltip-desktop-${theme}-${state}`);
 
-    try {
-      await test.step("reports stream in one card at a time, without Refresh", async () => {
-        const tooltip = await expectCardsToStreamIn(page, usage, hoverContextWindowMeter, shot);
-        // The tooltip cannot be pressed, so its cards have no Refresh.
-        await expectRefreshButtons(tooltip, 0);
-        await shot("ready");
-        expect(usage.agentRequests()).toEqual([session.agentId]);
-      });
+    await test.step("reports stream in one card at a time, without Refresh", async () => {
+      const tooltip = await expectCardsToStreamIn(page, usage, hoverContextWindowMeter, shot);
+      // The tooltip cannot be pressed, so its cards have no Refresh.
+      await expectRefreshButtons(tooltip, 0);
+      await shot("ready");
+      expect(usage.agentRequests()).toEqual([agent.agentId]);
+    });
 
-      await test.step("a report with a problem shows it on the card", async () => {
-        usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
-        await reloadAgent(page);
-        const tooltip = await hoverContextWindowMeter(page);
-        await expect(tooltip.getByText(LOGIN_EXPIRED)).toBeVisible();
-        await shot("problem");
-      });
+    await test.step("a report with a problem shows it on the card", async () => {
+      usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
+      await reloadAgent(page);
+      const tooltip = await hoverContextWindowMeter(page);
+      await expect(tooltip.getByText(LOGIN_EXPIRED)).toBeVisible();
+      await shot("problem");
+    });
 
-      await test.step("a failed request says so in a sentence", async () => {
-        await expectFailedRequestSentence(page, usage, hoverContextWindowMeter, shot);
-      });
+    await test.step("a failed request says so in a sentence", async () => {
+      await expectFailedRequestSentence(page, usage, hoverContextWindowMeter, shot);
+    });
 
-      await test.step("a host without usage reports shows only the context window", async () => {
-        await expectOnlyContextWindowWithoutUsage(page, usage, hoverContextWindowMeter, shot);
-        // One request per open that had usage; this one sends none.
-        expect(usage.agentRequests()).toHaveLength(3);
-      });
-    } finally {
-      await session.cleanup();
-    }
+    await test.step("a host without usage reports shows only the context window", async () => {
+      await expectOnlyContextWindowWithoutUsage(page, usage, hoverContextWindowMeter, shot);
+      // One request per open that had usage; this one sends none.
+      expect(usage.agentRequests()).toHaveLength(3);
+    });
   });
 
   test(`the context window sheet shows the agent's usage and refreshes it (${theme})`, async ({
     page,
+    agent,
   }) => {
     test.setTimeout(240_000);
     const [claude] = claudeAndCodexReports();
     const usage = await scriptAgentUsage(page);
     await page.emulateMedia({ colorScheme: theme });
     await page.setViewportSize(COMPACT);
-    const session = await openAgentWithContextWindow(page);
+    await openAgent(page, agent);
     const shot: Shot = (state) => qaScreenshot(page, `sheet-compact-${theme}-${state}`);
 
-    try {
-      await test.step("reports stream in one card at a time, each with Refresh", async () => {
-        const sheet = await expectCardsToStreamIn(page, usage, pressContextWindowMeter, shot);
-        await expectRefreshButtons(sheet, 2);
-        await shot("ready");
-        expect(usage.agentRequests()).toEqual([session.agentId]);
-      });
+    await test.step("reports stream in one card at a time, each with Refresh", async () => {
+      const sheet = await expectCardsToStreamIn(page, usage, pressContextWindowMeter, shot);
+      await expectRefreshButtons(sheet, 2);
+      await shot("ready");
+      expect(usage.agentRequests()).toEqual([agent.agentId]);
+    });
 
-      await test.step("Refresh replaces the card with the source's new report", async () => {
-        usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
-        const sheet = contextWindowSheet(page);
-        await refreshUsageCard(sheet, "Claude");
-        await expect(sheet.getByText(LOGIN_EXPIRED)).toBeVisible();
-        expect(usage.refreshedReports()).toEqual([["claude:work"]]);
-        await shot("problem");
-      });
+    await test.step("Refresh replaces the card with the source's new report", async () => {
+      usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
+      const sheet = contextWindowSheet(page);
+      await refreshUsageCard(sheet, "Claude");
+      await expect(sheet.getByText(LOGIN_EXPIRED)).toBeVisible();
+      expect(usage.refreshedReports()).toEqual([["claude:work"]]);
+      await shot("problem");
+    });
 
-      await test.step("Close dismisses the sheet", async () => {
-        await closeContextWindowSheet(page);
-      });
+    await test.step("Close dismisses the sheet", async () => {
+      await closeContextWindowSheet(page);
+    });
 
-      await test.step("a failed request says so in a sentence", async () => {
-        await expectFailedRequestSentence(page, usage, pressContextWindowMeter, shot);
-      });
+    await test.step("a failed request says so in a sentence", async () => {
+      await expectFailedRequestSentence(page, usage, pressContextWindowMeter, shot);
+    });
 
-      await test.step("a host without usage reports shows only the context window", async () => {
-        await expectOnlyContextWindowWithoutUsage(page, usage, pressContextWindowMeter, shot);
-        expect(usage.agentRequests()).toHaveLength(2);
-      });
-    } finally {
-      await session.cleanup();
-    }
+    await test.step("a host without usage reports shows only the context window", async () => {
+      await expectOnlyContextWindowWithoutUsage(page, usage, pressContextWindowMeter, shot);
+      expect(usage.agentRequests()).toHaveLength(2);
+    });
   });
 }

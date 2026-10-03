@@ -9,18 +9,20 @@ import { claudeAndCodexReports } from "./usage-sidebar-item";
 // 32,000 of the mock's 128,000-token window.
 const METER_NAME = "Context window 25% used";
 
-type MockAgentSession = Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
+export type MockAgentSession = Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
 
-/** An agent a quarter into its context window, open in the browser. */
-export async function openAgentWithContextWindow(page: Page): Promise<MockAgentSession> {
-  const session = await seedMockAgentWorkspace({
+/** An agent a quarter into its context window. */
+export function seedAgentWithContextWindow(): Promise<MockAgentSession> {
+  return seedMockAgentWorkspace({
     repoPrefix: "context-window-usage-",
     title: "Context window usage e2e",
     initialPrompt: "emit 32000 byte file agent stream payload",
   });
+}
+
+export async function openAgent(page: Page, session: MockAgentSession): Promise<void> {
   await openAgentRoute(page, session);
   await expectComposerVisible(page);
-  return session;
 }
 
 export async function reloadAgent(page: Page): Promise<void> {
