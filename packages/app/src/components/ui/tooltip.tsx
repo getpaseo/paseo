@@ -284,11 +284,23 @@ export function Tooltip({
       return;
     }
     closeTimerRef.current = setTimeout(() => {
-      setIsOpen(false);
       closeTimerRef.current = null;
+      if (
+        isWeb &&
+        typeof document !== "undefined" &&
+        contentRef.current &&
+        (contentRef.current as unknown as HTMLElement).contains(document.activeElement)
+      ) {
+        return;
+      }
+      setIsOpen(false);
     }, 100);
   }, [cancelClose, interactive, setIsOpen]);
-  const focusContent = useCallback(() => focusFirstContentControl(contentRef.current), []);
+  const focusContent = useCallback(() => {
+    const focused = focusFirstContentControl(contentRef.current);
+    if (focused) cancelClose();
+    return focused;
+  }, [cancelClose]);
 
   useEffect(() => cancelClose, [cancelClose]);
 

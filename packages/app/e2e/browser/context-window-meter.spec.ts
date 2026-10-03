@@ -3,7 +3,10 @@ import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
-import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import {
+  installUsageReportsFixture,
+  type UsageReportsFixture,
+} from "../support/helpers/usage-reports";
 
 const USAGE_ICON =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
@@ -21,6 +24,10 @@ function contextUsageReport(): UsageReportEntry {
       windows: [{ id: "session", label: "Session", usedPct: 42 }],
     },
   };
+}
+
+function forcedRefreshRequests(usage: UsageReportsFixture) {
+  return usage.listRequests().filter((request) => request.forceRefresh);
 }
 
 // Where the progress arc is painted, as its centroid relative to the ring's centre in pixels.
@@ -116,12 +123,14 @@ test.describe("context window meter", () => {
       const refresh = tooltip.getByRole("button", { name: "Refresh Mock plan" });
       await page.keyboard.press("Tab");
       await expect(refresh).toBeFocused();
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(150); // Longer than the trigger's close grace period.
+      await expect(refresh).toBeFocused();
+      await expect(tooltip).toBeVisible();
       await page.keyboard.press("Enter");
-      await usage.waitForListRequests(2);
-      expect(usage.listRequests()[1]).toMatchObject({
-        forceRefresh: true,
-        reportIds: ["mock:account"],
-      });
+      await expect
+        .poll(() => forcedRefreshRequests(usage))
+        .toEqual([{ forceRefresh: true, reportIds: ["mock:account"] }]);
 
       const pin = tooltip.getByRole("checkbox", { name: /Pin Mock plan Session/ });
       await page.keyboard.press("Tab");
