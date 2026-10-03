@@ -1,7 +1,9 @@
-import { useCallback, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Combobox } from "@/components/ui/combobox";
+import { Button } from "@/components/ui/button";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import type { PluginExecutionPresetCatalog } from "@getpaseo/plugin/client";
 import type { InstalledExecutionMode } from "./execution";
 
@@ -32,12 +34,32 @@ export function ExecutionControls({
   const presetAnchor = useRef<View>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [presetOpen, setPresetOpen] = useState(false);
+  const isCompact = useIsCompactFormFactor();
   const openModes = useCallback(() => setModeOpen(true), []);
   const openPresets = useCallback(() => setPresetOpen(true), []);
+  const manageTeams = useCallback(() => {
+    setPresetOpen(false);
+    onManage?.();
+  }, [onManage]);
   const selectedMode = modes.find((mode) => mode.id === executionId);
   const selectedPreset = catalog?.presets.find((preset) => preset.id === presetId);
   const unavailable = presetProblem(error, catalog, selectedPreset);
   const presetTitle = formatPresetTitle(loading, selectedPreset?.title, presetId);
+  const presetFooter = useMemo(
+    () =>
+      isCompact && onManage ? (
+        <Button
+          variant="ghost"
+          onPress={manageTeams}
+          disabled={disabled}
+          accessibilityLabel="Manage teams"
+          style={styles.manageAction}
+        >
+          Manage teams
+        </Button>
+      ) : undefined,
+    [isCompact, onManage, manageTeams, disabled],
+  );
   return (
     <View style={styles.container}>
       <View ref={modeAnchor} collapsable={false}>
@@ -91,10 +113,11 @@ export function ExecutionControls({
             onOpenChange={setPresetOpen}
             title="Team preset"
             searchable
+            footer={presetFooter}
           />
         </View>
       ) : null}
-      {executionId && onManage ? (
+      {executionId && onManage && !isCompact ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Manage teams"
@@ -137,5 +160,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface1,
   },
   label: { color: theme.colors.foreground, fontSize: 13 },
+  manageAction: { minHeight: 48, marginHorizontal: 12, marginVertical: 8 },
   error: { color: theme.colors.foregroundMuted, fontSize: 12, maxWidth: 320 },
 }));
