@@ -48,6 +48,7 @@ export function UsageCard({
   entry,
   display,
   pinnable,
+  refreshable,
   compact = false,
 }: {
   serverId: string;
@@ -55,12 +56,14 @@ export function UsageCard({
   display: UsageDisplay;
   /** Whether each window row pins the window to the sidebar. */
   pinnable: boolean;
+  /** Whether the header has a Refresh button. Without one the freshness shows on the card. */
+  refreshable: boolean;
   compact?: boolean;
 }) {
   const isCompact = useIsCompactFormFactor();
   const { refresh, refreshState } = useReportRefresh(serverId, entry.id);
   // Where there is no hover the freshness is printed on the card; elsewhere the Refresh tooltip.
-  const showsFreshnessInline = isNative || isCompact;
+  const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
   const status = statusText(usage);
   const footer = entry.account.label ?? null;
@@ -96,13 +99,15 @@ export function UsageCard({
             <Text style={styles.statusLabel}>{status}</Text>
           </View>
         ) : null}
-        <UsageRefreshButton
-          sourceLabel={entry.sourceLabel}
-          fetchedAt={entry.fetchedAt}
-          refreshState={refreshState}
-          onRefresh={refresh}
-          compact={isCompact}
-        />
+        {refreshable ? (
+          <UsageRefreshButton
+            sourceLabel={entry.sourceLabel}
+            fetchedAt={entry.fetchedAt}
+            refreshState={refreshState}
+            onRefresh={refresh}
+            compact={isCompact}
+          />
+        ) : null}
       </View>
 
       {message ? (

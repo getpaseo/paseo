@@ -44,6 +44,7 @@ function AgentUsageCards({
       display={display}
       compact
       pinnable={false}
+      refreshable={false}
     />
   ));
 }
