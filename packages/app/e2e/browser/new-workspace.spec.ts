@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
@@ -10,7 +11,6 @@ import {
   closeBranchPicker,
   connectNewWorkspaceDaemonClient,
   createWorktreeViaDaemon,
-  delayBrowserAgentCreatedStatus,
   expectComposerGithubAttachmentPill,
   expectNewWorkspaceProjectSelected,
   expectPickerClosed,
@@ -504,13 +504,23 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("redirects to the optimistic draft tab before agent creation resolves", async ({ page }) => {
+  test("reveals setup while the initial agent waits for workspace readiness", async ({ page }) => {
     const serverId = getServerId();
 
     const tempRepo = await createTempGitRepo("new-workspace-optimistic-");
-    const agentCreatedDelay = await delayBrowserAgentCreatedStatus(page);
-
     try {
+      writeFileSync(
+        path.join(tempRepo.path, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            setup: 'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done',
+          },
+        }),
+      );
+      execFileSync("git", ["add", "paseo.json"], { cwd: tempRepo.path });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add setup gate"], {
+        cwd: tempRepo.path,
+      });
       const openedProject = await openProjectViaDaemon(client, tempRepo.path);
       localWorkspaceIds.add(openedProject.workspaceId);
 
@@ -531,6 +541,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
+      await selectWorkspaceIsolation(page, "worktree");
 
       const composer = page.getByRole("textbox", { name: "Message agent..." });
       await expect(composer).toBeVisible({ timeout: 30_000 });
@@ -541,9 +552,6 @@ test.describe("New workspace flow", () => {
         .getByRole("button", { name: "Create" });
       await expect(createButton).toBeVisible({ timeout: 30_000 });
       await createButton.click();
-
-      await agentCreatedDelay.waitForCreateRequest();
-      await agentCreatedDelay.waitForDelayedCreatedStatus();
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
@@ -567,18 +575,28 @@ test.describe("New workspace flow", () => {
         .filter({ visible: true });
       await expect(activeWorkspaceDeckEntry).toBeVisible({ timeout: 30_000 });
 
-      const draftTabs = activeWorkspaceDeckEntry.locator('[data-testid^="workspace-tab-draft_"]');
-      await expect(draftTabs).toHaveCount(1, { timeout: 30_000 });
-      await expect(
-        activeWorkspaceDeckEntry.locator('[data-testid^="workspace-tab-agent_"]'),
-      ).toHaveCount(0);
+      await expect(activeWorkspaceDeckEntry.getByTestId("workspace-setup-panel")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(activeWorkspaceDeckEntry.getByTestId("turn-working-status")).toHaveText(
+        "Waiting for workspace setup",
+      );
+      await expect(activeWorkspaceDeckEntry.getByTestId("user-message")).toContainText(
+        "Hello from e2e",
+      );
+      await expect(activeWorkspaceDeckEntry.getByTestId("assistant-message")).toHaveCount(0);
+      const sidebarRow = page.getByTestId(
+        `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`,
+      );
+      await expect(sidebarRow.getByTestId("workspace-status-indicator-running")).toBeVisible({
+        timeout: 30_000,
+      });
 
-      agentCreatedDelay.release();
-      await expect(
-        activeWorkspaceDeckEntry.locator('[data-testid^="workspace-tab-agent_"]'),
-      ).toHaveCount(1, { timeout: 30_000 });
+      writeFileSync(path.join(createdWorkspace.workspaceDirectory, "allow-setup"), "ok\n");
+      await expect(activeWorkspaceDeckEntry.getByTestId("assistant-message").first()).toBeVisible({
+        timeout: 30_000,
+      });
     } finally {
-      agentCreatedDelay.release();
       await tempRepo.cleanup();
     }
   });
