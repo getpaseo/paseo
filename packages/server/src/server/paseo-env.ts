@@ -10,12 +10,29 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   "ESBUILD_BINARY_PATH",
 ] as const;
 
+// Fallback locale injected when the caller provides none. Locale-sensitive
+// tools decide how to decode bytes from this. macOS `pbcopy` is the concrete
+// victim: with no UTF-8 locale it decodes stdin via CoreFoundation's default
+// text encoding (MacRoman when ~/.CFUserTextEncoding is 0x0:0x0), corrupting
+// multi-byte UTF-8 such as CJK into mojibake. en_US.UTF-8 ships on macOS and
+// virtually every Linux distro, so it is a safe default.
+const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
+
 export type PaseoNodeEnv = "development" | "production" | "test";
 export type ProcessEnvRecord = Record<string, string | undefined>;
 export type ExternalProcessEnv = NodeJS.ProcessEnv & Record<string, string>;
 
 function buildInternalProcessEnv<T extends ProcessEnvRecord>(baseEnv: T): T {
   return { ...baseEnv };
+}
+
+// Guarantee a UTF-8 default only when the caller did not set any locale
+// category itself, so a deliberate locale choice is never overridden.
+function ensureUtf8LocaleDefault(env: ProcessEnvRecord): void {
+  if (env.LANG || env.LC_ALL || env.LC_CTYPE) {
+    return;
+  }
+  env.LANG = DEFAULT_UTF8_LOCALE;
 }
 
 function buildExternalProcessEnv(
@@ -31,6 +48,7 @@ function buildExternalProcessEnv(
       delete sanitized[key];
     }
   }
+  ensureUtf8LocaleDefault(sanitized);
   return sanitized as ExternalProcessEnv;
 }
 
@@ -62,13 +80,12 @@ export function buildSelfNodeCommand(
   args: string[];
   env: ExternalProcessEnv;
 } {
-  const env = buildExternalProcessEnv(process.env, []);
-  Object.assign(env, { [ELECTRON_RUN_AS_NODE]: "1" }, envOverlay);
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) {
-      delete env[key];
-    }
-  }
+  // Route the overlay through buildExternalProcessEnv so the UTF-8 locale guard
+  // observes the caller's locale choice, keeping this consistent with
+  // createExternalProcessEnv. Electron node mode is forced afterward because the
+  // runtime-control scrub inside buildExternalProcessEnv strips it.
+  const env = buildExternalProcessEnv(process.env, envOverlay ? [envOverlay] : []);
+  env[ELECTRON_RUN_AS_NODE] = "1";
   return {
     command: process.execPath,
     args,
