@@ -78,6 +78,35 @@ describe("reading anchor", () => {
     ).toBe(2600);
   });
 
+  it("projects a prepend range without consuming the correction before layout commits", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(600, rows);
+    expect(anchor.project(440, { id: "reading", top: 2500 })).toBe(2440);
+    expect(anchor.project(440, { id: "reading", top: 2500 })).toBe(2440);
+    expect(
+      anchor.reconcile(
+        440,
+        rows.map((row) => ({ ...row, top: row.top + 2000 })),
+        true,
+      ),
+    ).toBe(2440);
+    expect(anchor.getRowId()).toBe("above");
+  });
+
+  it("repicks from user movement before applying a simultaneous layout correction", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(600, rows);
+    anchor.scroll(440);
+    expect(anchor.getRowId()).toBe("above");
+    expect(
+      anchor.reconcile(
+        440,
+        rows.map((row) => ({ ...row, top: row.top + 2000 })),
+      ),
+    ).toBe(2440);
+    expect(anchor.getRowId()).toBe("above");
+  });
+
   it("releases the old reading position for explicit navigation", () => {
     const anchor = createReadingAnchor();
     anchor.reconcile(600, rows);

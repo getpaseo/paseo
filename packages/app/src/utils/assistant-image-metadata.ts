@@ -13,6 +13,7 @@ const ASSISTANT_IMAGE_METADATA_CACHE_LIMIT = 500;
 const ASSISTANT_IMAGE_PARSE_CACHE_LIMIT = 500;
 
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((<[^>]+>|[^)\n]+)\)/g;
+export const ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO = 3 / 2;
 const ASSISTANT_IMAGE_INSET = 8;
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 const ASSISTANT_IMAGE_BLOCK_GAP = 24;
@@ -185,19 +186,14 @@ export function estimateAssistantMessageHeightFromCache(
     return null;
   }
 
-  const knownHeights = parsed.sources
-    .map((source) => getAssistantImageMetadata({ source }))
-    .filter((metadata): metadata is AssistantImageMetadata => metadata !== null)
-    .map((metadata) =>
-      Math.max(
-        ASSISTANT_IMAGE_MIN_HEIGHT,
-        Math.round((contentMaxWidth - ASSISTANT_IMAGE_INSET) / metadata.aspectRatio),
-      ),
+  const imageHeights = parsed.sources.map((source) => {
+    const aspectRatio =
+      getAssistantImageMetadata({ source })?.aspectRatio ?? ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO;
+    return Math.max(
+      ASSISTANT_IMAGE_MIN_HEIGHT,
+      Math.round((contentMaxWidth - ASSISTANT_IMAGE_INSET) / aspectRatio),
     );
-
-  if (knownHeights.length === 0) {
-    return null;
-  }
+  });
 
   const baseHeight = parsed.hasNonImageText
     ? ASSISTANT_MESSAGE_BASE_HEIGHT
@@ -205,8 +201,8 @@ export function estimateAssistantMessageHeightFromCache(
 
   const estimatedHeight =
     baseHeight +
-    knownHeights.reduce((sum, height) => sum + height, 0) +
-    ASSISTANT_IMAGE_BLOCK_GAP * knownHeights.length;
+    imageHeights.reduce((sum, height) => sum + height, 0) +
+    ASSISTANT_IMAGE_BLOCK_GAP * imageHeights.length;
 
   return Math.max(ASSISTANT_MESSAGE_MIN_HEIGHT, estimatedHeight);
 }

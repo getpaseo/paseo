@@ -42,6 +42,12 @@ describe("assistant image metadata", () => {
     });
   });
 
+  it("reserves the default image aspect ratio before metadata arrives", () => {
+    expect(
+      estimateAssistantMessageHeightFromCache("![Pending](https://example.com/pending.png)", 608),
+    ).toBe(464);
+  });
+
   it("estimates assistant message height from cached image metadata", () => {
     setAssistantImageMetadata(
       {
