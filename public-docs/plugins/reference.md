@@ -420,6 +420,19 @@ server.before("agent.create", ({ request }) => {
 The selected provider validates `providerOptions` and must support the configured MCP servers.
 Explicit Codex sandbox and approval options override its mode presets.
 
+### Check the creation caller
+
+Gate caller-sensitive creation hooks with `server.supportsBeforeHookOrigin?.("agent.create") === true`.
+The optional, immutable `context.origin` is separate from the editable request. Its `kind` is
+`agent`, `plugin`, `client`, `system`, or `unknown`. Agent-tool dispatch includes the bound `agentId`;
+plugin SDK dispatch includes the `pluginId` attached by the host to its IPC connection. Request
+labels, configuration, and client identifiers cannot set this origin.
+
+`client` describes a regular daemon session, not a verified human. This is an operation boundary,
+not a sandbox: full-access agents and trusted plugins retain host process and filesystem access.
+Older hosts do not advertise this capability. Reject unsupported workflows rather than assuming
+caller identity from labels.
+
 ### Inject environment variables on every session opening
 
 ```ts

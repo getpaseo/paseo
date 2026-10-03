@@ -338,6 +338,7 @@ type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
+  origin?: import("@getpaseo/plugin/server").PluginHookContext["origin"];
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -1479,11 +1480,14 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     if (this.pluginLifecycle && !config.internal) {
-      const request = await this.pluginLifecycle.before("agent.create", {
-        config,
-        env: options.env,
-      });
-      // Daemon-owned routing history is outside the plugin-editable request schema.
+      const request = await this.pluginLifecycle.before(
+        "agent.create",
+        {
+          config,
+          env: options.env,
+        },
+        options.origin ?? { kind: "unknown" },
+      );
       config = {
         ...request.config,
         internal: config.internal,

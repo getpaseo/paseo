@@ -52,6 +52,7 @@ export interface PluginLifecycle {
   before<Name extends keyof PluginBeforeRequests>(
     name: Name,
     request: PluginBeforeRequests[Name],
+    origin?: PluginHookContext["origin"],
   ): Promise<PluginBeforeRequests[Name]>;
 }
 
@@ -176,6 +177,8 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
   readonly supportsLifecycleEvent = (name: string): boolean =>
     (lifecycleEventNames as readonly string[]).includes(name);
 
+  readonly supportsBeforeHookOrigin = (name: string): boolean => name === "agent.create";
+
   readonly on: PluginLifecycleRegistration["on"] = (name, handler) => {
     if (!lifecycleEventNames.includes(name)) {
       throw new Error(`Unknown lifecycle event: ${name}`);
@@ -200,8 +203,14 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     name: string,
     input: unknown,
     paseo: PluginHookContext["paseo"],
+    origin?: PluginHookContext["origin"],
   ): Promise<unknown> {
     const controller = new AbortController();
+    const context = Object.freeze({
+      paseo,
+      signal: controller.signal,
+      ...(origin ? { origin: Object.freeze({ ...origin }) } : {}),
+    });
     this.active.set(id, controller);
     try {
       if (kind === "before") {
@@ -216,10 +225,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
         let request = validateBeforeRequest(hookName, input);
         for (const handler of this.transforms.get(name) ?? []) {
           controller.signal.throwIfAborted();
-          const result = await handler(
-            { request: structuredClone(request) },
-            { paseo, signal: controller.signal },
-          );
+          const result = await handler({ request: structuredClone(request) }, context);
           if (result !== undefined) {
             request = validateBeforeResult(hookName, request, result);
           }
@@ -229,7 +235,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
       for (const handler of this.events.get(name) ?? []) {
         controller.signal.throwIfAborted();
         try {
-          await handler(structuredClone(input), { paseo, signal: controller.signal });
+          await handler(structuredClone(input), context);
         } catch (error) {
           console.error(`Lifecycle hook ${name} failed`, error);
         }

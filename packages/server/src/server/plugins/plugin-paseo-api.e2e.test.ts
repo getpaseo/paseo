@@ -408,3 +408,69 @@ export default function contribute(server: PluginServerContext) {
     await daemon.close();
   }
 }, 60_000);
+
+test("plugin SDK creation uses attached IPC ownership instead of caller-supplied labels", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-origin-plugin-"));
+  const homeRoot = await mkdtemp(path.join(tmpdir(), "paseo-origin-home-"));
+  roots.push(directory, homeRoot);
+  await mkdir(path.join(homeRoot, ".paseo"), { recursive: true });
+  await writeFile(
+    path.join(homeRoot, ".paseo", "config.json"),
+    JSON.stringify({
+      agents: { skills: { selection: { mode: "custom", skills: [] } } },
+    }),
+  );
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "origin-check",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `
+import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+export default function contribute(server) {
+  const origins = [];
+  server.handle(defineRpc({name:"origins",input:z.object({}),output:z.array(z.unknown())}),()=>origins);
+  server.before("agent.create", ({ request }, context) => {
+    origins.push({origin:context.origin});
+    return request;
+  });
+  server.handle(defineRpc({ name: "create", input: z.object({ cwd: z.string() }), output: z.object({ id: z.string() }) }), async ({cwd}, {paseo}) => {
+    const agent = await paseo.agents.create({ cwd, config: {provider:"pi/test"}, labels: { origin:"agent", pluginId:"forged" } });
+    return { id: agent.id };
+  });
+  return () => {};
+}
+`,
+  );
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: homeRoot,
+    agentClients: { ...createTestAgentClients(), pi: createTestAgentClient("pi") },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.10.0",
+  });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await client.createAgent({
+      provider: "pi",
+      cwd: directory,
+      labels: { origin: "plugin", pluginId: "forged" },
+    });
+    await client.invokePluginRpc("origin-check", "create", { cwd: directory });
+    await expect(client.invokePluginRpc("origin-check", "origins", {})).resolves.toEqual([
+      { origin: { kind: "client" } },
+      { origin: { kind: "plugin", pluginId: "origin-check" } },
+    ]);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);

@@ -65,6 +65,7 @@ export type EnsureWorkspaceForCreate = (
 
 export interface CreateAgentFromSessionInput {
   kind: "session";
+  origin?: CreateAgentOptions["origin"];
   onAgentReady?: (agent: ManagedAgent) => Promise<void>;
   agentId?: string;
   config: AgentSessionConfig;
@@ -182,6 +183,12 @@ interface ResolvedCreateAgent {
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
 
+function createAgentOrigin(input: CreateAgentCommandInput): CreateAgentOptions["origin"] {
+  if (input.kind === "session") return input.origin ?? { kind: "unknown" };
+  if (input.callerAgentId) return { kind: "agent", agentId: input.callerAgentId };
+  return { kind: "system" };
+}
+
 export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
@@ -194,7 +201,10 @@ export async function createAgentCommand(
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
     input.kind === "session" ? input.agentId : undefined,
-    resolved.createOptions,
+    {
+      ...resolved.createOptions,
+      origin: createAgentOrigin(input),
+    },
   );
 
   resolved.setupContinuation?.startAfterAgentCreate({

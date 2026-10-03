@@ -102,9 +102,9 @@ export class PluginService {
     this.runtime.emit?.(name, event);
   };
 
-  readonly before: PluginLifecycle["before"] = async (name, request) => {
+  readonly before: PluginLifecycle["before"] = async (name, request, origin) => {
     if (this.runtime.before) {
-      return this.runtime.before(name, request);
+      return this.runtime.before(name, request, origin);
     }
     return request;
   };

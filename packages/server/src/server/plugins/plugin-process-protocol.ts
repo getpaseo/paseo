@@ -1,3 +1,4 @@
+import type { PluginHookContext } from "@getpaseo/plugin/server";
 import type {
   ProviderConnectRequest,
   ProviderCatalogOptions,
@@ -29,7 +30,14 @@ export type PluginProcessRequest =
       providerId: string;
       options: ProviderCatalogOptions;
     }
-  | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
+  | {
+      type: "hook";
+      requestId: string;
+      kind: "event" | "before";
+      name: string;
+      input: unknown;
+      origin?: PluginHookContext["origin"];
+    }
   | { type: "hook.cancel"; requestId: string }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
@@ -138,6 +146,14 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         kind: z.enum(["event", "before"]),
         name: z.string(),
         input: z.unknown(),
+        origin: z
+          .object({
+            kind: z.enum(["agent", "plugin", "client", "system", "unknown"]),
+            agentId: z.string().optional(),
+            pluginId: z.string().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),

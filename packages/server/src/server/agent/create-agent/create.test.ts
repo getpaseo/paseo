@@ -715,3 +715,44 @@ test("actual MCP initial prompts own provisional titles while explicit child rol
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
+
+test("MCP creation passes the actual caller origin independently of spoofed plugin labels", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-origin-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const origins: unknown[] = [];
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+    pluginLifecycle: {
+      emit() {},
+      async before(name, request, origin) {
+        if (name === "agent.create") origins.push(origin);
+        return request;
+      },
+    },
+  });
+  const dependencies = {
+    agentManager,
+    agentStorage: storage,
+    logger,
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+  try {
+    const parent = await agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-parent",
+    });
+    await createAgentCommand(dependencies, {
+      kind: "mcp",
+      provider: "codex/gpt-5.4",
+      title: "child",
+      background: true,
+      notifyOnFinish: false,
+      callerAgentId: parent.id,
+      labels: { pluginId: "trusted-factory", origin: "plugin" },
+    });
+    expect(origins).toEqual([{ kind: "unknown" }, { kind: "agent", agentId: parent.id }]);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});

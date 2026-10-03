@@ -482,6 +482,7 @@ interface PluginSessionConnection extends SessionConnectionBase {
 type SessionConnection = ReconnectableSessionConnection | PluginSessionConnection;
 
 interface SocketSessionOptions {
+  trustedPluginId?: string;
   clientId: string;
   appVersion: string | null;
   interactive: boolean;
@@ -1413,6 +1414,7 @@ export class VoiceAssistantWebSocketServer {
     let connection: SessionConnection | null = null;
 
     const session = this.createSocketSession({
+      trustedPluginId: lifecycle.kind === "ephemeral-plugin" ? lifecycle.pluginId : undefined,
       clientId,
       appVersion,
       interactive: params.interactive,
@@ -1489,6 +1491,7 @@ export class VoiceAssistantWebSocketServer {
       browserActivity: this.browserActivity,
       verifyHost: this.verifyHost,
       verifyEvidence: this.verifyEvidence,
+      trustedPluginId: options.trustedPluginId,
       clientId: options.clientId,
       appVersion: options.appVersion,
       interactive: options.interactive,

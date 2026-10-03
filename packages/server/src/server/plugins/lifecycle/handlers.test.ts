@@ -107,3 +107,28 @@ test("advertises actual lifecycle events without guessing unsupported names", ()
   hooks.on("agent.user_message_accepted", () => {});
   expect(hooks.catalog().events).toEqual(["agent.user_message_accepted"]);
 });
+
+test("creation origin is immutable and separate from the editable request", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  expect(hooks.supportsBeforeHookOrigin("agent.create")).toBe(true);
+  expect(hooks.supportsBeforeHookOrigin("agent.session_open")).toBe(false);
+  hooks.before("agent.create", ({ request }, context) => {
+    expect(context.origin).toEqual({ kind: "agent", agentId: "actual-caller" });
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.origin)).toBe(true);
+    expect(() => Reflect.set(context.origin!, "kind", "plugin")).not.toThrow();
+    expect(context.origin?.kind).toBe("agent");
+    return { ...request, env: { origin: "plugin" } };
+  });
+  const output = await hooks.invoke(
+    "origin",
+    "before",
+    "agent.create",
+    {
+      config: { provider: "codex", cwd: "/project" },
+    },
+    paseo,
+    { kind: "agent", agentId: "actual-caller" },
+  );
+  expect(output).toMatchObject({ env: { origin: "plugin" } });
+});

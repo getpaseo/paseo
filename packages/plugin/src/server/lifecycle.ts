@@ -11,6 +11,11 @@ import type { WorkspaceCreateRequest } from "@getpaseo/protocol/messages";
 export interface PluginHookContext {
   paseo: PaseoApi;
   signal: AbortSignal;
+  readonly origin?: Readonly<{
+    kind: "agent" | "plugin" | "client" | "system" | "unknown";
+    agentId?: string;
+    pluginId?: string;
+  }>;
 }
 
 export interface PluginHookWorkspace {
@@ -80,6 +85,7 @@ export interface PluginBeforeRequests {
 
 export interface PluginLifecycleRegistration {
   supportsLifecycleEvent(name: string): boolean;
+  supportsBeforeHookOrigin(name: string): boolean;
   on<Name extends keyof PluginLifecycleEvents>(
     name: Name,
     handler: (

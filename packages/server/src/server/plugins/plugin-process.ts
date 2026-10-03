@@ -251,6 +251,7 @@ function evaluateBundle(bundle: string): void {
     registerProvider,
     registerSettings,
     supportsLifecycleEvent: hooks.supportsLifecycleEvent,
+    supportsBeforeHookOrigin: hooks.supportsBeforeHookOrigin,
     on: hooks.on,
     before: hooks.before,
   });
@@ -457,14 +458,16 @@ function handleHookMessage(
       });
       return;
     }
-    void hooks.invoke(message.requestId, message.kind, message.name, message.input, paseo).then(
-      (output) => {
-        return send({ type: "result", requestId: message.requestId, output });
-      },
-      (error) => {
-        return send({ type: "error", requestId: message.requestId, error: describeError(error) });
-      },
-    );
+    void hooks
+      .invoke(message.requestId, message.kind, message.name, message.input, paseo, message.origin)
+      .then(
+        (output) => {
+          return send({ type: "result", requestId: message.requestId, output });
+        },
+        (error) => {
+          return send({ type: "error", requestId: message.requestId, error: describeError(error) });
+        },
+      );
     return;
   }
 }

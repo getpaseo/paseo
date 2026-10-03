@@ -475,6 +475,7 @@ const nodeSessionFileSystem: SessionFileSystem = {
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
+  trustedPluginId?: string;
   browserToolsBroker?: BrowserToolsBroker | null;
   browserActivity?: BrowserActivityHub | null;
   validateSystemOneApiKey?: typeof isTypeSafeApiKeyAccepted;
@@ -753,6 +754,7 @@ export class Session {
   private readonly browserTunnel: BrowserTunnelSession;
   private readonly browserScreencast: BrowserScreencastSession;
   private readonly clientId: string;
+  private readonly trustedPluginId: string | undefined;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
   private readonly interactive: boolean;
@@ -859,6 +861,7 @@ export class Session {
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
 
   constructor(options: SessionOptions) {
+    this.trustedPluginId = options.trustedPluginId;
     const {
       clientId,
       permissions,
@@ -5090,6 +5093,9 @@ export class Session {
         },
         {
           kind: "session",
+          origin: this.trustedPluginId
+            ? { kind: "plugin", pluginId: this.trustedPluginId }
+            : { kind: "client" },
           onAgentReady: async (agent) => {
             createdAgentId = agent.id;
             await onAgentReady?.(await this.buildAgentPayload(agent));

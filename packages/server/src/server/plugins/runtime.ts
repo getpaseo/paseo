@@ -1,4 +1,8 @@
-import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
+import type {
+  PluginBeforeRequests,
+  PluginHookContext,
+  PluginLifecycleEvents,
+} from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import { stat } from "node:fs/promises";
@@ -469,6 +473,7 @@ export class PluginRuntime {
   async before<Name extends keyof PluginBeforeRequests>(
     name: Name,
     input: PluginBeforeRequests[Name],
+    origin?: PluginHookContext["origin"],
   ): Promise<PluginBeforeRequests[Name]> {
     let request = validateBeforeRequest(name, input);
     const plugins = [...this.plugins.values()].sort((left, right) => {
@@ -485,6 +490,7 @@ export class PluginRuntime {
           kind: "before",
           name,
           input: request,
+          origin,
         });
         request = validateBeforeResult(name, request, output);
       } catch (error) {
