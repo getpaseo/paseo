@@ -1154,6 +1154,19 @@ export const ru: TranslationResources = {
     pinned: {
       title: "Закреплённые",
     },
+    folder: {
+      title: "Папка",
+      none: "Нет",
+      newFolder: "Новая папка",
+      name: "Название папки",
+      create: "Создать",
+      save: "Сохранить",
+      menu: "Действия с папкой",
+      rename: "Переименовать",
+      moveUp: "Переместить вверх",
+      moveDown: "Переместить вниз",
+      delete: "Удалить папку",
+    },
     host: {
       noHost: "Нет хоста",
       switchTitle: "Сменить хост",

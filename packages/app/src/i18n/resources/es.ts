@@ -1172,6 +1172,19 @@ export const es: TranslationResources = {
     pinned: {
       title: "Anclados",
     },
+    folder: {
+      title: "Carpeta",
+      none: "Ninguna",
+      newFolder: "Nueva carpeta",
+      name: "Nombre de la carpeta",
+      create: "Crear",
+      save: "Guardar",
+      menu: "Acciones de carpeta",
+      rename: "Renombrar",
+      moveUp: "Mover arriba",
+      moveDown: "Mover abajo",
+      delete: "Eliminar carpeta",
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",

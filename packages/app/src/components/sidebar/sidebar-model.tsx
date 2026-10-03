@@ -14,8 +14,9 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { useSidebarFoldersStore } from "@/stores/sidebar-folders-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
-import { buildSidebarProjection } from "./sidebar-projection";
+import { buildSidebarProjection, type SidebarProjectFolderGroups } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
 import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
@@ -40,6 +41,7 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceGroups: SidebarWorkspaceGroup[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  projectFolderGroups: SidebarProjectFolderGroups;
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
   shortcutModel: SidebarShortcutModel;
@@ -68,6 +70,16 @@ export function SidebarModelProvider({
   );
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const pinnedWorkspaceOrder = useSidebarOrderStore((state) => state.pinnedWorkspaceOrder);
+  const folders = useSidebarFoldersStore((state) => state.folders);
+  const projectAssignments = useSidebarFoldersStore((state) => state.projectAssignments);
+  const collapsedFolderIds = useSidebarFoldersStore((state) => state.collapsedFolderIds);
+  const reconcileFolderProjects = useSidebarFoldersStore((state) => state.reconcileProjects);
+  // Every project, before filters: an assignment only ever gains refs here, so a project that is
+  // filtered out or briefly missing loses nothing. Re-runs on store changes settle, since the
+  // reconcile is a no-op once every ref is recorded.
+  useEffect(() => {
+    reconcileFolderProjects(list.projects);
+  }, [projectAssignments, folders, list.projects, reconcileFolderProjects]);
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
@@ -150,8 +162,14 @@ export function SidebarModelProvider({
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      folders,
+      projectAssignments,
+      collapsedFolderIds,
     }),
     [
+      folders,
+      projectAssignments,
+      collapsedFolderIds,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,
@@ -176,6 +194,7 @@ export function SidebarModelProvider({
       workspaceGroups: projection.workspaceGroups,
       projectIconTargets: projection.projectIconTargets,
       pinnedGroups: projection.pinnedGroups,
+      projectFolderGroups: projection.projectFolderGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
       shortcutModel: projection.shortcutModel,

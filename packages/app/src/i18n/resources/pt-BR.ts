@@ -1162,6 +1162,19 @@ export const ptBR: TranslationResources = {
     pinned: {
       title: "Fixados",
     },
+    folder: {
+      title: "Pasta",
+      none: "Nenhuma",
+      newFolder: "Nova pasta",
+      name: "Nome da pasta",
+      create: "Criar",
+      save: "Salvar",
+      menu: "Ações da pasta",
+      rename: "Renomear",
+      moveUp: "Mover para cima",
+      moveDown: "Mover para baixo",
+      delete: "Excluir pasta",
+    },
     host: {
       noHost: "Nenhum host",
       switchTitle: "Trocar host",
