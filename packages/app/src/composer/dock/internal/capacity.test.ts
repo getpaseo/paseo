@@ -46,15 +46,26 @@ describe("composer viewport", () => {
     expect(582 - 24 - 308 - height).toBe(5);
   });
 
-  it("keeps a centered tablet form below the header after translation", () => {
+  it("keeps a centered tablet form below the header once the keyboard reaches it", () => {
+    const viewport = 1000;
+    const bottomInset = 80;
+    const keyboardShift = 300;
     const height = resolveComposerCapacity({
-      height: 1000,
-      bottomInset: 80,
-      keyboardShift: 300,
+      height: viewport,
+      bottomInset,
+      keyboardShift,
       centered: true,
     });
-    expect(height).toBe(310);
-    expect((1000 - 80 - height) / 2 - 300).toBe(5);
+    expect(height).toBe(695);
+    const restingTop = (viewport - bottomInset - height) / 2;
+    const bottomClearance = viewport - (restingTop + height);
+    expect(restingTop - Math.max(0, keyboardShift - bottomClearance)).toBe(5);
+  });
+
+  it("leaves a centered form room to edit on a short foldable viewport", () => {
+    expect(
+      resolveComposerCapacity({ height: 725, bottomInset: 72, keyboardShift: 313, centered: true }),
+    ).toBe(407);
   });
 
   it("uses the measured viewport before the first keyboard opening", () => {

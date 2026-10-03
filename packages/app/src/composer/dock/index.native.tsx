@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
 import { KeyboardTranslateView } from "@/keyboard/shift";
-import { createContext, useCallback, useContext, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type ViewProps, StyleSheet } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -79,6 +79,24 @@ function ComposerViewportContent({ style, ...props }: ViewProps) {
   );
 }
 
+/** The keyboard only needs to move a centered form once it reaches the form's resting bottom. */
+function useCenteredClearance() {
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [formBottom, setFormBottom] = useState(0);
+  const measureViewport = useCallback((event: LayoutChangeEvent) => {
+    setViewportHeight(event.nativeEvent.layout.height);
+  }, []);
+  const measureForm = useCallback((event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setFormBottom(y + height);
+  }, []);
+  return {
+    value: Math.max(0, viewportHeight - formBottom),
+    measureViewport,
+    measureForm,
+  };
+}
+
 interface ComposerDockProps {
   children: [ReactNode, ReactNode, ReactNode?];
   centered?: boolean;
@@ -91,6 +109,7 @@ export function ComposerDock({
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
   const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
+  const centeredClearance = useCenteredClearance();
   // Preserve the existing centered form's visual balance on tablets.
   const bottomInset = centered ? HEADER_INNER_HEIGHT + 24 : 0;
   if (centered) {
@@ -99,8 +118,13 @@ export function ComposerDock({
         style={[dockStyles.centeredViewport, { paddingBottom: bottomInset }]}
         bottomInset={bottomInset}
         centered
+        onLayout={centeredClearance.measureViewport}
       >
-        <KeyboardTranslateView style={[dockStyles.centered, { maxWidth: contentMaxWidth }]}>
+        <KeyboardTranslateView
+          style={[dockStyles.centered, { maxWidth: contentMaxWidth }]}
+          bottomClearance={centeredClearance.value}
+          onLayout={centeredClearance.measureForm}
+        >
           <ComposerViewportContent style={dockStyles.composer}>
             <ScrollView style={dockStyles.setup} keyboardShouldPersistTaps="handled">
               {content}
