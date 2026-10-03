@@ -63,6 +63,7 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
+import { shouldDisplayPiCustomMessage } from "./custom-message.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import {
@@ -2355,7 +2356,9 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.message.role === "custom") {
       const customMapping = this.extensionHost.mapCustomMessage(event.message);
       this.emitExtensionOutput(customMapping, turnId);
-      const text = getUserMessageText(event.message.content);
+      const text = shouldDisplayPiCustomMessage(event.message)
+        ? getUserMessageText(event.message.content)
+        : null;
       if (text) {
         this.emit({
           type: "timeline",

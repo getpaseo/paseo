@@ -140,6 +140,41 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("drops custom messages the harness marks display: false", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "senpi-task.usage",
+          content: "<omo-senpi-task>\nBackground task results are automatically delivered.",
+          display: false,
+        },
+      ]),
+    ).resolves.toEqual([]);
+  });
+
+  test("keeps custom messages the harness marks display: true", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "senpi-terminal:restore-digest",
+          content: "Terminal state after restart: nothing to restore.",
+          display: true,
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "Terminal state after restart: nothing to restore.",
+        },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(
