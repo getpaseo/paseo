@@ -38,6 +38,16 @@ export function formatThinkingOptionLabel(option: ControlLabelInput): string {
   const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
 
   if (compactId === "xhigh" || compactLabel === "xhigh") {
+    // Honor a provider-supplied label when it carries more than the bare id,
+    // e.g. "XHigh (56 | 8m)". Fall back to the localized string only for
+    // the bare forms (no label, "xhigh"/"XHigh", or "Extra high").
+    if (
+      option.label != null &&
+      compactLabel !== "xhigh" &&
+      compactLabel !== "extrahigh"
+    ) {
+      return formatControlLabel(option, true);
+    }
     return i18n.t("agentControls.thinking.extraHigh");
   }
 
