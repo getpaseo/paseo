@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonServerInfo } from "@/stores/session-store";
-import type { AudioEngine } from "@/voice/audio-engine-types";
+import type { AudioEngine } from "@/audio";
 import { createVoiceRuntime, type VoiceSessionAdapter } from "@/voice/voice-runtime";
 import { REALTIME_VOICE_VAD_CONFIG } from "@/voice/realtime-voice-config";
 

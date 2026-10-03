@@ -166,6 +166,28 @@ The scaffold's `tsconfig.json` omits the DOM library. Keep DOM globals out of cr
 components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
 `layout.platform` carries the same value as React Native's `Platform.OS` for rendering decisions.
 
+### Play audio
+
+Call `client.playAudio({ base64, mimeType }): Promise<void>` to play an audio file on the
+current client (browser, Electron, iOS, or Android). Pass the base64 file returned by your
+plugin RPC; no browser globals or platform checks are needed.
+
+```ts
+const audio = await client.rpc(renderSpeech, { text: "Your agent needs you" });
+// renderSpeech returns { base64: string, mimeType: "audio/wav" }.
+await client.playAudio(audio);
+```
+
+The promise resolves when playback finishes and rejects if the file is invalid, playback
+fails, or the plugin unloads. Calls share Paseo's voice playback queue and play in order.
+Unloading a plugin cancels its active and queued audio. Voice playback controls can also
+interrupt that shared queue. Playback does not request microphone permission.
+
+Use PCM WAV or MP3 for portable files. Other codecs depend on the client's decoder.
+Browsers require user interaction before allowing sound; handle rejection and offer a
+play button. The function plays on the device running the plugin client, not on the daemon,
+and does not promise delivery while the app is suspended or closed.
+
 ### External links and workspace browsers
 
 Use `ExternalLink` to open documentation outside Paseo:
