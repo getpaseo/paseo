@@ -1,15 +1,22 @@
 import { Pin } from "lucide-react-native";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usageCopy } from "./copy";
-import { formatDisplayPct, formatResetLabel } from "./format";
+import {
+  formatDisplayPct,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatRunsOutLabel,
+} from "./format";
 import { UsageMeter } from "./meter";
 import { displayPercent, usageWindowRowLabel } from "./model";
 import type { UsageDisplayAs } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 // Pinned rows carry the pinned surface; hovering an unpinned row previews it at half strength,
 // so a hover never reads as the selection. Pinned rows do not react to hover.
@@ -34,15 +41,19 @@ export function UsageWindowBar({
   pinLabel: string;
   pinTestID: string;
 }) {
+  const { i18n } = useTranslation();
   const shownPct = displayPercent(window, displayAs);
   const tone = windowTone(window);
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
+  const relativeTime = isAtRisk ? window.runsOutAt : window.resetsAt;
+  useRelativeTimeTick(relativeTime != null);
   const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
+    ? formatRunsOutLabel(window.runsOutAt)
     : formatResetLabel(window.resetsAt);
 
-  const value = shownPct != null ? formatDisplayPct(shownPct, displayAs) : "—";
+  const value =
+    shownPct != null ? formatDisplayPct(shownPct, displayAs, i18n.resolvedLanguage) : "—";
   const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);
 
   // The whole row pins the window to the sidebar Usage item. Pinned or not, it keeps the same
@@ -60,7 +71,7 @@ export function UsageWindowBar({
       {({ hovered }: { hovered?: boolean }) => (
         <WindowRowContent
           highlight={highlightStyle(pinned, Boolean(hovered))}
-          label={window.label}
+          label={formatProviderUsageLabel(window.id, window.label)}
           value={value}
           trailing={trailing}
           isAtRisk={isAtRisk}
@@ -101,7 +112,7 @@ function WindowRowContent({
             <Text style={styles.label} numberOfLines={1}>
               {label}
             </Text>
-            <Text style={styles.value}>
+            <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
               {value}
               {trailing ? (
                 <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
@@ -186,6 +197,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,

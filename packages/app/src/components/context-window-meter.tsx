@@ -3,13 +3,15 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatTokenCount } from "./context-window-meter.utils";
+import { ContextWindowUsageTooltip } from "@/usage/context-window-section";
+import { formatContextPercentage, formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
   maxTokens: number | null;
   usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
+  serverId?: string;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
@@ -95,22 +97,19 @@ export function ContextWindowMeter({
   usedTokens,
   totalCostUsd,
   showPercentage = false,
+  serverId,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
-  // No usage yet: reserve the footprint with a track-only ring while a session is
-  // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
+  // No context telemetry yet: reserve the meter footprint while it is pending.
   if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
+    if (!pending) return null;
     return (
       <View style={geometry.containerStyle}>
         <Svg
@@ -143,12 +142,12 @@ export function ContextWindowMeter({
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
 
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile interactive>
       <TooltipTrigger asChild triggerRefProp="ref">
         <Pressable
           style={containerStyle}
           testID="context-window-meter"
-          accessibilityRole="image"
+          accessibilityRole="button"
           accessibilityLabel={t("contextWindow.accessibility", {
             percentage: roundedPercentage,
           })}
@@ -183,7 +182,9 @@ export function ContextWindowMeter({
             />
           </Svg>
           {showPercentage ? (
-            <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+            <Text style={styles.percentageLabel}>
+              {formatContextPercentage(roundedPercentage, i18n.resolvedLanguage)}
+            </Text>
           ) : null}
         </Pressable>
       </TooltipTrigger>
@@ -204,6 +205,7 @@ export function ContextWindowMeter({
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
           ) : null}
+          {serverId ? <ContextWindowUsageTooltip serverId={serverId} /> : null}
         </View>
       </TooltipContent>
     </Tooltip>
@@ -240,6 +242,7 @@ const styles = StyleSheet.create((theme) => ({
   tooltipContent: {
     gap: theme.spacing[1.5],
     minWidth: 200,
+    maxWidth: 280,
   },
   tooltipTitle: {
     color: theme.colors.foreground,
