@@ -830,6 +830,7 @@ describe("usage_update session notifications", () => {
     sessionId: string | null;
     currentTurnUsage: Record<string, unknown> | undefined;
     activeForegroundTurnId: string | null;
+    connection: { prompt: (params: unknown) => Promise<PromptResponse> };
     handlePromptResponse(response: PromptResponse, turnId: string): void;
   }
 
@@ -880,27 +881,91 @@ describe("usage_update session notifications", () => {
     // The manager replaces agent.lastUsage on both usage_updated and
     // turn_completed, so a prompt response that maps only per-turn token counts
     // must not erase the context-window fields merged from usage_update.
+    // Driven through startTurn — the same interface callers use — and asserted
+    // on the delivered turn_completed event rather than private state.
     const session = createSession();
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
     const internals = asInternals<UsageUpdateInternals>(session);
     internals.sessionId = "session-1";
+    internals.connection = { prompt };
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
 
     await session.sessionUpdate({
       sessionId: "session-1",
       update: { sessionUpdate: "usage_update", used: 37_000, size: 262_144 } as SessionUpdate,
     });
 
-    internals.handlePromptResponse(
-      {
-        stopReason: "end_turn",
-        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-      } as unknown as PromptResponse,
-      "turn-1",
-    );
+    resolvePrompt({
+      stopReason: "end_turn",
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    } as PromptResponse);
+    await Promise.resolve();
+    await Promise.resolve();
 
-    expect(internals.currentTurnUsage).toMatchObject({
-      inputTokens: 10,
-      outputTokens: 5,
-      contextWindowUsedTokens: 37_000,
+    expect(events.find((event) => event.type === "turn_completed")).toMatchObject({
+      type: "turn_completed",
+      turnId,
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        contextWindowUsedTokens: 37_000,
+        contextWindowMaxTokens: 262_144,
+      },
+    });
+  });
+
+  test("per-turn token counts do not leak into the next turn's usage event", async () => {
+    // A usage_update that arrives early in a new turn (before its prompt
+    // response) must not relabel the previous turn's input/output counts with
+    // the new turn's id. The session-wide context-window bounds do carry over.
+    const session = createSession();
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const makePrompt = () =>
+      new Promise<PromptResponse>((resolve) => {
+        resolvePrompt = resolve;
+      });
+    const internals = asInternals<UsageUpdateInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt: vi.fn(() => makePrompt()) };
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("turn one");
+    resolvePrompt({
+      stopReason: "end_turn",
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+    } as PromptResponse);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await session.startTurn("turn two");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 40_000, size: 262_144 } as SessionUpdate,
+    });
+
+    const turnTwoEvents = events.filter(
+      (event) => event.type === "usage_updated" && "turnId" in event && event.turnId,
+    );
+    const last = turnTwoEvents[turnTwoEvents.length - 1] as unknown as {
+      usage: Record<string, unknown>;
+      turnId: string;
+    };
+    expect(last.usage).not.toHaveProperty("inputTokens");
+    expect(last.usage).not.toHaveProperty("outputTokens");
+    expect(last.usage).toMatchObject({
+      contextWindowUsedTokens: 40_000,
       contextWindowMaxTokens: 262_144,
     });
   });

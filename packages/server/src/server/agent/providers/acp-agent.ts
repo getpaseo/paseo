@@ -1889,6 +1889,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    // Per-turn token counts belong to the previous turn; a `usage_update` that
+    // arrives before this turn's prompt response must not relabel them with the
+    // new turn's id. The context-window bounds are session-wide, so they carry
+    // forward and keep the meter lit between turns.
+    if (this.currentTurnUsage) {
+      const {
+        inputTokens: _i,
+        cachedInputTokens: _c,
+        outputTokens: _o,
+        ...carried
+      } = this.currentTurnUsage;
+      this.currentTurnUsage =
+        carried.contextWindowMaxTokens || carried.contextWindowUsedTokens ? carried : undefined;
+    }
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
