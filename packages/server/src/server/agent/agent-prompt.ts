@@ -11,6 +11,7 @@ import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import { resolveClientMessageId } from "../client-message-id.js";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -356,7 +357,10 @@ export async function startCreatedAgentInitialPrompt(
     params.prompt,
     params.logger,
     {
-      runOptions: params.runOptions,
+      runOptions: {
+        ...params.runOptions,
+        clientMessageId: resolveClientMessageId(params.runOptions?.clientMessageId),
+      },
     },
   );
 
