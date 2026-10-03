@@ -16,6 +16,7 @@ import {
   expectNoUsageItem,
   expectOnUsageScreen,
   expectPinnedUsage,
+  expectUnpinnableRows,
   leaveUsageScreen,
   openCompactSidebar,
   pinRow,
@@ -93,18 +94,18 @@ test.describe("Usage item", () => {
     await gotoAppShell(page);
     const screen = page.getByTestId(`usage-host-${serverId}`);
 
-    await test.step("a fresh device shows default windows, which opens the Usage screen", async () => {
-      await expect(usageItem(page)).toBeVisible({ timeout: 30_000 });
-      await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
-      await qaScreenshot(page, "desktop-footer-defaults", { kind: "footer" });
+    await test.step("a fresh device shows default windows once the Usage item is on", async () => {
+      // The Usage item starts off on every layout; turning it on stores the choice.
+      await expectNoUsageItem(page);
       await openSidebarNavSettings(page);
+      const toggle = page
+        .getByTestId("sidebar-nav-section-footer")
+        .getByTestId("sidebar-nav-toggle-usage");
+      await expect(toggle).toHaveAttribute("aria-checked", "false");
+      await setFooterItemVisible(page, "usage", true);
       await qaScreenshot(page, "desktop-settings-sidebar-footer");
       await page.setViewportSize(COMPACT);
-      // Phones start with the Usage item off; turning it on stores the choice.
-      await expect(
-        page.getByTestId("sidebar-nav-section-footer").getByTestId("sidebar-nav-toggle-usage"),
-      ).toHaveAttribute("aria-checked", "false");
-      await setFooterItemVisible(page, "usage", true);
+      await expect(toggle).toHaveAttribute("aria-checked", "true");
       await qaScreenshot(page, "compact-settings-sidebar-footer");
       await gotoAppShell(page);
       await openCompactSidebar(page);
@@ -112,6 +113,8 @@ test.describe("Usage item", () => {
       await qaScreenshot(page, "compact-footer-defaults");
       await page.setViewportSize(WIDE);
       await gotoAppShell(page);
+      await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+      await qaScreenshot(page, "desktop-footer-defaults", { kind: "footer" });
       await usageItem(page).click();
       await expectOnUsageScreen(page);
       await qaScreenshot(page, "default-pins-card");
@@ -298,26 +301,57 @@ test("without summary data the footer drops the Usage item and keeps the Usage i
   await expectOnUsageScreen(page);
 });
 
-test("the Usage Settings show and hide the sidebar Usage item", async ({ page }) => {
+test("the Usage Settings switch turns on the sidebar summary and the pins with it", async ({
+  page,
+}) => {
+  const serverId = getServerId();
   await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
   await page.setViewportSize(WIDE);
   await gotoAppShell(page);
-  await expect(usageItem(page)).toBeVisible({ timeout: 30_000 });
-  await usageItem(page).click();
-  await expectOnUsageScreen(page);
-
-  await openUsageOptions(page);
+  const screen = page.getByTestId(`usage-host-${serverId}`);
+  const claude = screen.getByTestId("usage-report-claude:default");
   const toggle = page.getByTestId("usage-show-in-sidebar").getByRole("switch");
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
-  await toggle.click();
-  await expect(page.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);
 
-  await page.reload();
-  await expectOnUsageScreen(page);
-  await openUsageOptions(page);
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await toggle.click();
-  await expect(usageItem(page)).toBeVisible();
+  await test.step("off by default: no Usage item, and rows that do not pin", async () => {
+    await expect(page.locator('[data-testid="sidebar-usage-icon"]:visible')).toBeVisible({
+      timeout: 30_000,
+    });
+    await expectNoUsageItem(page);
+    await page.locator('[data-testid="sidebar-usage-icon"]:visible').click();
+    await expectOnUsageScreen(page);
+    await expect(claude.getByText("Session", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expectUnpinnableRows(claude);
+    await expectUnpinnableRows(screen.getByTestId("usage-report-codex:default"));
+    await openUsageOptions(page);
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await qaScreenshot(page, "usage-screen-summary-off");
+  });
+
+  await test.step("on: the Usage item and the pins appear", async () => {
+    await toggle.click();
+    await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+    await expect(pinRow(screen, "Claude", "Weekly")).toBeChecked();
+    await togglePin(screen, "Claude", "Weekly");
+    await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
+    await qaScreenshot(page, "usage-screen-summary-on");
+  });
+
+  await test.step("off then on again, after a reload, brings back the saved pins", async () => {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expectNoUsageItem(page);
+    await expectUnpinnableRows(claude);
+    await page.reload();
+    await expectOnUsageScreen(page);
+    await openUsageOptions(page);
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(claude.getByText("Session", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expectUnpinnableRows(claude);
+    await toggle.click();
+    await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
+    await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
+    await expect(pinRow(screen, "Claude", "Weekly")).not.toBeChecked();
+  });
 });
 
 test("released hosts supply source logos through the client conversion", async ({ page }) => {
@@ -325,6 +359,7 @@ test("released hosts supply source logos through the client conversion", async (
     lists: [() => claudeAndCodexReports()],
     providerUsageListOnly: true,
   });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
   await page.setViewportSize(WIDE);
   await gotoAppShell(page);
   await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);

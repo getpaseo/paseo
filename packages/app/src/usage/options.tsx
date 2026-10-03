@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import { View } from "react-native";
 import {
   SettingsCard,
@@ -7,10 +6,10 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
-import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { settingsStyles } from "@/styles/settings";
 import { usageCopy } from "./copy";
 import type { UsageDisplay } from "./display";
+import { useUsageInSidebar } from "./in-sidebar";
 import type { UsageDisplayAs } from "./preferences";
 
 const DISPLAY_AS_OPTIONS: SegmentedControlOption<UsageDisplayAs>[] = [
@@ -23,13 +22,7 @@ const DISPLAY_AS_OPTIONS: SegmentedControlOption<UsageDisplayAs>[] = [
  * switch as Settings > Sidebar) and whether percents read as used or remaining.
  */
 export function UsageOptions({ display }: { display: UsageDisplay }) {
-  const sidebarItems = useSidebarNavItems("footer");
-  const inSidebar = sidebarItems.items.some((item) => item.key === "usage" && item.visible);
-  const { setVisible } = sidebarItems;
-  const setInSidebar = useCallback(
-    (visible: boolean) => setVisible("usage", visible),
-    [setVisible],
-  );
+  const { inSidebar, setInSidebar } = useUsageInSidebar();
   return (
     <View style={settingsStyles.section}>
       <SettingsCard>

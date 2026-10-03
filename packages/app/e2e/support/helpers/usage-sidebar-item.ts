@@ -168,6 +168,19 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
   return scope.getByRole("checkbox", { name: new RegExp(`^Pin ${source} ${window}, `) });
 }
 
+/**
+ * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
+ * but buttons, so no row presses or highlights on hover.
+ */
+export async function expectUnpinnableRows(card: Locator): Promise<void> {
+  await expect(card.getByRole("checkbox")).toHaveCount(0);
+  await expect(card.locator('[data-testid^="usage-pin-"]')).toHaveCount(0);
+  const focusable = await card
+    .locator("[tabindex]")
+    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("role") !== "button").length);
+  expect(focusable).toBe(0);
+}
+
 export async function togglePin(scope: Locator, source: string, window: string) {
   const row = pinRow(scope, source, window);
   const pinned = await row.isChecked();
