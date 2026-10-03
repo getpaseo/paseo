@@ -1325,6 +1325,16 @@ export const fr: TranslationResources = {
       searchPlaceholder: "Rechercher des succursales et des PR",
       title: "Commencer à partir de",
     },
+    folderPicker: {
+      title: "Dossier",
+      chooseFolder: "Choisir un dossier...",
+      backToProjects: "Retour aux projets",
+      searchPlaceholder: "Rechercher des dossiers ou saisir un chemin",
+      searching: "Recherche...",
+      noMatchingFolders: "Aucun dossier correspondant.",
+      openPath: "Ouvrir ce chemin",
+      usePath: 'Utiliser "{{path}}"',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",

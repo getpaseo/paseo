@@ -1278,6 +1278,16 @@ export const zhCN: TranslationResources = {
       searchPlaceholder: "搜索分支和 PR",
       title: "起始位置",
     },
+    folderPicker: {
+      title: "文件夹",
+      chooseFolder: "选择文件夹...",
+      backToProjects: "返回项目",
+      searchPlaceholder: "搜索目录或输入路径",
+      searching: "正在搜索...",
+      noMatchingFolders: "没有匹配的文件夹。",
+      openPath: "打开此路径",
+      usePath: '使用 "{{path}}"',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",

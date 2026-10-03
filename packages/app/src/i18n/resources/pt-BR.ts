@@ -1315,6 +1315,16 @@ export const ptBR: TranslationResources = {
       searchPlaceholder: "Buscar branches e PRs",
       title: "Começar de",
     },
+    folderPicker: {
+      title: "Pasta",
+      chooseFolder: "Escolher pasta...",
+      backToProjects: "Voltar aos projetos",
+      searchPlaceholder: "Buscar diretórios ou digitar um caminho",
+      searching: "Buscando...",
+      noMatchingFolders: "Nenhuma pasta correspondente.",
+      openPath: "Abrir este caminho",
+      usePath: 'Usar "{{path}}"',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",

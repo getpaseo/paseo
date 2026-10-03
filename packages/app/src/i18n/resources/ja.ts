@@ -1303,6 +1303,16 @@ export const ja: TranslationResources = {
       searchPlaceholder: "ブランチとPRを検索",
       title: "開始点",
     },
+    folderPicker: {
+      title: "フォルダ",
+      chooseFolder: "フォルダを選択...",
+      backToProjects: "プロジェクトに戻る",
+      searchPlaceholder: "ディレクトリを検索するかパスを入力",
+      searching: "検索中...",
+      noMatchingFolders: "一致するフォルダがありません。",
+      openPath: "このパスを開く",
+      usePath: '"{{path}}" を使用',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",

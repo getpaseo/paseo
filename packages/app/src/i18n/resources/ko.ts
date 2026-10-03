@@ -1296,6 +1296,16 @@ export const ko: TranslationResources = {
       searchPlaceholder: "브랜치와 PR 검색",
       title: "시작 위치",
     },
+    folderPicker: {
+      title: "폴더",
+      chooseFolder: "폴더 선택...",
+      backToProjects: "프로젝트로 돌아가기",
+      searchPlaceholder: "디렉터리를 검색하거나 경로 입력",
+      searching: "검색 중...",
+      noMatchingFolders: "일치하는 폴더가 없습니다.",
+      openPath: "이 경로 열기",
+      usePath: '"{{path}}" 사용',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",

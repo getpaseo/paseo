@@ -1325,6 +1325,16 @@ export const es: TranslationResources = {
       searchPlaceholder: "Buscar sucursales y relaciones públicas",
       title: "Empezar desde",
     },
+    folderPicker: {
+      title: "Carpeta",
+      chooseFolder: "Elegir carpeta...",
+      backToProjects: "Volver a proyectos",
+      searchPlaceholder: "Buscar directorios o escribir una ruta",
+      searching: "Buscando...",
+      noMatchingFolders: "No hay carpetas coincidentes.",
+      openPath: "Abrir esta ruta",
+      usePath: 'Usar "{{path}}"',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",
