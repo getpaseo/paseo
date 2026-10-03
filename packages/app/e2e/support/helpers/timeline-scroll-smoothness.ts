@@ -474,49 +474,53 @@ export async function expectImageSpaceReserved(page: Page, testInfo: TestInfo): 
     else pending.add(send);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Image server did not listen");
-  const agent = await seedMockAgentWorkspace({
-    repoPrefix: "reserved-timeline-image-",
-    title: "Reserved image geometry",
-    featureValues: {
-      mockAssistantResponses: [
-        `Before the image.\n\n![Reserved image](http://127.0.0.1:${address.port}/image.svg)\n\nText below the image.`,
-      ],
-    },
-  });
   try {
-    await agent.client.sendAgentMessage(agent.agentId, "Show the delayed image");
-    await agent.client.waitForFinish(agent.agentId, 15_000);
-    await openAgentTimeline(page, agent);
-    await expectTimelinePromptVisible(page, "Show the delayed image");
-    const image = page.getByRole("img", { name: "Reserved image" }).first();
-    await expect(image).toBeVisible();
-    const before = await image.boundingBox();
-    await attachTimelineScreenshot(page, testInfo, "image-placeholder");
-    released = true;
-    for (const send of pending) send();
-    await expect
-      .poll(() =>
-        image.evaluate((element) => {
-          const img = element instanceof HTMLImageElement ? element : element.querySelector("img");
-          return img?.naturalWidth;
-        }),
-      )
-      .toBe(240);
-    await expect
-      .poll(async () => {
-        const box = await image.boundingBox();
-        return box ? Math.round((box.width / box.height) * 100) : 0;
-      })
-      .toBe(150);
-    const after = await image.boundingBox();
-    await attachTimelineScreenshot(page, testInfo, "image-loaded");
-    expect(before?.height, "reserve the final image height before the HTTP response").toBe(
-      after?.height,
-    );
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Image server did not listen");
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "reserved-timeline-image-",
+      title: "Reserved image geometry",
+      featureValues: {
+        mockAssistantResponses: [
+          `Before the image.\n\n![Reserved image](http://127.0.0.1:${address.port}/image.svg)\n\nText below the image.`,
+        ],
+      },
+    });
+    try {
+      await agent.client.sendAgentMessage(agent.agentId, "Show the delayed image");
+      await agent.client.waitForFinish(agent.agentId, 15_000);
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, "Show the delayed image");
+      const image = page.getByRole("img", { name: "Reserved image" }).first();
+      await expect(image).toBeVisible();
+      const before = await image.boundingBox();
+      await attachTimelineScreenshot(page, testInfo, "image-placeholder");
+      released = true;
+      for (const send of pending) send();
+      await expect
+        .poll(() =>
+          image.evaluate((element) => {
+            const img =
+              element instanceof HTMLImageElement ? element : element.querySelector("img");
+            return img?.naturalWidth;
+          }),
+        )
+        .toBe(240);
+      await expect
+        .poll(async () => {
+          const box = await image.boundingBox();
+          return box ? Math.round((box.width / box.height) * 100) : 0;
+        })
+        .toBe(150);
+      const after = await image.boundingBox();
+      await attachTimelineScreenshot(page, testInfo, "image-loaded");
+      expect(before?.height, "reserve the final image height before the HTTP response").toBe(
+        after?.height,
+      );
+    } finally {
+      await agent.cleanup();
+    }
   } finally {
-    await agent.cleanup();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

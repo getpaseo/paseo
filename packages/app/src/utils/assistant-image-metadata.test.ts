@@ -21,21 +21,40 @@ describe("assistant image metadata", () => {
     ).toEqual(["/tmp/paseo.png", "https://example.com/test.png"]);
   });
 
-  it("reuses cached metadata across canonical and raw source keys", () => {
+  it("keeps local image metadata scoped to its server and workspace", () => {
+    const image = {
+      source: "screenshot.png",
+      workspaceRoot: "/workspace/one",
+      serverId: "server-1",
+    };
+    setAssistantImageMetadata(image, { width: 1200, height: 800 });
+
+    expect(getAssistantImageMetadata({ ...image, workspaceRoot: "/workspace/two" })).toBeNull();
+    expect(getAssistantImageMetadata({ ...image, serverId: "server-2" })).toBeNull();
+    expect(getAssistantImageMetadata({ source: image.source })).toBeNull();
+    expect(getAssistantImageMetadata(image)).toEqual({
+      width: 1200,
+      height: 800,
+      aspectRatio: 1.5,
+    });
+
     setAssistantImageMetadata(
-      {
-        source: "/tmp/paseo-codex-screenshot.png",
-        workspaceRoot: "/workspaces/paseo",
-        serverId: "server-1",
-      },
+      { ...image, workspaceRoot: "/workspace/two" },
+      { width: 800, height: 1200 },
+    );
+    expect(getAssistantImageMetadata(image)?.aspectRatio).toBe(1.5);
+    expect(
+      getAssistantImageMetadata({ ...image, workspaceRoot: "/workspace/two" })?.aspectRatio,
+    ).toBe(2 / 3);
+  });
+
+  it("reuses direct image metadata without workspace context", () => {
+    const source = "https://example.com/shared.png";
+    setAssistantImageMetadata(
+      { source, workspaceRoot: "/workspace/one", serverId: "server-1" },
       { width: 1200, height: 800 },
     );
-
-    expect(
-      getAssistantImageMetadata({
-        source: "/tmp/paseo-codex-screenshot.png",
-      }),
-    ).toEqual({
+    expect(getAssistantImageMetadata({ source })).toEqual({
       width: 1200,
       height: 800,
       aspectRatio: 1.5,

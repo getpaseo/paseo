@@ -66,11 +66,7 @@ function parseAssistantImageMarkdown(markdown: string): {
   };
 }
 
-function createSourceAliasKey(source: string): string {
-  return `source:${createImageSourceCacheKey(source)}`;
-}
-
-function createResolutionKey(input: {
+function getAssistantImageMetadataKey(input: {
   source: string;
   workspaceRoot?: string;
   serverId?: string;
@@ -85,25 +81,12 @@ function createResolutionKey(input: {
   if (resolution.kind === "direct") {
     return `direct:${createImageSourceCacheKey(resolution.uri)}`;
   }
-  return `file:${input.serverId ?? "unknown-server"}:${resolution.cwd}:${resolution.path}`;
-}
-
-function getAssistantImageMetadataKeys(input: {
-  source: string;
-  workspaceRoot?: string;
-  serverId?: string;
-}): string[] {
-  const source = input.source.trim();
-  if (!source) {
-    return [];
+  // A file path identifies an image only within its daemon and workspace.
+  // Callers without that context must use the default aspect ratio.
+  if (!input.serverId) {
+    return null;
   }
-
-  const keys = [createSourceAliasKey(source)];
-  const resolutionKey = createResolutionKey(input);
-  if (resolutionKey) {
-    keys.unshift(resolutionKey);
-  }
-  return [...new Set(keys)];
+  return JSON.stringify(["file", input.serverId, resolution.cwd, resolution.path]);
 }
 
 export function getAssistantImageMetadata(input: {
@@ -111,19 +94,13 @@ export function getAssistantImageMetadata(input: {
   workspaceRoot?: string;
   serverId?: string;
 }): AssistantImageMetadata | null {
-  for (const key of getAssistantImageMetadataKeys(input)) {
-    const metadata = assistantImageMetadataCache.get(key);
-    if (metadata) {
-      touchCacheEntry(
-        assistantImageMetadataCache,
-        key,
-        metadata,
-        ASSISTANT_IMAGE_METADATA_CACHE_LIMIT,
-      );
-      return metadata;
-    }
+  const key = getAssistantImageMetadataKey(input);
+  const metadata = key ? assistantImageMetadataCache.get(key) : undefined;
+  if (!key || !metadata) {
+    return null;
   }
-  return null;
+  touchCacheEntry(assistantImageMetadataCache, key, metadata, ASSISTANT_IMAGE_METADATA_CACHE_LIMIT);
+  return metadata;
 }
 
 export function setAssistantImageMetadata(
@@ -145,7 +122,8 @@ export function setAssistantImageMetadata(
     aspectRatio: width / height,
   };
 
-  for (const key of getAssistantImageMetadataKeys(input)) {
+  const key = getAssistantImageMetadataKey(input);
+  if (key) {
     touchCacheEntry(
       assistantImageMetadataCache,
       key,
