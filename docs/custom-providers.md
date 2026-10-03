@@ -724,13 +724,14 @@ Every entry under `agents.providers` accepts these fields:
 
 Each entry in the `models` array:
 
-| Field             | Type               | Required | Description                           |
-| ----------------- | ------------------ | -------- | ------------------------------------- |
-| `id`              | `string`           | Yes      | Model identifier sent to the provider |
-| `label`           | `string`           | Yes      | Display name in the UI                |
-| `description`     | `string`           | No       | Short description                     |
-| `isDefault`       | `boolean`          | No       | Mark as the default model selection   |
-| `thinkingOptions` | `ThinkingOption[]` | No       | Available thinking/reasoning levels   |
+| Field                    | Type               | Required | Description                                                                                                                                                                         |
+| ------------------------ | ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                     | `string`           | Yes      | Model identifier sent to the provider                                                                                                                                               |
+| `label`                  | `string`           | Yes      | Display name in the UI                                                                                                                                                              |
+| `description`            | `string`           | No       | Short description                                                                                                                                                                   |
+| `isDefault`              | `boolean`          | No       | Mark as the default model selection                                                                                                                                                 |
+| `contextWindowMaxTokens` | `number`           | No       | Pin the context window for the usage meter. Claude Code assumes 200k for model IDs it does not know, so gateway models (GLM, Qwen via a proxy) need this to report the real window. |
+| `thinkingOptions`        | `ThinkingOption[]` | No       | Available thinking/reasoning levels                                                                                                                                                 |
 
 ### Thinking option
 
