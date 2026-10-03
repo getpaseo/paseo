@@ -10,6 +10,7 @@ import {
   getAuthor,
   getRegistry,
   getPluginsByAuthor,
+  pluginOwner,
   sortPlugins,
 } from "~/plugins";
 import { AuthorAvatar } from "~/plugins/author-link";
@@ -20,9 +21,9 @@ import "~/styles.css";
 export const Route = createFileRoute("/plugins/$owner")({
   loader: async ({ params }) => {
     const registry = await getRegistry();
-    const first = registry.plugins.find((plugin) => plugin.author.github === params.owner);
+    const first = registry.plugins.find((plugin) => pluginOwner(plugin) === params.owner);
     if (!first) throw notFound();
-    return { plugins: registry.plugins, author: getAuthor(first.author) };
+    return { plugins: registry.plugins, author: getAuthor(first) };
   },
   head: ({ params, loaderData }) =>
     pageMeta(

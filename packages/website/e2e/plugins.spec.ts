@@ -10,7 +10,18 @@ test("browses from the directory into a category, a plugin, and its author", asy
   page,
   context,
 }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  // WebKit has no clipboard permission to grant; record what the page writes instead.
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          (window as unknown as { __copied?: string }).__copied = text;
+          return Promise.resolve();
+        },
+      },
+    });
+  });
   await openPlugins(page);
 
   const themes = page.getByRole("region", { name: "Themes" });
@@ -32,7 +43,7 @@ test("browses from the directory into a category, a plugin, and its author", asy
   ).toBeVisible();
   await copyInstallCommand(page);
   await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied))
     .toBe("paseo plugin install omercnet/fresh-worktrees");
 
   const breadcrumbs = page.getByRole("navigation", { name: "Breadcrumb" });

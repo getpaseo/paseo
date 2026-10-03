@@ -76,7 +76,7 @@ function PluginPage() {
     ];
   }, [plugin, primaryCategory]);
 
-  const author = getAuthor(plugin.author);
+  const author = getAuthor(plugin);
   const count = plugin.installs;
   const readme = plugin.readme;
 
@@ -178,7 +178,7 @@ function PluginPage() {
 
 function RelatedPlugins({ plugin, plugins }: { plugin: Plugin; plugins: Plugin[] }) {
   const category = getCategory(plugin.categories[0]);
-  const author = getAuthor(plugin.author);
+  const author = getAuthor(plugin);
   const inCategory = category
     ? sortPlugins(
         getPluginsInCategory(plugins, category.slug).filter(

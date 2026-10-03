@@ -16,16 +16,21 @@ export function getCategory(slug: string): Category | null {
 export function getPluginsInCategory(plugins: Plugin[], slug: string): Plugin[] {
   return plugins.filter((plugin) => plugin.categories.includes(slug));
 }
-export function getAuthor(author: Plugin["author"]): Author {
+/** The namespace segment of the plugin ID. It is the route param for the plugin and its author. */
+export function pluginOwner(plugin: Plugin): string {
+  return plugin.id.split("/")[0];
+}
+export function getAuthor(plugin: Plugin): Author {
+  const { author } = plugin;
   return {
-    username: author.github,
+    username: pluginOwner(plugin),
     github: author.github,
     name: author.name ?? author.github,
     npm: author.npm,
   };
 }
-export function getPluginsByAuthor(plugins: Plugin[], username: string): Plugin[] {
-  return plugins.filter((plugin) => plugin.author.github === username);
+export function getPluginsByAuthor(plugins: Plugin[], owner: string): Plugin[] {
+  return plugins.filter((plugin) => pluginOwner(plugin) === owner);
 }
 export function installCommand(plugin: Plugin): string {
   return `paseo plugin install ${plugin.id}`;

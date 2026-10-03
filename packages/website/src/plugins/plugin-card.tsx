@@ -7,12 +7,12 @@ import { formatInstalls, getAuthor, getCategory, type Plugin } from "./registry"
 export const PLUGIN_GRID_CLASS = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3";
 
 export function PluginCard({ plugin }: { plugin: Plugin }) {
-  const author = getAuthor(plugin.author);
+  const author = getAuthor(plugin);
   const category = getCategory(plugin.categories[0]);
-  const params = useMemo(
-    () => ({ owner: plugin.author.github, slug: plugin.id.split("/")[1] }),
-    [plugin.id, plugin.author.github],
-  );
+  const params = useMemo(() => {
+    const [owner, slug] = plugin.id.split("/");
+    return { owner, slug };
+  }, [plugin.id]);
   return (
     <Link
       to="/plugins/$owner/$slug"
