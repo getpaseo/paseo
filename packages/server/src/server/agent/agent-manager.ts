@@ -327,6 +327,12 @@ export interface AgentManagerOptions {
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
   appendSystemPrompt?: string;
+  /**
+   * Renders the shared project context digest for a cwd (null when the project
+   * has none). Injected into every agent session's appended system prompt so
+   * later agents inherit knowledge earlier agents saved.
+   */
+  sharedProjectContextDigest?: (cwd: string) => Promise<string | null>;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
@@ -743,7 +749,8 @@ export class AgentManager {
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
-  private appendSystemPrompt: string;
+  private appendSystemPrompt!: string;
+  private sharedProjectContextDigest!: ((cwd: string) => Promise<string | null>) | null;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
@@ -763,7 +770,7 @@ export class AgentManager {
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
-    this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.configureSystemPromptInjections(options);
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -789,6 +796,11 @@ export class AgentManager {
   private configurePaseoTools(options: AgentManagerOptions): void {
     this.paseoToolsEnabled = options.paseoToolsEnabled ?? true;
     this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
+  }
+
+  private configureSystemPromptInjections(options: AgentManagerOptions): void {
+    this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.sharedProjectContextDigest = options.sharedProjectContextDigest ?? null;
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
@@ -5158,7 +5170,11 @@ export class AgentManager {
         mcpAuthToken: this.mcpAuthToken,
       }),
     );
-    return { storedConfig, launchConfig, paseoToolPolicy };
+    return {
+      storedConfig,
+      launchConfig: await this.applySharedProjectContext(launchConfig, storedConfig.cwd),
+      paseoToolPolicy,
+    };
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
@@ -5172,6 +5188,39 @@ export class AgentManager {
           daemonAppendSystemPrompt,
         }
       : next;
+  }
+
+  /**
+   * Appends the project's shared context digest (knowledge saved by earlier
+   * agents on the same project) to the launch config's appended system prompt,
+   * so every new session inherits it. Failures never block agent launch.
+   */
+  private async applySharedProjectContext(
+    config: AgentSessionConfig,
+    cwd: string,
+  ): Promise<AgentSessionConfig> {
+    if (!this.sharedProjectContextDigest || !cwd) {
+      return config;
+    }
+    let digest: string | null = null;
+    try {
+      digest = await this.sharedProjectContextDigest(cwd);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, cwd },
+        "Failed to load shared project context digest; skipping injection",
+      );
+      return config;
+    }
+    const trimmed = digest?.trim();
+    if (!trimmed) {
+      return config;
+    }
+    const existing = config.daemonAppendSystemPrompt?.trim() ?? "";
+    return {
+      ...config,
+      daemonAppendSystemPrompt: existing ? `${existing}\n\n${trimmed}` : trimmed,
+    };
   }
 
   private async buildLaunchContext(

@@ -78,6 +78,12 @@ Permission requests are notification checkpoints, not the end of that subscripti
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
 
+## Shared project context
+
+Finish notifications move one child's result to one parent and die there. Shared project context is the durable form of cross-agent knowledge: entries an agent saves (`context_save` on the agent-scoped MCP catalog) persist per project under `$PASEO_HOME/projects/<projectId>/`, and every future session on that project receives them as a digest appended to the runtime system prompt — newest first, char-capped, older entries reachable through `context_list`/`context_read`.
+
+Two consequences are deliberate. The digest is runtime-only: it is never persisted into stored agent configs, and a failure to load it never blocks agent launch. And entries are keyed by project, not workspace, so parallel worktree agents on one repo compound into the same knowledge instead of each rediscovering the codebase. A `cwd` that maps to no project is simply a project with no shared context — the tools fail with an instructive error rather than inventing a project.
+
 ## Provider-managed child agents
 
 Some providers can create their own child sessions inside one provider runtime. OMP's task tool reports these with `child_session` events; `AgentManager` imports the live provider handle, stamps `paseo.parent-agent-id`, and surfaces the result as a normal subagent in the parent's subagents track.

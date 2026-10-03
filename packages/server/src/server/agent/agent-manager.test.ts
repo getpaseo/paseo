@@ -2252,6 +2252,88 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
   expect(record?.config).not.toHaveProperty("daemonAppendSystemPrompt");
 });
 
+test("createAgent injects the shared project context digest alongside the daemon append", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const digestCalls: string[] = [];
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Daemon instructions.",
+    sharedProjectContextDigest: async (cwd) => {
+      digestCalls.push(cwd);
+      return "<shared-project-context>\nBuild with Bazel.\n</shared-project-context>";
+    },
+    idFactory: () => "00000000-0000-4000-8000-000000000104",
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const record = await storage.get(snapshot.id);
+
+  expect(digestCalls).toEqual([workdir]);
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe(
+    "Daemon instructions.\n\n<shared-project-context>\nBuild with Bazel.\n</shared-project-context>",
+  );
+  // Runtime-only injection: the digest never persists into the stored config.
+  expect(record?.config).not.toHaveProperty("daemonAppendSystemPrompt");
+  expect(snapshot.config).not.toHaveProperty("daemonAppendSystemPrompt");
+});
+
+test("createAgent injects the shared project context digest without a daemon append", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    sharedProjectContextDigest: async () =>
+      "<shared-project-context>\nOnly context.\n</shared-project-context>",
+    idFactory: () => "00000000-0000-4000-8000-000000000105",
+  });
+
+  await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe(
+    "<shared-project-context>\nOnly context.\n</shared-project-context>",
+  );
+});
+
+test("a failing shared project context digest never blocks agent creation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Daemon instructions.",
+    sharedProjectContextDigest: async () => {
+      throw new Error("store unavailable");
+    },
+    idFactory: () => "00000000-0000-4000-8000-000000000106",
+  });
+
+  await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe("Daemon instructions.");
+});
+
 test("daemon append system prompt is injected into Pi configs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

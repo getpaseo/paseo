@@ -89,6 +89,8 @@ import {
   createPaseoWorktreeCommand,
 } from "../../worktree/commands.js";
 import { registerBrowserTools } from "../../browser-tools/tools.js";
+import { registerSharedContextTools } from "../shared-context/tools.js";
+import type { SharedContextStore } from "../shared-context/store.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
 import type {
   PaseoToolCatalog,
@@ -135,6 +137,10 @@ export interface PaseoToolHostDependencies {
   ) => Promise<string>;
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
+  /** Per-project shared context store. Present enables the context_* tools. */
+  sharedContextStore?: Pick<SharedContextStore, "list" | "save" | "get"> | null;
+  /** Resolves a cwd to the Paseo project it belongs to, or null. */
+  resolveProjectIdForCwd?: (cwd: string) => Promise<string | null>;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   paseoHome?: string;
   worktreesRoot?: string;
@@ -1230,6 +1236,26 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       broker: options.browserToolsBroker,
       callerAgentId,
       resolveCallerAgent,
+    });
+  }
+
+  if (options.sharedContextStore && options.resolveProjectIdForCwd) {
+    registerSharedContextTools({
+      registerTool,
+      store: options.sharedContextStore,
+      resolveProjectIdForCwd: options.resolveProjectIdForCwd,
+      callerAgentId,
+      resolveCallerAgent: () => {
+        const callerAgent = resolveCallerAgent();
+        if (!callerAgent) {
+          return null;
+        }
+        return {
+          id: callerAgent.id,
+          cwd: callerAgent.cwd,
+          title: callerAgent.config?.title ?? null,
+        };
+      },
     });
   }
 
