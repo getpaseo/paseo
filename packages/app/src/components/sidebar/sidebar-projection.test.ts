@@ -4,17 +4,29 @@ import type {
   SidebarWorkspaceEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
+import type { SidebarWorkspaceGroup } from "./sidebar-labels";
 import { buildSidebarProjection } from "./sidebar-projection";
+
+function projectWorkspaceIds(projects: readonly SidebarProjectEntry[]): string[] {
+  return projects.flatMap((project) =>
+    project.workspaces.map((workspace) => workspace.workspaceId),
+  );
+}
+
+function groupKeys(groups: readonly SidebarWorkspaceGroup[]): string[] {
+  return groups.map((group) => group.key);
+}
 
 function makeWorkspace(
   id: string,
   statusBucket: SidebarWorkspaceEntry["statusBucket"] = "done",
   labels: string[] = [],
   projectViewKey = "project",
+  serverId = "srv",
 ) {
   const placement: SidebarWorkspacePlacement = {
-    workspaceKey: `srv:${id}`,
-    serverId: "srv",
+    workspaceKey: `${serverId}:${id}`,
+    serverId,
     workspaceId: id,
     projectViewKey,
     projectName: "Project",
@@ -45,6 +57,7 @@ function makeWorkspace(
 function makeProject(
   workspaces: SidebarWorkspacePlacement[],
   viewKey = "project",
+  serverId = "srv",
 ): SidebarProjectEntry {
   return {
     viewKey,
@@ -53,7 +66,7 @@ function makeProject(
     iconWorkingDir: `/repo/${viewKey}`,
     hosts: [
       {
-        serverId: "srv",
+        serverId,
         projectId: viewKey,
         iconWorkingDir: `/repo/${viewKey}`,
         worktreeSupport: "supported" as const,
@@ -81,6 +94,7 @@ function projectionInput(options?: {
       [unpinned.entry.workspaceKey, unpinned.entry],
     ]),
     projectNamesByViewKey: new Map([["project", "Project"]]),
+    hostLabelsByServerId: new Map([["srv", "Server"]]),
     groupMode: options?.groupMode ?? ("project" as const),
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
@@ -171,6 +185,73 @@ describe("buildSidebarProjection", () => {
 
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "unpinned" },
+    ]);
+  });
+
+  it("leaves a single-host sidebar unsectioned", () => {
+    expect(buildSidebarProjection(projectionInput()).hostSections).toEqual([]);
+    expect(buildSidebarProjection(projectionInput({ groupMode: "status" })).hostSections).toEqual(
+      [],
+    );
+  });
+
+  it("always renders one host section per host, ordered by label", () => {
+    const local = makeWorkspace("local", "done", [], "project", "local-host");
+    const remote = makeWorkspace("remote", "done", [], "project", "remote-host");
+    const projection = buildSidebarProjection({
+      ...projectionInput(),
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      projects: [
+        makeProject([local.placement], "project", "local-host"),
+        makeProject([remote.placement], "project", "remote-host"),
+      ],
+      workspaceEntriesByKey: new Map([
+        [local.entry.workspaceKey, local.entry],
+        [remote.entry.workspaceKey, remote.entry],
+      ]),
+      hostLabelsByServerId: new Map([
+        ["local-host", "Laptop"],
+        ["remote-host", "Workstation"],
+      ]),
+    });
+
+    expect(projection.hostSections.map((section) => section.label)).toEqual([
+      "Laptop",
+      "Workstation",
+    ]);
+    expect(projection.hostSections.map((section) => projectWorkspaceIds(section.projects))).toEqual(
+      [["local"], ["remote"]],
+    );
+  });
+
+  it("carries the status grouping inside each host section", () => {
+    const local = makeWorkspace("local", "running", [], "project", "local-host");
+    const remote = makeWorkspace("remote", "failed", [], "project", "remote-host");
+    const projection = buildSidebarProjection({
+      ...projectionInput({ groupMode: "status" }),
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      projects: [
+        makeProject([local.placement], "project", "local-host"),
+        makeProject([remote.placement], "project", "remote-host"),
+      ],
+      workspaceEntriesByKey: new Map([
+        [local.entry.workspaceKey, local.entry],
+        [remote.entry.workspaceKey, remote.entry],
+      ]),
+      hostLabelsByServerId: new Map([
+        ["local-host", "Laptop"],
+        ["remote-host", "Workstation"],
+      ]),
+    });
+
+    expect(
+      projection.hostSections.map((section) => ({
+        label: section.label,
+        buckets: groupKeys(section.workspaceGroups),
+      })),
+    ).toEqual([
+      { label: "Laptop", buckets: ["running"] },
+      { label: "Workstation", buckets: ["failed"] },
     ]);
   });
 });

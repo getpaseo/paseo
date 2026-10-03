@@ -14,10 +14,12 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { useHosts } from "@/runtime/host-runtime";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import type { SidebarHostSection } from "./sidebar-host-sections";
 import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
 import {
   hasAuthoritativeWorkspaceLabelCatalog,
@@ -38,6 +40,7 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   hasProjectsBeforeFilter: boolean;
   groupMode: SidebarGroupMode;
   workspaceGroups: SidebarWorkspaceGroup[];
+  hostSections: SidebarHostSection[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
   collapsedProjectKeys: ReadonlySet<string>;
@@ -55,6 +58,11 @@ export function SidebarModelProvider({
   children: ReactNode;
 }) {
   const list = useSidebarWorkspacesList({ enabled: active });
+  const hosts = useHosts();
+  const hostLabelsByServerId = useMemo(
+    () => new Map(hosts.map((host) => [host.serverId, host.label])),
+    [hosts],
+  );
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
@@ -146,6 +154,7 @@ export function SidebarModelProvider({
       pinnedWorkspaceOrder,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       projectNamesByViewKey: list.projectNamesByViewKey,
+      hostLabelsByServerId,
       groupMode,
       pinnedCollapsed,
       collapsedProjectKeys,
@@ -155,6 +164,7 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,
+      hostLabelsByServerId,
       list.projectNamesByViewKey,
       filteredProjects,
       pinnedCollapsed,
@@ -174,6 +184,7 @@ export function SidebarModelProvider({
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       groupMode,
       workspaceGroups: projection.workspaceGroups,
+      hostSections: projection.hostSections,
       projectIconTargets: projection.projectIconTargets,
       pinnedGroups: projection.pinnedGroups,
       collapsedProjectKeys,
