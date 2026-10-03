@@ -364,6 +364,19 @@ function SplitGroupChild({
 }
 
 /**
+ * Sizes from a divider drag are kept per group id, apart from the layout tree. A group keeps its
+ * id when panes are added or removed, so the dragged sizes only apply while they still have one
+ * entry per child; otherwise the dividers past the end of the list could not move.
+ */
+function resolveGroupSizes(
+  layoutSizes: number[],
+  draggedSizes: number[] | undefined,
+  childCount: number,
+): number[] {
+  return draggedSizes?.length === childCount ? draggedSizes : layoutSizes;
+}
+
+/**
  * Flex grow per child, renormalized so the visible ones always sum to 1.
  *
  * `sizes` are fractions, so a two-pane group is `[0.5, 0.5]`. Hiding one child drops the group's
@@ -462,8 +475,11 @@ function SplitNodeView({
     groupId ? state.splitSizesByWorkspace[workspaceKey]?.[groupId] : undefined,
   );
   const groupChildren = node.kind === "group" ? node.group.children : EMPTY_SPLIT_NODES;
-  const groupSizes =
-    storedGroupSizes ?? (node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES);
+  const groupSizes = resolveGroupSizes(
+    node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES,
+    storedGroupSizes,
+    groupChildren.length,
+  );
   const visibleFlex = useMemo(
     () => resolveVisibleGroupFlex(groupChildren, groupSizes, maximizedPaneId),
     [groupChildren, groupSizes, maximizedPaneId],
