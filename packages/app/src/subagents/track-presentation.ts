@@ -45,11 +45,15 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
   };
 }
 
-type ActiveStatusBucket = Exclude<SidebarStateBucket, "done">;
+/**
+ * A subagent row reports the child's own lifecycle only. Waiting on a subagent is a fact about a
+ * parent, so it never appears on a row and the pill has no label for it.
+ */
+type ActiveStatusBucket = Exclude<SidebarStateBucket, "done" | "waiting_on_subagent">;
 
-/** The sidebar's list order, minus the state that earns no mark. */
+/** The sidebar's list order, minus the states a row cannot reach. */
 const ACTIVE_STATUS_BUCKET_ORDER = STATUS_BUCKET_ORDER.filter(
-  (bucket): bucket is ActiveStatusBucket => bucket !== "done",
+  (bucket): bucket is ActiveStatusBucket => bucket !== "done" && bucket !== "waiting_on_subagent",
 );
 
 /** One state the pill reports, and how many children are in it. */
