@@ -6,7 +6,7 @@ const STORE_NAME = "key-value";
 let databasePromise: Promise<IDBDatabase> | null = null;
 
 function openDatabase(): Promise<IDBDatabase> {
-  databasePromise ??= new Promise((resolve, reject) => {
+  databasePromise ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, 1);
     request.addEventListener("upgradeneeded", () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) {
@@ -17,6 +17,14 @@ function openDatabase(): Promise<IDBDatabase> {
     request.addEventListener("error", () =>
       reject(request.error ?? new Error("Failed to open project icon cache")),
     );
+    request.addEventListener("blocked", () =>
+      reject(new Error("Project icon cache open was blocked")),
+    );
+  }).catch((error: unknown) => {
+    // A rejected promise cannot be memoized: left in place it re-throws on every
+    // call forever and the icon cache never recovers from a transient failure.
+    databasePromise = null;
+    throw error;
   });
   return databasePromise;
 }
