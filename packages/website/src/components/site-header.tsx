@@ -24,6 +24,12 @@ export function SiteHeader() {
           Docs
         </a>
         <a
+          href="/plugins"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Plugins
+        </a>
+        <a
           href="/changelog"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >

@@ -80,6 +80,11 @@ function discoverBlogRoutes(): string[] {
   return ["/blog", ...slugs.map((slug) => `/blog/${slug}`)];
 }
 
+// Registry entries change independently of website builds; only the directory is in the sitemap.
+function discoverPluginRoutes(): string[] {
+  return ["/plugins"];
+}
+
 const sitemapPages = [
   "/",
   "/agents",
@@ -90,6 +95,7 @@ const sitemapPages = [
   "/terms",
   ...discoverAgentRoutes(),
   ...discoverAlternativeRoutes(),
+  ...discoverPluginRoutes(),
   ...discoverDocsRoutes(),
   ...discoverBlogRoutes(),
 ].map((routePath) => ({

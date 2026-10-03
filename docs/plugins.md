@@ -115,27 +115,37 @@ the bundled integration; an entry with `extends` shadows it with a custom provid
 [provider contributions](#contribute-a-provider) for the contract and
 [Muse Code](../public-docs/muse-code.md) for setup, per-agent options, and version limitations.
 
+## Install from a registry
+
+`paseo plugin install owner/slug` installs the registry's reviewed artifact. Registry installs
+keep the registry URL and ID, so update checks use its approved pin. Explicit version/ref
+selection is unavailable for registry installs; install an explicit source to select your own.
+
+Use `host/owner/slug` for a registry at `https://host`, or set
+`PASEO_PLUGIN_REGISTRY` to change the default base (including a path prefix).
+Private registry credentials live in daemon config under
+`pluginRegistries: { "host": { "authorization": "Bearer token" } }`.
+Restart your daemon after changing these startup settings. Credentials go only to the registry,
+never artifact hosts or redirects. Git/npm use their own host authentication.
+
+The [open registry protocol](https://github.com/getpaseo/plugins/blob/main/PROTOCOL.md)
+owns static hosting, record shapes, pins, and advisory install counts.
+
 ## Install a Git source
 
-GitHub repositories use an `owner/repository` shorthand. Other hosts use a Git URL. An existing
-directory always wins over shorthand resolution.
+GitHub shorthand requires `github:`. Other hosts use a Git URL. An existing directory
+still wins over source resolution.
 
 ```bash
-paseo plugin add owner/repository
-paseo plugin add https://gitlab.com/group/repository.git
-paseo plugin add https://git.example.com/owner/repository.git
-paseo plugin add owner/monorepo:plugins/review
-paseo plugin add owner/repository --ref main
-paseo plugin ls
-paseo plugin update review
-paseo plugin update --all
+paseo plugin install github:owner/repository
+paseo plugin install https://gitlab.com/group/repository.git
+paseo plugin install github:owner/monorepo:plugins/review
+paseo plugin install github:owner/repository --ref main
 ```
 
-Append `:relative/path` to the source when the plugin lives below the repository root.
-
-`--ref` chooses the initial branch, tag, or commit once. Ordinary updates resolve the remote's
-current default HEAD and ask for approval. `ls` reports the installed commit without contacting the remote.
-Removing a Git source deletes Paseo's managed checkout.
+Append `:relative/path` for a plugin below the repository root. `--ref` chooses the initial
+branch, tag, or commit once. Updates of explicit Git sources resolve the remote's default HEAD
+and ask for approval. `ls` reports the installed commit without contacting the remote.
 
 ## Managed source ownership
 

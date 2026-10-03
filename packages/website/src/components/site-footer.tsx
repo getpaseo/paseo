@@ -28,6 +28,12 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               Docs
             </a>
             <a
+              href="/plugins"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Plugins
+            </a>
+            <a
               href="/changelog"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >
