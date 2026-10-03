@@ -17,13 +17,14 @@ export function createPlayAudio(engine: Pick<AudioEngine, "play">, signal: Abort
     }
     if (
       typeof source.mimeType !== "string" ||
-      !/^audio\/[\w.+-]+(?:[ \t]*;[^\r\n]+)?$/.test(source.mimeType)
+      !/^audio\/[\w.+-]+(?:[ \t]*;[^\r\n]+)?$/i.test(source.mimeType)
     ) {
       throw new Error("Audio must have an audio MIME type, such as audio/wav");
     }
     let bytes = Uint8Array.from(Buffer.from(source.base64, "base64"));
-    let type = source.mimeType;
-    if (type.split(";")[0].trim() === "audio/pcm") {
+    const [mediaType, ...parameters] = source.mimeType.split(";");
+    let type = [mediaType.trim().toLowerCase(), ...parameters].join(";");
+    if (mediaType.trim().toLowerCase() === "audio/pcm") {
       // Plugin playback must remain independent of microphone initialization.
       bytes = pcmToWav(bytes, type);
       type = "audio/wav";

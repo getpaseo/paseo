@@ -160,8 +160,12 @@ test("native cancellation releases playback and settles the caller", async () =>
   expect(h.removed()).toBe(true);
 });
 
-test("plugin PCM parameters become a WAV so playback does not initialize capture", async () => {
-  const type = "audio/pcm;rate=16000;bits=16";
+test.each([
+  "audio/pcm;rate=16000;bits=16",
+  "audio/PCM;rate=16000;bits=16",
+  'AUDIO/PCM; rate = "16000"; bits=16',
+  "audio/pcm; rate=16000; bits=16",
+])("plugin PCM parameters become a WAV without initializing capture: %s", async (type) => {
   let received = "";
   let wav: ArrayBuffer | undefined;
   const play = createPlayAudio(
@@ -179,3 +183,20 @@ test("plugin PCM parameters become a WAV so playback does not initialize capture
   expect(new DataView(wav!).getUint32(24, true)).toBe(16000);
   expect(new Uint8Array(wav!).slice(44)).toEqual(new Uint8Array(4));
 });
+
+test.each(["rate=invalid", "rate=0", "bits=8", "channels=2"])(
+  "rejects unsupported PCM parameters before decoding: %s",
+  async (parameter) => {
+    const play = createPlayAudio(
+      {
+        play: async () => {
+          throw new Error("Reached decoder");
+        },
+      },
+      new AbortController().signal,
+    );
+    await expect(play({ base64: "AAAAAA==", mimeType: `audio/pcm; ${parameter}` })).rejects.toThrow(
+      "Invalid PCM16 audio",
+    );
+  },
+);

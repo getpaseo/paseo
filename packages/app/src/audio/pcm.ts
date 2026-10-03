@@ -90,12 +90,29 @@ export function playPcm16(
 
 /** Wrap the voice protocol's mono PCM16 LE bytes for a file decoder. */
 export function pcmToWav(bytes: Uint8Array, mimeType: string): Uint8Array<ArrayBuffer> {
-  const sampleRate = Number(/(?:^|;)rate=(\d+)/i.exec(mimeType)?.[1] ?? 24000);
+  const parameters = new Map(
+    mimeType
+      .split(";")
+      .slice(1)
+      .map((parameter) => {
+        const separator = parameter.indexOf("=");
+        return [
+          parameter.slice(0, separator).trim().toLowerCase(),
+          parameter
+            .slice(separator + 1)
+            .trim()
+            .replace(/^"(.*)"$/, "$1"),
+        ];
+      }),
+  );
+  const sampleRate = Number(parameters.get("rate") ?? 24000);
   if (
     !Number.isSafeInteger(sampleRate) ||
     sampleRate <= 0 ||
     sampleRate > 192000 ||
-    bytes.length % 2
+    bytes.length % 2 ||
+    Number(parameters.get("bits") ?? 16) !== 16 ||
+    Number(parameters.get("channels") ?? 1) !== 1
   ) {
     throw new Error("Invalid PCM16 audio");
   }
