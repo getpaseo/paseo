@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useConfirmDialogStore } from "@/utils/confirm-dialog-store";
 import { HostPluginsPage } from "./plugins-page";
 
 void testI18n;
@@ -144,19 +145,22 @@ function renderPage(client: PluginClient | null): void {
 }
 
 describe("HostPluginsPage", () => {
+  let unsubscribeConfirm: () => void = () => {};
+
   beforeEach(() => {
     vi.stubGlobal("React", React);
     runtime.connected = true;
     runtime.supported = true;
     runtime.logsSupported = true;
     runtime.client = null;
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
+    // No dialog host renders here, so accept every confirmation as it opens.
+    unsubscribeConfirm = useConfirmDialogStore.subscribe((state) => {
+      if (state.pending) state.answer(state.pending.id, true);
+    });
   });
 
   afterEach(() => {
+    unsubscribeConfirm();
     cleanup();
     vi.unstubAllGlobals();
   });

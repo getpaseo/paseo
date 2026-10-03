@@ -4,6 +4,7 @@ import { connectDaemonClient } from "./daemon-client-loader";
 import { openSettings } from "./app";
 import { openHostSection, openSettingsHost, seedSavedSettingsHosts } from "./settings";
 import type { IsolatedHostDaemon } from "./isolated-host-daemon";
+import { answerConfirmDialog } from "./confirm-dialog";
 
 export async function openDaemonOverview(page: Page, daemon: IsolatedHostDaemon) {
   await seedSavedSettingsHosts(page, [
@@ -18,8 +19,8 @@ export async function openDaemonOverview(page: Page, daemon: IsolatedHostDaemon)
 export async function restartDaemonInSettings(page: Page) {
   const button = page.getByRole("button", { name: "Restart", exact: true });
   await expect(button).toBeEnabled();
-  page.once("dialog", (dialog) => dialog.accept());
   await button.click();
+  await answerConfirmDialog(page, "accept");
   await expect(page.getByRole("button", { name: "Restarting...", exact: true })).toBeDisabled();
 }
 

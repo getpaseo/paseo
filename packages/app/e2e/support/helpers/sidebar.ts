@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { answerConfirmDialog } from "./confirm-dialog";
 import { getServerId } from "./server-id";
 
 interface ContextMenuAnchor {
@@ -152,9 +153,14 @@ export async function pinWorkspaceFromSidebar(page: Page, workspaceId: string): 
 
 export async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
   // A clean workspace archives with no prompt. Managed worktree backing may raise
-  // a browser confirm for unsynced work, so accept it when present.
-  page.once("dialog", (dialog) => void dialog.accept());
+  // a confirmation for unsynced work, so accept it when it appears.
   await clickArchiveWorkspaceMenuItem(page, workspaceId);
+  const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+  const confirmation = page.getByTestId("confirm-dialog");
+  await expect
+    .poll(async () => (await confirmation.isVisible()) || (await row.count()) === 0)
+    .toBe(true);
+  if (await confirmation.isVisible()) await answerConfirmDialog(page, "accept");
 }
 
 export async function expectWorkspaceAbsentFromSidebar(

@@ -78,7 +78,7 @@ describe("confirmDialog", () => {
     });
   });
 
-  it("falls back to browser confirm on web when desktop APIs are unavailable", async () => {
+  it("shows the in-app confirm dialog on web when desktop APIs are unavailable", async () => {
     const browserConfirm = vi.fn(() => true);
     const blurMock = vi.fn();
     (globalThis as { document?: unknown }).document = {
@@ -87,25 +87,60 @@ describe("confirmDialog", () => {
     (globalThis as { confirm?: unknown }).confirm = browserConfirm;
 
     const { confirmDialog } = await loadModuleForPlatform("web");
-    const confirmed = await confirmDialog({
-      title: "Restart host",
-      message: "This will restart the daemon.",
+    const { useConfirmDialogStore } = await import("./confirm-dialog-store");
+    const result = confirmDialog({
+      title: "Archive workspace",
+      message: "Archive this workspace?",
+      destructive: true,
     });
 
-    expect(confirmed).toBe(true);
+    await vi.waitFor(() => expect(useConfirmDialogStore.getState().pending).not.toBeNull());
+    const pending = useConfirmDialogStore.getState().pending;
+    expect(pending?.input).toEqual({
+      title: "Archive workspace",
+      message: "Archive this workspace?",
+      destructive: true,
+    });
+    useConfirmDialogStore.getState().answer(pending?.id ?? -1, true);
+
+    await expect(result).resolves.toBe(true);
+    expect(useConfirmDialogStore.getState().pending).toBeNull();
     expect(blurMock).toHaveBeenCalledTimes(1);
-    expect(browserConfirm).toHaveBeenCalledWith("Restart host\n\nThis will restart the daemon.");
+    expect(browserConfirm).not.toHaveBeenCalled();
   });
 
-  it("throws on web when no confirm backend exists", async () => {
+  it("cancels an on-screen confirm when a newer one replaces it", async () => {
     const { confirmDialog } = await loadModuleForPlatform("web");
+    const { useConfirmDialogStore } = await import("./confirm-dialog-store");
+    const first = confirmDialog({ title: "First", message: "First?" });
+    await vi.waitFor(() => expect(useConfirmDialogStore.getState().pending).not.toBeNull());
+    const second = confirmDialog({ title: "Second", message: "Second?" });
 
-    await expect(
-      confirmDialog({
-        title: "Restart host",
-        message: "This will restart the daemon.",
-      }),
-    ).rejects.toThrow("[ConfirmDialog] No web confirmation backend is available.");
+    await expect(first).resolves.toBe(false);
+    await vi.waitFor(() =>
+      expect(useConfirmDialogStore.getState().pending?.input.title).toBe("Second"),
+    );
+    const replacement = useConfirmDialogStore.getState().pending;
+    useConfirmDialogStore.getState().answer(replacement?.id ?? -1, false);
+    await expect(second).resolves.toBe(false);
+  });
+
+  it("ignores an answer meant for a confirmation that was already replaced", async () => {
+    const { confirmDialog } = await loadModuleForPlatform("web");
+    const { useConfirmDialogStore } = await import("./confirm-dialog-store");
+    const first = confirmDialog({ title: "First", message: "First?" });
+    await vi.waitFor(() => expect(useConfirmDialogStore.getState().pending).not.toBeNull());
+    const replacedId = useConfirmDialogStore.getState().pending?.id ?? -1;
+    const second = confirmDialog({ title: "Second", message: "Second?" });
+    await expect(first).resolves.toBe(false);
+
+    // The first sheet finishing its dismissal must not cancel the second.
+    useConfirmDialogStore.getState().answer(replacedId, false);
+    expect(useConfirmDialogStore.getState().pending?.input.title).toBe("Second");
+
+    const current = useConfirmDialogStore.getState().pending;
+    useConfirmDialogStore.getState().answer(current?.id ?? -1, true);
+    await expect(second).resolves.toBe(true);
   });
 
   it("uses native Alert on iOS/Android", async () => {

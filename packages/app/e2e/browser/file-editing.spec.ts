@@ -12,6 +12,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -486,8 +487,8 @@ test.describe("CodeMirror workspace file editing", () => {
     await replaceEditorText(page, "const discarded = 7;\n");
     await writeFile(sourcePath, "const diskWins = 8;\n", "utf8");
     await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "Reload", exact: true }).click();
+    await answerConfirmDialog(page, "accept");
     await expect(editor(page)).toContainText("const diskWins = 8;");
 
     const subscriptionCount = gate.getClientRequestCount("fs.file.subscribe.request");
@@ -535,17 +536,13 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
     await expect(page.getByTestId("workspace-tab-modified-file_draft.ts")).toBeVisible();
 
-    let closePrompt = "";
-    page.once("dialog", async (dialog) => {
-      closePrompt = dialog.message();
-      await dialog.dismiss();
-    });
     await page
       .getByTestId("workspace-tab-file_draft.ts")
       .filter({ visible: true })
       .first()
       .click({ button: "right" });
     await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+    const closePrompt = await answerConfirmDialog(page, "dismiss");
     expect(closePrompt).toContain("Closing it will discard the draft.");
 
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
