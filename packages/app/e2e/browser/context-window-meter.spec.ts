@@ -89,7 +89,9 @@ test.describe("context window meter", () => {
     }
   });
 
-  test("shows the host's plan limits in the context tooltip", async ({ page }) => {
+  test("shows host plan limits and lets keyboard users enter the context tooltip", async ({
+    page,
+  }) => {
     test.setTimeout(180_000);
     const usage = await installUsageReportsFixture(page, { lists: [[contextUsageReport()]] });
     const session = await seedMockAgentWorkspace({
@@ -102,22 +104,32 @@ test.describe("context window meter", () => {
       await expectComposerVisible(page);
       const meter = page.getByTestId("context-window-meter");
       await expect(meter).toHaveAccessibleName(/25%/, { timeout: 30_000 });
-      await meter.hover();
       await usage.waitForListRequests(1);
+
+      // The preceding Tab marks this as keyboard focus; tooltips deliberately ignore restored focus.
+      await page.keyboard.press("Tab");
+      await meter.focus();
 
       const tooltip = page.getByTestId("context-window-meter-tooltip");
       await expect(tooltip.getByText("Mock plan", { exact: true })).toBeVisible();
       await expect(tooltip.getByText("42% used", { exact: true })).toBeVisible();
-      const pin = tooltip.getByRole("checkbox", { name: /Pin Mock plan Session/ });
-      await pin.click();
-      await expect(pin).toBeChecked();
-
-      await tooltip.getByRole("button", { name: "Refresh Mock plan" }).click();
+      const refresh = tooltip.getByRole("button", { name: "Refresh Mock plan" });
+      await page.keyboard.press("Tab");
+      await expect(refresh).toBeFocused();
+      await page.keyboard.press("Enter");
       await usage.waitForListRequests(2);
       expect(usage.listRequests()[1]).toMatchObject({
         forceRefresh: true,
         reportIds: ["mock:account"],
       });
+
+      const pin = tooltip.getByRole("checkbox", { name: /Pin Mock plan Session/ });
+      await page.keyboard.press("Tab");
+      await expect(pin).toBeFocused();
+      await page.keyboard.press("Space");
+      await expect(pin).toBeChecked();
+      await pin.click();
+      await expect(pin).not.toBeChecked();
     } finally {
       await session.cleanup();
     }
