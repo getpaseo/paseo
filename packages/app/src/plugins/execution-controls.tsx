@@ -1,8 +1,10 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
+import { MessageCircle, Settings2, Users, Workflow } from "@/components/icons/ui-icons";
+import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { PluginExecutionPresetCatalog } from "@getpaseo/plugin/client";
 import type { InstalledExecutionMode } from "./execution";
@@ -63,17 +65,16 @@ export function ExecutionControls({
   return (
     <View style={styles.container}>
       <View ref={modeAnchor} collapsable={false}>
-        <Pressable
-          accessibilityRole="button"
+        <AgentControlTrigger
+          icon={executionId ? Workflow : MessageCircle}
+          surface="toolbar"
+          label={executionId ? (selectedMode?.contribution.title ?? "Unavailable mode") : "Direct"}
+          showCaret
+          open={modeOpen}
           accessibilityLabel="Execution mode"
           disabled={disabled}
           onPress={openModes}
-          style={styles.trigger}
-        >
-          <Text style={styles.label}>
-            {executionId ? (selectedMode?.contribution.title ?? "Unavailable mode") : "Direct"}
-          </Text>
-        </Pressable>
+        />
         <Combobox
           anchorRef={modeAnchor}
           options={[
@@ -89,15 +90,16 @@ export function ExecutionControls({
       </View>
       {executionId ? (
         <View ref={presetAnchor} collapsable={false}>
-          <Pressable
-            accessibilityRole="button"
+          <AgentControlTrigger
+            icon={Users}
+            surface="toolbar"
+            label={presetTitle}
+            showCaret
+            open={presetOpen}
             accessibilityLabel="Team preset"
             disabled={disabled || loading || !catalog}
             onPress={openPresets}
-            style={styles.trigger}
-          >
-            <Text style={styles.label}>{presetTitle}</Text>
-          </Pressable>
+          />
           <Combobox
             anchorRef={presetAnchor}
             options={(catalog?.presets ?? [])
@@ -118,15 +120,14 @@ export function ExecutionControls({
         </View>
       ) : null}
       {executionId && onManage && !isCompact ? (
-        <Pressable
-          accessibilityRole="button"
+        <AgentControlTrigger
+          icon={Settings2}
+          surface="toolbar"
+          label="Manage teams"
           accessibilityLabel="Manage teams"
           disabled={disabled}
           onPress={onManage}
-          style={styles.trigger}
-        >
-          <Text style={styles.label}>Manage teams</Text>
-        </Pressable>
+        />
       ) : null}
       {unavailable ? (
         <Text accessibilityRole="alert" style={styles.error}>
@@ -151,15 +152,12 @@ function presetProblem(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
-  trigger: {
-    minHeight: 48,
-    justifyContent: "center",
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: theme.colors.surface1,
+  container: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: theme.spacing[1],
   },
-  label: { color: theme.colors.foreground, fontSize: 13 },
   manageAction: { minHeight: 48, marginHorizontal: 12, marginVertical: 8 },
   error: { color: theme.colors.foregroundMuted, fontSize: 12, maxWidth: 320 },
 }));
