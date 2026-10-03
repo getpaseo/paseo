@@ -1,11 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 
-// The launcher reads Linux /proc state as well as POSIX command interfaces.
 const it = test.runIf(process.platform === "linux");
 
 const require = createRequire(import.meta.url);
@@ -20,20 +27,25 @@ async function launch(
     args?: string[];
     symlink?: boolean;
     rerun?: boolean;
+    flagsFile?: string;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "paseo-launcher-"));
   try {
     const app = join(root, "app with spaces");
     const commands = join(root, "commands");
+    const config = join(root, "config");
     mkdirSync(app);
     mkdirSync(commands);
+    if (options.flagsFile !== undefined) {
+      mkdirSync(join(config, "PandaOS"), { recursive: true });
+      writeFileSync(join(config, "PandaOS", "electron-flags"), options.flagsFile);
+    }
     writeFileSync(
       join(app, "PandaOS"),
-      `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`,
+      `#!${process.execPath}\nconsole.log(JSON.stringify({args:process.argv.slice(2),flags:process.env.PASEO_ELECTRON_FLAGS}));\n`,
     );
     chmodSync(join(app, "PandaOS"), 0o755);
-    // The command interface represents the host's userns policy, independent of CI's host.
     writeFileSync(join(commands, "unshare"), `#!/bin/sh\nexit ${options.namespaces ? 0 : 1}\n`);
     chmodSync(join(commands, "unshare"), 0o755);
     for (const [name, output] of Object.entries({
@@ -52,17 +64,25 @@ async function launch(
     const args = options.args ?? ["path with spaces", "$(touch never)", "semi;colon", "*.txt"];
     const result = spawnSync(executablePath, args, {
       encoding: "utf8",
+      cwd: root,
       env: {
         ...process.env,
         FORCE_COLOR: undefined,
         PATH: `${commands}:${process.env.PATH}`,
         APPIMAGE: "/tmp/Paseo.AppImage",
         PASEO_DESKTOP_SMOKE: "0",
+        XDG_CONFIG_HOME: config,
+        PASEO_ELECTRON_FLAGS: undefined,
         ...options.env,
       },
     });
     expect(result.status, result.stderr).toBe(0);
-    return { args: JSON.parse(result.stdout), stderr: result.stderr, input: args };
+    return {
+      ...JSON.parse(result.stdout),
+      stderr: result.stderr,
+      input: args,
+      evaluatedFlags: existsSync(join(root, "evaluated-flags")),
+    };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -92,9 +112,14 @@ it("does not trust 4755 on a nosuid mount", async () => {
 });
 
 it("preserves sandbox flags and all Node entrypoint arguments without probing", async () => {
-  const result = await launch({ env: { ELECTRON_RUN_AS_NODE: "1" }, args: ["--version"] });
+  const result = await launch({
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+    args: ["--version"],
+    flagsFile: "--ignore-gpu-blocklist --no-sandbox",
+  });
   expect(result.args).toEqual(["--version"]);
   expect(result.stderr).toBe("");
+  expect(result.flags).toBeUndefined();
 });
 
 it("reports an explicit user override without injecting a duplicate", async () => {
@@ -120,4 +145,28 @@ it("applies a debugging environment sandbox override before Chromium starts", as
   });
   expect(result.args).toEqual(["--no-sandbox", ...result.input]);
   expect(result.stderr).toContain("requested by PASEO_ELECTRON_FLAGS");
+});
+
+it("reads opt-in graphics flags on icon and symlink launches while preserving explicit overrides", async () => {
+  const result = await launch({
+    namespaces: true,
+    symlink: true,
+    flagsFile: "--ignore-gpu-blocklist --use-angle=gl\n",
+    env: { PASEO_ELECTRON_FLAGS: "--use-angle=default --remote-debugging-port=0" },
+  });
+  expect(result.args).toEqual(result.input);
+  expect(result.flags).toBe(
+    "--ignore-gpu-blocklist --use-angle=gl --use-angle=default --remote-debugging-port=0",
+  );
+  expect(result.stderr).toContain("[linux-sandbox] enabled");
+});
+
+it("reads flag files as data and honors an explicit sandbox override", async () => {
+  const result = await launch({
+    namespaces: true,
+    flagsFile: "--no-sandbox $(touch evaluated-flags)",
+  });
+  expect(result.args).toEqual(["--no-sandbox", ...result.input]);
+  expect(result.flags).toBe("--no-sandbox $(touch evaluated-flags)");
+  expect(result.evaluatedFlags).toBe(false);
 });

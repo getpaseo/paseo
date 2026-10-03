@@ -1,13 +1,17 @@
 #!/bin/sh
 set -eu
 
-# Resolve /usr/bin alternatives and user-created symlinks before finding Electron.
 launcher=$(readlink -f -- "$0")
 executable="${launcher}.bin"
 
-# Node entrypoints are not Chromium processes. Never inject browser flags here.
 if [ "${ELECTRON_RUN_AS_NODE:-}" = 1 ]; then
   exec "$executable" "$@"
+fi
+
+flags_file="${XDG_CONFIG_HOME:-${HOME}/.config}/PandaOS/electron-flags"
+if [ -r "$flags_file" ]; then
+  configured_flags=$(cat -- "$flags_file")
+  export PASEO_ELECTRON_FLAGS="${configured_flags}${PASEO_ELECTRON_FLAGS:+ ${PASEO_ELECTRON_FLAGS}}"
 fi
 
 for arg in "$@"; do
@@ -18,7 +22,6 @@ for arg in "$@"; do
   fi
 done
 
-# Match main's whitespace-separated debugging flags without evaluating shell code.
 set -f
 for flag in ${PASEO_ELECTRON_FLAGS:-}; do
   if [ "$flag" = '--no-sandbox' ]; then
@@ -28,8 +31,6 @@ for flag in ${PASEO_ELECTRON_FLAGS:-}; do
   fi
 done
 
-# Map the real UID and create a network namespace as Chromium does. A bare
-# unshare --user can succeed under AppArmor while namespace capabilities fail.
 if namespace_error=$(unshare --user --map-root-user --net true 2>&1); then
   export PASEO_DESKTOP_SANDBOX_REASON='user namespaces available'
   printf '[linux-sandbox] enabled: %s\n' "$PASEO_DESKTOP_SANDBOX_REASON" >&2 || true

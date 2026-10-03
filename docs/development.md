@@ -173,6 +173,23 @@ When running a dedicated Electron QA instance against a non-default Expo port, s
 `EXPO_DEV_URL` explicitly. Desktop main defaults to `http://localhost:8081`, so
 `PASEO_PORT=57928` alone starts Metro on 57928 but Electron still loads 8081.
 
+### Linux remote desktop graphics
+
+The packaged Linux launcher reads optional flags from
+`${XDG_CONFIG_HOME:-$HOME/.config}/PandaOS/electron-flags`. Use whitespace-separated
+Chromium switches. The launcher treats the file as data, preserves the existing
+`PASEO_ELECTRON_FLAGS` environment after the file's switches, and skips the file
+for Node entrypoints. This opt-in also applies to icon launches and survives app
+updates.
+
+On Chrome Remote Desktop, Mesa llvmpipe can support OpenGL 4.5 while Chromium
+blocklists both WebGL contexts. After confirming `WebGL2 blocklisted` in the
+desktop log and llvmpipe in GPU diagnostics, put `--ignore-gpu-blocklist` in that
+file and reopen the desktop app. The verified Electron 44 path uses ANGLE OpenGL
+and Mesa llvmpipe with Chromium's namespace sandbox enabled. No additional
+SwiftShader or sandbox switch is needed. Keep this choice local to affected
+machines; it is not a default for Linux installations.
+
 ### React render profiling
 
 The app has a gated React render profiler in
