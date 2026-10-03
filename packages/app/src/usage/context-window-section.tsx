@@ -1,5 +1,6 @@
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { FloatingScrollView } from "@/components/ui/floating";
 import { UsageCard } from "./card";
 import { useUsagePreferences } from "./display";
 import { useHostUsage } from "./queries";
@@ -13,11 +14,17 @@ export function ContextWindowUsageTooltip({ serverId }: { serverId: string }) {
   return (
     <>
       <View style={styles.divider} />
-      <View style={styles.reports}>
+      <FloatingScrollView
+        bounces={false}
+        contentContainerStyle={styles.reports}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+        style={styles.reportScroll}
+      >
         {view.reports.map((entry) => (
           <UsageCard key={entry.id} serverId={serverId} entry={entry} display={display} compact />
         ))}
-      </View>
+      </FloatingScrollView>
     </>
   );
 }
@@ -32,5 +39,9 @@ const styles = StyleSheet.create((theme) => ({
   reports: {
     alignSelf: "stretch",
     gap: theme.spacing[3],
+  },
+  reportScroll: {
+    alignSelf: "stretch",
+    maxHeight: 240,
   },
 }));

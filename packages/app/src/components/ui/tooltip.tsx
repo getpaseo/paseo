@@ -44,10 +44,13 @@ interface Rect {
 interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
+  cancelClose: () => void;
+  scheduleClose: () => void;
   triggerRef: React.RefObject<View | null>;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
+  interactive: boolean;
 }
 
 const TooltipContext = createContext<TooltipContextValue | null>(null);
@@ -231,6 +234,7 @@ export function Tooltip({
   delayDuration = 0,
   enabledOnDesktop = true,
   enabledOnMobile = false,
+  interactive = false,
   children,
 }: PropsWithChildren<{
   open?: boolean;
@@ -239,8 +243,11 @@ export function Tooltip({
   delayDuration?: number;
   enabledOnDesktop?: boolean;
   enabledOnMobile?: boolean;
+  /** Keep the surface open while people use controls inside it. */
+  interactive?: boolean;
 }>): ReactElement {
   const triggerRef = useRef<View>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
@@ -250,17 +257,48 @@ export function Tooltip({
   const isCompact = useIsCompactFormFactor();
   const opensOnPress = isNative || isCompact;
   const enabled = opensOnPress ? enabledOnMobile : enabledOnDesktop;
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+  const scheduleClose = useCallback(() => {
+    cancelClose();
+    if (!interactive) {
+      setIsOpen(false);
+      return;
+    }
+    closeTimerRef.current = setTimeout(() => {
+      setIsOpen(false);
+      closeTimerRef.current = null;
+    }, 100);
+  }, [cancelClose, interactive, setIsOpen]);
+
+  useEffect(() => cancelClose, [cancelClose]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
       open: isOpen,
       setOpen: setIsOpen,
+      cancelClose,
+      scheduleClose,
       triggerRef,
       enabled,
       openOnPress: opensOnPress,
       delayDuration,
+      interactive,
     }),
-    [isOpen, setIsOpen, enabled, opensOnPress, delayDuration],
+    [
+      isOpen,
+      setIsOpen,
+      cancelClose,
+      scheduleClose,
+      enabled,
+      opensOnPress,
+      delayDuration,
+      interactive,
+    ],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -306,7 +344,7 @@ export function TooltipTrigger({
 
   const close = useCallback(() => {
     clearOpenTimer();
-    ctx.setOpen(false);
+    ctx.scheduleClose();
   }, [clearOpenTimer, ctx]);
 
   useEffect(() => {
@@ -358,6 +396,7 @@ export function TooltipTrigger({
       }
       if (ctx.openOnPress) {
         clearOpenTimer();
+        ctx.cancelClose();
         ctx.setOpen(true);
         return;
       }
@@ -509,6 +548,8 @@ export function TooltipContent({
   const contentStyle = useMemo(() => [styles.content, style], [style]);
 
   const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
+  const handleContentEnter = useCallback(() => ctx.cancelClose(), [ctx]);
+  const handleContentLeave = useCallback(() => ctx.scheduleClose(), [ctx]);
 
   if (!ctx.open || !ctx.enabled) return null;
 
@@ -517,14 +558,18 @@ export function TooltipContent({
   // exact same positioning math as DropdownMenu, without hover feedback loops.
   if (isWeb) {
     return createPortal(
-      <View pointerEvents="none" style={styles.portalOverlay}>
+      <View pointerEvents={ctx.interactive ? "box-none" : "none"} style={styles.portalOverlay}>
         <FloatingSurface
-          pointerEvents="none"
+          pointerEvents={ctx.interactive ? "auto" : "none"}
           entering={FadeIn.duration(80)}
           exiting={FadeOut.duration(80)}
           collapsable={false}
           testID={testID}
           onLayout={handleLayout}
+          onPointerEnter={ctx.interactive ? handleContentEnter : undefined}
+          onPointerLeave={ctx.interactive ? handleContentLeave : undefined}
+          onFocus={ctx.interactive ? handleContentEnter : undefined}
+          onBlur={ctx.interactive ? handleContentLeave : undefined}
           style={contentStyle}
           frameStyle={frameStyle}
         >
@@ -543,26 +588,51 @@ export function TooltipContent({
       statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={handleDismiss}
     >
-      <Pressable testID="tooltip-dismiss" style={styles.overlay} onPress={handleDismiss}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
-      </Pressable>
+      {ctx.interactive ? (
+        <View pointerEvents="box-none" style={styles.overlay}>
+          <Pressable
+            testID="tooltip-dismiss"
+            style={styles.dismissOverlay}
+            onPress={handleDismiss}
+          />
+          <FloatingSurface
+            pointerEvents="auto"
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            testID={testID}
+            onLayout={handleLayout}
+            onFocus={handleContentEnter}
+            onBlur={handleContentLeave}
+            style={contentStyle}
+            frameStyle={frameStyle}
+          >
+            {children}
+          </FloatingSurface>
+        </View>
+      ) : (
+        <Pressable testID="tooltip-dismiss" style={styles.overlay} onPress={handleDismiss}>
+          <FloatingSurface
+            pointerEvents="none"
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            testID={testID}
+            onLayout={handleLayout}
+            style={contentStyle}
+            frameStyle={frameStyle}
+          >
+            {children}
+          </FloatingSurface>
+        </Pressable>
+      )}
     </Modal>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   overlay: { flex: 1 },
+  dismissOverlay: { ...StyleSheet.absoluteFillObject },
   portalOverlay: {
     position: "absolute",
     top: 0,

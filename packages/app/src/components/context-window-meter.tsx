@@ -142,12 +142,12 @@ export function ContextWindowMeter({
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
 
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile interactive>
       <TooltipTrigger asChild triggerRefProp="ref">
         <Pressable
           style={containerStyle}
           testID="context-window-meter"
-          accessibilityRole="image"
+          accessibilityRole="button"
           accessibilityLabel={t("contextWindow.accessibility", {
             percentage: roundedPercentage,
           })}

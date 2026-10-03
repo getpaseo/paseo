@@ -108,6 +108,16 @@ test.describe("context window meter", () => {
       const tooltip = page.getByTestId("context-window-meter-tooltip");
       await expect(tooltip.getByText("Mock plan", { exact: true })).toBeVisible();
       await expect(tooltip.getByText("42% used", { exact: true })).toBeVisible();
+      const pin = tooltip.getByRole("checkbox", { name: /Pin Mock plan Session/ });
+      await pin.click();
+      await expect(pin).toBeChecked();
+
+      await tooltip.getByRole("button", { name: "Refresh Mock plan" }).click();
+      await usage.waitForListRequests(2);
+      expect(usage.listRequests()[1]).toMatchObject({
+        forceRefresh: true,
+        reportIds: ["mock:account"],
+      });
     } finally {
       await session.cleanup();
     }

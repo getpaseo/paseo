@@ -150,7 +150,7 @@ test.describe("usage settings", () => {
                   label: "Credits available for additional usage",
                   remaining: 999_999_999_999_999,
                   unit: "credits",
-                  resetsAt: "2026-12-31T23:59:00.000Z",
+                  resetsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
                 },
               ],
             },
