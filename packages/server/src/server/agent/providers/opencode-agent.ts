@@ -2894,13 +2894,51 @@ function appendOpenCodeTextPart(
     return;
   }
   const materialized = state.materializedParts.get(part.id);
-  if (materialized?.closed) return;
+  if (materialized?.closed) {
+    // Late edit of an already-finalized part (e.g. the harness rewrites the
+    // message text after the turn ends): deliver the full current text as a replacement.
+    if (part.text && part.text !== materialized.emittedText) {
+      state.materializedParts.set(part.id, {
+        messageId: part.messageID,
+        emittedText: part.text,
+        closed: true,
+      });
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "assistant_message",
+          text: part.text,
+          messageId: part.messageID,
+          replace: true,
+        },
+      });
+    }
+    return;
+  }
   const emittedText = materialized?.messageId === part.messageID ? materialized.emittedText : "";
   if (!part.text.startsWith(emittedText)) {
     state.onMaterializationMismatch?.({
       partId: part.id,
       messageId: part.messageID,
       kind: "text",
+    });
+    // The final snapshot no longer extends what was streamed (e.g. an
+    // after-the-fact text edit): deliver the full current text as a replacement.
+    state.materializedParts.set(part.id, {
+      messageId: part.messageID,
+      emittedText: part.text,
+      closed: true,
+    });
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: {
+        type: "assistant_message",
+        text: part.text,
+        messageId: part.messageID,
+        replace: true,
+      },
     });
     return;
   }
@@ -4552,6 +4590,22 @@ class OpenCodeAgentSession implements AgentSession {
     return sessionId === this.sessionId || this.knownChildSessionIds.has(sessionId);
   }
 
+  // Message records are mutable: a provider plugin may patch message text
+  // after the turn ended. A late replacement (assistant_message carrying
+  // replace: true) is data, not turn activity — deliver it (without a turn)
+  // so the client converges. All other no-turn content stays discarded.
+  private forwardLateAssistantReplacements(events: readonly AgentStreamEvent[]): void {
+    for (const event of events) {
+      if (
+        event.type === "timeline" &&
+        event.item.type === "assistant_message" &&
+        event.item.replace === true
+      ) {
+        this.notifySubscribers(event, null);
+      }
+    }
+  }
+
   private async consumeOpenCodeStreamEvent(params: {
     rawEvent: unknown;
     eventCount: number;
@@ -4589,6 +4643,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     if (!turnId) {
       this.emitBackgroundPermissionRequests(foregroundEvents);
+      this.forwardLateAssistantReplacements(foregroundEvents);
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
         reason: "no_active_turn",

@@ -237,6 +237,39 @@ describe("projectTimelineRows", () => {
     expect(projected[0]?.collapsed).toEqual([]);
     expect(projected[1]?.collapsed).toEqual([]);
   });
+  test("a replace row supersedes accumulated assistant text", () => {
+    const rows = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message" as const, text: "Hel", messageId: "msg-1" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: { type: "assistant_message" as const, text: "lo", messageId: "msg-1" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        item: {
+          type: "assistant_message" as const,
+          text: "Rewritten.",
+          messageId: "msg-1",
+          replace: true,
+        },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "Rewritten.",
+      messageId: "msg-1",
+    });
+  });
 });
 
 describe("selectTimelineWindowByProjectedLimit", () => {

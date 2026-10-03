@@ -6985,3 +6985,189 @@ describe("OpenCode session permission rules", () => {
     }
   });
 });
+
+describe("OpenCode assistant text replacement (#5410)", () => {
+  function assistantTextItems(events: AgentStreamEvent[]): AgentStreamEvent[] {
+    return events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" && event.item.type === "assistant_message",
+    );
+  }
+
+  test("emits a replacement when the final snapshot no longer extends the streamed text", () => {
+    const onMaterializationMismatch = vi.fn();
+    const state = {
+      sessionId: "session-1",
+      messageRoles: new Map(),
+      accumulatedUsage: {},
+      materializedParts: new Map(),
+      emittedStructuredMessageIds: new Set(),
+      partTypes: new Map(),
+      compactionSummaryMessageIds: new Set(),
+      onMaterializationMismatch,
+    };
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: { info: { id: "msg_edit", sessionID: "session-1", role: "assistant" } },
+      } as OpenCodeEvent,
+      state,
+    );
+    const deltaEvents = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg_edit",
+          partID: "prt_edit",
+          field: "text",
+          delta: "Hello",
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+    const snapshotEvents = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_edit",
+            sessionID: "session-1",
+            messageID: "msg_edit",
+            type: "text",
+            text: "Rewritten.",
+            time: { start: 1, end: 2 },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(onMaterializationMismatch).toHaveBeenCalledWith({
+      partId: "prt_edit",
+      messageId: "msg_edit",
+      kind: "text",
+    });
+    const deltaItems = assistantTextItems(deltaEvents);
+    expect(deltaItems).toHaveLength(1);
+    expect(deltaItems[0]?.item.replace).toBeUndefined();
+    const replaced = assistantTextItems(snapshotEvents);
+    expect(replaced).toHaveLength(1);
+    expect(replaced[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "Rewritten.",
+      messageId: "msg_edit",
+      replace: true,
+    });
+  });
+
+  test("emits a replacement for a late edit of a closed part", () => {
+    const state = {
+      sessionId: "session-1",
+      messageRoles: new Map(),
+      accumulatedUsage: {},
+      materializedParts: new Map(),
+      emittedStructuredMessageIds: new Set(),
+      partTypes: new Map(),
+      compactionSummaryMessageIds: new Set(),
+    };
+    const snapshot = (text: string) =>
+      translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_late",
+              sessionID: "session-1",
+              messageID: "msg_late",
+              type: "text",
+              text,
+              time: { start: 1, end: 2 },
+            },
+          },
+        } as OpenCodeEvent,
+        state,
+      );
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: { info: { id: "msg_late", sessionID: "session-1", role: "assistant" } },
+      } as OpenCodeEvent,
+      state,
+    );
+    snapshot("Hello");
+    const events = snapshot("Hello edited");
+
+    expect(assistantTextItems(events)).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "assistant_message",
+          text: "Hello edited",
+          messageId: "msg_late",
+          replace: true,
+        },
+      },
+    ]);
+  });
+
+  test("streams an extending snapshot as a plain suffix delta", () => {
+    const state = {
+      sessionId: "session-1",
+      messageRoles: new Map(),
+      accumulatedUsage: {},
+      materializedParts: new Map(),
+      emittedStructuredMessageIds: new Set(),
+      partTypes: new Map(),
+      compactionSummaryMessageIds: new Set(),
+    };
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: { info: { id: "msg_ext", sessionID: "session-1", role: "assistant" } },
+      } as OpenCodeEvent,
+      state,
+    );
+    translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg_ext",
+          partID: "prt_ext",
+          field: "text",
+          delta: "Hello",
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_ext",
+            sessionID: "session-1",
+            messageID: "msg_ext",
+            type: "text",
+            text: "Hello world",
+            time: { start: 1, end: 2 },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    const items = assistantTextItems(events);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.item).toEqual({
+      type: "assistant_message",
+      text: " world",
+      messageId: "msg_ext",
+    });
+  });
+});
