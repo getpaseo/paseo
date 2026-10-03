@@ -173,6 +173,9 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
     enabled: isConnected && isSupported,
     // Another agent's reports never stand in while this one's load.
     dataShape: "value",
+    // The daemon's errors (an unknown agent) do not heal on retry, and reopening the popover
+    // fetches again; retrying would hold the loading sentence for seconds instead.
+    retry: false,
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
   return resolveAgentUsageView({
