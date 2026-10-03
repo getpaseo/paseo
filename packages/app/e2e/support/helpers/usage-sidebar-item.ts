@@ -188,6 +188,28 @@ export async function togglePin(scope: Locator, source: string, window: string) 
   await expect(row).toBeChecked({ checked: !pinned });
 }
 
+/** The footer's Usage icon, which is there whether or not the Usage item is on. */
+export async function openUsageScreenFromIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Usage", exact: true }).click({ timeout: 30_000 });
+  await expectOnUsageScreen(page);
+}
+
+function summaryInSidebarSwitch(page: Page): Locator {
+  return page.getByRole("switch", { name: "Summary in sidebar", exact: true });
+}
+
+/** Turns the sidebar Usage summary on or off from the Usage screen's Settings. */
+export async function setSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await summaryInSidebarSwitch(page).click();
+  await expectSummaryInSidebar(page, on);
+}
+
+export async function expectSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await expect(summaryInSidebarSwitch(page)).toBeChecked({ checked: on });
+}
+
 /** Expand the inline Settings row when its controls are folded. */
 export async function openUsageOptions(page: Page): Promise<void> {
   const toggle = visible(page, "usage-options-toggle");

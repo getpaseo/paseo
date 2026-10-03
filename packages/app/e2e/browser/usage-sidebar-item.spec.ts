@@ -5,6 +5,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
 import {
+  expectFooterItemSetting,
   expectFooterSeparator,
   leaveSettings,
   openSidebarNavSettings,
@@ -16,10 +17,13 @@ import {
   expectNoUsageItem,
   expectOnUsageScreen,
   expectPinnedUsage,
+  expectSummaryInSidebar,
   expectUnpinnableRows,
   leaveUsageScreen,
   openCompactSidebar,
+  openUsageScreenFromIcon,
   pinRow,
+  setSummaryInSidebar,
   openUsageOptions,
   showUsageAs,
   togglePin,
@@ -98,14 +102,11 @@ test.describe("Usage item", () => {
       // The Usage item starts off on every layout; turning it on stores the choice.
       await expectNoUsageItem(page);
       await openSidebarNavSettings(page);
-      const toggle = page
-        .getByTestId("sidebar-nav-section-footer")
-        .getByTestId("sidebar-nav-toggle-usage");
-      await expect(toggle).toHaveAttribute("aria-checked", "false");
+      await expectFooterItemSetting(page, "usage", false);
       await setFooterItemVisible(page, "usage", true);
       await qaScreenshot(page, "desktop-settings-sidebar-footer");
       await page.setViewportSize(COMPACT);
-      await expect(toggle).toHaveAttribute("aria-checked", "true");
+      await expectFooterItemSetting(page, "usage", true);
       await qaScreenshot(page, "compact-settings-sidebar-footer");
       await gotoAppShell(page);
       await openCompactSidebar(page);
@@ -310,25 +311,19 @@ test("the Usage Settings switch turns on the sidebar summary and the pins with i
   await gotoAppShell(page);
   const screen = page.getByTestId(`usage-host-${serverId}`);
   const claude = screen.getByTestId("usage-report-claude:default");
-  const toggle = page.getByTestId("usage-show-in-sidebar").getByRole("switch");
 
   await test.step("off by default: no Usage item, and rows that do not pin", async () => {
-    await expect(page.locator('[data-testid="sidebar-usage-icon"]:visible')).toBeVisible({
-      timeout: 30_000,
-    });
+    await openUsageScreenFromIcon(page);
     await expectNoUsageItem(page);
-    await page.locator('[data-testid="sidebar-usage-icon"]:visible').click();
-    await expectOnUsageScreen(page);
     await expect(claude.getByText("Session", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expectUnpinnableRows(claude);
     await expectUnpinnableRows(screen.getByTestId("usage-report-codex:default"));
-    await openUsageOptions(page);
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expectSummaryInSidebar(page, false);
     await qaScreenshot(page, "usage-screen-summary-off");
   });
 
   await test.step("on: the Usage item and the pins appear", async () => {
-    await toggle.click();
+    await setSummaryInSidebar(page, true);
     await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
     await expect(pinRow(screen, "Claude", "Weekly")).toBeChecked();
     await togglePin(screen, "Claude", "Weekly");
@@ -337,17 +332,15 @@ test("the Usage Settings switch turns on the sidebar summary and the pins with i
   });
 
   await test.step("off then on again, after a reload, brings back the saved pins", async () => {
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await setSummaryInSidebar(page, false);
     await expectNoUsageItem(page);
     await expectUnpinnableRows(claude);
     await page.reload();
     await expectOnUsageScreen(page);
-    await openUsageOptions(page);
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expectSummaryInSidebar(page, false);
     await expect(claude.getByText("Session", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expectUnpinnableRows(claude);
-    await toggle.click();
+    await setSummaryInSidebar(page, true);
     await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
     await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
     await expect(pinRow(screen, "Claude", "Weekly")).not.toBeChecked();

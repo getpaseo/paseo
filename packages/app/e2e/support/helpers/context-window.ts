@@ -1,0 +1,146 @@
+import path from "node:path";
+import { expect, type Locator, type Page } from "@playwright/test";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
+import { expectComposerVisible } from "./composer";
+import { openAgentRoute, seedMockAgentWorkspace } from "./mock-agent";
+import { installUsageReportsFixture, type UsageListResponse } from "./usage-reports";
+import { claudeAndCodexReports } from "./usage-sidebar-item";
+
+// 32,000 of the mock's 128,000-token window.
+const METER_NAME = "Context window 25% used";
+
+type MockAgentSession = Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
+
+/** An agent a quarter into its context window, open in the browser. */
+export async function openAgentWithContextWindow(page: Page): Promise<MockAgentSession> {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "context-window-usage-",
+    title: "Context window usage e2e",
+    initialPrompt: "emit 32000 byte file agent stream payload",
+  });
+  await openAgentRoute(page, session);
+  await expectComposerVisible(page);
+  return session;
+}
+
+export async function reloadAgent(page: Page): Promise<void> {
+  await page.reload({ waitUntil: "commit" });
+  await expectComposerVisible(page);
+}
+
+/** Wide screens show the meter's details in a tooltip while the pointer is on it. */
+export async function hoverContextWindowMeter(page: Page): Promise<Locator> {
+  await page.getByRole("img", { name: METER_NAME }).hover({ timeout: 30_000 });
+  const tooltip = page.getByRole("tooltip").filter({ hasText: "Context window" });
+  await expect(tooltip).toBeVisible();
+  return tooltip;
+}
+
+/** Compact screens open the meter's details in a sheet. */
+export async function pressContextWindowMeter(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: METER_NAME }).click({ timeout: 30_000 });
+  const sheet = contextWindowSheet(page);
+  await expect(sheet).toBeVisible();
+  return sheet;
+}
+
+export async function closeContextWindowSheet(page: Page): Promise<void> {
+  const sheet = contextWindowSheet(page);
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+}
+
+export function contextWindowSheet(page: Page): Locator {
+  return page.getByRole("dialog", { name: "Context window" });
+}
+
+/** One report card; cards have no role of their own. */
+export function usageCard(surface: Locator, reportId: string): Locator {
+  return surface.getByTestId(`usage-report-${reportId}`);
+}
+
+export async function refreshUsageCard(surface: Locator, source: string): Promise<void> {
+  await surface.getByRole("button", { name: `Refresh ${source}`, exact: true }).click();
+}
+
+export async function expectRefreshButtons(surface: Locator, count: number): Promise<void> {
+  await expect(surface.getByRole("button", { name: /^Refresh / })).toHaveCount(count);
+}
+
+/** A report on the agent's own login, which is not the host's default one. */
+export function onWorkLogin(report: UsageReportEntry): UsageReportEntry {
+  return { ...report, id: `${report.sourceId}:work`, account: { label: "work@example.com" } };
+}
+
+export function expiredLogin(report: UsageReportEntry): UsageReportEntry {
+  return {
+    ...report,
+    report: {
+      status: "unavailable",
+      problem: {
+        kind: "expired",
+        expiresAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+        refreshedBy: "claude",
+      },
+    },
+  };
+}
+
+/** Holds a stream at a point until the test opens it, like a slow source. */
+export function gate(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+export interface AgentUsageScript {
+  /** The answer to the next agent usage request or report Refresh. */
+  answerNext(response: UsageListResponse): void;
+  /** From the next reload the host no longer reports usage. */
+  stopReportingUsage(): void;
+  /** The agent of each agent usage request, in order. */
+  agentRequests(): string[];
+  /** Each report Refresh, by report ID. */
+  refreshedReports(): string[][];
+}
+
+/**
+ * Scripts the host's usage: the host's own list is Claude and Codex on its default login; each
+ * agent request and each Refresh takes the next scripted answer.
+ */
+export async function scriptAgentUsage(page: Page): Promise<AgentUsageScript> {
+  let supported = true;
+  const answers: UsageListResponse[] = [];
+  const usage = await installUsageReportsFixture(page, {
+    usageSupported: () => supported,
+    lists: [
+      (request) => {
+        if (!request.agentId && !request.reportIds) return claudeAndCodexReports();
+        const next = answers.shift();
+        if (!next) throw new Error("The test scripts every agent usage request.");
+        return next;
+      },
+    ],
+  });
+  return {
+    answerNext: (response) => answers.push(response),
+    stopReportingUsage: () => {
+      supported = false;
+    },
+    agentRequests: () => usage.listRequests().flatMap((request) => request.agentId ?? []),
+    refreshedReports: () =>
+      usage.listRequests().flatMap((request) => (request.reportIds ? [request.reportIds] : [])),
+  };
+}
+
+/** Set PASEO_QA_SCREENSHOT_DIR to keep a QA screenshot. */
+export async function qaScreenshot(page: Page, name: string): Promise<void> {
+  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
+  if (!directory) return;
+  // Let the sheet and tooltip animations settle.
+  await page.waitForTimeout(600);
+  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
+  await page.screenshot({ path: path.join(directory, `${name}.png`) });
+}

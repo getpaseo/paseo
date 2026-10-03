@@ -1,13 +1,24 @@
-import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
-import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
-import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import {
-  installUsageReportsFixture,
-  type UsageListResponse,
-} from "../support/helpers/usage-reports";
+  type AgentUsageScript,
+  closeContextWindowSheet,
+  contextWindowSheet,
+  expectRefreshButtons,
+  expiredLogin,
+  gate,
+  hoverContextWindowMeter,
+  onWorkLogin,
+  openAgentWithContextWindow,
+  pressContextWindowMeter,
+  qaScreenshot,
+  refreshUsageCard,
+  reloadAgent,
+  scriptAgentUsage,
+  usageCard,
+} from "../support/helpers/context-window";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { claudeAndCodexReports, expectUnpinnableRows } from "../support/helpers/usage-sidebar-item";
 
 // Where the progress arc is painted, as its centroid relative to the ring's centre in pixels.
@@ -77,195 +88,162 @@ test.describe("context window meter", () => {
   });
 });
 
-/** A report on the agent's own login, which is not the host's default one. */
-function onWorkLogin(report: UsageReportEntry): UsageReportEntry {
-  return {
-    ...report,
-    id: `${report.sourceId}:work`,
-    account: { label: "work@example.com" },
-  };
-}
+const DESKTOP = { width: 1440, height: 900 };
+const COMPACT = { width: 390, height: 844 };
+const LOGIN_EXPIRED = /^Login expired .*Run claude to refresh it\.$/;
 
-function expiredLogin(report: UsageReportEntry): UsageReportEntry {
-  return {
-    ...report,
-    report: {
-      status: "unavailable",
-      problem: {
-        kind: "expired",
-        expiresAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
-        refreshedBy: "claude",
-      },
-    },
-  };
-}
+type OpenDetails = (page: Page) => Promise<Locator>;
+type Shot = (state: string) => Promise<void>;
 
-function gate(): { promise: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    open = resolve;
+/** Two reports on the agent's login stream in; the details show each card as it arrives. */
+async function expectCardsToStreamIn(
+  page: Page,
+  usage: AgentUsageScript,
+  openDetails: OpenDetails,
+  shot: Shot,
+): Promise<Locator> {
+  const [claude, codex] = claudeAndCodexReports();
+  const first = gate();
+  const second = gate();
+  usage.answerNext({
+    stream: [first.promise, onWorkLogin(claude!), second.promise, onWorkLogin(codex!)],
   });
-  return { promise, open };
+  const details = await openDetails(page);
+  await expect(details.getByText("Loading usage...", { exact: true })).toBeVisible();
+  await shot("loading");
+
+  first.open();
+  await expect(
+    usageCard(details, "claude:work").getByText("work@example.com", { exact: true }),
+  ).toBeVisible();
+  await expect(details.getByText("Loading usage...", { exact: true })).toHaveCount(0);
+  await expect(usageCard(details, "codex:work")).toHaveCount(0);
+  await shot("streaming");
+
+  second.open();
+  await expect(
+    usageCard(details, "codex:work").getByText("Session", { exact: true }),
+  ).toBeVisible();
+  // Only the agent's login, never the host's default one, and no pins.
+  await expect(details.getByText("dev@example.com", { exact: true })).toHaveCount(0);
+  await expectUnpinnableRows(details);
+  await expect(details.getByText("Updated just now", { exact: true })).toHaveCount(2);
+  return details;
 }
 
-/** Set PASEO_QA_SCREENSHOT_DIR to keep a QA screenshot. */
-async function qaScreenshot(page: Page, name: string) {
-  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
-  if (!directory) return;
-  await page.waitForTimeout(600);
-  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
-  await page.screenshot({ path: path.join(directory, `${name}.png`) });
+async function expectFailedRequestSentence(
+  page: Page,
+  usage: AgentUsageScript,
+  openDetails: OpenDetails,
+  shot: Shot,
+): Promise<void> {
+  usage.answerNext({ error: "Unknown agent" });
+  await reloadAgent(page);
+  const details = await openDetails(page);
+  await expect(
+    details.getByText("Unable to load usage: Unknown agent", { exact: true }),
+  ).toBeVisible();
+  await shot("error");
 }
 
-const LAYOUTS = {
-  desktop: { width: 1440, height: 900 },
-  compact: { width: 390, height: 844 },
-};
+async function expectOnlyContextWindowWithoutUsage(
+  page: Page,
+  usage: AgentUsageScript,
+  openDetails: OpenDetails,
+  shot: Shot,
+): Promise<void> {
+  usage.stopReportingUsage();
+  await reloadAgent(page);
+  const details = await openDetails(page);
+  await expect(details.getByText("25% used", { exact: true })).toBeVisible();
+  await expect(details.getByText("Loading usage...", { exact: true })).toHaveCount(0);
+  await expect(details.getByText("work@example.com", { exact: true })).toHaveCount(0);
+  await shot("unsupported");
+}
 
 for (const theme of ["light", "dark"] as const) {
-  for (const [layout, viewport] of Object.entries(LAYOUTS)) {
-    // Wide screens show the details in a tooltip; compact ones in a sheet, which can hold Refresh.
-    const surfaceName = layout === "compact" ? "sheet" : "popover";
-    test(`context window ${surfaceName} shows the agent's usage (${layout} ${theme})`, async ({
-      page,
-    }) => {
-      test.setTimeout(240_000);
-      const [claude, codex] = claudeAndCodexReports();
-      const session = await seedMockAgentWorkspace({
-        repoPrefix: "context-window-usage-",
-        title: "Context window usage e2e",
-        initialPrompt: "emit 32000 byte file agent stream payload",
+  test(`the context window tooltip shows the agent's usage (${theme})`, async ({ page }) => {
+    test.setTimeout(240_000);
+    const [claude] = claudeAndCodexReports();
+    const usage = await scriptAgentUsage(page);
+    await page.emulateMedia({ colorScheme: theme });
+    await page.setViewportSize(DESKTOP);
+    const session = await openAgentWithContextWindow(page);
+    const shot: Shot = (state) => qaScreenshot(page, `tooltip-desktop-${theme}-${state}`);
+
+    try {
+      await test.step("reports stream in one card at a time, without Refresh", async () => {
+        const tooltip = await expectCardsToStreamIn(page, usage, hoverContextWindowMeter, shot);
+        // The tooltip cannot be pressed, so its cards have no Refresh.
+        await expectRefreshButtons(tooltip, 0);
+        await shot("ready");
+        expect(usage.agentRequests()).toEqual([session.agentId]);
       });
-      let supported = true;
-      // Each open sends one agent request, and each Refresh one report request; each step
-      // scripts its answer.
-      const agentReports: UsageListResponse[] = [];
-      const usage = await installUsageReportsFixture(page, {
-        usageSupported: () => supported,
-        lists: [
-          (request) => {
-            if (!request.agentId && !request.reportIds) return claudeAndCodexReports();
-            const next = agentReports.shift();
-            if (!next) throw new Error("The test scripts every agent usage request.");
-            return next;
-          },
-        ],
+
+      await test.step("a report with a problem shows it on the card", async () => {
+        usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
+        await reloadAgent(page);
+        const tooltip = await hoverContextWindowMeter(page);
+        await expect(tooltip.getByText(LOGIN_EXPIRED)).toBeVisible();
+        await shot("problem");
       });
-      await page.addInitScript((value) => {
-        const key = "@paseo:app-settings";
-        const current = JSON.parse(localStorage.getItem(key) ?? "{}");
-        localStorage.setItem(key, JSON.stringify({ ...current, theme: value }));
-      }, theme);
-      await page.setViewportSize(viewport);
-      const meter = page.locator('[data-testid="context-window-meter"]:visible').first();
-      const popover = page.getByTestId(
-        layout === "compact" ? "context-window-sheet" : "context-window-meter-tooltip",
-      );
-      const message = popover.getByTestId("agent-usage-message");
-      const openPopover = async () => {
-        await expect(meter).toHaveAccessibleName(/25%/, { timeout: 30_000 });
-        if (layout === "compact") await meter.click();
-        else await meter.hover();
-        await expect(popover.getByText("Context window", { exact: true })).toBeVisible();
-      };
-      const shot = (state: string) =>
-        qaScreenshot(page, `${surfaceName}-${layout}-${theme}-${state}`);
-      const reopen = async () => {
-        await page.reload({ waitUntil: "commit" });
-        await expectComposerVisible(page);
-        await openPopover();
-      };
 
-      try {
-        await openAgentRoute(page, session);
-        await expectComposerVisible(page);
+      await test.step("a failed request says so in a sentence", async () => {
+        await expectFailedRequestSentence(page, usage, hoverContextWindowMeter, shot);
+      });
 
-        await test.step("reports stream in one card at a time, on the agent's login only", async () => {
-          const first = gate();
-          const second = gate();
-          agentReports.push({
-            stream: [first.promise, onWorkLogin(claude!), second.promise, onWorkLogin(codex!)],
-          });
-          await openPopover();
-          await expect(message).toHaveText("Loading usage...");
-          await shot("loading");
+      await test.step("a host without usage reports shows only the context window", async () => {
+        await expectOnlyContextWindowWithoutUsage(page, usage, hoverContextWindowMeter, shot);
+        // One request per open that had usage; this one sends none.
+        expect(usage.agentRequests()).toHaveLength(3);
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
 
-          first.open();
-          const claudeCard = popover.getByTestId("usage-report-claude:work");
-          await expect(claudeCard.getByText("work@example.com", { exact: true })).toBeVisible();
-          await expect(message).toHaveCount(0);
-          await expect(popover.getByTestId("usage-report-codex:work")).toHaveCount(0);
-          await shot("streaming");
+  test(`the context window sheet shows the agent's usage and refreshes it (${theme})`, async ({
+    page,
+  }) => {
+    test.setTimeout(240_000);
+    const [claude] = claudeAndCodexReports();
+    const usage = await scriptAgentUsage(page);
+    await page.emulateMedia({ colorScheme: theme });
+    await page.setViewportSize(COMPACT);
+    const session = await openAgentWithContextWindow(page);
+    const shot: Shot = (state) => qaScreenshot(page, `sheet-compact-${theme}-${state}`);
 
-          second.open();
-          await expect(
-            popover.getByTestId("usage-report-codex:work").getByText("Session", { exact: true }),
-          ).toBeVisible();
-          await expect(popover.getByText("dev@example.com", { exact: true })).toHaveCount(0);
-          await expectUnpinnableRows(popover);
-          await expect(popover.getByTestId("usage-freshness")).toHaveCount(2);
-          // Only the sheet can be pressed, so only it has Refresh.
-          await expect(popover.getByTestId("usage-refresh")).toHaveCount(
-            layout === "compact" ? 2 : 0,
-          );
-          await shot("ready");
-          expect(
-            usage
-              .listRequests()
-              .filter((request) => request.agentId)
-              .map((request) => request.agentId),
-          ).toEqual([session.agentId]);
-        });
+    try {
+      await test.step("reports stream in one card at a time, each with Refresh", async () => {
+        const sheet = await expectCardsToStreamIn(page, usage, pressContextWindowMeter, shot);
+        await expectRefreshButtons(sheet, 2);
+        await shot("ready");
+        expect(usage.agentRequests()).toEqual([session.agentId]);
+      });
 
-        if (layout === "compact") {
-          await test.step("Refresh in the sheet replaces the card, and the sheet closes", async () => {
-            agentReports.push([expiredLogin(onWorkLogin(claude!))]);
-            await popover
-              .getByTestId("usage-report-claude:work")
-              .getByTestId("usage-refresh")
-              .click();
-            await expect(
-              popover.getByText(/^Login expired .*Run claude to refresh it\.$/),
-            ).toBeVisible();
-            expect(usage.listRequests().at(-1)).toMatchObject({
-              forceRefresh: true,
-              reportIds: ["claude:work"],
-            });
+      await test.step("Refresh replaces the card with the source's new report", async () => {
+        usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
+        const sheet = contextWindowSheet(page);
+        await refreshUsageCard(sheet, "Claude");
+        await expect(sheet.getByText(LOGIN_EXPIRED)).toBeVisible();
+        expect(usage.refreshedReports()).toEqual([["claude:work"]]);
+        await shot("problem");
+      });
 
-            await popover.getByRole("button", { name: "Close", exact: true }).click();
-            await expect(popover).toHaveCount(0);
-          });
-        }
+      await test.step("Close dismisses the sheet", async () => {
+        await closeContextWindowSheet(page);
+      });
 
-        await test.step("a report with a problem shows it on the card", async () => {
-          agentReports.push([expiredLogin(onWorkLogin(claude!))]);
-          await reopen();
-          await expect(
-            popover.getByText(/^Login expired .*Run claude to refresh it\.$/),
-          ).toBeVisible();
-          await shot("problem");
-        });
+      await test.step("a failed request says so in a sentence", async () => {
+        await expectFailedRequestSentence(page, usage, pressContextWindowMeter, shot);
+      });
 
-        await test.step("a failed request says so in a sentence", async () => {
-          agentReports.push({ error: "Unknown agent" });
-          await reopen();
-          await expect(message).toHaveText("Unable to load usage: Unknown agent");
-          await shot("error");
-        });
-
-        await test.step("a host without usage reports shows only the context window", async () => {
-          supported = false;
-          await reopen();
-          await expect(popover.getByText(/% used/)).toBeVisible();
-          await expect(message).toHaveCount(0);
-          await expect(popover.locator('[data-testid^="usage-report-"]')).toHaveCount(0);
-          // The three earlier opens; this one sends none.
-          expect(usage.listRequests().filter((request) => request.agentId)).toHaveLength(3);
-          await shot("unsupported");
-        });
-      } finally {
-        await session.cleanup();
-      }
-    });
-  }
+      await test.step("a host without usage reports shows only the context window", async () => {
+        await expectOnlyContextWindowWithoutUsage(page, usage, pressContextWindowMeter, shot);
+        expect(usage.agentRequests()).toHaveLength(2);
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
 }
