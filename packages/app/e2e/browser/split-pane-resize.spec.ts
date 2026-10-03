@@ -17,7 +17,8 @@ async function dividerX(divider: Locator): Promise<number> {
   return box.x;
 }
 
-async function dragDivider(page: Page, divider: Locator, deltaX: number): Promise<void> {
+async function dragDivider(divider: Locator, deltaX: number): Promise<void> {
+  const page = divider.page();
   const box = await divider.boundingBox();
   if (!box) throw new Error("Divider has no bounding box");
   const x = box.x + box.width / 2;
@@ -32,7 +33,7 @@ async function dragDivider(page: Page, divider: Locator, deltaX: number): Promis
 async function expectDividerFollowsDrag(page: Page, index: number): Promise<void> {
   const divider = splitDividers(page).nth(index);
   const before = await dividerX(divider);
-  await dragDivider(page, divider, DRAG_DISTANCE);
+  await dragDivider(divider, DRAG_DISTANCE);
   await expect
     .poll(async () => (await dividerX(divider)) - before, {
       message: `divider ${index + 1} should follow the drag`,
