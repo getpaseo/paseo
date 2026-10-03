@@ -25,6 +25,12 @@ export const zhCN: TranslationResources = {
     position: "{{current}} / {{total}}",
     total: "{{total}} 个匹配项",
   },
+  diffFind: {
+    title: "在差异中查找",
+    searching: "正在查找...",
+    scope: "仅搜索当前差异文本",
+    skipped: "已排除 {{count}} 个二进制或超大文件",
+  },
   common: {
     bottomSheetBackdrop: "底部面板背景",
     back: "返回",
