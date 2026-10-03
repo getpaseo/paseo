@@ -6,6 +6,22 @@ import {
 import { migrateSidebarOrderState, useSidebarOrderStore } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
+  it("preserves host order independently of project and workspace orders", () => {
+    expect(
+      migrateSidebarOrderState({
+        hostOrder: ["host-b", "host-a", "host-b"],
+        projectOrder: ["project-a", "project-b"],
+        pinnedWorkspaceOrder: ["host-a:pinned"],
+        workspaceOrderByProject: { "project-a": ["host-a:two", "host-a:one"] },
+      }),
+    ).toEqual({
+      hostOrder: ["host-b", "host-a"],
+      projectOrder: ["project-a", "project-b"],
+      pinnedWorkspaceOrder: ["host-a:pinned"],
+      workspaceOrderByProject: { "project-a": ["host-a:two", "host-a:one"] },
+    });
+  });
+
   it("prefixes legacy per-server workspace order with the source server id", () => {
     const migrated = migrateSidebarOrderState({
       projectOrderByServerId: {
@@ -19,6 +35,7 @@ describe("migrateSidebarOrderState", () => {
     });
 
     expect(migrated).toEqual({
+      hostOrder: [],
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {

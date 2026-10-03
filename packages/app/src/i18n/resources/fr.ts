@@ -1127,6 +1127,7 @@ export const fr: TranslationResources = {
       trigger: "Préférences d'affichage",
       heading: "Affichage",
       grouping: {
+        hostProject: "Hôte → Projet",
         label: "Regroupement",
         project: "Projet",
         status: "Statut",

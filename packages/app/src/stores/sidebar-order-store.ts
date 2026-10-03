@@ -5,9 +5,12 @@ import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 interface SidebarOrderStoreState {
+  hostOrder: string[];
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
+  getHostOrder: () => string[];
+  setHostOrder: (keys: string[]) => void;
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
   getPinnedWorkspaceOrder: () => string[];
@@ -17,6 +20,7 @@ interface SidebarOrderStoreState {
 }
 
 interface SidebarOrderPersistedState {
+  hostOrder?: string[];
   projectOrder?: string[];
   pinnedWorkspaceOrder?: string[];
   workspaceOrderByProject?: Record<string, string[]>;
@@ -26,6 +30,7 @@ interface SidebarOrderPersistedState {
 
 const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
 const SidebarOrderPersistedStateSchema = z.strictObject({
+  hostOrder: z.array(z.string()).optional(),
   projectOrder: z.array(z.string()).optional(),
   pinnedWorkspaceOrder: z.array(z.string()).optional(),
   workspaceOrderByProject: StringArrayRecordSchema.optional(),
@@ -107,13 +112,19 @@ function normalizeLegacyWorkspaceKey(serverId: string, rawWorkspaceKey: string):
 }
 
 export function migrateSidebarOrderState(persistedState: unknown): {
+  hostOrder: string[];
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
 } {
   const result = SidebarOrderPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
-    return { projectOrder: [], pinnedWorkspaceOrder: [], workspaceOrderByProject: {} };
+    return {
+      hostOrder: [],
+      projectOrder: [],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: {},
+    };
   }
   const state: SidebarOrderPersistedState = result.data;
 
@@ -144,6 +155,7 @@ export function migrateSidebarOrderState(persistedState: unknown): {
   }
 
   return {
+    hostOrder: normalizeKeys(state.hostOrder ?? []),
     projectOrder,
     pinnedWorkspaceOrder: normalizeKeys(state.pinnedWorkspaceOrder ?? []),
     workspaceOrderByProject,
@@ -153,9 +165,14 @@ export function migrateSidebarOrderState(persistedState: unknown): {
 export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
   persist(
     (set, get) => ({
+      hostOrder: [],
       projectOrder: [],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {},
+      getHostOrder: () => get().hostOrder,
+      setHostOrder: (keys) => {
+        set({ hostOrder: dedupeKeys(keys) });
+      },
       getProjectOrder: () => get().projectOrder,
       setProjectOrder: (keys) => {
         set({ projectOrder: dedupeKeys(keys) });
@@ -182,10 +199,12 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       name: "sidebar-project-workspace-order",
       storage: createValidatedPersistStorage(AsyncStorage, SidebarOrderPersistedStateSchema),
       partialize: (state) => ({
+        hostOrder: state.hostOrder,
         projectOrder: state.projectOrder,
         pinnedWorkspaceOrder: state.pinnedWorkspaceOrder,
         workspaceOrderByProject: state.workspaceOrderByProject,
       }),
+      // The optional host order is additive; avoid re-trimming current path keys via legacy migration.
       version: 1,
       migrate: migrateSidebarOrderState,
     },
