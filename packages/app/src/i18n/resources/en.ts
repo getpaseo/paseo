@@ -1104,6 +1104,7 @@ export const en = {
         project: "Project",
         status: "Status",
         labels: "Labels",
+        recentActivity: "Recent activity",
       },
       titleSource: {
         label: "Title",

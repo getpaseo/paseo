@@ -7,7 +7,7 @@ export interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   rows: SidebarWorkspaceEntry[];
-  leading: { kind: "status"; bucket: StatusBucket };
+  leading: { kind: "status"; bucket: StatusBucket } | null;
 }
 
 export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWorkspaceGroup[] {
@@ -17,6 +17,22 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
     rows: group.rows,
     leading: { kind: "status", bucket: group.bucket },
   }));
+}
+
+/** The one group key that renders without a header — see `recentActivityWorkspaceGroups`. */
+export const SIDEBAR_HEADERLESS_GROUP_KEY = "recentActivity";
+
+/**
+ * Recency grouping is one flat group: the ordering carries the meaning, so a header would only
+ * restate the menu's answer while giving collapse a blank, unlabeled row to hide behind. The
+ * renderer skips the header for `SIDEBAR_HEADERLESS_GROUP_KEY` instead of the group carrying
+ * empty content.
+ */
+export function recentActivityWorkspaceGroups(
+  rows: readonly SidebarWorkspaceEntry[],
+): SidebarWorkspaceGroup[] {
+  if (rows.length === 0) return [];
+  return [{ key: SIDEBAR_HEADERLESS_GROUP_KEY, label: "", rows: [...rows], leading: null }];
 }
 
 /**
