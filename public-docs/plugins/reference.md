@@ -664,7 +664,8 @@ plans, and mode changes; requesting permission does not end the turn.
 | `workspace.archived`         | `workspace`                              | Archive state is saved                             |
 
 Agent events exclude internal agents, including helpers a plugin creates with
-`paseo.agents.create({ internal: true })`. Archive events can precede runtime/worktree cleanup;
+`paseo.agents.create({ internal: true })`. Workspace events and the `workspace.create` before hook
+exclude internal workspaces the same way. Archive events can precede runtime/worktree cleanup;
 closing an agent that is already closed does not emit another `agent.closed` event.
 During daemon shutdown, pending event hooks have up to five seconds to finish before plugins stop.
 `workspace.created` is not a setup barrier before agent startup.

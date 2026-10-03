@@ -557,14 +557,20 @@ export class WorkspaceDirectory {
   // Project parents that have no active workspaces. The wire field is the
   // sidebar projection bucket for projects whose workspace list is currently
   // empty; it is not a separate domain record.
-  async listEmptyProjects(): Promise<WorkspaceProjectDescriptor[]> {
+  async listEmptyProjects(options?: {
+    includeInternal?: boolean;
+  }): Promise<WorkspaceProjectDescriptor[]> {
     const [persistedWorkspaces, persistedProjects] = await Promise.all([
       this.deps.workspaceRegistry.list(),
       this.deps.projectRegistry.list(),
     ]);
+    // A project whose only workspaces are hidden reads as empty to that caller.
     const projectIdsWithActiveWorkspaces = new Set(
       persistedWorkspaces
-        .filter((workspace) => !workspace.archivedAt)
+        .filter(
+          (workspace) =>
+            !workspace.archivedAt && (options?.includeInternal === true || !workspace.internal),
+        )
         .map((workspace) => workspace.projectId),
     );
     return persistedProjects
@@ -596,6 +602,8 @@ export class WorkspaceDirectory {
     }));
   }
 
+  // Every active workspace, internal ones included. Callers that answer a
+  // listing go through matchesFilter so internal workspaces stay opt-in.
   async listDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
     return Array.from(
       (
@@ -611,6 +619,9 @@ export class WorkspaceDirectory {
     filter: FetchWorkspacesRequestFilter | undefined;
   }): boolean {
     const { workspace, filter } = input;
+    if (workspace.internal && filter?.includeInternal !== true) {
+      return false;
+    }
     if (!filter) {
       return true;
     }
@@ -666,7 +677,7 @@ export class WorkspaceDirectory {
     const projectIdFilter = filter?.projectId?.trim();
     const emptyProjects = cursorToken
       ? []
-      : (await this.listEmptyProjects()).filter(
+      : (await this.listEmptyProjects({ includeInternal: filter?.includeInternal })).filter(
           (project) => !projectIdFilter || project.projectId === projectIdFilter,
         );
 

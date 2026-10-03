@@ -55,6 +55,18 @@ describe("canonical CLI surface", () => {
     expect(help).not.toContain("--detach");
   });
 
+  it("hides internal agents and workspaces from listings unless --internal is passed", () => {
+    const cli = createCli();
+    const ls = cli.commands.find((command) => command.name() === "ls");
+    const workspace = cli.commands.find((command) => command.name() === "workspace");
+    const workspaceLs = workspace?.commands.find((command) => command.name() === "ls");
+    const workspaceCreate = workspace?.commands.find((command) => command.name() === "create");
+
+    expect(ls?.helpInformation()).toContain("--internal");
+    expect(workspaceLs?.helpInformation()).toContain("--internal");
+    expect(workspaceCreate?.helpInformation()).toContain("--internal");
+  });
+
   it("offers thinking configuration when running, updating, and scheduling agents", () => {
     const cli = createCli();
     const run = cli.commands.find((command) => command.name() === "run");

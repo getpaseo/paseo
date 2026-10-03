@@ -891,7 +891,7 @@ export async function createPaseoDaemon(
     },
   });
   workspaceRegistry.subscribeToMutations((mutation) => {
-    if (mutation.kind === "archive" && mutation.workspace) {
+    if (mutation.kind === "archive" && mutation.workspace && !mutation.workspace.internal) {
       pluginRuntime.emit("workspace.archived", {
         workspace: describeHookWorkspace(mutation.workspace),
       });
@@ -934,6 +934,8 @@ export async function createPaseoDaemon(
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
+    isInternalWorkspace: async (workspaceId) =>
+      (await workspaceRegistry.get(workspaceId))?.internal === true,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -1390,11 +1392,12 @@ export async function createPaseoDaemon(
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     workspaceRegistry,
     projectRegistry,
-    createDirectoryWorkspace: async (cwd, title, projectId) => {
+    createDirectoryWorkspace: async (cwd, title, projectId, context) => {
       const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
         cwd,
         title,
         projectId,
+        context,
       );
       await emitWorkspaceUpdatesExternal([workspace.workspaceId]);
       return workspace;
@@ -1866,7 +1869,7 @@ export async function createPaseoDaemon(
 const AGENT_CLOSE_TIMEOUT_MS = 5_000;
 
 async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
-  const agents = agentManager.listAgents();
+  const agents = agentManager.listAgents({ includeInternal: true });
   await Promise.all(
     agents.map(async (agent) => {
       try {

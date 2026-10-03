@@ -241,6 +241,8 @@ export type AgentSubscriber = (event: AgentManagerEvent) => void;
 export interface SubscribeOptions {
   agentId?: string;
   replayState?: boolean;
+  /** Receive events for internal agents too. Off by default for global subscribers. */
+  includeInternal?: boolean;
 }
 
 interface HydrateTimelineOptions {
@@ -314,6 +316,8 @@ export interface CreateAgentOptions {
 
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
+  /** An internal workspace makes every agent created inside it internal. */
+  isInternalWorkspace?: (workspaceId: string) => Promise<boolean>;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
@@ -566,6 +570,7 @@ function attachPersistenceCwd(
 interface SubscriptionRecord {
   callback: AgentSubscriber;
   agentId: string | null;
+  includeInternal: boolean;
 }
 
 interface SteerEventBarrier {
@@ -727,6 +732,7 @@ export interface RetiredInternalAgent {
 
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
+  private readonly isInternalWorkspace: ((workspaceId: string) => Promise<boolean>) | undefined;
   private readonly retiredInternalAgents = new Map<
     string,
     RetiredInternalAgent & { expiresAt: number }
@@ -772,6 +778,7 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
+    this.isInternalWorkspace = options.isInternalWorkspace;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
@@ -964,6 +971,7 @@ export class AgentManager {
     const record: SubscriptionRecord = {
       callback,
       agentId: targetAgentId,
+      includeInternal: options?.includeInternal === true,
     };
     this.subscribers.add(record);
 
@@ -977,9 +985,9 @@ export class AgentManager {
           });
         }
       } else {
-        // For global subscribers, skip internal agents during replay
+        // Global subscribers skip internal agents unless they opted in.
         for (const agent of this.agents.values()) {
-          if (agent.internal) {
+          if (agent.internal && !record.includeInternal) {
             continue;
           }
           callback({
@@ -999,10 +1007,24 @@ export class AgentManager {
     return this.subscribers.size;
   }
 
-  listAgents(): ManagedAgent[] {
+  listAgents(options?: { includeInternal?: boolean }): ManagedAgent[] {
     return Array.from(this.agents.values())
-      .filter((agent) => !agent.internal)
+      .filter((agent) => options?.includeInternal === true || !agent.internal)
       .map((agent) => Object.assign({}, agent));
+  }
+
+  /** Archived internal agents still readable by id; see getRetiredInternalAgent. */
+  listRetiredInternalAgents(): RetiredInternalAgent[] {
+    const now = Date.now();
+    const retired: RetiredInternalAgent[] = [];
+    for (const [agentId, entry] of this.retiredInternalAgents) {
+      if (entry.expiresAt <= now) {
+        this.retiredInternalAgents.delete(agentId);
+        continue;
+      }
+      retired.push({ record: entry.record, lastMessage: entry.lastMessage });
+    }
+    return retired;
   }
 
   async listImportableSessions(
@@ -1255,6 +1277,16 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    if (
+      !config.internal &&
+      options.workspaceId &&
+      (await this.isInternalWorkspace?.(options.workspaceId))
+    ) {
+      // Internal cascades from the workspace: nothing inside it is listed,
+      // persisted, or announced, so the provider session is not kept either.
+      config = { ...config, internal: true };
+      options = { ...options, persistSession: false };
+    }
     if (this.pluginLifecycle && !config.internal) {
       const request = await this.pluginLifecycle.before("agent.create", {
         config,
@@ -5125,8 +5157,12 @@ export class AgentManager {
       ) {
         continue;
       }
-      // Skip internal agents for global subscribers (those without a specific agentId)
-      if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
+      // Global subscribers (no agentId) skip internal agents unless they opted in.
+      if (
+        !subscriber.agentId &&
+        !subscriber.includeInternal &&
+        this.eventBelongsToInternalAgent(event)
+      ) {
         continue;
       }
       subscriber.callback(event);

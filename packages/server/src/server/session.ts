@@ -1404,6 +1404,7 @@ export class Session {
     }
     // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
     // Older clients create before subscribing and require the causal update beside the response.
+    if (workspace.internal) return;
     this.emit({
       type: "workspace_update",
       payload: {
@@ -1923,6 +1924,12 @@ export class Session {
         }
 
         if (event.type === "provider_subagent") {
+          // The subagents track of an internal parent stays hidden.
+          const parentAgentId =
+            event.event.type === "upsert"
+              ? event.event.subagent.parentAgentId
+              : event.event.parentAgentId;
+          if (this.agentManager.getAgent(parentAgentId)?.internal) return;
           this.emitProviderSubagentWorkspaceUpdate(event.event);
           this.forwardProviderSubagentUpdate(event.event);
           return;
@@ -1968,7 +1975,10 @@ export class Session {
 
         this.forwardAgentStream(event, serializedEvent);
 
-        if (event.event.type === "permission_requested") {
+        // An internal agent streams only to clients subscribed to it by id;
+        // session-wide prompts would surface it everywhere.
+        const internal = this.agentManager.getAgent(event.agentId)?.internal === true;
+        if (event.event.type === "permission_requested" && !internal) {
           this.emit({
             type: "agent_permission_request",
             payload: {
@@ -1990,7 +2000,9 @@ export class Session {
 
         // Title updates may be applied asynchronously after agent creation.
       },
-      { replayState: false },
+      // Internal agents flow through so exact-id subscribers and opted-in
+      // listings see them; everything else above filters them out.
+      { replayState: false, includeInternal: true },
     );
   }
 
@@ -5186,24 +5198,33 @@ export class Session {
   private async listAgentPayloads(filter?: {
     labels?: Record<string, string>;
     includeArchived?: boolean;
+    includeInternal?: boolean;
     includeUnavailablePersisted?: boolean;
   }): Promise<AgentSnapshotPayload[]> {
     const includeArchived = filter?.includeArchived === true;
+    const includeInternal = filter?.includeInternal === true;
     const labelEntries = filter?.labels ? Object.entries(filter.labels) : [];
 
     // Get live agents with session modes
-    const agentSnapshots = this.agentManager.listAgents();
+    const agentSnapshots = this.agentManager.listAgents({ includeInternal });
     const liveAgents = await Promise.all(
       agentSnapshots.map((agent) => this.buildAgentPayload(agent)),
     );
 
+    // Internal agents never reach storage; the ones archived recently are still
+    // held in memory and count as archived here.
+    const retiredInternalRecords =
+      includeInternal && includeArchived
+        ? this.agentManager.listRetiredInternalAgents().map((retired) => retired.record)
+        : [];
+
     // Add persisted agents that have not been lazily initialized yet
     // (excluding internal agents which are for ephemeral system tasks)
-    const registryRecords = await this.agentStorage.list();
+    const registryRecords = [...(await this.agentStorage.list()), ...retiredInternalRecords];
     const liveIds = new Set(agentSnapshots.map((a) => a.id));
     const registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds());
     const persistedAgents = registryRecords
-      .filter((record) => !liveIds.has(record.id) && !record.internal)
+      .filter((record) => !liveIds.has(record.id) && (includeInternal || !record.internal))
       // Keep raw-record filters ahead of projection; seeded homes can carry thousands of archived agents.
       .filter((record) => includeArchived || !record.archivedAt)
       .filter((record) => labelEntries.every(([key, value]) => record.labels?.[key] === value))
@@ -5445,6 +5466,7 @@ export class Session {
     let agents = await this.listAgentPayloads({
       labels: filter?.labels,
       includeArchived: filter?.includeArchived,
+      includeInternal: filter?.includeInternal,
       includeUnavailablePersisted: request.type === "fetch_agent_history_request",
     });
     const activePlacementsByWorkspaceId =
@@ -5588,6 +5610,7 @@ export class Session {
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
+      ...(workspace.internal ? { internal: true } : {}),
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -6577,8 +6600,9 @@ export class Session {
         "Sequenced workspace directory reads do not support filters.",
       );
     }
+    // Sync reads carry no filter, so internal workspaces are always hidden here.
     return this.directorySync.synchronizeWorkspaces(
-      await this.workspaceDirectory.listDescriptors(),
+      (await this.workspaceDirectory.listDescriptors()).filter((workspace) => !workspace.internal),
       request.sync ?? {},
     );
   }
@@ -6664,7 +6688,8 @@ export class Session {
     let creationRequest = request;
     // Hooks belong to the operation: retries fingerprint the caller's input
     // and must not rerun hooks or compare their potentially changing output.
-    if (this.pluginRuntime) {
+    // Plugins never see internal workspaces, same as internal agents.
+    if (this.pluginRuntime && !request.internal) {
       const { type, requestId, ...input } = request;
       const transformed = await this.pluginRuntime.before("workspace.create", input);
       creationRequest = { ...transformed, type, requestId };
@@ -6694,7 +6719,11 @@ export class Session {
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
-      { expectsInitialAgent: Boolean(request.firstAgentContext), workspaceId },
+      {
+        expectsInitialAgent: Boolean(request.firstAgentContext),
+        workspaceId,
+        internal: request.internal,
+      },
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -6756,6 +6785,7 @@ export class Session {
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
+        internal: request.internal,
       },
       source.baseBranch
         ? { resolveDefaultBranch: async () => source.baseBranch as string }

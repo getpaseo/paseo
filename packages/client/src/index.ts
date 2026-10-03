@@ -786,9 +786,12 @@ function createWorkspaceHandleFactory(
     const refresh = async (options?: { requestId?: string }) => {
       let cursor: string | undefined;
       let requestId = options?.requestId;
+      // A ref addresses one workspace by id, so an internal one resolves too.
+      const filter = daemonClient.supportsInternalWorkspaces() ? { includeInternal: true } : {};
       do {
         const result = await daemonClient.fetchWorkspaces({
           requestId,
+          filter,
           page: { limit: 200, ...(cursor ? { cursor } : {}) },
         });
         const match = result.entries.find((entry) => entry.id === id);

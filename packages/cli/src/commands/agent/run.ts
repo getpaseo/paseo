@@ -568,7 +568,11 @@ async function resolveRunWorkspace(
   // TODO: thread the run `prompt` as firstAgentContext so workspace-level
   // title/branch generation picks up the task description (U8/U6 deferred).
   const source = buildRunWorkspaceSource(options, cwd);
-  const result = await client.createWorkspace({ source });
+  // An internal agent that mints its own workspace keeps that workspace hidden too.
+  const result = await client.createWorkspace({
+    source,
+    ...(options.internal ? { internal: true } : {}),
+  });
 
   if (!result.workspace) {
     throw {

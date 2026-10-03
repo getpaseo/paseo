@@ -102,12 +102,12 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 ### Workspaces
 
-| Tool                | Function                                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| `create_workspace`  | Create a local or worktree-isolated workspace. Worktrees can branch off, check out a branch, or a PR. |
-| `list_workspaces`   | List active workspaces and their directories and isolation.                                           |
-| `rename_workspace`  | Change the user-visible name of the current or specified workspace.                                   |
-| `archive_workspace` | Archive a workspace and the sessions it owns.                                                         |
+| Tool                | Function                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_workspace`  | Create a local or worktree-isolated workspace. Worktrees can branch off, check out a branch, or a PR. `internal: true` hides it and makes every agent inside it internal. |
+| `list_workspaces`   | List active workspaces and their directories and isolation. Internal workspaces are left out.                                                                             |
+| `rename_workspace`  | Change the user-visible name of the current or specified workspace.                                                                                                       |
+| `archive_workspace` | Archive a workspace and the sessions it owns.                                                                                                                             |
 
 For worktree isolation, `create_workspace` accepts the same useful choices as the app: branch off from a base, check out an existing branch, or check out a pull request. The worktree remains an implementation detail of the workspace lifecycle.
 

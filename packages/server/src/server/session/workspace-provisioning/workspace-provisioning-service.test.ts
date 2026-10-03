@@ -145,6 +145,37 @@ test("fresh non-git directory creates a directory workspace at the exact path", 
   expect(workspace.cwd).toBe(dir);
 });
 
+test("an internal workspace is persisted hidden, skipped by open-by-path, and never reaches plugins", async () => {
+  const dir = path.join(tmpDir, "plain");
+  const lifecycleEvents: string[] = [];
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    lifecycle: {
+      emit: (name) => {
+        lifecycleEvents.push(name);
+      },
+      before: async (_name, request) => request,
+    },
+  });
+
+  const internal = await provisioning.createWorkspaceForDirectory(dir, null, undefined, {
+    internal: true,
+  });
+  expect(internal.internal).toBe(true);
+  expect((await workspaceRegistry.get(internal.workspaceId))?.internal).toBe(true);
+  expect(lifecycleEvents).toEqual([]);
+
+  // Opening the same directory mints a visible workspace instead of adopting the hidden one.
+  const opened = await provisioning.findOrCreateWorkspaceForDirectory(dir);
+  expect(opened.workspaceId).not.toBe(internal.workspaceId);
+  expect(opened.internal).toBeUndefined();
+  expect(lifecycleEvents).toEqual(["workspace.created"]);
+});
+
 test("re-opening an active workspace by exact path returns the same record without duplicating", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
