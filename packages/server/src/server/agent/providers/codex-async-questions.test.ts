@@ -113,7 +113,7 @@ test("an agent withdraws only its obsolete async questions with a persisted expl
       createPaseoToolCatalog(dependencies).executeTool("dismiss_questions", { reason }),
     ).rejects.toThrow("Only an agent");
     await expect(catalog.executeTool("dismiss_questions", { reason: " " })).rejects.toThrow();
-    expect(manager.getPendingPermissions(agent.id)).toHaveLength(3);
+    await expect.poll(() => manager.getPendingPermissions(agent.id)).toHaveLength(3);
     const result = await catalog.executeTool("dismiss_questions", {
       reason,
       requestIds: ["permission-async-question-1", approvalId, "already-resolved"],
@@ -316,16 +316,18 @@ test("manager snapshots capture pending and answered question state before the t
   try {
     await ask();
     const [permission] = session.getPendingPermissions();
-    expect(manager.getAgent(agent.id)?.persistence?.metadata?.asyncQuestions).toEqual([
-      {
-        item: {
-          type: "agentMessage",
-          id: questionItem.id,
-          delivery: "async",
-          questions: questionItem.questions,
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.persistence?.metadata?.asyncQuestions)
+      .toEqual([
+        {
+          item: {
+            type: "agentMessage",
+            id: questionItem.id,
+            delivery: "async",
+            questions: questionItem.questions,
+          },
         },
-      },
-    ]);
+      ]);
     await manager.respondToPermission(agent.id, permission.id, answer);
     expect(manager.getAgent(agent.id)?.persistence?.metadata?.asyncQuestions).toEqual([
       {

@@ -47,6 +47,7 @@ vi.mock("@/components/ui/combobox", () => ({
 }));
 
 beforeEach(() => {
+  vi.stubGlobal("React", React);
   cleanup();
   fixture.plugins = [];
   fixture.compact = true;
