@@ -536,4 +536,18 @@ describe("PiCliRuntime", () => {
 
     await expect(session.abort()).resolves.toBeUndefined();
   });
+
+  test("forceInterrupt signals the wedged Pi process and publishes its exit", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const exits: string[] = [];
+    session.onEvent((event) => {
+      if (event.type === "process_exit") exits.push(event.error);
+    });
+
+    await session.forceInterrupt();
+
+    expect(child.killedSignals).toEqual(["SIGINT"]);
+    expect(exits).toHaveLength(1);
+  });
 });

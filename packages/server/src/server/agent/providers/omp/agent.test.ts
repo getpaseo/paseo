@@ -1242,6 +1242,15 @@ describe("OMP agent client and session", () => {
     expect(omp.runningToolCallIds()).toEqual([]);
   });
 
+  test("forceInterrupt escalates to the wedged OMP runtime process", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.forceInterrupt();
+
+    expect(omp.runtime().forceInterruptRequested).toBe(true);
+  });
+
   test("an interrupt that OMP reports as an aborted turn cancels instead of failing", async () => {
     const omp = new OmpHarness();
     await omp.start();

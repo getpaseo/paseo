@@ -166,6 +166,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.requestStopWork({ type: "abort" });
   }
 
+  async forceInterrupt(): Promise<void> {
+    await this.process.forceInterrupt();
+  }
+
   async getState(): Promise<OmpSessionState> {
     return OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
   }

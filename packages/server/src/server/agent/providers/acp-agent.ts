@@ -2465,6 +2465,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  async forceInterrupt(): Promise<void> {
+    const child = this.child;
+    if (!child) {
+      return;
+    }
+    const firstPass = await this.terminateProcess(child, {
+      gracefulSignal: "SIGINT",
+      forceSignal: "SIGTERM",
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    if (firstPass !== "kill-timeout") {
+      return;
+    }
+    this.logger.warn("ACP provider process did not exit after SIGINT and SIGTERM; sending SIGKILL");
+    await this.terminateProcess(child, {
+      gracefulSignal: "SIGKILL",
+      forceSignal: "SIGKILL",
+      gracefulTimeoutMs: 0,
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;

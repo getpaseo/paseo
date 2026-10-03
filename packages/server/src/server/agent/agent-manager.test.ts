@@ -1381,6 +1381,19 @@ class ControlledInterruptSession extends TestAgentSession {
   }
 }
 
+class ForceInterruptibleSession extends ControlledInterruptSession {
+  forceInterruptCalled = false;
+  closeCalled = false;
+
+  override async forceInterrupt(): Promise<void> {
+    this.forceInterruptCalled = true;
+  }
+
+  override async close(): Promise<void> {
+    this.closeCalled = true;
+  }
+}
+
 interface ControlledInterruptFixture {
   agentId: string;
   manager: AgentManager;
@@ -1394,9 +1407,14 @@ async function createControlledInterruptFixture(options: {
   agentId: string;
   turnId: string;
   interrupt: (session: ControlledInterruptSession) => Promise<void>;
+  forceInterrupt?: boolean;
+  resumeSession?: () => Promise<AgentSession>;
 }): Promise<ControlledInterruptFixture> {
   const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${options.name}-`));
-  const session = new ControlledInterruptSession(
+  const sessionClass = options.forceInterrupt
+    ? ForceInterruptibleSession
+    : ControlledInterruptSession;
+  const session = new sessionClass(
     { provider: "codex", cwd: workdir },
     options.turnId,
     options.interrupt,
@@ -1405,12 +1423,23 @@ async function createControlledInterruptFixture(options: {
     override async createSession(): Promise<AgentSession> {
       return session;
     }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      if (options.resumeSession) {
+        return options.resumeSession();
+      }
+      return super.resumeSession(handle, config, launchContext);
+    }
   })();
   const manager = new AgentManager({
     clients: { codex: client },
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
-    rescueTimeouts: { interruptSessionMs: 10 },
+    rescueTimeouts: { interruptSessionMs: 10, reloadSessionCloseMs: 50 },
     idFactory: () => options.agentId,
   });
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
@@ -2659,7 +2688,7 @@ test.each(["hang", "reject"])(
   },
 );
 
-test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
+test("cancelAgentRun preserves running state when the provider interrupt hangs without process escalation", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",
     agentId: "00000000-0000-4000-8000-000000000303",
@@ -2686,7 +2715,7 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
   }
 });
 
-test("cancelAgentRun preserves the active turn when the provider rejects the interrupt", async () => {
+test("cancelAgentRun preserves the active turn when the provider rejects the interrupt without process escalation", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-rejected",
     agentId: "00000000-0000-4000-8000-000000000304",
@@ -2711,6 +2740,113 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
       type: "turn_completed",
       provider: "codex",
       turnId: "provider-still-active-turn",
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun force-recovers an unresponsive provider session", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-timeout-recovery",
+    agentId: "00000000-0000-4000-8000-000000000308",
+    turnId: "hanging-interrupt-turn",
+    interrupt: async () => await new Promise(() => {}),
+    forceInterrupt: true,
+  });
+  const session = fixture.session as ForceInterruptibleSession;
+
+  try {
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "hanging-interrupt-turn",
+    });
+    await running;
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.interruptCalled).toBe(true);
+    expect(session.forceInterruptCalled).toBe(true);
+    expect(session.closeCalled).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)?.session).not.toBe(fixture.session);
+
+    const followUp = fixture.manager.streamAgent(fixture.agentId, "follow-up after forced stop");
+    const events: AgentStreamEvent[] = [];
+    for await (const event of followUp) {
+      events.push(event);
+    }
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_completed", provider: "codex" }),
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun force-recovers when the provider rejects the interrupt", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-rejected-recovery",
+    agentId: "00000000-0000-4000-8000-000000000309",
+    turnId: "provider-still-active-turn",
+    interrupt: async () => {
+      throw new Error("A foreground turn is already active");
+    },
+    forceInterrupt: true,
+  });
+  const session = fixture.session as ForceInterruptibleSession;
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(session.forceInterruptCalled).toBe(true);
+    expect(session.closeCalled).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun exposes recovery failure instead of a permanent running state", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-recovery-failure",
+    agentId: "00000000-0000-4000-8000-000000000310",
+    turnId: "unrecoverable-turn",
+    interrupt: async () => await new Promise(() => {}),
+    forceInterrupt: true,
+    resumeSession: async () => {
+      throw new Error("provider session cannot be resumed");
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "error",
+      activeForegroundTurnId: null,
+      pendingReplacement: false,
+      attention: expect.objectContaining({
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
+      lastError:
+        "Paseo stopped the unresponsive runtime but could not restore its session: provider session cannot be resumed",
     });
   } finally {
     await fixture.cleanup();
@@ -7194,6 +7330,74 @@ test("failed replacement cancellation preserves an autonomous running state", as
     );
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed replacement cancellation force-recovers an autonomous running state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-replace-recovered-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ForceInterruptibleLiveInterruptSession extends TestAgentSession {
+    forceInterruptCalled = false;
+
+    override async interrupt(): Promise<void> {
+      throw new Error("provider still owns the autonomous turn");
+    }
+
+    override async forceInterrupt(): Promise<void> {
+      this.forceInterruptCalled = true;
+    }
+  }
+
+  class ForceInterruptibleLiveInterruptClient extends TestAgentClient {
+    readonly session = new ForceInterruptibleLiveInterruptSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new ForceInterruptibleLiveInterruptClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10, reloadSessionCloseMs: 50 },
+    idFactory: () => "00000000-0000-4000-8000-000000000311",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+
+    client.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-replace-1",
+    });
+    await running;
+
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement prompt");
+    const events: AgentStreamEvent[] = [];
+    for await (const event of replacement) {
+      events.push(event);
+    }
+
+    expect(client.session.forceInterruptCalled).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_completed", provider: "codex" }),
+    );
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
       activeForegroundTurnId: null,
     });
   } finally {

@@ -46,9 +46,16 @@ into that contract; lifecycle callers do not interpret provider-specific errors.
 
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an
-older cancellation from settling a newer turn. If interruption is rejected or times out, the agent
-keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
-Accepting new work after an ambiguous interruption would create a split-brain session.
+older cancellation from settling a newer turn.
+
+When interruption is rejected or times out and the provider session offers `forceInterrupt()`, the
+manager escalates to process-level signals, then closes the unresponsive runtime and reloads it so
+the durable provider session is resumed rather than lost. A successful recovery settles the run and
+leaves the agent `idle` and ready for another prompt. If the runtime cannot be restored, the agent
+lands in `error` with an attention flag instead of staying `running` forever. Sessions without
+`forceInterrupt()` keep the previous behavior: the agent keeps its active foreground turn and
+replacement, reload, rewind, and Stop report the failure, because accepting new work after an
+ambiguous interruption would create a split-brain session.
 
 ## Relationships
 
