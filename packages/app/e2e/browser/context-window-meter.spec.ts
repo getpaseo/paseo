@@ -1,7 +1,14 @@
-import type { Locator } from "@playwright/test";
+import path from "node:path";
+import type { Locator, Page } from "@playwright/test";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  installUsageReportsFixture,
+  type UsageListResponse,
+} from "../support/helpers/usage-reports";
+import { claudeAndCodexReports, expectUnpinnableRows } from "../support/helpers/usage-sidebar-item";
 
 // Where the progress arc is painted, as its centroid relative to the ring's centre in pixels.
 // Reads the rendered pixels, so any rotation that does not reach the screen counts as none.
@@ -69,3 +76,165 @@ test.describe("context window meter", () => {
     }
   });
 });
+
+/** A report on the agent's own login, which is not the host's default one. */
+function onWorkLogin(report: UsageReportEntry): UsageReportEntry {
+  return {
+    ...report,
+    id: `${report.sourceId}:work`,
+    account: { label: "work@example.com" },
+  };
+}
+
+function expiredLogin(report: UsageReportEntry): UsageReportEntry {
+  return {
+    ...report,
+    report: {
+      status: "unavailable",
+      problem: {
+        kind: "expired",
+        expiresAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+        refreshedBy: "claude",
+      },
+    },
+  };
+}
+
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+/** Set PASEO_QA_SCREENSHOT_DIR to keep a QA screenshot. */
+async function qaScreenshot(page: Page, name: string) {
+  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
+  if (!directory) return;
+  await page.waitForTimeout(600);
+  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
+  await page.screenshot({ path: path.join(directory, `${name}.png`) });
+}
+
+const LAYOUTS = {
+  desktop: { width: 1440, height: 900 },
+  compact: { width: 390, height: 844 },
+};
+
+for (const theme of ["light", "dark"] as const) {
+  for (const [layout, viewport] of Object.entries(LAYOUTS)) {
+    test(`context window popover shows the agent's usage (${layout} ${theme})`, async ({
+      page,
+    }) => {
+      test.setTimeout(240_000);
+      const [claude, codex] = claudeAndCodexReports();
+      const session = await seedMockAgentWorkspace({
+        repoPrefix: "context-window-usage-",
+        title: "Context window usage e2e",
+        initialPrompt: "emit 32000 byte file agent stream payload",
+      });
+      let supported = true;
+      // Each popover open sends one agent request; each step scripts its answer.
+      const agentReports: UsageListResponse[] = [];
+      const usage = await installUsageReportsFixture(page, {
+        usageSupported: () => supported,
+        lists: [
+          (request) => {
+            if (!request.agentId) return claudeAndCodexReports();
+            const next = agentReports.shift();
+            if (!next) throw new Error("The test scripts every agent usage request.");
+            return next;
+          },
+        ],
+      });
+      await page.addInitScript((value) => {
+        const key = "@paseo:app-settings";
+        const current = JSON.parse(localStorage.getItem(key) ?? "{}");
+        localStorage.setItem(key, JSON.stringify({ ...current, theme: value }));
+      }, theme);
+      await page.setViewportSize(viewport);
+      const meter = page.locator('[data-testid="context-window-meter"]:visible').first();
+      const popover = page.getByTestId("context-window-meter-tooltip");
+      const message = popover.getByTestId("agent-usage-message");
+      const openPopover = async () => {
+        await expect(meter).toHaveAccessibleName(/25%/, { timeout: 30_000 });
+        if (layout === "compact") await meter.click();
+        else await meter.hover();
+        await expect(popover.getByText("Context window", { exact: true })).toBeVisible();
+      };
+      const reopen = async () => {
+        await page.reload({ waitUntil: "commit" });
+        await expectComposerVisible(page);
+        await openPopover();
+      };
+
+      try {
+        await openAgentRoute(page, session);
+        await expectComposerVisible(page);
+
+        await test.step("reports stream in one card at a time, on the agent's login only", async () => {
+          const first = gate();
+          const second = gate();
+          agentReports.push({
+            stream: [first.promise, onWorkLogin(claude!), second.promise, onWorkLogin(codex!)],
+          });
+          await openPopover();
+          await expect(message).toHaveText("Loading usage...");
+          await qaScreenshot(page, `popover-${layout}-${theme}-loading`);
+
+          first.open();
+          const claudeCard = popover.getByTestId("usage-report-claude:work");
+          await expect(claudeCard.getByText("work@example.com", { exact: true })).toBeVisible();
+          await expect(message).toHaveCount(0);
+          await expect(popover.getByTestId("usage-report-codex:work")).toHaveCount(0);
+          await qaScreenshot(page, `popover-${layout}-${theme}-streaming`);
+
+          second.open();
+          await expect(
+            popover.getByTestId("usage-report-codex:work").getByText("Session", { exact: true }),
+          ).toBeVisible();
+          await expect(popover.getByText("dev@example.com", { exact: true })).toHaveCount(0);
+          await expectUnpinnableRows(popover);
+          await expect(popover.getByTestId("usage-freshness")).toHaveCount(2);
+          await qaScreenshot(page, `popover-${layout}-${theme}-ready`);
+          expect(
+            usage
+              .listRequests()
+              .filter((request) => request.agentId)
+              .map((request) => request.agentId),
+          ).toEqual([session.agentId]);
+        });
+
+        await test.step("a report with a problem shows it on the card", async () => {
+          agentReports.push([expiredLogin(onWorkLogin(claude!))]);
+          await reopen();
+          await expect(
+            popover.getByText(/^Login expired .*Run claude to refresh it\.$/),
+          ).toBeVisible();
+          await qaScreenshot(page, `popover-${layout}-${theme}-problem`);
+        });
+
+        await test.step("a failed request says so in a sentence", async () => {
+          agentReports.push({ error: "Unknown agent" });
+          await reopen();
+          await expect(message).toHaveText("Unable to load usage: Unknown agent");
+          await qaScreenshot(page, `popover-${layout}-${theme}-error`);
+        });
+
+        await test.step("a host without usage reports shows only the context window", async () => {
+          supported = false;
+          await reopen();
+          await expect(popover.getByText(/% used/)).toBeVisible();
+          await expect(message).toHaveCount(0);
+          await expect(popover.locator('[data-testid^="usage-report-"]')).toHaveCount(0);
+          // The three earlier opens; this one sends none.
+          expect(usage.listRequests().filter((request) => request.agentId)).toHaveLength(3);
+          await qaScreenshot(page, `popover-${layout}-${theme}-unsupported`);
+        });
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
+}
