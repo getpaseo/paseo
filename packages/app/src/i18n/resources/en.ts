@@ -1827,6 +1827,12 @@ export const en = {
     externalBrowser: "External browser",
     dontAskAgain: "Don't ask again",
   },
+  chatLink: {
+    title: "Open URL",
+    message: "Open {{url}} in Paseo or your external browser?",
+    internalTab: "Internal browser — tab",
+    externalBrowser: "External browser",
+  },
   downloads: {
     requestTokenFailed: "Failed to request download token.",
     hostUnavailable: "Download host is unavailable.",
@@ -2031,6 +2037,9 @@ export const en = {
             label: "Clicking a file in an agent chat",
             description: "Open file links and tool-call files beside the conversation",
           },
+          chatLinks: {
+            label: "Clicking a URL in an agent chat",
+          },
           diffFiles: {
             label: "Clicking a file in a diff",
             description: "Open source files selected from a diff beside it",
@@ -2190,6 +2199,14 @@ export const en = {
         options: {
           ask: "Ask",
           inApp: "In Paseo",
+          external: "External browser",
+        },
+      },
+      chatLinks: {
+        options: {
+          ask: "Ask",
+          internalSide: "Internal browser — side",
+          internalTab: "Internal browser — tab",
           external: "External browser",
         },
       },

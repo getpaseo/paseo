@@ -1854,6 +1854,12 @@ export const fr: TranslationResources = {
     externalBrowser: "Navigateur externe",
     dontAskAgain: "Ne demande plus",
   },
+  chatLink: {
+    title: "Ouvrir l’URL",
+    message: "Ouvrir {{url}} dans Paseo ou dans votre navigateur externe ?",
+    internalTab: "Navigateur interne — onglet",
+    externalBrowser: "Navigateur externe",
+  },
   downloads: {
     requestTokenFailed: "Échec de la demande du jeton de téléchargement.",
     hostUnavailable: "L'hôte de téléchargement n'est pas disponible.",
@@ -2121,6 +2127,14 @@ export const fr: TranslationResources = {
         options: {
           ask: "Demander",
           inApp: "DansPaseo",
+          external: "Navigateur externe",
+        },
+      },
+      chatLinks: {
+        options: {
+          ask: "Demander",
+          internalSide: "Navigateur interne — sur le côté",
+          internalTab: "Navigateur interne — onglet",
           external: "Navigateur externe",
         },
       },
