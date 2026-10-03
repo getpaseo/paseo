@@ -207,6 +207,20 @@ function encodeNavigationKey(
   }
 }
 
+function encodeEnterKey(input: TerminalKeyInput, options: TerminalKeyInputEncodingOptions): string {
+  const mod = modifierParam(input);
+  if (mod > 1 && shouldUseWin32InputMode(input, options)) {
+    return encodeWin32EnterKeyInput(input);
+  }
+  if (mod > 1 && shouldUseKittyKeyboardMode(input, options)) {
+    return `\x1b[13;${mod}u`;
+  }
+  if (mod > 1 && (options.inputMode?.modifyOtherKeys ?? 0) >= 2) {
+    return `\x1b[27;${mod};13~`;
+  }
+  return "\r";
+}
+
 export function encodeTerminalKeyInput(
   input: TerminalKeyInput,
   options: TerminalKeyInputEncodingOptions = {},
@@ -221,16 +235,8 @@ export function encodeTerminalKeyInput(
   }
 
   switch (key) {
-    case "Enter": {
-      const mod = modifierParam(input);
-      if (mod > 1 && shouldUseWin32InputMode(input, options)) {
-        return encodeWin32EnterKeyInput(input);
-      }
-      if (mod > 1 && shouldUseKittyKeyboardMode(input, options)) {
-        return `\x1b[13;${mod}u`;
-      }
-      return "\r";
-    }
+    case "Enter":
+      return encodeEnterKey(input, options);
     case "Tab":
       if (input.shift && !input.ctrl && !input.alt && !input.meta) {
         return "\x1b[Z";

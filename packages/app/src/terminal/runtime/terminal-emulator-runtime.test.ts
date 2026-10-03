@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeTerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
 
 vi.mock("@xterm/addon-clipboard", () => ({
   ClipboardAddon: class ClipboardAddon {
@@ -246,6 +247,49 @@ describe("terminal-emulator-runtime", () => {
       expect(findRequests).toBe(opensFind ? 1 : 0);
       expect(prevented).toBe(opensFind);
       expect(stopped).toBe(opensFind);
+    },
+  );
+
+  it.each([
+    { isMac: true, key: "ArrowLeft", sent: ["\x01"] },
+    { isMac: true, key: "ArrowRight", sent: ["\x05"] },
+    { isMac: true, key: "ArrowLeft", shiftKey: true, sent: [] },
+    { isMac: false, key: "ArrowLeft", sent: [] },
+  ])(
+    "maps Cmd+$key to line navigation with isMac=$isMac shift=$shiftKey",
+    ({ isMac, key, shiftKey = false, sent }) => {
+      const runtime = new TerminalEmulatorRuntime({ isMac });
+      const bytes: string[] = [];
+      runtime.setCallbacks({
+        callbacks: {
+          onTerminalKey: (input) => {
+            bytes.push(encodeTerminalKeyInput(input));
+          },
+        },
+      });
+      const event = {
+        type: "keydown",
+        key,
+        ctrlKey: false,
+        metaKey: true,
+        shiftKey,
+        altKey: false,
+        isComposing: false,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as KeyboardEvent;
+
+      let passedToXterm: boolean | undefined;
+      runtime.attachKeyEventHandler({
+        attachCustomKeyEventHandler: (handler) => {
+          passedToXterm = handler(event);
+        },
+        hasSelection: () => false,
+        getSelection: () => "",
+        paste: () => {},
+      });
+      expect(bytes).toEqual(sent);
+      expect(passedToXterm).toBe(sent.length === 0);
     },
   );
 
