@@ -128,6 +128,19 @@ import {
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const MAX_REPLAY_REASONING_CHARS = 32_000;
+
+function capReplayReasoningText(text: string, maxChars: number): string {
+  if (text.length < maxChars) {
+    return text;
+  }
+  const capped = text.slice(0, maxChars);
+  const lastCodeUnit = capped.charCodeAt(capped.length - 1);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
+    return capped.slice(0, -1);
+  }
+  return capped;
+}
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -1695,6 +1708,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
+  private replayedReasoningChars = 0;
   private readonly initialHandle?: AgentPersistenceHandle;
 
   private readonly config: AgentSessionConfig;
@@ -1811,6 +1825,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
       if (this.agentCapabilities?.loadSession) {
+        this.replayedReasoningChars = 0;
         this.replayingHistory = true;
         const response = await this.runACPRequest(() =>
           this.connection!.loadSession({
@@ -2595,7 +2610,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private deliverTranslatedEvents(events: AgentStreamEvent[]): void {
     if (this.replayingHistory) {
       for (const event of events) {
-        if (event.type === "timeline") {
+        if (event.type !== "timeline") {
+          continue;
+        }
+        if (event.item.type === "reasoning") {
+          const remaining = MAX_REPLAY_REASONING_CHARS - this.replayedReasoningChars;
+          if (remaining <= 0) {
+            continue;
+          }
+          const text = capReplayReasoningText(event.item.text, remaining);
+          const consumed =
+            event.item.text.length > remaining || text.length !== event.item.text.length
+              ? remaining
+              : text.length;
+          this.replayedReasoningChars += consumed;
+          if (!text) {
+            continue;
+          }
+          this.persistedHistory.push({ ...event.item, text });
+        } else {
           this.persistedHistory.push(event.item);
         }
       }

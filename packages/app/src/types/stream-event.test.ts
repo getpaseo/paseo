@@ -92,6 +92,26 @@ describe("applyStreamEvent", () => {
     expect((result.head[0] as ThoughtItem).text).toBe("Let me think...");
   });
 
+  it("caps accumulated reasoning before it reaches timeline state", () => {
+    let result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: reasoningChunk("r".repeat(20_000)),
+      timestamp: baseTimestamp,
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: reasoningChunk("s".repeat(20_000)),
+      timestamp: baseTimestamp,
+    });
+
+    expect(result.head).toHaveLength(1);
+    expect((result.head[0] as ThoughtItem).text).toHaveLength(32_000);
+    expect((result.head[0] as ThoughtItem).text).toBe("r".repeat(20_000) + "s".repeat(12_000));
+    expect((result.head[0] as ThoughtItem).capped).toBe(true);
+  });
+
   it("flushes reasoning to tail when tool call arrives", () => {
     let result = applyStreamEvent({
       tail: [],
