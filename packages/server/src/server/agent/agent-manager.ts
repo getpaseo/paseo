@@ -23,6 +23,7 @@ import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 import {
+  AgentTurnStartCanceledError,
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
@@ -2427,7 +2428,7 @@ export class AgentManager {
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
-  }): Promise<string> {
+  }): Promise<string | null> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
       const result = await agent.session.startTurn(prompt, options);
@@ -2436,6 +2437,18 @@ export class AgentManager {
       }
       return result.turnId;
     } catch (error) {
+      if (error instanceof AgentTurnStartCanceledError) {
+        if (!pendingRun.settled) {
+          await this.handleStreamEvent(agent, {
+            type: "turn_canceled",
+            provider: agent.provider,
+            reason: "interrupted",
+          });
+          this.finalizeForegroundTurn(agent);
+          this.runs.settleForegroundRun(agentId, pendingRun.token);
+        }
+        return null;
+      }
       if (pendingRun.settled) {
         throw error;
       }
@@ -2502,7 +2515,7 @@ export class AgentManager {
     const pendingRun = this.runs.createPendingRun(agentId);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
-      let turnId: string;
+      let turnId: string | null;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
       turnId = await this.startPendingForegroundTurn({
         agent,
@@ -2511,6 +2524,15 @@ export class AgentManager {
         prompt,
         options,
       });
+      if (turnId === null) {
+        const canceledEvent: AgentStreamEvent = {
+          type: "turn_canceled",
+          provider: agent.provider,
+          reason: "interrupted",
+        };
+        yield canceledEvent;
+        return;
+      }
 
       if (isReplacement) {
         agent.pendingReplacement = false;
@@ -3004,7 +3026,10 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+    return this.runForegroundMutation(agentId, () => {
+      this.requireSessionAgent(agentId).pendingReplacement = false;
+      return this.cancelAgentRunNow(agentId);
+    });
   }
 
   private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
@@ -3076,7 +3101,12 @@ export class AgentManager {
     agentId: string,
     action: "reload" | "replace" | "rewind",
   ): Promise<void> {
-    const result = await this.cancelAgentRun(agentId);
+    let result: AgentRunCancellationResult;
+    if (action === "replace") {
+      result = await this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+    } else {
+      result = await this.cancelAgentRun(agentId);
+    }
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
