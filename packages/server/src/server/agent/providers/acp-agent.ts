@@ -263,6 +263,45 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: false,
 };
 
+/**
+ * ACP `agentCapabilities._meta` key an agent uses to advertise conversation rewind.
+ *
+ * A provider that forks its own conversation server-side names one request
+ * method here; the adapter calls it and rebinds to the returned session id.
+ */
+export const ACP_CONVERSATION_REWIND_META_KEY = "conversationRewind";
+
+/** Target namespace this adapter understands: a stable user message id. */
+export const ACP_CONVERSATION_REWIND_TARGET = "user-message-id";
+
+/**
+ * Read the conversation-rewind request method an ACP agent advertised.
+ * @param capabilities - the initialize result's `agentCapabilities`, if any.
+ * @returns the namespaced request method, or null when the agent does not
+ *   advertise conversation rewind (or advertises an unsupported target).
+ */
+export function readACPConversationRewindMethod(
+  capabilities: ACPAgentCapabilities | null | undefined,
+): string | null {
+  const meta = capabilities?._meta as
+    | { [ACP_CONVERSATION_REWIND_META_KEY]?: unknown }
+    | null
+    | undefined;
+  const rewind = meta?.[ACP_CONVERSATION_REWIND_META_KEY] as
+    | { method?: unknown; target?: unknown }
+    | null
+    | undefined;
+  if (!rewind || typeof rewind.method !== "string" || rewind.method.length === 0) {
+    return null;
+  }
+  // An agent may widen this contract later; only the message-id target is
+  // understood here, so anything else stays hidden instead of failing at rewind.
+  if (rewind.target !== undefined && rewind.target !== ACP_CONVERSATION_REWIND_TARGET) {
+    return null;
+  }
+  return rewind.method;
+}
+
 function acpSessionListRequest(cursor: string | null | undefined, cwd: string | undefined) {
   return {
     ...(cursor ? { cursor } : {}),
@@ -1657,7 +1696,11 @@ export class ACPAgentClient implements AgentClient {
 
 export class ACPAgentSession implements AgentSession, ACPClient {
   readonly provider: string;
-  readonly capabilities: AgentCapabilityFlags;
+  /**
+   * Capability flags this session reports to the daemon. Mutable because a
+   * provider only reveals its conversation-rewind extension in `initialize`.
+   */
+  capabilities: AgentCapabilityFlags;
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -1701,6 +1744,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
+  /** Namespaced conversation-rewind request method this provider advertised. */
+  private conversationRewindMethod: string | null = null;
   private sessionId: string | null = null;
   private readonly earlySessionUpdates: SessionNotification[] = [];
   private currentMode: string | null = null;
@@ -1769,6 +1814,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.bindConversationRewind(this.agentCapabilities);
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1806,6 +1852,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.bindConversationRewind(this.agentCapabilities);
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -1899,6 +1946,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       .prompt({
         sessionId: this.sessionId,
         messageId,
+        // ACP v1 has no stable prompt-id field, so a rewind-capable agent also
+        // receives the id in `_meta`. The timeline row that rewind targets names
+        // this same id, so a provider can map it to its own user message.
+        ...(this.conversationRewindMethod === null
+          ? {}
+          : { _meta: { clientMessageId: messageId } }),
         prompt: toACPContentBlocks(prompt),
       })
       .then((response) => {
@@ -2450,6 +2503,147 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     };
   }
 
+  /**
+   * Adopt a provider-advertised conversation-rewind extension for this session.
+   *
+   * The capability is per connection: an ACP provider that forks conversations
+   * server-side names its own request method in `initialize`, and only then may
+   * the rewind UI appear for this agent.
+   * @param capabilities - the initialize result's `agentCapabilities`.
+   */
+  private bindConversationRewind(capabilities: ACPAgentCapabilities | null): void {
+    // Rewind needs session/load to replay the fork before the daemon exposes it.
+    // Do not advertise a control that this adapter cannot complete safely.
+    if (!capabilities?.loadSession) {
+      return;
+    }
+    const method = readACPConversationRewindMethod(capabilities);
+    if (method === null) {
+      return;
+    }
+    this.conversationRewindMethod = method;
+    // Copy before flipping the flag: the option object is shared by every
+    // session created from the same provider options.
+    this.capabilities = { ...this.capabilities, supportsRewindConversation: true };
+  }
+
+  /**
+   * Fork this conversation immediately before one user message.
+   *
+   * The provider keeps the original session; this adapter rebinds to the fork
+   * it returns and replays that fork's history, so the daemon's forced timeline
+   * refresh reads the rewound conversation instead of the old one.
+   * @param input - the daemon's canonical user message id for the target turn.
+   */
+  async revertConversation(input: { messageId: string }): Promise<void> {
+    if (!this.connection || !this.sessionId) {
+      throw new Error(`${this.provider} session is not initialized`);
+    }
+    const method = this.conversationRewindMethod;
+    if (method === null) {
+      throw new Error(`${this.provider} does not support conversation rewind`);
+    }
+    const response = await this.runACPRequest(() =>
+      this.connection!.extMethod(method, {
+        sessionId: this.sessionId,
+        messageId: input.messageId,
+      }),
+    );
+    const forkSessionId = typeof response.sessionId === "string" ? response.sessionId : null;
+    if (!forkSessionId) {
+      throw new Error(`${this.provider} conversation rewind returned no session id`);
+    }
+    const previousState = {
+      sessionId: this.sessionId,
+      pendingUserMessage: this.pendingUserMessage,
+      submittedUserMessageTurnId: this.submittedUserMessageTurnId,
+      toolCalls: new Map(this.toolCalls),
+      fallbackAssistantMessageId: this.fallbackAssistantMessageId,
+      persistedHistory: [...this.persistedHistory],
+      historyPending: this.historyPending,
+      replayingHistory: this.replayingHistory,
+      configOptions: [...this.configOptions],
+      availableModes: [...this.availableModes],
+      currentMode: this.currentMode,
+      availableModels: this.availableModels ? [...this.availableModels] : null,
+      currentModel: this.currentModel,
+      thinkingOptionId: this.thinkingOptionId,
+      currentTitle: this.currentTitle,
+      lastActivityAt: this.lastActivityAt,
+      cachedCommands: [...this.cachedCommands],
+      commandsReadyDeferred: this.commandsReadyDeferred,
+      commandsReadySettled: this.commandsReadySettled,
+    };
+    try {
+      this.rebindConversationSession(forkSessionId);
+      await this.replayConversationHistory(forkSessionId);
+    } catch (error) {
+      this.sessionId = previousState.sessionId;
+      this.pendingUserMessage = previousState.pendingUserMessage;
+      this.submittedUserMessageTurnId = previousState.submittedUserMessageTurnId;
+      this.toolCalls.clear();
+      for (const [toolCallId, toolCall] of previousState.toolCalls) {
+        this.toolCalls.set(toolCallId, toolCall);
+      }
+      this.fallbackAssistantMessageId = previousState.fallbackAssistantMessageId;
+      this.persistedHistory.length = 0;
+      this.persistedHistory.push(...previousState.persistedHistory);
+      this.historyPending = previousState.historyPending;
+      this.replayingHistory = previousState.replayingHistory;
+      this.configOptions = previousState.configOptions;
+      this.availableModes = previousState.availableModes;
+      this.currentMode = previousState.currentMode;
+      this.availableModels = previousState.availableModels;
+      this.currentModel = previousState.currentModel;
+      this.thinkingOptionId = previousState.thinkingOptionId;
+      this.currentTitle = previousState.currentTitle;
+      this.lastActivityAt = previousState.lastActivityAt;
+      this.cachedCommands = previousState.cachedCommands;
+      this.commandsReadyDeferred = previousState.commandsReadyDeferred;
+      this.commandsReadySettled = previousState.commandsReadySettled;
+      throw error;
+    }
+  }
+
+  /** Point this session at a provider-side fork and drop the old turn state. */
+  private rebindConversationSession(sessionId: string): void {
+    this.sessionId = sessionId;
+    this.pendingUserMessage = null;
+    this.submittedUserMessageTurnId = null;
+    this.toolCalls.clear();
+    this.fallbackAssistantMessageId = null;
+    this.persistedHistory.length = 0;
+    this.historyPending = false;
+  }
+
+  /**
+   * Replay a fork's provider history into the buffer `streamHistory()` drains.
+   *
+   * A live ACP session is not resumable through `session/load` on every
+   * provider, so the same call is used that a daemon-restart resume would use:
+   * an agent that owns the session replays it, an agent that does not resumes it.
+   */
+  private async replayConversationHistory(sessionId: string): Promise<void> {
+    if (!this.connection) {
+      return;
+    }
+    this.replayingHistory = true;
+    try {
+      const response = await this.runACPRequest(() =>
+        this.connection!.loadSession({
+          sessionId,
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
+      this.deliverTranslatedEvents(this.flushPendingUserMessage());
+      this.applySessionState(response);
+    } finally {
+      this.replayingHistory = false;
+    }
+    this.historyPending = this.persistedHistory.length > 0;
+  }
+
   async interrupt(): Promise<void> {
     if (!this.connection || !this.sessionId) {
       return;
@@ -2764,7 +2958,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return {};
   }
 
-  private async spawnProcess(): Promise<SpawnedACPProcess> {
+  protected async spawnProcess(): Promise<SpawnedACPProcess> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
