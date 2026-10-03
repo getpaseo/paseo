@@ -1,7 +1,7 @@
 import { Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Server } from "lucide-react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
+import { THEMED_HOST_ICONS } from "@/hosts/host-icon";
 import { identityForeground } from "@/styles/identity-colors";
 import type { Theme } from "@/styles/theme";
 
@@ -10,8 +10,6 @@ import type { Theme } from "@/styles/theme";
  * match this so the line reads as one rank of peers.
  */
 export const HOST_BADGE_ICON_SIZE = 12;
-
-const ThemedServer = withUnistyles(Server);
 
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -33,7 +31,7 @@ const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }>
 })();
 
 /**
- * Which machine something lives on, drawn the same way everywhere it appears: a server glyph
+ * Which machine something lives on, drawn the same way everywhere it appears: the host's glyph
  * and, when the host is configured to show one, its name — both in the host's identity color.
  *
  * A hostname is the least interesting thing on any line that carries it and the only one whose
@@ -41,13 +39,14 @@ const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }>
  * them — see `flexShrink` below.
  */
 export function HostBadge({ badge }: { badge: HostBadgeModel }) {
+  const ThemedIcon = THEMED_HOST_ICONS[badge.icon];
   return (
     <View
       style={styles.badge}
       testID={`host-badge-${badge.serverId}`}
       accessibilityLabel={badge.label}
     >
-      <ThemedServer
+      <ThemedIcon
         size={HOST_BADGE_ICON_SIZE}
         style={styles.icon}
         uniProps={HOST_ICON_MAPPINGS[badge.color]}

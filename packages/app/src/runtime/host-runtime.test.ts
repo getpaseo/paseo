@@ -1911,7 +1911,10 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    expect(store.getHosts()[0]?.appearance).toEqual({ color: "none", badgeDisplay: null });
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "none",
+      badgeDisplay: null,
+    });
 
     store.syncHosts([]);
   });
@@ -1968,7 +1971,10 @@ describe("HostRuntimeStore", () => {
     await store.setHostBadgeDisplay("srv_appearance", "icon");
     await hostListChanged;
 
-    expect(store.getHosts()[0]?.appearance).toEqual({ color: "amber", badgeDisplay: "icon" });
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "amber",
+      badgeDisplay: "icon",
+    });
 
     const persisted = await storage.getItem("@paseo:daemon-registry");
     expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
@@ -2028,9 +2034,15 @@ describe("HostRuntimeStore", () => {
     firstWrite.resolve();
     await Promise.all([color, display]);
 
-    expect(store.getHosts()[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    expect(store.getHosts()[0]?.appearance).toEqual({
+      color: "teal",
+      badgeDisplay: "icon",
+    });
     const persistedHosts = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
-    expect(persistedHosts[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+    expect(persistedHosts[0]?.appearance).toEqual({
+      color: "teal",
+      badgeDisplay: "icon",
+    });
     store.syncHosts([]);
   });
 
