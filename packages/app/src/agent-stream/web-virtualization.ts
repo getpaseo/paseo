@@ -44,17 +44,27 @@ export interface WebVirtualizedHistoryWindow {
   mountedEntries: IndexedStreamItem[];
 }
 
-export function estimateStreamItemHeight(
-  item: StreamItem,
-  contentMaxWidth: number,
-  imageContext?: AssistantImageContext,
-): number {
+interface StreamItemHeightEstimateInput {
+  item: StreamItem;
+  contentMaxWidth: number;
+  imageContext?: AssistantImageContext;
+}
+
+export function estimateStreamItemHeight({
+  item,
+  contentMaxWidth,
+  imageContext,
+}: StreamItemHeightEstimateInput): number {
   switch (item.kind) {
     case "user_message":
       return item.images && item.images.length > 0 ? 220 : 96;
     case "assistant_message":
       return (
-        estimateAssistantMessageHeightFromCache(item.text, contentMaxWidth, imageContext) ?? 220
+        estimateAssistantMessageHeightFromCache({
+          markdown: item.text,
+          contentMaxWidth,
+          imageContext,
+        }) ?? 220
       );
     case "tool_call":
       return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;

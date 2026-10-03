@@ -63,7 +63,10 @@ describe("assistant image metadata", () => {
 
   it("reserves the default image aspect ratio before metadata arrives", () => {
     expect(
-      estimateAssistantMessageHeightFromCache("![Pending](https://example.com/pending.png)", 608),
+      estimateAssistantMessageHeightFromCache({
+        markdown: "![Pending](https://example.com/pending.png)",
+        contentMaxWidth: 608,
+      }),
     ).toBe(464);
   });
 
@@ -76,10 +79,10 @@ describe("assistant image metadata", () => {
     );
 
     expect(
-      estimateAssistantMessageHeightFromCache(
-        "Here is the screenshot\n\n![Screenshot](https://example.com/landscape.png)",
-        DEFAULT_CONTENT_MAX_WIDTH,
-      ),
+      estimateAssistantMessageHeightFromCache({
+        markdown: "Here is the screenshot\n\n![Screenshot](https://example.com/landscape.png)",
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
     ).toBeGreaterThan(220);
   });
 
@@ -87,14 +90,14 @@ describe("assistant image metadata", () => {
     const source = `data:image/png;base64,${"a".repeat(512)}`;
     setAssistantImageMetadata({ source }, { width: 1200, height: 800 });
 
-    const imageOnlyHeight = estimateAssistantMessageHeightFromCache(
-      `![Screenshot](${source})`,
-      DEFAULT_CONTENT_MAX_WIDTH,
-    );
-    const mixedHeight = estimateAssistantMessageHeightFromCache(
-      `Text\n\n![Screenshot](${source})`,
-      DEFAULT_CONTENT_MAX_WIDTH,
-    );
+    const imageOnlyHeight = estimateAssistantMessageHeightFromCache({
+      markdown: `![Screenshot](${source})`,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    });
+    const mixedHeight = estimateAssistantMessageHeightFromCache({
+      markdown: `Text\n\n![Screenshot](${source})`,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    });
 
     expect(imageOnlyHeight).toBeGreaterThan(220);
     expect(mixedHeight).toBeGreaterThan(imageOnlyHeight ?? 0);

@@ -152,11 +152,17 @@ export function extractAssistantImageSources(markdown: string): string[] {
   return parsed.sources;
 }
 
-export function estimateAssistantMessageHeightFromCache(
-  markdown: string,
-  contentMaxWidth: number,
-  imageContext?: AssistantImageContext,
-): number | null {
+export interface AssistantMessageHeightEstimateInput {
+  markdown: string;
+  contentMaxWidth: number;
+  imageContext?: AssistantImageContext;
+}
+
+export function estimateAssistantMessageHeightFromCache({
+  markdown,
+  contentMaxWidth,
+  imageContext,
+}: AssistantMessageHeightEstimateInput): number | null {
   const parsed = assistantImageParseCache.get(markdown) ?? parseAssistantImageMarkdown(markdown);
   if (parsed.sources.length === 0) {
     return null;
