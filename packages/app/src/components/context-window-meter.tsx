@@ -3,7 +3,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AgentUsage } from "@/usage";
+import { AgentUsage, useHostReportsUsage } from "@/usage";
 import { formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -106,6 +106,8 @@ export function ContextWindowMeter({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
+  // Usage cards need a wider popover; without them it keeps the plain tooltip shape.
+  const showsUsage = useHostReportsUsage(serverId);
   const popoverWidth = Math.min(360, width - 24);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
@@ -198,8 +200,8 @@ export function ContextWindowMeter({
         side="top"
         align="center"
         offset={8}
-        maxWidth={popoverWidth}
-        style={[styles.popover, { width: popoverWidth }]}
+        maxWidth={showsUsage ? popoverWidth : undefined}
+        style={showsUsage ? [styles.popover, { width: popoverWidth }] : undefined}
         testID="context-window-meter-tooltip"
       >
         <View style={styles.tooltipContent}>
@@ -219,7 +221,7 @@ export function ContextWindowMeter({
             </Text>
           ) : null}
         </View>
-        <AgentUsage serverId={serverId} agentId={agentId} />
+        {showsUsage ? <AgentUsage serverId={serverId} agentId={agentId} /> : null}
       </TooltipContent>
     </Tooltip>
   );

@@ -164,13 +164,12 @@ export function useUsageHostReports(serverId: string | null): UsageReportEntry[]
  */
 export function useAgentUsage(serverId: string, agentId: string): AgentUsageView {
   const queryClient = useQueryClient();
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
+  const canReport = useHostReportsUsage(serverId);
   const queryKey = agentUsageQueryKey(serverId, agentId);
   const query = useFetchQuery({
     queryKey,
     queryFn: () => streamReports({ queryClient, queryKey, serverId, agentId }),
-    enabled: isConnected && isSupported,
+    enabled: canReport,
     // Another agent's reports never stand in while this one's load.
     dataShape: "value",
     // The daemon's errors (an unknown agent) do not heal on retry, and reopening the popover
@@ -178,10 +177,14 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
     retry: false,
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
-  return resolveAgentUsageView({
-    canReport: isConnected && isSupported,
-    query: toQueryState(query),
-  });
+  return resolveAgentUsageView({ canReport, query: toQueryState(query) });
+}
+
+/** Whether a host is connected and reports usage, read without fetching anything. */
+export function useHostReportsUsage(serverId: string): boolean {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
+  return isConnected && isSupported;
 }
 
 /** Every host with whether it is connected and reports usage, in host order. */
