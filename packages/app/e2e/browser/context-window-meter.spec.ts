@@ -124,7 +124,9 @@ const LAYOUTS = {
 
 for (const theme of ["light", "dark"] as const) {
   for (const [layout, viewport] of Object.entries(LAYOUTS)) {
-    test(`context window popover shows the agent's usage (${layout} ${theme})`, async ({
+    // Wide screens show the details in a tooltip; compact ones in a sheet, which can hold Refresh.
+    const surfaceName = layout === "compact" ? "sheet" : "popover";
+    test(`context window ${surfaceName} shows the agent's usage (${layout} ${theme})`, async ({
       page,
     }) => {
       test.setTimeout(240_000);
@@ -135,13 +137,14 @@ for (const theme of ["light", "dark"] as const) {
         initialPrompt: "emit 32000 byte file agent stream payload",
       });
       let supported = true;
-      // Each popover open sends one agent request; each step scripts its answer.
+      // Each open sends one agent request, and each Refresh one report request; each step
+      // scripts its answer.
       const agentReports: UsageListResponse[] = [];
       const usage = await installUsageReportsFixture(page, {
         usageSupported: () => supported,
         lists: [
           (request) => {
-            if (!request.agentId) return claudeAndCodexReports();
+            if (!request.agentId && !request.reportIds) return claudeAndCodexReports();
             const next = agentReports.shift();
             if (!next) throw new Error("The test scripts every agent usage request.");
             return next;
@@ -155,7 +158,9 @@ for (const theme of ["light", "dark"] as const) {
       }, theme);
       await page.setViewportSize(viewport);
       const meter = page.locator('[data-testid="context-window-meter"]:visible').first();
-      const popover = page.getByTestId("context-window-meter-tooltip");
+      const popover = page.getByTestId(
+        layout === "compact" ? "context-window-sheet" : "context-window-meter-tooltip",
+      );
       const message = popover.getByTestId("agent-usage-message");
       const openPopover = async () => {
         await expect(meter).toHaveAccessibleName(/25%/, { timeout: 30_000 });
@@ -163,6 +168,8 @@ for (const theme of ["light", "dark"] as const) {
         else await meter.hover();
         await expect(popover.getByText("Context window", { exact: true })).toBeVisible();
       };
+      const shot = (state: string) =>
+        qaScreenshot(page, `${surfaceName}-${layout}-${theme}-${state}`);
       const reopen = async () => {
         await page.reload({ waitUntil: "commit" });
         await expectComposerVisible(page);
@@ -181,14 +188,14 @@ for (const theme of ["light", "dark"] as const) {
           });
           await openPopover();
           await expect(message).toHaveText("Loading usage...");
-          await qaScreenshot(page, `popover-${layout}-${theme}-loading`);
+          await shot("loading");
 
           first.open();
           const claudeCard = popover.getByTestId("usage-report-claude:work");
           await expect(claudeCard.getByText("work@example.com", { exact: true })).toBeVisible();
           await expect(message).toHaveCount(0);
           await expect(popover.getByTestId("usage-report-codex:work")).toHaveCount(0);
-          await qaScreenshot(page, `popover-${layout}-${theme}-streaming`);
+          await shot("streaming");
 
           second.open();
           await expect(
@@ -197,7 +204,11 @@ for (const theme of ["light", "dark"] as const) {
           await expect(popover.getByText("dev@example.com", { exact: true })).toHaveCount(0);
           await expectUnpinnableRows(popover);
           await expect(popover.getByTestId("usage-freshness")).toHaveCount(2);
-          await qaScreenshot(page, `popover-${layout}-${theme}-ready`);
+          // Only the sheet can be pressed, so only it has Refresh.
+          await expect(popover.getByTestId("usage-refresh")).toHaveCount(
+            layout === "compact" ? 2 : 0,
+          );
+          await shot("ready");
           expect(
             usage
               .listRequests()
@@ -206,20 +217,40 @@ for (const theme of ["light", "dark"] as const) {
           ).toEqual([session.agentId]);
         });
 
+        if (layout === "compact") {
+          await test.step("Refresh in the sheet replaces the card, and the sheet closes", async () => {
+            agentReports.push([expiredLogin(onWorkLogin(claude!))]);
+            await popover
+              .getByTestId("usage-report-claude:work")
+              .getByTestId("usage-refresh")
+              .click();
+            await expect(
+              popover.getByText(/^Login expired .*Run claude to refresh it\.$/),
+            ).toBeVisible();
+            expect(usage.listRequests().at(-1)).toMatchObject({
+              forceRefresh: true,
+              reportIds: ["claude:work"],
+            });
+
+            await popover.getByRole("button", { name: "Close", exact: true }).click();
+            await expect(popover).toHaveCount(0);
+          });
+        }
+
         await test.step("a report with a problem shows it on the card", async () => {
           agentReports.push([expiredLogin(onWorkLogin(claude!))]);
           await reopen();
           await expect(
             popover.getByText(/^Login expired .*Run claude to refresh it\.$/),
           ).toBeVisible();
-          await qaScreenshot(page, `popover-${layout}-${theme}-problem`);
+          await shot("problem");
         });
 
         await test.step("a failed request says so in a sentence", async () => {
           agentReports.push({ error: "Unknown agent" });
           await reopen();
           await expect(message).toHaveText("Unable to load usage: Unknown agent");
-          await qaScreenshot(page, `popover-${layout}-${theme}-error`);
+          await shot("error");
         });
 
         await test.step("a host without usage reports shows only the context window", async () => {
@@ -230,7 +261,7 @@ for (const theme of ["light", "dark"] as const) {
           await expect(popover.locator('[data-testid^="usage-report-"]')).toHaveCount(0);
           // The three earlier opens; this one sends none.
           expect(usage.listRequests().filter((request) => request.agentId)).toHaveLength(3);
-          await qaScreenshot(page, `popover-${layout}-${theme}-unsupported`);
+          await shot("unsupported");
         });
       } finally {
         await session.cleanup();
