@@ -16,7 +16,7 @@ interface RowFrame {
   top: number;
   height: number;
 }
-interface ScrollFrame {
+export interface ScrollFrame {
   at: number;
   scrollTop: number;
   scrollHeight: number;
@@ -272,13 +272,8 @@ export async function recordUpwardTraversal(
   });
 }
 
-export async function reportScrollJumps(
-  page: Page,
-  testInfo: TestInfo,
-  frames: ScrollFrame[],
-  pages: TimelinePage[],
-): Promise<void> {
-  const jumps = frames.flatMap((current, index) => {
+export function findScrollJumps(frames: ScrollFrame[]) {
+  return frames.flatMap((current, index) => {
     const previous = frames[index - 1];
     if (!previous?.anchor) return [];
     // Wheel input can move the reading line onto an image before it expands.
@@ -288,10 +283,6 @@ export async function reportScrollJumps(
     const currentRows = new Map(current.rows.map((row) => [row.id, row]));
     const intendedRow = previous.rows.find((row) => row.top + row.height > readingLine);
     const intendedHeight = intendedRow && currentRows.get(intendedRow.id)?.height;
-    const enteredRowGrowth =
-      inputDelta > 0 && intendedRow && intendedHeight !== undefined
-        ? Math.max(0, intendedHeight - intendedRow.height)
-        : 0;
     const anchor = previous.anchor;
     const before = currentRows.has(anchor)
       ? previous.rows.find((row) => row.id === anchor)!
@@ -308,6 +299,16 @@ export async function reportScrollJumps(
     const idle = current.inputFinishedAt !== null && previous.at - current.inputFinishedAt > 250;
     const recent = frames.findLast((frame) => frame.at <= previous.at - 100);
     const wheelBudget = current.wheelTotal - (recent?.wheelTotal ?? 0);
+    // Growth displaces only later rows. It never grants extra movement to the
+    // image itself, and its top must still follow the input budget.
+    const enteredRowGrowth =
+      inputDelta > 0 &&
+      intendedRow &&
+      intendedHeight !== undefined &&
+      before.top >= intendedRow.top + intendedRow.height &&
+      Math.abs(currentRows.get(intendedRow.id)!.top - intendedRow.top - inputDelta) <= 32
+        ? Math.max(0, intendedHeight - intendedRow.height)
+        : 0;
     const excessForward = movement > wheelBudget + enteredRowGrowth + 32;
     // Upward wheel input moves the same text DOWN the viewport. A negative move
     // is a reversal, independent of legitimate scrollTop compensation on prepend.
@@ -334,6 +335,15 @@ export async function reportScrollJumps(
       },
     ];
   });
+}
+
+export async function reportScrollJumps(
+  page: Page,
+  testInfo: TestInfo,
+  frames: ScrollFrame[],
+  pages: TimelinePage[],
+): Promise<void> {
+  const jumps = findScrollJumps(frames);
   const react = await page.evaluate(() => Reflect.get(window, "__PASEO_RENDER_PROFILE__") ?? []);
   const gaps = frames
     .slice(1)
