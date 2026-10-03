@@ -746,3 +746,38 @@ it("binds imported getters to each originating installation across delayed callb
   await first.cleanup();
   await second.cleanup();
 });
+
+it("registers normalized code-block actions and removes them at cleanup", async () => {
+  const plugin = evaluatePluginClientBundle(
+    "terminal",
+    bundle(`
+    plugin.addCodeBlockActions({ id: "run", languages: ["BASH", "bash", "python"], Component: function() { return null; } });
+  `),
+  );
+  expect(plugin.codeBlockActions.map(({ id, languages }) => ({ id, languages }))).toEqual([
+    { id: "run", languages: ["bash", "python"] },
+  ]);
+  await plugin.cleanup();
+  expect(plugin.codeBlockActions).toEqual([]);
+});
+
+it("accepts memoized code block action components", () => {
+  const plugin = evaluatePluginClientBundle(
+    "terminal",
+    bundle(`
+    const Component = require("react").memo(function Actions() { return null; });
+    plugin.addCodeBlockActions({ id: "run", languages: ["bash"], Component });
+  `),
+  );
+  expect(plugin.codeBlockActions.map(({ id }) => id)).toEqual(["run"]);
+});
+
+it.each([
+  '{ id: "run", languages: [], Component: function() {} }',
+  '{ id: "run", languages: [" "], Component: function() {} }',
+  '{ id: "run", languages: ["bash"], Component: null }',
+])("rejects malformed code block contributions: %s", (contribution) => {
+  expect(() =>
+    evaluatePluginClientBundle("terminal", bundle(`plugin.addCodeBlockActions(${contribution});`)),
+  ).toThrow("Code block actions");
+});

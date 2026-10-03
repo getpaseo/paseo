@@ -90,3 +90,17 @@ function getStructuralBlankLines(text: string, lines: string[]): Set<number> {
   }
   return blankLines;
 }
+
+/** Count every fence, including nested and unsupported ones, before each render fragment. */
+export function indexMarkdownFences(
+  blocks: readonly string[],
+): { block: string; fenceOffset: number; fenceCount: number }[] {
+  let nextIndex = 0;
+  return blocks.map((block) => {
+    const fenceOffset = nextIndex;
+    for (const token of markdownBlockParser.parse(block, {})) {
+      if (token.type === "fence") nextIndex++;
+    }
+    return { block, fenceOffset, fenceCount: nextIndex - fenceOffset };
+  });
+}

@@ -1103,6 +1103,7 @@ describe("workspace-layout-store actions", () => {
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
       explorerSidebarPaneIdByWorkspace: {},
+      sidePaneIdByWorkspace: {},
     });
   });
 
@@ -1704,6 +1705,33 @@ describe("workspace-layout-store actions", () => {
 
     layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneContainingTab(layout.root, "terminal_terminal-1")?.id).toBe("main");
+  });
+
+  it("opens discovered terminals in the requested pane without focusing it", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    });
+    const sidePaneId = store.ensureSidePane(workspaceKey, { focus: false });
+    expect(sidePaneId).toBeTruthy();
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["agent-1"],
+      autoOpenAgentIds: ["agent-1"],
+      knownTerminalIds: ["terminal-1"],
+      standaloneTerminalIds: ["terminal-1"],
+      terminalPlacement: { mode: "prefer", paneId: sidePaneId as string },
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, "terminal_terminal-1")?.id).toBe(sidePaneId);
+    expect(findPaneContainingTab(layout.root, "agent_agent-1")?.id).not.toBe(sidePaneId);
+    expect(layout.focusedPaneId).not.toBe(sidePaneId);
   });
 
   it("keeps non-entity tabs in the focused explorer pane", () => {

@@ -36,6 +36,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    codeBlockActions: [],
   };
 }
 

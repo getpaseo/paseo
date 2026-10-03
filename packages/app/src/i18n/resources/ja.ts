@@ -2005,7 +2005,16 @@ export const ja: TranslationResources = {
       diagnostics: "診断",
       about: "アプリ情報",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "ターミナルを開く" },
+        },
+      },
+    },
     editor: {
       title: "エディター",
       vimKeybindings: "Vim キーバインド",

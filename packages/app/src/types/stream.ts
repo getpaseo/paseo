@@ -713,6 +713,9 @@ export interface AssistantMessageItem {
   /** Display-only fields, assigned after source-item plugin transforms. */
   blockGroupId?: string;
   blockIndex?: number;
+  /** Fences before/in this display row, counted in the unsplit source message. */
+  fenceOffset?: number;
+  fenceCount?: number;
 }
 
 export interface TimelinePosition {

@@ -1182,6 +1182,34 @@ Showing another toast replaces the currently visible toast. An empty message is 
 | `size`  | `number` | No       | Icon width and height.                          |
 | `color` | `string` | No       | Icon color. Use a plugin theme token.           |
 
+## Assistant code-block actions
+
+Register `client.addCodeBlockActions({ id, languages, Component })` to add controls below fenced
+code in assistant messages. Paseo retains ownership of the parser, highlighting, copying, and
+code display. The registration returns an idempotent cleanup function.
+
+`Component` receives `PluginCodeBlockActionsProps`: `agentId`, `messageId`, `blockIndex`, `code`,
+`language`, `phase`, and the standard `host`, `theme`, `layout`, and `navigation` props. It renders
+under the installation's RPC, query-cache, and client-state providers, so `useRpc`, `useSettings`,
+and `usePaseo` work as they do in other plugin surfaces. Languages are normalized to lowercase.
+
+Use host + agent + message ID + block index as the state key. The index counts **all** fences in
+message order, including unsupported languages and fences inside lists or quotes. Components can
+unmount during scrolling and remount when history loads. Keep run state outside component-local
+state; never execute commands or navigate merely because a component mounted.
+
+`phase` remains `streaming` until the message is complete and fully revealed. Disable execution
+until `complete`; displayed text may still be partial. No server event, history scan, or appended
+timeline item is needed. The host only mounts matching contributions for the message's host.
+
+`navigation.openTerminal({ workspaceId, terminalId, serverId? })` reveals an existing terminal.
+The default host is the contribution's host. New tabs follow **Layout → Open location → Terminals**;
+existing tabs retain their placement. This method does not create a terminal or run a command.
+Capture the user's navigation intent in the click handler, not a polling or render effect.
+
+These APIs require a client build containing the code-block actions extension. Check
+`client.addCodeBlockActions` at setup; older clients can retain their existing contribution path.
+
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both

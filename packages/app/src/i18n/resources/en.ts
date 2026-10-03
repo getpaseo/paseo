@@ -2035,6 +2035,7 @@ export const en = {
             label: "Clicking a file in a diff",
             description: "Open source files selected from a diff beside it",
           },
+          terminals: { label: "Opening a terminal" },
           subagents: {
             label: "Clicking a subagent in an agent chat",
             description: "Open subagents beside their parent agent",

@@ -4,6 +4,7 @@ import { isHttpUrl } from "@/utils/http-url";
 
 interface HostNavigationOwner {
   browserAvailable: boolean;
+  openTerminal(input: { serverId: string; workspaceId: string; terminalId: string }): void;
   openAgent(input: { serverId: string; agentId: string }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
@@ -15,6 +16,22 @@ export function createPluginHostNavigation(
   owner: HostNavigationOwner,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return {
+    openTerminal: ({ workspaceId, terminalId, serverId: targetServerId }) => {
+      if (!workspaceId.trim() || !terminalId.trim())
+        throw new Error("workspaceId and terminalId are required.");
+      const destinationServerId = targetServerId ?? serverId;
+      const destinationWorkspaceId = owner.resolveWorkspace({
+        serverId: destinationServerId,
+        workspaceId,
+      });
+      if (!destinationWorkspaceId)
+        throw new Error("Workspace is unavailable on the requested host.");
+      owner.openTerminal({
+        serverId: destinationServerId,
+        workspaceId: destinationWorkspaceId,
+        terminalId,
+      });
+    },
     openAgent: ({ agentId, serverId: targetServerId }) =>
       owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>

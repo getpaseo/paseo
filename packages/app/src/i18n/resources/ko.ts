@@ -1995,7 +1995,16 @@ export const ko: TranslationResources = {
       diagnostics: "진단",
       about: "정보",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "터미널 열기" },
+        },
+      },
+    },
     editor: {
       title: "편집기",
       vimKeybindings: "Vim 키 바인딩",

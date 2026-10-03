@@ -167,3 +167,24 @@ describe("createAssistantMarkdownParser", () => {
     expect(parser.render("[x](javascript:alert(1))")).not.toContain("href");
   });
 });
+
+it("numbers all fences consistently through streaming and completed parses", () => {
+  const source = "```json\n{}\n```\n\n> ```bash\n> echo hello\n> ```\n\n~~~python\nprint(1)\n~~~";
+  for (const streaming of [false, true]) {
+    const parser = createAssistantMarkdownParser({ streaming, fenceIdentity: true });
+    for (let render = 0; render < 2; render++) {
+      expect(
+        parser
+          .parse(source, {})
+          .filter((token) => token.type === "fence")
+          .map((token) => token.attrGet("data-fence-index")),
+      ).toEqual(["0", "1", "2"]);
+    }
+  }
+});
+
+it("keeps fence identity out of rendered HTML by default", () => {
+  expect(createAssistantMarkdownParser().render("```bash\necho hi\n```")).toBe(
+    '<pre><code class="language-bash">echo hi\n</code></pre>\n',
+  );
+});

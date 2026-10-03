@@ -47,11 +47,22 @@ export default function contribute(client) {
   return () => {};
 }`;
 
+function assistantFeatureValues(
+  mode: "assistant" | "tools",
+  options: { assistantText?: string; instantResponse?: boolean },
+): Record<string, string | number> {
+  if (mode !== "assistant") return {};
+  const text = options.assistantText ?? ASSISTANT_TEXT;
+  if (options.instantResponse) return { mockAssistantResponse: text };
+  return { mockStreamingAssistantResponse: text, mockStreamingAssistantIntervalMs: 300 };
+}
+
 export async function withTimelinePlugin(
   page: Page,
   info: TestInfo,
   mode: "assistant" | "tools",
   run: (agent: MockAgentWorkspace) => Promise<void>,
+  options: { clientSource?: string; assistantText?: string; instantResponse?: boolean } = {},
 ): Promise<void> {
   info.setTimeout(120_000);
   await page.addInitScript(() => {
@@ -65,13 +76,7 @@ export async function withTimelinePlugin(
     repoPrefix: "timeline-plugin-",
     title: "Timeline plugin regression",
     model: "ten-second-stream",
-    featureValues:
-      mode === "assistant"
-        ? {
-            mockStreamingAssistantResponse: ASSISTANT_TEXT,
-            mockStreamingAssistantIntervalMs: 300,
-          }
-        : {},
+    featureValues: assistantFeatureValues(mode, options),
   });
   const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await pluginClient.getDaemonConfig();
@@ -80,7 +85,10 @@ export async function withTimelinePlugin(
       path.join(directory, "paseo-plugin.json"),
       JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
     );
-    await writeFile(path.join(directory, "index.client.tsx"), CLIENT_SOURCE);
+    await writeFile(
+      path.join(directory, "index.client.tsx"),
+      options.clientSource ?? CLIENT_SOURCE,
+    );
     await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
     await pluginClient.installDirectoryPlugin(directory);
     await openAgentRoute(page, agent);
@@ -142,3 +150,49 @@ export async function expectBothConsecutiveTools(page: Page): Promise<void> {
   await grep.scrollIntoViewIfNeeded();
   await expect(grep).toBeVisible();
 }
+
+export const CODE_ACTIONS_SOURCE = `import React, { useState } from "react";
+import { Text, View, Pressable } from "react-native";
+function Actions({ messageId, blockIndex, phase, code }) {
+  const [clicks, setClicks] = useState(0);
+  return <View>
+    <Text>{"Fence " + blockIndex + " " + phase}</Text>
+    <Pressable accessibilityRole="button" disabled={phase !== "complete"}
+      onPress={() => setClicks(clicks + 1)}><Text>{"Run fence " + blockIndex + " clicks " + clicks}</Text></Pressable>
+    {clicks > 0 ? <Text>{"Executed " + code.trim()}</Text> : null}
+  </View>;
+}
+export default function contribute(client) {
+  client.addCodeBlockActions({ id: "run", languages: ["bash"], Component: Actions });
+  return () => {};
+}`;
+
+export const CODE_ACTIONS_TEXT = [
+  "Before",
+  "",
+  "```json",
+  "{}",
+  "```",
+  "",
+  "```bash",
+  "echo first-fence",
+  "```",
+  "",
+  "> ```bash",
+  "> echo nested-fence",
+  "> ```",
+  "",
+  "Finishing the response after both executable blocks are visible.",
+].join("\n");
+
+// Each Markdown block renders as its own row, capped at 32,000 characters; the second fence alone
+// exceeds the cap, so its row cuts it before the closing fence.
+export const CAPPED_CODE_ACTIONS_TEXT = [
+  "```bash",
+  "echo before-cap",
+  "```",
+  "",
+  "```bash",
+  ...Array.from({ length: 3_000 }, (_, line) => `echo cut-${line}`),
+  "```",
+].join("\n");

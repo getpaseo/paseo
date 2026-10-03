@@ -25,6 +25,7 @@ function installation(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    codeBlockActions: [],
   };
 }
 

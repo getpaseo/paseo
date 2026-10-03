@@ -2018,7 +2018,16 @@ export const ptBR: TranslationResources = {
       diagnostics: "Diagnósticos",
       about: "Sobre",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "Abrir um terminal" },
+        },
+      },
+    },
     editor: {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",

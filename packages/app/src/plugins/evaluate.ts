@@ -119,6 +119,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    codeBlockActions: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -133,6 +134,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const codeBlockActionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -406,6 +408,29 @@ export function runPluginClientBundle(
         timelineTransformerIds.delete(normalizedId),
       );
     },
+    addCodeBlockActions(contribution) {
+      const actionId = requireId(contribution.id, "code block actions id");
+      if (codeBlockActionIds.has(actionId))
+        throw new Error(`Duplicate code block actions: ${actionId}`);
+      if (
+        !Array.isArray(contribution.languages) ||
+        contribution.languages.length === 0 ||
+        contribution.languages.some((language) => typeof language !== "string" || !language.trim())
+      ) {
+        throw new Error(`Code block actions ${actionId} need non-empty languages`);
+      }
+      if (!isComponentType(contribution.Component))
+        throw new Error(`Code block actions ${actionId} is not a component`);
+      codeBlockActionIds.add(actionId);
+      const languages = [
+        ...new Set(contribution.languages.map((language) => language.trim().toLowerCase())),
+      ];
+      return register(
+        collector.codeBlockActions,
+        { ...contribution, id: actionId, languages },
+        () => codeBlockActionIds.delete(actionId),
+      );
+    },
     addTimelineRenderer(contribution: PluginTimelineRendererContribution) {
       const kind = requireId(contribution.kind, "timeline renderer kind");
       if (!Number.isInteger(contribution.version) || contribution.version < 1) {
@@ -521,5 +546,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    codeBlockActions: collector.codeBlockActions,
   };
 }

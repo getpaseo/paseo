@@ -2033,7 +2033,16 @@ export const es: TranslationResources = {
       diagnostics: "Diagnóstico",
       about: "Acerca de",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "Abrir una terminal" },
+        },
+      },
+    },
     editor: {
       title: "Editor",
       vimKeybindings: "Atajos de Vim",

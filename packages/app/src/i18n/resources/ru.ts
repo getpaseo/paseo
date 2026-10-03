@@ -2018,7 +2018,16 @@ export const ru: TranslationResources = {
       diagnostics: "Диагностика",
       about: "О приложении",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      openInSidePane: {
+        ...en.settings.layout.openInSidePane,
+        sources: {
+          ...en.settings.layout.openInSidePane.sources,
+          terminals: { label: "Открытие терминала" },
+        },
+      },
+    },
     editor: {
       title: "Редактор",
       vimKeybindings: "Сочетания клавиш Vim",

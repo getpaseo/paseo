@@ -14,6 +14,7 @@ const SOURCES = [
   "chatFiles",
   "diffFiles",
   "subagents",
+  "terminals",
 ] as const satisfies readonly (keyof OpenInSidePanePreferences)[];
 
 const SERVICE_URL_BEHAVIORS: readonly ServiceUrlBehavior[] = ["ask", "in-app", "external"];
