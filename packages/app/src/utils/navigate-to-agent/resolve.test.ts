@@ -62,20 +62,52 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
-  it("uses the input workspaceId without reading the nav target", () => {
-    const readTargets: { serverId: string; agentId: string }[] = [];
-    const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: null });
-    deps.readAgentNavTarget = (input) => {
-      readTargets.push(input);
-      return { agentWorkspaceId: null };
-    };
+  it("prefers the agent's live workspace over the carried workspaceId", () => {
+    const { deps, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: "workspace-live",
+    });
 
     resolveNavigateToAgent(
       { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
       deps,
     );
 
-    expect(readTargets).toEqual([]);
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: "workspace-live",
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+      },
+    ]);
+  });
+
+  it("uses the input workspaceId when the agent is not in the store", () => {
+    const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: null });
+
+    resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
+      deps,
+    );
+
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+      },
+    ]);
+  });
+
+  it("uses the input workspaceId when the store value is an empty string", () => {
+    const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: "" });
+
+    resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
+      deps,
+    );
+
     expect(tabNavigations).toEqual([
       {
         serverId: SERVER_ID,
