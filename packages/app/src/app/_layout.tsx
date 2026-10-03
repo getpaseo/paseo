@@ -42,6 +42,7 @@ import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
+import { SubmissionDecisionSheet } from "@/plugins/submission-decision-sheet";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
@@ -608,6 +609,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <HostChooserModal />
         <ProviderSettingsHost />
         <WorkspaceSetupDialog />
+        <SubmissionDecisionSheet />
         <KeyboardShortcutsDialog />
         <AppDiagnosticHost />
         <ChangelogHost />

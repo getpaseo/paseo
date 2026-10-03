@@ -26,6 +26,7 @@ import {
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
   type PluginButtonRegistration,
+  type PluginSubmissionCheckContribution,
 } from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
@@ -81,6 +82,7 @@ export type PluginClientRuntime = Pick<
   | "openPanel"
   | "addComposerPill"
   | "addHeaderButton"
+  | "runSubmissionChecks"
 > & { hosts: ReturnType<typeof createPluginHosts> };
 
 export function runPluginClientBundle(
@@ -89,7 +91,9 @@ export function runPluginClientBundle(
   runtime: PluginClientRuntime,
   onChange: () => void = () => undefined,
 ): EvaluatedPlugin {
+  const submissionChecks: PluginSubmissionCheckContribution[] = [];
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
+    submissionChecks,
     executionModes: [],
     surfaces: [],
     settingsScreens: [],
@@ -152,6 +156,14 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addSubmissionCheck(contribution) {
+      const checkId = requireId(contribution.id, "submission check id");
+      if (submissionChecks.some((check) => check.id === checkId))
+        throw new Error(`Duplicate submission check: ${checkId}`);
+      if (typeof contribution.check !== "function" || typeof contribution.resolve !== "function")
+        throw new Error(`Invalid submission check: ${checkId}`);
+      return register(submissionChecks, { ...contribution, id: checkId }, () => undefined);
+    },
     addExecutionMode(contribution) {
       const modeId = requireId(contribution.id, "execution mode id");
       if (collector.executionModes.some((mode) => mode.id === modeId))
@@ -464,6 +476,7 @@ export function runPluginClientBundle(
   return {
     id,
     cleanup,
+    submissionChecks,
     executionModes: collector.executionModes,
     surfaces: collector.surfaces,
     settingsScreens: collector.settingsScreens,

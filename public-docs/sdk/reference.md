@@ -114,12 +114,17 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 ## `client.projects`
 
-| Method               | Result                   | Behavior                                                                                       |
-| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                  |
-| `subscribe(handler)` | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state. |
+| Method                                              | Result                   | Behavior                                                                                                   |
+| --------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `list(options?)`                                    | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                              |
+| `createDirectory({ parentPath, name, requestId? })` | Project creation payload | Creates and registers a new child directory; returns `directoryPath`, `project`, `error`, and `errorCode`. |
+| `subscribe(handler)`                                | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state.             |
 
 See [events](./events.md#follow-provider-catalog-changes) for explicit event observation and cleanup.
+
+`createDirectory` requires `features.projectCreateDirectory`; the SDK rejects unsupported hosts before
+sending a request. A pre-existing directory is reported as `directory_exists`; it is never overwritten.
+Project creation does not initialize Git or create an agent or workspace.
 
 ## `client.workspaces`
 

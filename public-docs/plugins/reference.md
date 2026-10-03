@@ -322,6 +322,39 @@ export default function contribute(client: PluginClientContext) {
 
 Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
 
+Use `server.dataDirectory` for files owned by your plugin. The host creates an absolute directory
+inside the current daemon home, isolated by the installed plugin ID. It survives reload, disable,
+and daemon restart; removing the plugin removes this directory with its settings. Check that the
+optional property exists before using it and ask for a host update if it is unavailable. Do not
+infer the daemon home from your source checkout or write into another installation's data.
+
+## Submission checks
+
+Register `client.addSubmissionCheck({ id, check, resolve })` to inspect an interactive request before
+the app creates its workspace or agent. The native New workspace composer runs the selected host's
+installed checks for Direct and plugin execution modes. Empty workspaces, terminals, existing agent
+messages and unattended daemon dispatch do not use this client hook.
+
+`check(input, { signal })` receives `cwd`, optional `projectId`, `projectName` and `projectRootPath`,
+`executionId` (empty for Direct), optional `presetId`, original `text`, encoded `images`, structured
+`attachments`, `idempotencyKey`, optional `defaultAgentConfig`, and `routingMode`. Return nothing to
+continue or return a decision with `title`, optional `description`, and `choices: [{ id, title,
+description? }]`. Optional `textInput: { label, initialValue?, placeholder? }` adds one editable field.
+Optional `timeout: { seconds, choiceId }` selects that choice automatically only while untouched.
+Focusing or editing the field, touching the content, or choosing an action stops the countdown.
+
+`resolve(input, { choiceId, textValue?, automatic }, { signal })` runs after the user's choice or the
+untouched timeout. It may return `{ cwd, projectId?, isolation?: "local" | "worktree" }` to change only
+the new submission's target. Return nothing to keep it. The app verifies the target against this
+host's registered projects and preserves prompt, attachments, provider, manual model and routing.
+Cancelling the sheet prevents the start and retains the draft. Plugin removal cancels its pending
+decision. Check and resolve must honor `signal` and implement durable idempotency for their mutations.
+
+Plugin-owned start forms can call `client.runSubmissionChecks(input)` before their own mutation and
+consume the returned target. Do not call it inside a submission check or after a workspace exists.
+The app reuses a successful check for an identical retry within the current client session; it does
+not provide cross-client or restart deduplication. Registrations are removed with the plugin lifetime.
+
 ## Execution modes
 
 Client entries register `addExecutionMode({ id, title, icon, loadPresets, start, onManage? })`.

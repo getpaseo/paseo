@@ -29,6 +29,19 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("registers submission checks under plugin lifetime and rejects duplicate checks", async () => {
+    const contribution = `const check={id:"intake",async check(){},async resolve(){}};plugin.addSubmissionCheck(check);`;
+    const plugin = evaluatePluginClientBundle("intake", bundle(contribution));
+    expect(plugin.submissionChecks?.map((check) => check.id)).toEqual(["intake"]);
+    await plugin.cleanup();
+    expect(plugin.submissionChecks).toEqual([]);
+    expect(() =>
+      evaluatePluginClientBundle(
+        "intake",
+        bundle(`${contribution}plugin.addSubmissionCheck(check);`),
+      ),
+    ).toThrow("Duplicate submission check");
+  });
   it("registers execution modes under plugin lifetime and rejects duplicate modes", async () => {
     const plugin = evaluatePluginClientBundle(
       "execution",

@@ -31,6 +31,7 @@ function registry(version: string) {
           cleanups++;
         },
         openNewWorkspace: () => undefined,
+        runSubmissionChecks: async () => undefined,
         openSurface() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),

@@ -11,6 +11,7 @@ import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
 import { resolvePluginPanelOpenLocation } from "./workspace-panels/locations";
 import type { PluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
+import { runInstalledSubmissionChecks } from "./submission-runtime";
 
 export interface PluginNavigation {
   openSettings(pluginId: string, screenId: string): void;
@@ -32,6 +33,11 @@ export function createPluginCapabilities(
 ): PluginCommandCapabilities {
   return {
     paseo: runtime.paseo,
+    runSubmissionChecks: (input) =>
+      runInstalledSubmissionChecks(plugin.serverId, input, {
+        signal: plugin.lifetime.signal,
+        caller: plugin,
+      }),
     rpc: (contract, input) => callPluginRpc(contract, runtime.invoke, input),
     openSettings(screenId) {
       if (!plugin.settingsScreens.some((screen) => screen.id === screenId))

@@ -32,6 +32,7 @@ function registry() {
           throw new Error("Unexpected plugin RPC");
         },
         openNewWorkspace: () => undefined,
+        runSubmissionChecks: async () => undefined,
         openSurface: () => {},
         openSettings: () => {},
         openPanel: () => {},

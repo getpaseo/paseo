@@ -5,6 +5,8 @@ import {
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
@@ -24,6 +26,7 @@ import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 let settingsStore: PluginSettingsStore | null = null;
+let dataDirectory: string | undefined;
 function registerSettings<Schema extends ZodType>(definition: SettingsDefinition<Schema>) {
   if (!settingsStore) throw new Error("Plugin settings storage is unavailable");
   const handlers = settingsStore.register(definition);
@@ -202,8 +205,6 @@ async function sendProviderInput(
   });
 }
 
-// The connection stays registered until its close has reported, so shutdown
-// waits for a close already in flight instead of disconnecting underneath it.
 async function closeProviderConnection(connectionId: string): Promise<void> {
   const current = providerConnections.get(connectionId);
   if (!current) return;
@@ -247,6 +248,7 @@ function evaluateBundle(bundle: string): void {
     throw new Error("Plugin server bundle must default export a function");
   }
   const contributedCleanup = setup({
+    dataDirectory,
     handle: register,
     registerProvider,
     registerSettings,
@@ -275,7 +277,6 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     clientId: createPluginClientId(message.pluginId),
     clientType: "cli",
     appVersion: message.appVersion,
-    // The runtime re-attaches a session when the daemon drops this socket.
     reconnect: { enabled: true },
     transportFactory,
   });
@@ -286,6 +287,10 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
         send({ type: "settings.changed", settingsId }),
       )
     : null;
+  dataDirectory = message.settingsDirectory
+    ? path.join(message.settingsDirectory, "data")
+    : undefined;
+  if (dataDirectory) await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   evaluateBundle(message.bundle);
   send({
     type: "ready",

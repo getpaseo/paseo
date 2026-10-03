@@ -417,6 +417,53 @@ test("project actions list registered projects through the existing RPC", async 
   await client.close();
 });
 
+test("project directory creation uses the public SDK and gates the host before sending", async () => {
+  const unsupported = await connectClient({});
+  const frames = unsupported.ws.sent.length;
+  expect(() =>
+    unsupported.client.projects.createDirectory({ parentPath: "/projects", name: "kin" }),
+  ).toThrow("Update the host");
+  expect(unsupported.ws.sent).toHaveLength(frames);
+  await unsupported.client.close();
+  FakeWebSocket.instances.length = 0;
+  const { client, ws } = await connectClient({ projectCreateDirectory: true });
+  const pending = client.projects.createDirectory({
+    parentPath: "/projects",
+    name: "kin",
+    requestId: "create-kin",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "project.create_directory.request",
+    requestId: "create-kin",
+    parentPath: "/projects",
+    name: "kin",
+  });
+  const project = {
+    projectId: "kin",
+    projectDisplayName: "kin",
+    projectRootPath: "/projects/kin",
+    projectKind: "directory",
+  };
+  ws.message(
+    sessionMessage({
+      type: "project.create_directory.response",
+      payload: {
+        requestId: "create-kin",
+        directoryPath: "/projects/kin",
+        project,
+        error: null,
+        errorCode: null,
+      },
+    }),
+  );
+  await expect(pending).resolves.toMatchObject({
+    directoryPath: "/projects/kin",
+    project,
+    error: null,
+  });
+  await client.close();
+});
+
 test("project actions subscribe to existing project updates", async () => {
   const { client, ws } = await connectClient();
   const updates: string[] = [];

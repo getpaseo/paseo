@@ -16,6 +16,7 @@ import type {
   ListProviderModelsResponseMessage,
   ProjectListRequestMessage,
   ProjectListResponseMessage,
+  ProjectCreateDirectoryResponse,
   ListProviderModesResponseMessage,
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
@@ -193,6 +194,11 @@ export interface PaseoWorkspaceHandle {
 }
 
 export interface PaseoProjectActions {
+  createDirectory(input: {
+    parentPath: string;
+    name: string;
+    requestId?: string;
+  }): Promise<ProjectCreateDirectoryResponse["payload"]>;
   list(options?: PaseoProjectListOptions): Promise<PaseoProjectListResult>;
   subscribe(handler: PaseoProjectUpdateHandler): () => void;
 }
@@ -707,6 +713,11 @@ export function createPaseoApi(
     observeEvents,
     terminals,
     projects: {
+      createDirectory: ({ requestId, ...input }) => {
+        if (daemonClient.getLastServerInfoMessage()?.features?.projectCreateDirectory !== true)
+          throw new Error("Update the host to create project directories from plugins.");
+        return daemonClient.createProjectDirectory(input, requestId);
+      },
       list: (options) => daemonClient.listProjects(options),
       subscribe: (handler) => {
         return subscribeEvent("project.update", (message) => {

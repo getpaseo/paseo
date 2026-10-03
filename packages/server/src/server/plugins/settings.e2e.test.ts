@@ -13,6 +13,7 @@ test("server reads saved settings after daemon restart before any client connect
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   const directory = path.join(root, "plugin");
   const startupReport = path.join(root, "startup.json");
+  const storageReport = path.join(root, "storage.json");
   await mkdir(path.join(directory, "server"), { recursive: true });
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
@@ -24,8 +25,11 @@ test("server reads saved settings after daemon restart before any client connect
   await writeFile(
     path.join(directory, "server", "report.ts"),
     `import { writeFile } from "node:fs/promises";
-export async function reportStartup(settings) {
+import path from "node:path";
+export async function reportStartup(settings, dataDirectory) {
   const state = await settings.read();
+  await writeFile(${JSON.stringify(storageReport)}, JSON.stringify({ dataDirectory }));
+  await writeFile(path.join(dataDirectory, "startup-proof.json"), JSON.stringify({ persisted: true }), { flag: "a" });
   await writeFile(${JSON.stringify(startupReport)}, JSON.stringify(state));
 }`,
   );
@@ -36,7 +40,7 @@ import { z } from "zod";
 import { reportStartup } from "./server/report";
 export default function(server) {
   const settings = server.registerSettings(defineSettings({ id: "display", scope: "host", version: 1, schema: z.object({ enabled: z.boolean().default(true) }) }));
-  const startup = reportStartup(settings);
+  const startup = reportStartup(settings, server.dataDirectory);
   return async () => { await startup; };
 }`,
   );
@@ -57,6 +61,15 @@ export default function(server) {
   await expect
     .poll(readStartup)
     .toEqual({ status: "ready", revision: "missing", values: { enabled: true } });
+  const storage = z
+    .object({ dataDirectory: z.string() })
+    .parse(JSON.parse(await readFile(storageReport, "utf8")));
+  expect(path.isAbsolute(storage.dataDirectory)).toBe(true);
+  expect(path.relative(options.paseoHomeRoot, storage.dataDirectory)).not.toMatch(/^\.\./);
+  expect(storage.dataDirectory).toContain(`${path.sep}settings-startup${path.sep}`);
+  const storageFile = path.join(storage.dataDirectory, "startup-proof.json");
+  const firstStorage = await readFile(storageFile, "utf8");
+  expect(firstStorage).toBe(JSON.stringify({ persisted: true }));
 
   const client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.8.0" });
   onTestFinished(() => client.close());
@@ -77,8 +90,9 @@ export default function(server) {
 
   const restarted = await createTestPaseoDaemon(options);
   onTestFinished(() => restarted.close());
-  // No client is created for this daemon: the report comes from server startup alone.
   await expect.poll(readStartup).toEqual(persisted);
+  expect(JSON.parse(await readFile(storageReport, "utf8"))).toEqual(storage);
+  expect(await readFile(storageFile, "utf8")).toBe(firstStorage + firstStorage);
 }, 60_000);
 
 test("two clients share settings, observe changes, and preserve values through plugin lifecycle", async () => {

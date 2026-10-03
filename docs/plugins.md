@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, execution modes, and settings screens.
+client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, submission checks, execution modes, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -176,6 +176,12 @@ structured copies remain in `$PANDAOS_HOME/daemon.log`. Plugin output can contai
 log credentials or tokens.
 
 ## Contribute behavior and UI
+
+Interactive project selection belongs in a [client submission check](../public-docs/plugins/reference.md#submission-checks).
+New workspace invokes the shared check runner before Direct or plugin execution creates anything;
+plugin-owned forms can invoke that same runner. Keep classification and automatic-choice policy in
+the optional plugin. Core owns native presentation, cancellation and consumption of the resolved
+registered-project target. Daemon creation hooks cannot present this pre-start decision.
 
 Default export one contribution function from each runtime entry. Keep the entries to registration
 wiring. Runtime code lives behind directory boundaries:

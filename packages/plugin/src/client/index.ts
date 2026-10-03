@@ -67,3 +67,10 @@ export type {
   PluginOpenNewWorkspaceOptions,
   PluginOpenSurfaceOptions,
 } from "./execution.js";
+export type {
+  PluginSubmissionCheckInput,
+  PluginSubmissionDecision,
+  PluginSubmissionChoice,
+  PluginSubmissionTarget,
+  PluginSubmissionCheckContribution,
+} from "./submission.js";

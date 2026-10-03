@@ -3,6 +3,11 @@ import type {
   PluginOpenNewWorkspaceOptions,
   PluginOpenSurfaceOptions,
 } from "./execution.js";
+import type {
+  PluginSubmissionCheckContribution,
+  PluginSubmissionCheckInput,
+  PluginSubmissionTarget,
+} from "./submission.js";
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
@@ -93,6 +98,7 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities {
+  addSubmissionCheck(contribution: PluginSubmissionCheckContribution): PluginCleanup;
   addExecutionMode(contribution: PluginExecutionModeContribution): PluginCleanup;
   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
@@ -179,6 +185,7 @@ export interface PluginTimelineRendererContribution<Schema extends ZodType = Zod
 
 export interface PluginCommandCapabilities {
   paseo: PaseoApi;
+  runSubmissionChecks(input: PluginSubmissionCheckInput): Promise<PluginSubmissionTarget | void>;
   rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     input: ZodInput<InputSchema>,

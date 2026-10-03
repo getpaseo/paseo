@@ -1,4 +1,10 @@
 import { startPluginExecution } from "@/plugins/execution";
+import {
+  hasInstalledSubmissionChecks,
+  runInstalledSubmissionChecks,
+} from "@/plugins/submission-runtime";
+import { SubmissionCancelledError } from "@/plugins/submission-decision";
+import type { PluginSubmissionTarget } from "@getpaseo/plugin/client";
 import { useExecutionMode, buildExecutionControls } from "@/plugins/use-execution-mode";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import type {
@@ -791,12 +797,21 @@ interface WorkspaceCreationResult {
   agent?: AgentSnapshotPayload;
 }
 
+async function resolveSubmissionProjectId(client: DaemonClient, target: PluginSubmissionTarget) {
+  const { projects } = await client.listProjects();
+  return projects.find(
+    (project) =>
+      project.projectRootPath === target.cwd &&
+      (!target.projectId || project.projectId === target.projectId),
+  )?.projectId;
+}
+
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
   worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
-  project: HostProjectListItem;
+  projectId: string;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
@@ -811,7 +826,7 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<WorkspaceCreationResult> {
-  const projectId = getHostProjectId(input.project, input.serverId);
+  const projectId = input.projectId;
   if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const firstAgentContext = buildFirstAgentContext({
@@ -1685,7 +1700,7 @@ async function createWorkspacePluginExecution(input: {
   const result = await startPluginExecution(mode, {
     workspaceId: workspace.id,
     cwd: workspace.workspaceDirectory,
-    projectId: input.projectId,
+    projectId: workspace.projectId,
     presetId: execution.presetId,
     text: payload.text,
     images: images ?? [],
@@ -2112,38 +2127,47 @@ export function NewWorkspaceScreen({
       withInitialAgent: boolean;
       agent?: CreateWorkspaceRequestOptions["agent"];
       onEvent?: (snapshot: CreationSnapshot) => void;
+      target?: PluginSubmissionTarget;
     }) => {
       if (creationResult.workspace) {
         return creationResult;
       }
-      if (!selectedProject) {
-        throw new Error("Choose a project");
-      }
-      if (!selectedSourceDirectory) {
+      const sourceDirectoryForCreate = input.target?.cwd ?? selectedSourceDirectory;
+      if (!sourceDirectoryForCreate) {
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutStatusForCreate = createsWorktree
+      const projectIdForCreate = input.target
+        ? await resolveSubmissionProjectId(connectedClient, input.target)
+        : resolveExecutionProjectId(selectedProject, selectedServerId);
+      if (!projectIdForCreate) throw new Error("The selected project is unavailable on this host");
+      const requestsWorktree =
+        !supportsWorkspaceMultiplicity ||
+        (input.target?.isolation ?? effectiveIsolation) === "worktree";
+      const checkoutStatusForCreate = requestsWorktree
         ? await ensureCheckoutStatus({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
+            cwd: sourceDirectoryForCreate,
           })
         : null;
-      const checkoutRequest = checkoutStatusForCreate
-        ? pickerItemToCheckoutRequest(
-            selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
-          )
-        : undefined;
+      const targetIsGit = checkoutStatusForCreate?.isGit === true;
+      const createsWorktree = requestsWorktree && (!input.target || targetIsGit);
+      const checkoutRequest =
+        createsWorktree && checkoutStatusForCreate
+          ? pickerItemToCheckoutRequest(
+              (sourceDirectoryForCreate === selectedSourceDirectory ? selectedItem : null) ??
+                defaultBasePickerItem(checkoutStatusForCreate),
+            )
+          : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
-        project: selectedProject,
-        sourceDirectory: selectedSourceDirectory,
+        projectId: projectIdForCreate,
+        sourceDirectory: sourceDirectoryForCreate,
         checkoutRequest,
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
@@ -2173,21 +2197,70 @@ export function NewWorkspaceScreen({
     ],
   );
 
+  const resolveSubmissionTarget = useCallback(
+    async (payload: MessagePayload) => {
+      let resolvedTarget: PluginSubmissionTarget | void = undefined;
+      if (!isEmptyWorkspaceSubmission(payload) && hasInstalledSubmissionChecks(selectedServerId)) {
+        setPendingAction("chat");
+        const wire = splitComposerAttachmentsForSubmit(payload.attachments, {
+          format: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+        });
+        resolvedTarget = await runInstalledSubmissionChecks(selectedServerId, {
+          cwd: payload.cwd,
+          projectId: resolveExecutionProjectId(selectedProject, selectedServerId),
+          projectName: selectedProject?.projectName,
+          projectRootPath: selectedSourceDirectory ?? undefined,
+          executionId: execution.executionId,
+          presetId: execution.executionId ? execution.presetId : undefined,
+          text: payload.text,
+          images: (await encodeImages(wire.images)) ?? [],
+          attachments: wire.attachments ?? [],
+          idempotencyKey: creationIdentity.draftId,
+          defaultAgentConfig: executionDefaultAgentConfig(composerState),
+          routingMode: composerState?.isAuto ? "auto" : "manual",
+        });
+        if (!isStillOnCreateScreen()) throw new SubmissionCancelledError();
+      }
+      return resolvedTarget;
+    },
+    [
+      selectedServerId,
+      selectedProject,
+      selectedSourceDirectory,
+      execution,
+      creationIdentity,
+      composerState,
+      supportsForgeSearch,
+      isStillOnCreateScreen,
+    ],
+  );
+
+  const submissionInFlight = useRef(false);
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
+      if (submissionInFlight.current) return;
+      submissionInFlight.current = true;
       try {
         setErrorMessage(null);
+        const resolvedTarget = await resolveSubmissionTarget(payload);
+        const checkedPayload = resolvedTarget ? { ...payload, cwd: resolvedTarget.cwd } : payload;
+        const checkedEnsureWorkspace: CreateChatAgentInput["ensureWorkspace"] = (request) =>
+          ensureWorkspace({ ...request, ...(resolvedTarget ? { target: resolvedTarget } : {}) });
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
         if (execution.executionId) {
           setPendingAction("chat");
           await createWorkspacePluginExecution({
             execution,
-            payload,
+            payload: checkedPayload,
             composerState,
-            ensureWorkspace,
+            ensureWorkspace: checkedEnsureWorkspace,
             serverId: selectedServerId,
-            projectId: resolveExecutionProjectId(selectedProject, selectedServerId),
+            projectId:
+              resolvedTarget?.projectId ??
+              resolveExecutionProjectId(selectedProject, selectedServerId),
             draftId: creationIdentity.draftId,
             draftKey,
             draftContextScopeKey,
@@ -2221,10 +2294,10 @@ export function NewWorkspaceScreen({
 
         setPendingAction("chat");
         const outcome = await runCreateChatAgent({
-          payload,
+          payload: checkedPayload,
           composerState,
           forkDraftSetup,
-          ensureWorkspace,
+          ensureWorkspace: checkedEnsureWorkspace,
           serverId: selectedServerId,
           clearDraft: chatDraft.clear,
           draftKey,
@@ -2242,10 +2315,16 @@ export function NewWorkspaceScreen({
           setPendingAction(null);
         }
       } catch (error) {
+        if (error instanceof SubmissionCancelledError) {
+          setPendingAction(null);
+          return;
+        }
         const message = toErrorMessage(error);
         setPendingAction(null);
         setErrorMessage(message);
         toast.error(message);
+      } finally {
+        submissionInFlight.current = false;
       }
     },
     [
@@ -2257,6 +2336,7 @@ export function NewWorkspaceScreen({
       chatDraft.clear,
       draftKey,
       ensureWorkspace,
+      resolveSubmissionTarget,
       forkDraftSetup,
       isStillOnCreateScreen,
       launchTarget,
