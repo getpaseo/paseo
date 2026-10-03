@@ -6,12 +6,10 @@ import appPackage from "../../../package.json";
 
 export const pluginRequirements = { paseo: `>=${appPackage.version}` };
 
-export async function copyPluginExample(name: string) {
+async function copyPluginSource(source: string) {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-example-"));
   try {
-    await cp(path.resolve(__dirname, "../../../../../plugin-examples", name), directory, {
-      recursive: true,
-    });
+    await cp(source, directory, { recursive: true });
     const manifestPath = path.join(directory, "paseo-plugin.json");
     const manifest = z
       .record(z.string(), z.unknown())
@@ -26,4 +24,12 @@ export async function copyPluginExample(name: string) {
     await rm(directory, { recursive: true, force: true });
     throw error;
   }
+}
+
+export function copyPluginExample(name: string) {
+  return copyPluginSource(path.resolve(__dirname, "../../../../../plugin-examples", name));
+}
+
+export function copyPluginFixture(name: string) {
+  return copyPluginSource(path.resolve(__dirname, "../../fixtures", name));
 }

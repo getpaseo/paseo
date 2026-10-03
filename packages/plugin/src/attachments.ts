@@ -15,6 +15,7 @@ export const PluginAttachmentItemSchema = z.object({
   url: z.url(),
   text: z.string(),
   resourceType: z.string(),
+  contextKind: z.literal("chat_history").optional(),
 });
 
 export const PluginAttachmentSearchPayloadSchema = z.object({

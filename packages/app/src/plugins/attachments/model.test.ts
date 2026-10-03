@@ -66,4 +66,18 @@ describe("plugin resource attachments", () => {
       attachments: [agentAttachment],
     });
   });
+
+  it("preserves chat-history ordering metadata for transcript snapshots", () => {
+    const attachment = createPluginResourceAttachment(source, {
+      ...item,
+      contextKind: "chat_history",
+    });
+
+    expect(PluginResourceComposerAttachmentSchema.parse(attachment)).toEqual(attachment);
+    expect(pluginResourceAttachmentToAgentAttachment(attachment)).toMatchObject({
+      type: "text",
+      text: item.text,
+      contextKind: "chat_history",
+    });
+  });
 });
