@@ -1711,6 +1711,12 @@ export const ko: TranslationResources = {
       helper: "원격 호스트에서 실행 중인 Paseo 데몬에 연결합니다.",
       fields: {
         target: "SSH 호스트",
+        password: "데몬 비밀번호",
+        optional: "선택 사항",
+      },
+      passwordVisibility: {
+        show: "비밀번호 표시",
+        hide: "비밀번호 숨기기",
       },
       actions: {
         cancel: "취소",
