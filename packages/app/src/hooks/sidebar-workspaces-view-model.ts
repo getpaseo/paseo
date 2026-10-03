@@ -615,3 +615,164 @@ export function deriveSidebarLoadingState(input: {
   const isInitialLoad = isLoading && !input.hasProjects;
   return { isLoading, isInitialLoad, isRevalidating: false };
 }
+
+/**
+ * The persisted sidebar order, as stored.
+ */
+export interface SidebarOrderState {
+  projectOrder: string[];
+  pinnedWorkspaceOrder: string[];
+  workspaceOrderByProject: Record<string, string[]>;
+}
+
+/**
+ * What this device can currently see. Only a server listed in `servers` may judge a key,
+ * and `hostIds` must carry EVERY registered host id — not just the visible ones — because
+ * a workspace key has to be attributed to its owning server before anyone may claim it is
+ * gone (see `resolveStructuralWorkspaceIdentity` for the same longest-prefix-first rule).
+ */
+export interface SidebarOrderLiveState {
+  /** Registered host ids, any order; consumed longest-first. */
+  hostIds: readonly string[];
+  /** Servers whose workspace list was received in full, mapped to the keys it reported. */
+  servers: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Project view keys the sidebar can currently see. */
+  visibleProjects: ReadonlySet<string>;
+}
+
+const SIDEBAR_PLACEMENT_HISTORY_KEY = "@airlock:sidebar-placement-keys:v1";
+
+/**
+ * Removes workspace keys that a server which reported its full workspace list no longer
+ * has, the project records that emptying leaves behind, and the project-order entries of
+ * projects that are no longer visible.
+ *
+ * The reconcile above only ever adds: `prependMissingOrderKeys` and
+ * `appendMissingOrderKeys` prepend or append, so a key whose workspace was archived, whose
+ * project was deleted, or whose host is gone stays in the stored order forever. On a
+ * device that syncs the order this is not merely untidy — the stored order is the shared
+ * one, it grows once per workspace the box has ever had, and it eventually stops being
+ * writable at all. Removing it at the point the order is written keeps the shared value
+ * proportional to what exists now.
+ *
+ * Deliberately narrow. Nothing is removed unless a server that reported its whole
+ * workspace list is the one that owns the key, so a device that has not received the
+ * directory, or a host the sidebar filter hides, cannot delete an order somebody else
+ * still has. Returns the SAME state object when there is nothing to remove, which lets
+ * the caller skip the write entirely.
+ */
+export function pruneSidebarOrder(
+  state: SidebarOrderState,
+  live: SidebarOrderLiveState,
+): SidebarOrderState {
+  const servers = live.servers;
+  if (!servers || servers.size === 0 || live.hostIds.length === 0) return state;
+
+  const visibleProjects = live.visibleProjects ?? new Set<string>();
+  // Longest first, matching `resolveStructuralWorkspaceIdentity`: the first host whose
+  // prefix matches owns the key, whether or not that host is allowed to judge it.
+  const hostIds = [...live.hostIds].sort((left, right) => right.length - left.length);
+
+  const isStale = (key: string): boolean => {
+    if (typeof key !== "string" || key.length === 0) return false;
+    for (const hostId of hostIds) {
+      if (!key.startsWith(`${hostId}:`)) continue;
+      const known = servers.get(hostId);
+      // A server with no list is skipped rather than read as "it has nothing" — guessing
+      // there is how a live key gets deleted.
+      return known !== undefined && !known.has(key);
+    }
+    return false;
+  };
+
+  const keepLive = (order: readonly string[]): string[] => {
+    const next = order.filter((key) => !isStale(key));
+    return next.length === order.length ? (order as string[]) : next;
+  };
+
+  const workspaceOrderByProject: Record<string, string[]> = {};
+  const emptied = new Set<string>();
+  let ordersChanged = false;
+  for (const [projectViewKey, order] of Object.entries(state.workspaceOrderByProject)) {
+    // The placement history is a fixed-size log of identity transitions rather than a
+    // workspace list, so it is never a candidate.
+    let next =
+      projectViewKey === SIDEBAR_PLACEMENT_HISTORY_KEY ||
+      !Array.isArray(order) ||
+      order.length === 0
+        ? order
+        : keepLive(order);
+    // A record this pass would EMPTY while its project is still on screen is left as it
+    // was. Its stale keys still name the complete server that owns them, so a later pass
+    // removes them and the projectOrder slot in the SAME step; an empty array names no
+    // server and would leave nothing to act on. A record that was ALREADY empty is not
+    // evidence of anything and is never touched either way.
+    if (next !== order && next.length === 0 && visibleProjects.has(projectViewKey)) {
+      next = order;
+    }
+    workspaceOrderByProject[projectViewKey] = next;
+    if (next !== order) {
+      ordersChanged = true;
+      if (next.length === 0) emptied.add(projectViewKey);
+    }
+  }
+
+  const pinnedWorkspaceOrder = keepLive(state.pinnedWorkspaceOrder);
+  // A project whose order was removed, and that this device can no longer see, is gone. A
+  // VISIBLE one keeps both its slot and its record: dropping it would let the next
+  // reconcile append it straight back and this remove it again. A projectOrder key with
+  // NO record at all is a project this device has no evidence about, and is left alone.
+  const projectOrder = state.projectOrder.filter((key) => !emptied.has(key));
+
+  if (
+    !ordersChanged &&
+    pinnedWorkspaceOrder === state.pinnedWorkspaceOrder &&
+    projectOrder.length === state.projectOrder.length
+  ) {
+    return state;
+  }
+
+  for (const projectViewKey of emptied) delete workspaceOrderByProject[projectViewKey];
+  return { projectOrder, pinnedWorkspaceOrder, workspaceOrderByProject };
+}
+
+/**
+ * Splits the sidebar's current view into what `pruneSidebarOrder` needs: every
+ * workspace key each host that reported a complete list still has.
+ *
+ * Kept separate from the prune so the live state can be assembled — and tested — without
+ * a store, and so the "only a complete list may judge a key" rule has exactly one home.
+ */
+export function buildSidebarOrderLiveState(input: {
+  projects: readonly SidebarProjectEntry[];
+  registeredHostIds: readonly string[];
+  completeWorkspaceListServerIds: readonly string[];
+}): SidebarOrderLiveState {
+  const complete = new Set(input.completeWorkspaceListServerIds);
+  const visibleProjects = new Set<string>();
+  const servers = new Map<string, Set<string>>();
+  // Longest first, matching `resolveStructuralWorkspaceIdentity`: the first host whose
+  // prefix matches owns the key. Sorted ONCE, over every registered id, because a host
+  // the sidebar filter hides still owns its workspaces.
+  const owners = [...new Set(input.registeredHostIds)].sort(
+    (left, right) => right.length - left.length,
+  );
+
+  for (const project of input.projects) {
+    visibleProjects.add(project.viewKey);
+    for (const workspace of project.workspaces) {
+      const owner = owners.find((hostId) => workspace.workspaceKey.startsWith(`${hostId}:`));
+      // Only a host that reported a complete list may judge its keys. An unlisted owner is
+      // left alone: the key belongs to a server this device has no evidence about.
+      if (owner === undefined || !complete.has(owner)) continue;
+      let keys = servers.get(owner);
+      if (!keys) {
+        keys = new Set<string>();
+        servers.set(owner, keys);
+      }
+      keys.add(workspace.workspaceKey);
+    }
+  }
+
+  return { hostIds: owners, servers, visibleProjects };
+}

@@ -388,6 +388,14 @@ export interface SessionState {
   hasHydratedAgents: boolean;
   hasHydratedWorkspaces: boolean;
   hasWorkspaceDirectorySnapshot: boolean;
+  /**
+   * True only while this device holds a COMPLETE workspace list for the server — i.e.
+   * the last thing the server sent was a full snapshot, not a cached directory or a
+   * delta. Distinct from `hasHydratedWorkspaces`, which `registerProjectDescriptor`
+   * also sets and which is never unset; anything that needs to reason about which
+   * workspaces exist has to use this one.
+   */
+  hasCompleteWorkspaceList: boolean;
 
   // Audio state
   isPlayingAudio: boolean;
@@ -617,6 +625,7 @@ interface SessionStoreActions {
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+  setHasCompleteWorkspaceList: (serverId: string, complete: boolean) => void;
   setHasWorkspaceDirectorySnapshot: (serverId: string, available: boolean) => void;
 
   // Agent directory (derived from agents)
@@ -641,6 +650,7 @@ function createInitialSessionState(
     serverInfo: null,
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
+    hasCompleteWorkspaceList: false,
     hasWorkspaceDirectorySnapshot: false,
     isPlayingAudio: false,
     focusedAgentId: null,
@@ -1839,6 +1849,22 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, hasHydratedWorkspaces: hydrated },
+            },
+          };
+        });
+      },
+
+      setHasCompleteWorkspaceList: (serverId, complete) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.hasCompleteWorkspaceList === complete) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, hasCompleteWorkspaceList: complete },
             },
           };
         });

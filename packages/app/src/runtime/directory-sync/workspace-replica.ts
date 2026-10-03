@@ -37,6 +37,8 @@ export class WorkspaceDirectoryReplica {
   private workspaces = new Map<string, WorkspaceDescriptor>();
   private projects = new Map<string, ProjectDescriptor>();
   private workspaceIdsByProject = new Map<string, Set<string>>();
+  /** Whether `commitSnapshot` has run on this instance. Per instance, never global. */
+  private hasFullWorkspaceList = false;
 
   constructor(private readonly serverId: string) {}
 
@@ -56,6 +58,16 @@ export class WorkspaceDirectoryReplica {
       projects: new Map([...input.projects, ...this.projects]),
     });
     useSessionStore.getState().setHasWorkspaceDirectorySnapshot(this.serverId, true);
+    // A checkpoint restore is not a directory sync, and the merge above can only ADD to
+    // what this replica already knows. So it invalidates "this is the server's complete
+    // workspace list" only while no live snapshot has been taken yet: afterwards the
+    // merged result is a superset of that snapshot, which is the direction in which a
+    // consumer of the flag keeps too much rather than acting on a stale list. Revoking
+    // unconditionally would let a slow checkpoint read withdraw a snapshot that is still
+    // standing, with nothing scheduled to put it back.
+    if (!this.hasFullWorkspaceList) {
+      useSessionStore.getState().setHasCompleteWorkspaceList(this.serverId, false);
+    }
   }
 
   commitCachedWorkspace(
@@ -74,6 +86,9 @@ export class WorkspaceDirectoryReplica {
     this.replace(snapshot);
     const mutations = deltas.flatMap((delta) => this.applyDelta(delta));
     useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, true);
+    // The only place a complete list is known to be complete.
+    this.hasFullWorkspaceList = true;
+    useSessionStore.getState().setHasCompleteWorkspaceList(this.serverId, true);
     return mutations;
   }
 
