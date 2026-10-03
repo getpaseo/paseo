@@ -2,16 +2,39 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { findFreePort } = vi.hoisted(() => ({ findFreePort: vi.fn() }));
+
+vi.mock("./service-proxy.js", () => ({ findFreePort }));
+
 import { allocateWorkspaceServicePort } from "./workspace-service-port-allocator.js";
 
 describe("allocateWorkspaceServicePort", () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    findFreePort.mockReset();
     for (const tempDir of tempDirs.splice(0)) {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("skips reserved ports during default allocation", async () => {
+    findFreePort.mockResolvedValueOnce(45_000).mockResolvedValueOnce(45_001);
+
+    await expect(
+      allocateWorkspaceServicePort({
+        allocation: undefined,
+        cwd: tmpdir(),
+        scriptName: "web",
+        workspaceId: "wks_default_reserved",
+        branchName: "feature/default-reserved",
+        reservedPorts: new Set([45_000]),
+      }),
+    ).resolves.toBe(45_001);
+
+    expect(findFreePort).toHaveBeenCalledTimes(2);
   });
 
   it("allocates an available port within the configured range", async () => {
@@ -58,6 +81,7 @@ describe("allocateWorkspaceServicePort", () => {
         scriptName: "app-server",
         workspaceId: "wks_port_allocator",
         branchName: "feature/allocator-context",
+        portCount: 100,
       }),
     ).resolves.toBe(port);
     expect(readFileSync(join(tempDir, "cwd"), "utf8")).toBe(tempDir);
@@ -67,6 +91,7 @@ describe("allocateWorkspaceServicePort", () => {
     expect(readFileSync(join(tempDir, "env"), "utf8")).toBe(
       `app-server|wks_port_allocator|feature/allocator-context|${tempDir}`,
     );
+    expect(readFileSync(join(tempDir, "count"), "utf8")).toBe("100");
   });
 
   it("accepts a valid portScript result that is already occupied", async () => {
@@ -114,8 +139,8 @@ describe("allocateWorkspaceServicePort", () => {
   function createContextPortScript(tempDir: string, port: number): string {
     const contents =
       process.platform === "win32"
-        ? `@echo off\r\n<nul set /p "=%CD%" > cwd\r\n<nul set /p "=%~1|%~2|%~3|%~4" > argv\r\n<nul set /p "=%PASEO_SCRIPTNAME%|%PASEO_WORKSPACE_ID%|%PASEO_BRANCH_NAME%|%PASEO_WORKTREE_PATH%" > env\r\necho ${port}\r\n`
-        : `#!/bin/sh\nprintf '%s' "$PWD" > cwd\nprintf '%s|%s|%s|%s' "$1" "$2" "$3" "$4" > argv\nprintf '%s|%s|%s|%s' "$PASEO_SCRIPTNAME" "$PASEO_WORKSPACE_ID" "$PASEO_BRANCH_NAME" "$PASEO_WORKTREE_PATH" > env\nprintf '${port}\\n'\n`;
+        ? `@echo off\r\n<nul set /p "=%CD%" > cwd\r\n<nul set /p "=%~1|%~2|%~3|%~4" > argv\r\n<nul set /p "=%PASEO_SCRIPTNAME%|%PASEO_WORKSPACE_ID%|%PASEO_BRANCH_NAME%|%PASEO_WORKTREE_PATH%" > env\r\n<nul set /p "=%PASEO_PORT_COUNT%" > count\r\necho ${port}\r\n`
+        : `#!/bin/sh\nprintf '%s' "$PWD" > cwd\nprintf '%s|%s|%s|%s' "$1" "$2" "$3" "$4" > argv\nprintf '%s|%s|%s|%s' "$PASEO_SCRIPTNAME" "$PASEO_WORKSPACE_ID" "$PASEO_BRANCH_NAME" "$PASEO_WORKTREE_PATH" > env\nprintf '%s' "$PASEO_PORT_COUNT" > count\nprintf '${port}\\n'\n`;
     return writePortScript(tempDir, contents);
   }
 
