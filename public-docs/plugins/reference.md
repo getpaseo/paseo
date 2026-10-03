@@ -1024,6 +1024,17 @@ function hideAlerts() {
 }
 ```
 
+When `navigation.supportsFocusHost === true`, pass `focusHost: true` to `openAgent` or
+`openWorkspace` to select only the destination host in the workspace sidebar. This clears
+project and label filters so they do not hide that host's workspaces, and keeps the grouping
+mode. Omit the option to preserve the existing sidebar filters. The option is client-owned
+and works on desktop, browser, iOS, and Android; older clients do not advertise it.
+
+```ts
+navigation.openAgent({ agentId, serverId, focusHost: true });
+navigation.openWorkspace({ workspaceId, serverId, focusHost: true });
+```
+
 ## Host UI
 
 Import Paseo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
