@@ -9,10 +9,10 @@ check logs so reviewers see them here without cross-repo reads.
 
 Contents: `summary.md` (inventory + review-response record), `toolchain-pin.md`
 (pinned versions with sources), `android-sdk-inventory.md`,
-`mac-toolchain-inventory.md`, `logs/` (Android APK build transcript,
-host toolchain transcript, four reference-check transcripts, Mac transcript —
-`.txt` because this repo git-ignores `*.log`; the Kin-monorepo mirror keeps
-the same content as `.log`).
+`mac-toolchain-inventory.md`, `logs/` (Android APK and iOS Simulator build
+transcripts, host toolchain transcript, four reference-check transcripts, and
+Mac transcript — `.txt` because this repo git-ignores `*.log`; the Kin-monorepo
+mirror keeps the same content as `.log`).
 
 Deliberately NOT in this commit: `environment.local.md` (gitignored by design —
 may one day hold founder answers; lives only in the Kin worktree), the APK

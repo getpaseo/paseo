@@ -84,10 +84,10 @@ Full version table with sources: `toolchain-pin.md`.
 
 Review asked for: commits + build logs present in the factory worktree (fixed —
 this `handoff/evidence/KIN-001/` copy with `logs/` lives on branch
-`team-6ffe9a-kin-001`); iOS half beyond a claim (in progress below); Kin IDs
+`team-6ffe9a-kin-001`); iOS half beyond a claim (built and logged below); Kin IDs
 from real reads, never Breathe-and-Pray IDs (honored — the A11 Breathe-and-Pray
-note on the Mac was not used as a Kin source); Mac controller verification via
-authorized Mac lanes (routed, exact pending step recorded).
+note on the Mac was not used as a Kin source); Mac Chrome controller
+verification (still open after the browser attempt below).
 Founder order: keep working without blocking him; missing devices are facts, not
 blockers; Apple API key `AuthKey_9N9APUZP88.p8` may be used at runtime on the Mac
 (short-lived JWT, helper pattern `.context/apple-review/asc.py`).
@@ -98,14 +98,19 @@ blockers; Apple API key `AuthKey_9N9APUZP88.p8` may be used at runtime on the Ma
 - Reference checks re-run with logs: schedule 20/20, watch 18/18, gate 9/9,
   Cloudflare worker 12/12, all exit 0 (`logs/kin-ref-*.txt`,
   `logs/kin-host-toolchain.txt`).
-- iOS shell, real attempt (no signing, no portal writes): official Flutter 3.47.6
-  macos-arm64 SDK downloading on the Mac to `/tmp/flutter-mac.zip`
-  (resume-capable, sha256 `a1946d…ea2e79a` from the official release manifest);
-  bootstrap tree already staged at `/tmp/kin-ios-check/apps/mobile`.
-  Next on the Mac (exact): verify `cat /tmp/flutter-dl.done`, unzip to
-  `~/flutter-sdk`, `flutter doctor`, `flutter build ios --simulator` in
-  `/tmp/kin-ios-check/apps/mobile`. If the download did not finish in this
-  session, resume with `curl -C - -o /tmp/flutter-mac.zip <same URL>`.
+- iOS Simulator shell built on the Mac from a fresh archive of commit
+  `71482e9` for `apps/mobile`, extracted to `/tmp/kin001-ios-clean/apps/mobile`.
+  The official Flutter 3.47.6 macos-arm64 archive SHA-256 matched
+  `a1946d3b6b3de15ce247dc89649df9035ce29e6b4e7ebe91919a25890ea2e79a`.
+  `flutter pub get` and `flutter build ios --simulator --no-codesign` both
+  exited 0; Xcode built `build/ios/iphonesimulator/Runner.app` in 24.6s.
+  CocoaPods 1.17.0 and ffi 1.16.3 ran in a temporary Bundler directory because
+  the Mac's system Ruby is 2.6.10; no global package was installed. The 26.5
+  simulator runtime was available; no simulator was started and no signing or
+  portal write occurred. The bootstrap's generated bundle ID is
+  `org.anpalahan.kin`; it is source configuration, not a public Apple app ID,
+  and does not replace the founder's `org.anpan.kin` decision owned by KIN-004.
+  Full transcript: `logs/kin-ios-build.txt`.
 - ASC read-only inventory: key file presence verified (`AuthKey_9N9APUZP88.p8`,
   mode 600, name only — material never read/copied); no `asc.py` helper exists
   on either host; Issuer ID is in no file on the Mac (full search logged in
@@ -115,6 +120,12 @@ blockers; Apple API key `AuthKey_9N9APUZP88.p8` may be used at runtime on the Ma
   are explicitly NOT recorded as Kin IDs.
 - RevenueCat / Play / Cloudflare: no credential or session offered on any
   reachable host; all stay unknown, no duplicates created anywhere.
-- Mac Chrome controller: profile-dir presence re-verified, zero content read.
-  Attach itself needs the Mac lane (KIN-031/A11); precise pending step and the
-  no-extraction boundary are in `logs/kin-mac-toolchain.txt`.
+- Mac Chrome controller: the available `browser_test` run navigated to
+  `https://appstoreconnect.apple.com/apps` but ended at
+  `/login?targetUrl=%2Fapps&authResult=FAILED` with `authReused: null`; a
+  read-only snapshot showed only public footer links. This does not verify the
+  founder profile or attachment to Chrome's `Default` profile. No credentials,
+  cookies, sessions, or keys were read; the tab was closed and no portal data
+  changed. The task workspace exposes no Chrome lease skill or command, so the
+  authenticated-profile check remains for the authorized Mac lane. Run
+  evidence: `evidence://wks_b4cfa92db3287952/evr_16c93210-ddb5-4a45-a8fb-045835a8c71e`.

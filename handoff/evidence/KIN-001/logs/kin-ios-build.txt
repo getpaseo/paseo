@@ -1,0 +1,41 @@
+KIN-001 iOS Simulator build transcript
+
+Source snapshot: `git archive 71482e9 apps/mobile` from the clean
+`task/KIN-004-shell` checkout, extracted into `/tmp/kin001-ios-clean` on the
+Mac. The evidence directory and product checkout were not used as build output
+directories.
+
+Mac toolchain: macOS 27.0 (26A428), Xcode 27.0 (27A266a), Flutter 3.47.6
+(Dart 3.13.5). Flutter archive SHA-256:
+`a1946d3b6b3de15ce247dc89649df9035ce29e6b4e7ebe91919a25890ea2e79a`.
+CocoaPods 1.17.0 and ffi 1.16.3 were supplied from a temporary Bundler
+environment under `/tmp`; system Ruby is 2.6.10.
+
+Commands and results:
+
+```text
+$ flutter pub get
+Resolving dependencies...
+Downloading packages...
+  cupertino_icons 1.0.9 (2.0.0 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  test_api 0.7.12 (0.7.14 available)
+  vector_math 2.4.0 (2.4.3 available)
+Got dependencies!
+5 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Exit code: 0
+
+$ flutter build ios --simulator --no-codesign
+Building org.anpalahan.kin for simulator (ios)...
+Running Xcode build...
+Xcode build done.                                           24,6s
+✓ Built build/ios/iphonesimulator/Runner.app
+Exit code: 0
+```
+
+The generated bundle identifier `org.anpalahan.kin` is the bootstrap source
+configuration at `71482e9`, not a public App Store record. The founder's chosen
+namespace `org.anpan.kin` remains owned by KIN-004. The build was unsigned; no
+simulator launch, device install, or portal mutation was attempted.
