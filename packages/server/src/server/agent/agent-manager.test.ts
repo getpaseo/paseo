@@ -638,7 +638,13 @@ class UnsupportedSteeringSession extends TestAgentSession {
 async function startAndSteerThroughManager(
   session: AgentSession,
   behavior: "steer" | "interrupt" = "steer",
-): Promise<{ manager: AgentManager; agentId: string; workdir: string }> {
+  steerFallback?: "replace" | "reject",
+): Promise<{
+  manager: AgentManager;
+  agentId: string;
+  workdir: string;
+  dispatchError: unknown;
+}> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-dispatch-"));
   const client = new (class extends TestAgentClient {
     override async createSession(): Promise<AgentSession> {
@@ -655,12 +661,18 @@ async function startAndSteerThroughManager(
     }
   })();
   await manager.waitForAgentRunStart(agent.id);
-  await startAgentRun(manager, agent.id, "replacement", logger, {
-    replaceRunning: true,
-    activeTurnBehavior: behavior,
-    runOptions: { clientMessageId: "replacement-client" },
-  });
-  return { manager, agentId: agent.id, workdir };
+  let dispatchError: unknown = null;
+  try {
+    await startAgentRun(manager, agent.id, "replacement", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: behavior,
+      ...(steerFallback ? { steerFallback } : {}),
+      runOptions: { clientMessageId: "replacement-client" },
+    });
+  } catch (error) {
+    dispatchError = error;
+  }
+  return { manager, agentId: agent.id, workdir, dispatchError };
 }
 
 test("uses an injected timeline store without making it a production requirement", async () => {
@@ -1232,6 +1244,45 @@ test("isolated rewind falls back from steering to the normal replacement path", 
     expect(manager.getTimeline(agentId)).toContainEqual(
       expect.objectContaining({ type: "user_message", clientMessageId: "rewind-client" }),
     );
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a rejecting steer leaves an unsteerable turn running", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  session.steerResult = "unavailable";
+  const { manager, agentId, workdir, dispatchError } = await startAndSteerThroughManager(
+    session,
+    "steer",
+    "reject",
+  );
+  try {
+    expect(dispatchError).toBeInstanceOf(Error);
+    expect((dispatchError as Error).message).toContain("its provider cannot steer");
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
+    expect(manager.getTimeline(agentId)).not.toContainEqual(
+      expect.objectContaining({ type: "user_message", clientMessageId: "replacement-client" }),
+    );
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a rejecting steer leaves a provider without steering untouched", async () => {
+  const session = new UnsupportedSteeringSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir, dispatchError } = await startAndSteerThroughManager(
+    session,
+    "steer",
+    "reject",
+  );
+  try {
+    expect(dispatchError).toBeInstanceOf(Error);
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
   } finally {
     await manager.closeAgent(agentId);
     rmSync(workdir, { recursive: true, force: true });

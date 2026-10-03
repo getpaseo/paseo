@@ -54,6 +54,7 @@ import type {
   FetchAgentTimelineDirection,
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
+  SendAgentMessageResult,
   SendMessageOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
@@ -277,6 +278,7 @@ export interface PaseoAgentTimelineRefetchOptions {
 }
 
 export type PaseoAgentSendOptions = SendMessageOptions;
+export type PaseoAgentSendResult = SendAgentMessageResult;
 
 export interface PaseoAgentRunOptions extends PaseoAgentSendOptions {
   timeoutMs?: number;
@@ -360,7 +362,11 @@ export interface PaseoAgentHandle {
   readonly timeline: PaseoAgentTimelineHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
-  send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
+  /**
+   * Resolves when the daemon accepts the prompt. `queued` is true when the daemon
+   * holds the prompt until the running turn ends (`activeTurnBehavior: "queue"`).
+   */
+  send(text: string, options?: PaseoAgentSendOptions): Promise<PaseoAgentSendResult>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
@@ -937,9 +943,7 @@ function createAgentHandleFactory(
         current = result?.agent ?? null;
         return result;
       },
-      send: async (text, options) => {
-        await daemonClient.sendAgentMessage(id, text, options);
-      },
+      send: (text, options) => daemonClient.sendAgentMessage(id, text, options),
       respondToPermission: async ({ requestId, response }) => {
         await daemonClient.respondToPermission(id, requestId, response);
       },

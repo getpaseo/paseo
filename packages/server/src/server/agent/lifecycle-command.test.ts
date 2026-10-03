@@ -32,6 +32,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
   readonly liveAgents = new Map<string, LifecycleAgentSnapshot>();
   readonly cancelledAgentIds: string[] = [];
   readonly clearedAttentionAgentIds: string[] = [];
+  readonly clearedQueueAgentIds: string[] = [];
   readonly archivedAgentIds: string[] = [];
   readonly closedAgentIds: string[] = [];
   readonly metadataUpdates: Array<{
@@ -68,6 +69,10 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     return this.inFlightAgentIds.delete(agentId)
       ? ({ status: "settled" } as const)
       : ({ status: "not_running" } as const);
+  }
+
+  clearQueuedMessages(agentId: string): void {
+    this.clearedQueueAgentIds.push(agentId);
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {
@@ -214,6 +219,7 @@ describe("agent lifecycle commands", () => {
         archivedAt: "2026-05-10T10:00:00.000Z",
       },
     });
+    expect(manager.clearedQueueAgentIds).toEqual(["agent-1"]);
     expect(manager.cancelledAgentIds).toEqual(["agent-1"]);
     expect(manager.clearedAttentionAgentIds).toEqual(["agent-1"]);
     expect(manager.archivedAgentIds).toEqual(["agent-1"]);

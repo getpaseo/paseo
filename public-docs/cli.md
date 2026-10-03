@@ -219,7 +219,13 @@ Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](
 paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
 paseo send <id> --no-wait "queue this task"
+paseo send <id> --steer "also check the logs"   # deliver into the running turn
+paseo send <id> --queue "then write the summary" # run after the running turn ends
 ```
+
+Without `--steer` or `--queue`, a message sent to a busy agent cancels its current turn and any subagents it started. `--steer` hands the message to the running turn instead. If the agent is mid-turn and its provider cannot steer, `--steer` fails with a non-zero exit and leaves the running turn alone — wait for it to finish, or resend without `--steer`.
+
+`--queue` holds the message in the daemon until the running turn ends, then runs it as the next turn. Several queued messages run in the order you sent them, and the agent stays running until the last one ends. When the agent is idle, the message starts at once. Stopping the agent's turn does not clear the queue: the next queued message starts. Archiving the agent, or restarting the daemon, drops queued messages. `--queue` and `--steer` cannot be used together. Older hosts do not support `--queue`; update the host to use it.
 
 ## Viewing logs
 

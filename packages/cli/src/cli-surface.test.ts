@@ -65,6 +65,26 @@ describe("canonical CLI surface", () => {
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
   });
 
+  it("offers steering an active turn when sending a message", () => {
+    const cli = createCli();
+    const send = cli.commands.find((command) => command.name() === "send");
+    const agent = cli.commands.find((command) => command.name() === "agent");
+    const agentSend = agent?.commands.find((command) => command.name() === "send");
+
+    expect(send?.helpInformation()).toContain("--steer");
+    expect(agentSend?.helpInformation()).toContain("--steer");
+  });
+
+  it("offers queueing behind an active turn when sending a message", () => {
+    const cli = createCli();
+    const send = cli.commands.find((command) => command.name() === "send");
+    const agent = cli.commands.find((command) => command.name() === "agent");
+    const agentSend = agent?.commands.find((command) => command.name() === "send");
+
+    expect(send?.helpInformation()).toContain("--queue");
+    expect(agentSend?.helpInformation()).toContain("--queue");
+  });
+
   it("offers opening an existing agent in the desktop app", () => {
     const agent = createCli().commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");
