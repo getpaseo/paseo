@@ -556,12 +556,28 @@ const ToolPolicySchema = z
   })
   .strict();
 
+export const AgentRoutingPolicySchema = z.object({
+  strategy: z.literal("ordered"),
+  routes: z
+    .array(
+      z.object({
+        provider: z.string().min(1),
+        model: z.string().min(1),
+        thinkingOptionId: z.string().min(1).optional(),
+      }),
+    )
+    .min(1)
+    .max(16),
+});
+export type AgentRoutingPolicy = z.infer<typeof AgentRoutingPolicySchema>;
+
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
+  routingPolicy: AgentRoutingPolicySchema.optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   providerOptions: ProviderOptionsSchema.optional(),
@@ -2037,6 +2053,18 @@ export const SetAgentModelRequestMessageSchema = z.object({
 
 export const SetAgentModelResponseMessageSchema = z.object({
   type: z.literal("set_agent_model_response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
+export const AgentRoutingPolicySetRequestMessageSchema = z.object({
+  type: z.literal("agent.routing_policy.set.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+  routingPolicy: AgentRoutingPolicySchema.nullable(),
+});
+
+export const AgentRoutingPolicySetResponseMessageSchema = z.object({
+  type: z.literal("agent.routing_policy.set.response"),
   payload: AgentActionResponsePayloadSchema,
 });
 
@@ -3568,6 +3596,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
+  AgentRoutingPolicySetRequestMessageSchema,
   SetAgentProviderRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
@@ -3863,6 +3892,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
         agentInputActivity: z.boolean().optional(),
+        orderedAgentRouting: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -7251,6 +7281,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
+  AgentRoutingPolicySetResponseMessageSchema,
   SetAgentProviderResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,

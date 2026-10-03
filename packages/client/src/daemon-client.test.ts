@@ -7374,3 +7374,131 @@ test("fetches a single evidence artifact through a correlated session request", 
   expect(payload.dataBase64).toBe("iVBORw0KGgo=");
   expect(payload.error).toBeNull();
 });
+
+test.each([false, true])(
+  "ordered routing creation requires its host capability: %s",
+  async (supported) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: supported ? { orderedAgentRouting: true } : {} });
+    await connected;
+    const routingPolicy = {
+      strategy: "ordered" as const,
+      routes: [{ provider: "codex-plus", model: "gpt-6-luna", thinkingOptionId: "low" }],
+    };
+    const creation = client.createAgent({
+      provider: "codex-plus",
+      model: "gpt-6-luna",
+      cwd: "/private-project",
+      routingPolicy,
+    });
+    if (!supported) {
+      await expect(creation).rejects.toThrow("Update the host to configure ordered agent routing");
+      expect(mock.sent).toHaveLength(0);
+      return;
+    }
+    expect(mock.sent).toHaveLength(1);
+    const request = parseSentFrame(mock.sent[0]);
+    expect(request).toMatchObject({
+      type: "create_agent_request",
+      config: { provider: "codex-plus", model: "gpt-6-luna", routingPolicy },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId: request.requestId,
+          error: "ordered routing test sentinel",
+        },
+      }),
+    );
+    await expect(creation).rejects.toThrow("ordered routing test sentinel");
+  },
+);
+
+test.each([false, true])(
+  "ordered routing update gates the host and forwards a nullable policy: %s",
+  async (supported) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "ordered-update",
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connection = client.connect();
+    mock.triggerOpen({ features: supported ? { orderedAgentRouting: true } : {} });
+    await connection;
+    const routingPolicy = {
+      strategy: "ordered" as const,
+      routes: [{ provider: "codex-plus", model: "gpt-6-luna" }],
+    };
+    for (const policy of [routingPolicy, null]) {
+      const update = client.setAgentRoutingPolicy("same-agent", policy);
+      if (!supported) {
+        await expect(update).rejects.toThrow("Update the host");
+        continue;
+      }
+      const request = parseSentFrame(mock.sent.at(-1)!);
+      expect(request).toMatchObject({
+        type: "agent.routing_policy.set.request",
+        agentId: "same-agent",
+        routingPolicy: policy,
+      });
+      mock.triggerMessage(
+        wrapSessionMessage({
+          type: "agent.routing_policy.set.response",
+          payload: {
+            requestId: request.requestId,
+            agentId: "same-agent",
+            accepted: true,
+            error: null,
+          },
+        }),
+      );
+      await update;
+    }
+    if (!supported) expect(mock.sent).toHaveLength(0);
+  },
+);
+
+test("ordered first agent in workspace creation cannot bypass an older host gate", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "ordered-workspace",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connection;
+  await expect(
+    client.createWorkspace({
+      source: { kind: "directory", path: "/private" },
+      agent: {
+        config: {
+          provider: "codex-plus",
+          model: "gpt-6-luna",
+          cwd: "/private",
+          routingPolicy: {
+            strategy: "ordered",
+            routes: [{ provider: "codex-plus", model: "gpt-6-luna" }],
+          },
+        },
+      },
+    }),
+  ).rejects.toThrow("Update the host");
+  expect(mock.sent).toHaveLength(0);
+});

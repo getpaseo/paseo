@@ -4,6 +4,7 @@ import type { TurnRouter } from "../system-one/model-routing.js";
 import {
   ProfileRoutingUnavailableError,
   agentRoutingMode,
+  validateRoutingPolicy,
   type ProfileRouter,
   type ProfileRoute,
 } from "../system-one/profile-routing.js";
@@ -224,6 +225,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     return config;
   }
   if (record.config.routingNotice) config.routingNotice = record.config.routingNotice;
+  if (record.config.routingPolicy) config.routingPolicy = record.config.routingPolicy;
   if (record.config.modeId != null) config.modeId = record.config.modeId;
   if (record.config.model != null) config.model = record.config.model;
   if (record.config.thinkingOptionId != null) {
@@ -1004,6 +1006,7 @@ export class AgentManager {
       prompt: this.routingTask(agent, prompt),
       isFirstTurn: agent.lastUserMessageAt === null,
       routingMode: agentRoutingMode(agent.labels),
+      routingPolicy: agent.config.routingPolicy,
     };
     const route = await this.turnRouter(input);
     if (
@@ -1011,7 +1014,8 @@ export class AgentManager {
       agentRoutingMode(agent.labels) !== "auto" ||
       agent.provider !== input.provider ||
       agent.config.model !== input.model ||
-      agent.config.thinkingOptionId !== input.thinkingOptionId
+      agent.config.thinkingOptionId !== input.thinkingOptionId ||
+      agent.config.routingPolicy !== input.routingPolicy
     )
       return;
     if (route) await this.applyRoute(agent, route);
@@ -1088,6 +1092,12 @@ export class AgentManager {
     ) {
       this.setRoutingNotice(agent, "selected", route.reason, route.resetsAt, route);
       await this.persistSnapshot(agent);
+      if (agent.config.routingPolicy)
+        await this.appendTimelineItem(agent.id, {
+          type: "notification",
+          level: "info",
+          message: route.reason,
+        });
       return;
     }
     this.setRoutingNotice(agent, "retrying", route.reason, route.resetsAt, route);
@@ -1495,6 +1505,20 @@ export class AgentManager {
       };
       options = { ...options, env: request.env };
     }
+    if (config.routingPolicy) {
+      config = { ...config, routingPolicy: validateRoutingPolicy(config.routingPolicy) };
+      if (
+        !config.routingPolicy!.routes.some(
+          (route) =>
+            route.provider === config.provider &&
+            route.model === config.model &&
+            route.thinkingOptionId === config.thinkingOptionId,
+        )
+      )
+        throw new Error(
+          "The requested model and profile must belong to the ordered routing choices",
+        );
+    }
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
@@ -1531,6 +1555,13 @@ export class AgentManager {
       owner: options.owner,
       historyPrimed: true,
     });
+    if (storedConfig.routingPolicy && storedConfig.routingNotice) {
+      await this.appendTimelineItem(agent.id, {
+        type: "notification",
+        level: "info",
+        message: storedConfig.routingNotice.reason,
+      });
+    }
     if (!agent.internal) {
       this.pluginLifecycle?.emit("agent.created", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
@@ -2404,6 +2435,35 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     this.emitState(agent);
     return notice;
+  }
+
+  async setAgentRoutingPolicy(
+    agentId: string,
+    policy: AgentSessionConfig["routingPolicy"] | null,
+  ): Promise<void> {
+    const validated = policy ? validateRoutingPolicy(policy) : undefined;
+    const agent = this.requireSessionAgent(agentId);
+    agent.config.routingPolicy = validated;
+    if (validated) {
+      agent.labels = applyLabelPatch(agent.labels, { "pandaos.routing.mode": "auto" });
+      await this.writeLabels(agentId, { "pandaos.routing.mode": "auto" });
+    }
+    agent.config.routingNotice = undefined;
+    this.routedModels.delete(agentId);
+    this.preparedRoutes.delete(agentId);
+    this.fallbackAttemptedProfiles.get(agentId)?.clear();
+    this.attemptedRoutes.get(agentId)?.clear();
+    this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent);
+    this.emitState(agent);
+    await this.appendTimelineItem(agentId, {
+      type: "notification",
+      level: "info",
+      message: validated
+        ? `Configured ordered routing choices: ${validated.routes.map((route) => `${route.provider}/${route.model}${route.thinkingOptionId ? ` (${route.thinkingOptionId})` : ""}`).join(" → ")}. The next turn or recovery uses the first eligible choice.`
+        : "Cleared ordered routing choices.",
+    });
+    this.recoveryWake.get(agentId)?.();
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -5535,6 +5595,7 @@ export class AgentManager {
         prompt,
         currentRetry: true,
         routingMode: agentRoutingMode(agent.labels),
+        routingPolicy: agent.config.routingPolicy,
       });
       return true;
     } catch (error) {
@@ -5579,6 +5640,7 @@ export class AgentManager {
       agent.config.model,
       agent.config.thinkingOptionId,
       agentRoutingMode(agent.labels),
+      agent.config.routingPolicy,
     ]);
   }
 
@@ -5604,7 +5666,9 @@ export class AgentManager {
         recordFailure,
         explicitEffort: agent.config.thinkingOptionId === "max",
         routingMode: agentRoutingMode(agent.labels),
+        routingPolicy: agent.config.routingPolicy,
       });
+      if (this.routingSelection(agent) !== selection) return null;
       if (agentRoutingMode(agent.labels) !== "auto")
         throw new ProfileRoutingUnavailableError(
           "Your selected model will be retained. Choose Auto to allow another available route.",
@@ -5684,6 +5748,7 @@ export class AgentManager {
       {
         cwd: agent.cwd,
         title: agent.config.title,
+        routingPolicy: agent.config.routingPolicy,
         systemPrompt: agent.config.systemPrompt,
         mcpServers: agent.config.mcpServers,
         toolPolicy: agent.config.toolPolicy,

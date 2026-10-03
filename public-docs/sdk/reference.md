@@ -65,6 +65,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | ------------------ | ------------------------- | ------------------------------------------------------------------------------------------------- |
 | `provider`         | `string`                  | Required `provider/model` selection.                                                              |
 | `modeId`           | `string`                  | Provider operating or permission mode.                                                            |
+| `routingPolicy`    | ordered route policy      | Explicit allowed profile/model/thinking choices, in priority order.                               |
 | `thinkingOptionId` | `string`                  | Provider reasoning level.                                                                         |
 | `featureValues`    | `Record<string, unknown>` | Values for features discovered through `providers.listFeatures`.                                  |
 | `options`          | JSON object               | Provider-native settings, strictly validated. See [Provider options](/docs/sdk/provider-options). |
@@ -111,6 +112,50 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 `agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
 
 `agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. Delivery is live-only. Reconnect emits a local `subscription_restored` event; request missed history explicitly with `refetch()`. A live replacement invalidates the previous epoch. See the callback shapes, paging and failure behavior in [timeline events](./events.md#follow-timeline-events).
+
+### Ordered model choices
+
+Create an Auto agent with `labels: { "pandaos.routing.mode": "auto" }` and an optional
+`config.routingPolicy`. Use exact profile IDs from `providers.snapshot({ cwd })`, and selectable
+models and thinking options from `providers.listModels(profileId, { cwd })`. Private and business
+profiles are separate accounts; include only accounts you authorize for this task.
+
+```ts
+await paseo.agents.create({
+  cwd: "/absolute/path/to/project",
+  config: {
+    provider: "codex-plus/gpt-6-luna",
+    thinkingOptionId: "low",
+    routingPolicy: {
+      strategy: "ordered",
+      routes: [
+        { provider: "codex-plus", model: "gpt-6-luna", thinkingOptionId: "low" },
+        { provider: "codex-plus", model: "gpt-6.1-sol", thinkingOptionId: "low" },
+      ],
+    },
+  },
+  labels: { "pandaos.routing.mode": "auto" },
+  prompt: "Implement the registered task and verify its result.",
+});
+```
+
+The policy accepts 1–16 unique exact choices. Its first eligible choice takes priority over Jev's
+model ranking. Host model restrictions still apply. A quota error skips the exhausted account;
+a capacity error preserves the existing short retry before the next allowed model. Unknown usage
+may be tried for explicitly allowed choices. Routing never escapes the list or creates another
+agent for a model handoff. The same agent and workspace retain their history, policy, and routing
+notices. Selections and their causes appear in timeline notifications.
+
+When no choice remains, the pending task waits for a known reset or renewed availability, with a
+routing notice explaining the blocker. No human question is manufactured. Omit the policy to keep
+the existing routing behavior. Explicit manual mode retains the selected model. Ordered creation
+requires `server_info.features.orderedAgentRouting`; the SDK tells you to update older hosts.
+
+Use `agent.setRoutingPolicy(policy)` to update an existing Cook without replacing its ID or workspace.
+The change enables Auto, persists the new list, and wakes an existing quota wait. A stopped agent
+uses the first eligible choice on its next turn; a running turn is retained until recovery or the next
+turn. Pass `null` to clear the list while retaining the current routing mode. This operation uses the
+same host capability and `workspace.write` permission as model changes.
 
 ## `client.projects`
 

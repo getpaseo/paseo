@@ -781,11 +781,18 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
 });
 
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
-  const { client, ws } = await connectClient();
+  const { client, ws } = await connectClient({
+    orderedAgentRouting: true,
+    ownedSubscriptions: true,
+  });
+  const routingPolicy = {
+    strategy: "ordered" as const,
+    routes: [{ provider: "codex", model: "gpt-5.4" }],
+  };
   const createdAgent = createAgent();
 
   const createPromise = client.agents.create({
-    config: { provider: "codex/gpt-5.4" },
+    config: { provider: "codex/gpt-5.4", routingPolicy },
     cwd: "/repo/sdk",
     prompt: "ship it",
   });
@@ -796,6 +803,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
       provider: "codex",
       model: "gpt-5.4",
       cwd: "/repo/sdk",
+      routingPolicy,
     },
     initialPrompt: "ship it",
   });

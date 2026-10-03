@@ -3061,9 +3061,11 @@ export class DaemonClient {
   });
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    const config = resolveAgentConfig(options);
+    if (config.routingPolicy) this.requireOrderedAgentRouting();
     const result = await this.creations.createAgent({
       ...options,
-      config: resolveAgentConfig(options),
+      config,
     });
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
@@ -4005,6 +4007,24 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentProvider rejected");
     }
+  }
+
+  private requireOrderedAgentRouting(): void {
+    // COMPAT(orderedAgentRouting): added in v0.10.0, remove gate after 2027-04-03 once daemon floor supports ordered routing.
+    if (this.lastServerInfoMessage?.features?.orderedAgentRouting !== true)
+      throw new Error("Update the host to configure ordered agent routing");
+  }
+
+  async setAgentRoutingPolicy(
+    agentId: string,
+    routingPolicy: NonNullable<AgentSessionConfig["routingPolicy"]> | null,
+  ): Promise<void> {
+    this.requireOrderedAgentRouting();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.routing_policy.set.response">({
+        message: { type: "agent.routing_policy.set.request", agentId, routingPolicy },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Ordered routing choices rejected");
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -4974,6 +4994,8 @@ export class DaemonClient {
     input: CreateWorkspaceRequestOptions,
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
+    if (input.agent && resolveAgentConfig(input.agent).routingPolicy)
+      this.requireOrderedAgentRouting();
     const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
     const result = await this.creations.createWorkspace({
       ...input,

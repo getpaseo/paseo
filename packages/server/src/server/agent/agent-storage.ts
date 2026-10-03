@@ -8,6 +8,7 @@ import {
   AgentFeatureSchema,
   AgentStatusSchema,
   AgentRoutingNoticeSchema,
+  AgentRoutingPolicySchema,
   AgentPromptInputSchema,
   PluginTimelineItemPayloadSchema,
 } from "../messages.js";
@@ -19,6 +20,7 @@ import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./a
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
     routingNotice: AgentRoutingNoticeSchema.optional(),
+    routingPolicy: AgentRoutingPolicySchema.optional(),
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
@@ -124,6 +126,7 @@ export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
   | "modeId"
   | "routingNotice"
+  | "routingPolicy"
   | "model"
   | "thinkingOptionId"
   | "featureValues"

@@ -233,13 +233,14 @@ export type PaseoAgentProvider = PaseoAgentSessionConfig["provider"];
 
 export type PaseoProviderFeatureValues = Record<string, unknown>;
 
+export type PaseoAgentRoutingPolicy = NonNullable<PaseoAgentSessionConfig["routingPolicy"]>;
+
 export interface PaseoAgentConfig {
-  /** Provider and model in `provider/model` format. */
+  routingPolicy?: PaseoAgentRoutingPolicy;
   provider: string;
   modeId?: PaseoAgentSessionConfig["modeId"];
   thinkingOptionId?: PaseoAgentSessionConfig["thinkingOptionId"];
   featureValues?: PaseoProviderFeatureValues;
-  /** JSON-safe provider-native settings, validated by the selected provider. */
   options?: PaseoAgentSessionConfig["providerOptions"];
   systemPrompt?: PaseoAgentSessionConfig["systemPrompt"];
   toolPolicy?: PaseoAgentSessionConfig["toolPolicy"];
@@ -379,6 +380,7 @@ export interface PaseoAgentHandle {
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
   notifyInputActivity(options: PaseoAgentInputActivityOptions): Promise<void>;
+  setRoutingPolicy(policy: PaseoAgentRoutingPolicy | null): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -966,6 +968,7 @@ function createAgentHandleFactory(
         await daemonClient.respondToPermission(id, requestId, response, expectedNoInputStarted);
       },
       notifyInputActivity: (options) => daemonClient.notifyAgentInputActivity(id, options),
+      setRoutingPolicy: (policy) => daemonClient.setAgentRoutingPolicy(id, policy),
       run: async (text, options) => {
         const { timeoutMs, ...sendOptions } = options ?? {};
         await daemonClient.sendAgentMessage(id, text, sendOptions);

@@ -78,3 +78,22 @@ it("records an unverified creation preflight so the first turn does not wait twi
     routingNotice: { status: "unverified", toProfile: "opencode" },
   });
 });
+
+it("forwards the exact ordered policy into creation routing", async () => {
+  const profileRouter = vi.fn(async () => null);
+  const routingPolicy = {
+    strategy: "ordered" as const,
+    routes: [{ provider: "codex-plus", model: "gpt-6-luna", thinkingOptionId: "low" }],
+  };
+  await createSystemOneCreateRouter({ profileRouter })({
+    requestedProvider: "codex-plus",
+    requestedModel: "gpt-6-luna",
+    requestedThinking: "low",
+    prompt: "Task",
+    cwd: "/project",
+    isAgentScoped: false,
+    routingMode: "auto",
+    routingPolicy,
+  });
+  expect(profileRouter).toHaveBeenCalledWith(expect.objectContaining({ routingPolicy }));
+});

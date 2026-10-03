@@ -5,12 +5,14 @@ import {
   type AgentConfigOperations,
   type AgentConfigSessionHost,
 } from "./agent-config-session.js";
+import type { AgentRoutingPolicy } from "@getpaseo/protocol/messages";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 
 class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly loadedAgentIds: string[] = [];
   readonly modeCalls: Array<{ agentId: string; modeId: string }> = [];
+  readonly routingPolicyCalls: Array<{ agentId: string; policy: AgentRoutingPolicy | null }> = [];
   readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
   readonly providerCalls: Array<{ agentId: string; provider: string; modelId: string | null }> = [];
   readonly featureCalls: Array<{ agentId: string; featureId: string; value: unknown }> = [];
@@ -32,6 +34,11 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     this.callLog.push("mode");
     if (this.failWith) throw this.failWith;
     return this.modeNotice;
+  }
+
+  async setRoutingPolicy(agentId: string, policy: AgentRoutingPolicy | null): Promise<void> {
+    this.routingPolicyCalls.push({ agentId, policy });
+    if (this.failWith) throw this.failWith;
   }
 
   async setModel(agentId: string, modelId: string | null): Promise<void> {
@@ -488,5 +495,25 @@ describe("AgentConfigSession provider switch", () => {
         error: "claude runtime unavailable",
       },
     });
+  });
+});
+
+test.each([false, true])("set routing policy reports real mutation outcome: %s", async (fails) => {
+  const { subsystem, emitted, operations } = makeSubsystem();
+  const routingPolicy: AgentRoutingPolicy = {
+    strategy: "ordered",
+    routes: [{ provider: "codex-plus", model: "gpt-6-luna", thinkingOptionId: "low" }],
+  };
+  if (fails) operations.failWith = new Error("invalid choices");
+  await subsystem.handleSetAgentRoutingPolicyRequest({
+    type: "agent.routing_policy.set.request",
+    agentId: "agent-1",
+    requestId: "ordered",
+    routingPolicy,
+  });
+  expect(operations.routingPolicyCalls).toEqual([{ agentId: "agent-1", policy: routingPolicy }]);
+  expect(emitted.at(-1)).toMatchObject({
+    type: "agent.routing_policy.set.response",
+    payload: { accepted: !fails, requestId: "ordered", error: fails ? "invalid choices" : null },
   });
 });

@@ -11,6 +11,10 @@ it("uses the same actual-profile router for a native session turn", async () => 
     prompt: "Implement the task",
     isFirstTurn: true,
     routingMode: "auto" as const,
+    routingPolicy: {
+      strategy: "ordered" as const,
+      routes: [{ provider: "codex-business", model: "gpt-6.1-sol", thinkingOptionId: "medium" }],
+    },
   };
   await expect(createSystemOneTurnRouter({ profileRouter })(input)).resolves.toBeNull();
   expect(profileRouter).toHaveBeenCalledWith({ ...input, explicitEffort: false });

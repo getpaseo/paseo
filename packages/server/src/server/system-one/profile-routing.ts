@@ -2,6 +2,7 @@ import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
 import type { AgentModelDefinition, AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { ProviderUsageListResult } from "../../services/quota-fetcher/service.js";
 import type { ProviderUsage } from "../messages.js";
+import { AgentRoutingPolicySchema, type AgentRoutingPolicy } from "../messages.js";
 import { parseChoiceAnswer, type TypeSafeDecisionSource } from "../browser-tools/jev-client.js";
 
 export interface RoutingProfile {
@@ -25,6 +26,7 @@ export interface ProfileRouteInput {
   recordFailure?: boolean;
   currentRetry?: boolean;
   routingMode?: "auto" | "manual";
+  routingPolicy?: AgentRoutingPolicy;
 }
 export interface ProfileRoute {
   profile: AgentProfile;
@@ -91,10 +93,8 @@ export function createProfileRouter(options: ProfileRouterOptions): ProfileRoute
     );
     try {
       const now = (options.now ?? Date.now)();
-      const profiles = configuredProfiles(
-        options.getProfiles(input.cwd),
-        options.getRouting?.() ?? {},
-      );
+      const policy = input.routingPolicy && validateRoutingPolicy(input.routingPolicy);
+      const profiles = profilesForPolicy(options, input.cwd, policy);
       const evidence = await beforeDeadline(
         options.getUsage(profiles.map((profile) => profile.id)),
         controller.signal,
@@ -117,7 +117,8 @@ export function createProfileRouter(options: ProfileRouterOptions): ProfileRoute
           limits.delete(profile.id);
         }
         if (attempted.has(profile.id)) return false;
-        return profileAvailability(usage.get(profile.id), now) === "available";
+        const availability = profileAvailability(usage.get(profile.id), now);
+        return policy ? availability !== "limited" : availability === "available";
       });
       const futureResets = profiles
         .flatMap((profile) => {
@@ -151,6 +152,7 @@ export function createProfileRouter(options: ProfileRouterOptions): ProfileRoute
             : "Your selected provider is quota-limited. Waiting for its reset; choose Auto to allow another available route.",
         );
       }
+      if (policy) return orderedRoute(policy, input, eligible, usage, reset, unavailable);
       return await selectAvailableRoute(
         options,
         currentLimited && !input.fallback ? { ...input, fallback: "quota" } : input,
@@ -164,6 +166,99 @@ export function createProfileRouter(options: ProfileRouterOptions): ProfileRoute
       clearTimeout(timeout);
     }
   };
+}
+
+function profilesForPolicy(
+  options: ProfileRouterOptions,
+  cwd: string,
+  policy: AgentRoutingPolicy | undefined,
+): RoutingProfile[] {
+  return configuredProfiles(options.getProfiles(cwd), options.getRouting?.() ?? {}).filter(
+    (profile) => !policy || policy.routes.some((route) => route.provider === profile.id),
+  );
+}
+
+function orderedCandidate(
+  route: AgentRoutingPolicy["routes"][number],
+  eligible: RoutingProfile[],
+  attempted: Set<string>,
+): RoutingCandidate | null {
+  const profile = eligible.find((entry) => entry.id === route.provider);
+  const model = profile?.models.find(
+    (entry) => entry.id === route.model && entry.isSelectable !== false,
+  );
+  if (!profile || !model || attempted.has(JSON.stringify([profile.id, model.id]))) return null;
+  if (
+    profile.routing &&
+    (!profile.routing.models.includes(model.id) ||
+      (profile.routing.thinking &&
+        (!route.thinkingOptionId || !profile.routing.thinking.includes(route.thinkingOptionId))))
+  )
+    return null;
+  if (
+    route.thinkingOptionId &&
+    !model.thinkingOptions?.some((entry) => entry.id === route.thinkingOptionId)
+  )
+    return null;
+  return { profile, model, effort: route.thinkingOptionId };
+}
+
+export function validateRoutingPolicy(policy: AgentRoutingPolicy): AgentRoutingPolicy {
+  const parsed = AgentRoutingPolicySchema.parse(policy);
+  const keys = parsed.routes.map((route) =>
+    JSON.stringify([route.provider, route.model, route.thinkingOptionId ?? null]),
+  );
+  if (new Set(keys).size !== keys.length) throw new Error("Ordered routing choices must be unique");
+  if (
+    parsed.routes.some(
+      (route) =>
+        route.provider.trim() !== route.provider ||
+        route.model.trim() !== route.model ||
+        route.thinkingOptionId?.trim() !== route.thinkingOptionId,
+    )
+  )
+    throw new Error("Ordered routing choices must not contain surrounding whitespace");
+  return parsed;
+}
+
+function orderedRoute(
+  policy: AgentRoutingPolicy,
+  input: ProfileRouteInput,
+  eligible: RoutingProfile[],
+  usage: Map<string, ProviderUsage>,
+  reset: string | null,
+  unavailable: (message: string) => never,
+): ProfileRoute {
+  const attempted = new Set(input.attemptedRoutes ?? []);
+  const current = policy.routes.findIndex(
+    (route) =>
+      route.provider === input.provider &&
+      route.model === input.model &&
+      route.thinkingOptionId === input.thinkingOptionId,
+  );
+  const start = input.fallback && input.recordFailure !== false ? current + 1 : 0;
+  for (let index = start; index < policy.routes.length; index++) {
+    const route = policy.routes[index];
+    const candidate = orderedCandidate(route, eligible, attempted);
+    if (!candidate) continue;
+    const { profile, model } = candidate;
+    const cause = input.fallback
+      ? `after ${input.fallback} on ${input.provider}/${input.model ?? "default"}`
+      : "by your configured preference";
+    const knownUsage = usage
+      .get(profile.id)
+      ?.windows.filter((window) => typeof window.usedPct === "number")
+      .map((window) => `${window.label}: ${window.usedPct}% used`)
+      .join(", ");
+    return candidateRoute(
+      { profile, model, effort: route.thinkingOptionId },
+      reset,
+      `Ordered route ${index + 1}/${policy.routes.length} selected ${profile.label} · ${model.id}${route.thinkingOptionId ? ` · ${route.thinkingOptionId}` : ""} ${cause}.${knownUsage ? ` Observed quota: ${knownUsage}.` : " Usage is unavailable; trying this explicitly allowed route."}`,
+    );
+  }
+  return unavailable(
+    `No eligible route remains in the configured ordered choices${input.fallback ? ` after ${input.fallback}` : ""}. Other accounts and models are not allowed.`,
+  );
 }
 
 export function agentRoutingMode(

@@ -1084,6 +1084,7 @@ export class Session {
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
+        setRoutingPolicy: (agentId, policy) => agentManager.setAgentRoutingPolicy(agentId, policy),
         setProvider: async (agentId, provider, modelId) => {
           await agentManager.setAgentProvider(agentId, provider, modelId);
         },
@@ -2905,6 +2906,8 @@ export class Session {
     switch (msg.type) {
       case "set_agent_mode_request":
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
+      case "agent.routing_policy.set.request":
+        return this.agentConfigSession.handleSetAgentRoutingPolicyRequest(msg);
       case "set_agent_model_request":
         return this.agentConfigSession.handleSetAgentModelRequest(msg);
       case "set_agent_provider_request":
@@ -2915,6 +2918,13 @@ export class Session {
         return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "agent.config.apply.request":
         return this.agentConfigSession.handleAgentConfigApplyRequest(msg);
+      default:
+        return this.dispatchDaemonConfigMessage(msg);
+    }
+  }
+
+  private dispatchDaemonConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
       case "get_daemon_config_request":
         return this.handleGetDaemonConfigRequest(msg.requestId);
       case "daemon.get_status.request":

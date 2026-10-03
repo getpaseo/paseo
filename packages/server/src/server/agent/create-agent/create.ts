@@ -276,6 +276,7 @@ async function resolveSessionCreateAgent(
             prompt: trimmedPrompt,
             isAgentScoped: false,
             routingMode: agentRoutingMode(input.labels),
+            routingPolicy: builtSessionConfig.routingPolicy,
           })
           .catch((error: unknown) => {
             if (!(error instanceof ProfileRoutingUnavailableError)) throw error;
@@ -497,6 +498,7 @@ async function applySubagentCreateRouting(params: {
       cwd: params.resolvedCwd,
       isAgentScoped: Boolean(input.callerAgentId),
       routingMode: agentRoutingMode(input.labels),
+      routingPolicy: input.config?.routingPolicy,
     });
     if (route) {
       provider = route.provider;

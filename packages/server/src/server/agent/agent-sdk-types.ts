@@ -5,7 +5,11 @@ import type {
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
-import type { AgentAttachment, AgentRoutingNotice } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  AgentRoutingNotice,
+  AgentRoutingPolicy,
+} from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type { AgentProviderNotice, AgentTaskItem };
@@ -605,6 +609,7 @@ export interface ImportedProviderSession {
 }
 
 export interface AgentSessionConfig {
+  routingPolicy?: AgentRoutingPolicy;
   routingNotice?: AgentRoutingNotice;
   provider: AgentProvider;
   cwd: string;

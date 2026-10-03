@@ -1,4 +1,5 @@
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
+import type { AgentRoutingPolicy } from "../messages.js";
 import type { ProfileRoute, ProfileRouter } from "./profile-routing.js";
 
 export interface TurnRouteInput {
@@ -9,6 +10,7 @@ export interface TurnRouteInput {
   prompt: AgentPromptInput;
   isFirstTurn: boolean;
   routingMode?: "auto" | "manual";
+  routingPolicy?: AgentRoutingPolicy;
 }
 export type TurnRoute = ProfileRoute;
 export type TurnRouter = (input: TurnRouteInput) => Promise<TurnRoute | null>;

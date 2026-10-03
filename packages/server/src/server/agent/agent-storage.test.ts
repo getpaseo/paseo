@@ -39,6 +39,7 @@ function buildManagedAgentConfig(
     modeId: configOverrides.modeId ?? "plan",
     model: configOverrides.model ?? "gpt-5.1",
     thinkingOptionId: configOverrides.thinkingOptionId,
+    routingPolicy: configOverrides.routingPolicy,
     providerOptions: configOverrides.providerOptions,
     toolPolicy: configOverrides.toolPolicy,
     systemPrompt: configOverrides.systemPrompt,
@@ -199,6 +200,29 @@ describe("AgentStorage", () => {
       "B",
     ]);
     expect(restored?.acceptedUserMessages?.[0]?.providerMessageId).toBe("provider-A");
+  });
+
+  test("ordered routing survives storage reload and session config reconstruction", async () => {
+    const routingPolicy: NonNullable<AgentSessionConfig["routingPolicy"]> = {
+      strategy: "ordered",
+      routes: [
+        { provider: "codex-plus", model: "gpt-6-luna", thinkingOptionId: "low" },
+        { provider: "codex-plus", model: "gpt-6.1-sol", thinkingOptionId: "low" },
+      ],
+    };
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "ordered-routing-agent",
+        provider: "codex-plus",
+        config: { model: "gpt-6-luna", thinkingOptionId: "low", routingPolicy },
+      }),
+    );
+    const record = await new AgentStorage(storagePath, logger).get("ordered-routing-agent");
+    expect(record?.config?.routingPolicy).toEqual(routingPolicy);
+    expect(buildConfigOverrides(record!).routingPolicy).toEqual(routingPolicy);
+    expect(buildSessionConfig(record!, { validProviders: ["codex-plus"] })?.routingPolicy).toEqual(
+      routingPolicy,
+    );
   });
 
   test("applySnapshot persists configs and snapshot metadata", async () => {

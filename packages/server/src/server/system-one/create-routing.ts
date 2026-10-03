@@ -1,4 +1,4 @@
-import type { AgentRoutingNotice } from "../messages.js";
+import type { AgentRoutingNotice, AgentRoutingPolicy } from "../messages.js";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { ProfileRouter } from "./profile-routing.js";
 
@@ -10,6 +10,7 @@ export interface CreateRouteInput {
   cwd: string;
   isAgentScoped: boolean;
   routingMode?: "auto" | "manual";
+  routingPolicy?: AgentRoutingPolicy;
 }
 export interface CreateRoute {
   provider: string;
@@ -33,6 +34,7 @@ export function createSystemOneCreateRouter(options: {
       prompt: input.prompt,
       explicitEffort: !input.isAgentScoped && input.requestedThinking === "max",
       routingMode: input.routingMode,
+      routingPolicy: input.routingPolicy,
     });
     return route
       ? {

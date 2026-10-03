@@ -1908,6 +1908,7 @@ export class VoiceAssistantWebSocketServer {
         ownedSubscriptions: true,
         agentRequestReceipts: true,
         agentInputActivity: true,
+        orderedAgentRouting: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
         hubAgentRpc: true,

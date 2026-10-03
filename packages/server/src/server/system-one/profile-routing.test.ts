@@ -2,9 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   createProfileRouter,
   ProfileRoutingUnavailableError,
+  validateRoutingPolicy,
   type RoutingProfile,
 } from "./profile-routing.js";
-import type { ProviderUsage } from "../messages.js";
+import type { AgentRoutingPolicy, ProviderUsage } from "../messages.js";
 import {
   TypeSafeSystemOneClient,
   type TypeSafeDecisionRequest,
@@ -40,6 +41,7 @@ function fixture(
   entries = profiles.map((profile) => usage(profile.id)),
   catalog = profiles,
   enabled = true,
+  routing: Record<string, { models: string[]; thinking?: string[] }> = {},
 ) {
   let now = Date.parse("2026-09-30T12:00:00Z");
   const decide = vi.fn(async (request: TypeSafeDecisionRequest) => {
@@ -71,6 +73,7 @@ function fixture(
   }));
   const router = createProfileRouter({
     getProfiles: () => catalog,
+    getRouting: () => routing,
     getUsage,
     decisionSource: () => ({ decide }),
     enabled: () => enabled,
@@ -543,4 +546,166 @@ it("bounds a stalled usage snapshot and does not call Jev without verified candi
   await vi.advanceTimersByTimeAsync(2000);
   await expect(pending).resolves.toBeNull();
   expect(f.decide).not.toHaveBeenCalled();
+});
+
+const orderedPolicy: AgentRoutingPolicy = {
+  strategy: "ordered",
+  routes: [
+    { provider: "codex-plus", model: "gpt-6-luna", thinkingOptionId: "low" },
+    { provider: "codex-plus", model: "gpt-6.1-sol", thinkingOptionId: "low" },
+    { provider: "claude", model: "claude-sonnet-5-5", thinkingOptionId: "medium" },
+  ],
+};
+const orderedProfiles: RoutingProfile[] = [
+  ...profiles.map((profile) =>
+    Object.assign({}, profile, {
+      models: ["gpt-6-luna", "gpt-6.1-sol"].map((id) => ({
+        provider: profile.id,
+        id,
+        label: id,
+        thinkingOptions: [{ id: "low", label: "Low" }],
+      })),
+    }),
+  ),
+  {
+    id: "claude",
+    label: "Claude",
+    enabled: true,
+    harness: "claude",
+    models: [
+      {
+        provider: "claude",
+        id: "claude-sonnet-5-5",
+        label: "Sonnet",
+        thinkingOptions: [{ id: "medium", label: "Medium" }],
+      },
+    ],
+  },
+];
+function orderedFixture(
+  entries = orderedProfiles.map((profile) => usage(profile.id)),
+  routing: Record<string, { models: string[]; thinking?: string[] }> = {},
+) {
+  const f = fixture(entries, orderedProfiles, true, routing);
+  return { ...f, input: { ...f.input, ...orderedPolicy.routes[0], routingPolicy: orderedPolicy } };
+}
+it("honors ordered first model and exact private profile without Jev or business usage", async () => {
+  const f = orderedFixture();
+  expect(await f.router(f.input)).toMatchObject({
+    profile: { provider: "codex-plus", thinkingOptionId: "low" },
+    model: "gpt-6-luna",
+    reason: expect.stringContaining("Ordered route 1/3"),
+  });
+  expect(f.decide).not.toHaveBeenCalled();
+  expect(f.getUsage).toHaveBeenCalledWith(["codex-plus", "claude"]);
+});
+it("ordered quota fallback skips every model on the exhausted account", async () => {
+  const f = orderedFixture();
+  expect(await f.router({ ...f.input, fallback: "quota" })).toMatchObject({
+    profile: { provider: "claude", thinkingOptionId: "medium" },
+    model: "claude-sonnet-5-5",
+    reason: expect.stringContaining("after quota on codex-plus/gpt-6-luna"),
+  });
+  expect(f.decide).not.toHaveBeenCalled();
+});
+it("ordered capacity fallback tries the next allowed model within the same private account", async () => {
+  const f = orderedFixture();
+  expect(
+    await f.router({
+      ...f.input,
+      fallback: "capacity",
+      attemptedRoutes: [JSON.stringify(["codex-plus", "gpt-6-luna"])],
+    }),
+  ).toMatchObject({
+    profile: { provider: "codex-plus", thinkingOptionId: "low" },
+    model: "gpt-6.1-sol",
+  });
+});
+it("ordered exhausted routes cannot escape to an available business account", async () => {
+  const f = orderedFixture([
+    usage("codex-plus"),
+    usage("codex-business"),
+    usage("claude", 100, "2026-09-30T13:00:00Z"),
+  ]);
+  await expect(f.router({ ...f.input, fallback: "quota" })).rejects.toMatchObject({
+    message: expect.stringContaining("Other accounts and models are not allowed"),
+    resetsAt: "2026-09-30T13:00:00.000Z",
+  });
+});
+it("ordered unknown usage can try only the explicitly authorized profile", async () => {
+  const f = orderedFixture([]);
+  expect(await f.router(f.input)).toMatchObject({
+    profile: { provider: "codex-plus" },
+    model: "gpt-6-luna",
+    reason: expect.stringContaining("Usage is unavailable"),
+  });
+  expect(f.decide).not.toHaveBeenCalled();
+});
+it("ordered choices respect the host model and thinking allowlists", async () => {
+  const f = orderedFixture(undefined, {
+    "codex-plus": { models: ["gpt-6.1-sol"], thinking: ["low"] },
+  });
+  expect(await f.router(f.input)).toMatchObject({
+    profile: { provider: "codex-plus", thinkingOptionId: "low" },
+    model: "gpt-6.1-sol",
+  });
+  const blocked = orderedFixture(undefined, {
+    "codex-plus": { models: ["gpt-6.1-sol"], thinking: ["high"] },
+  });
+  expect(await blocked.router(blocked.input)).toMatchObject({
+    profile: { provider: "claude" },
+    model: "claude-sonnet-5-5",
+  });
+});
+it("ordered choices skip unselectable models and unsupported efforts without substituting", async () => {
+  const f = orderedFixture();
+  const policy: AgentRoutingPolicy = {
+    strategy: "ordered",
+    routes: [
+      { ...orderedPolicy.routes[0], thinkingOptionId: "max" },
+      { ...orderedPolicy.routes[0], model: "not-a-model" },
+      orderedPolicy.routes[2],
+    ],
+  };
+  expect(await f.router({ ...f.input, routingPolicy: policy })).toMatchObject({
+    profile: { provider: "claude", thinkingOptionId: "medium" },
+  });
+});
+it("ordered choice resumes the first preference after its known quota reset", async () => {
+  const f = orderedFixture([
+    usage("codex-plus", 100, "2026-09-30T13:00:00Z"),
+    usage("claude", 100, "2026-09-30T13:00:00Z"),
+  ]);
+  await expect(f.router({ ...f.input, fallback: "quota" })).rejects.toBeInstanceOf(
+    ProfileRoutingUnavailableError,
+  );
+  f.setNow("2026-09-30T13:00:00Z");
+  expect(
+    await f.router({
+      ...f.input,
+      ...orderedPolicy.routes[2],
+      fallback: "quota",
+      recordFailure: false,
+    }),
+  ).toMatchObject({ profile: { provider: "codex-plus" }, model: "gpt-6-luna" });
+});
+it("validates unique ordered exact routes without collapsing private and business profiles", () => {
+  expect(() =>
+    validateRoutingPolicy({
+      ...orderedPolicy,
+      routes: [orderedPolicy.routes[0], orderedPolicy.routes[0]],
+    }),
+  ).toThrow("unique");
+  expect(
+    validateRoutingPolicy({
+      strategy: "ordered",
+      routes: [orderedPolicy.routes[0], { ...orderedPolicy.routes[0], provider: "codex-business" }],
+    }).routes,
+  ).toHaveLength(2);
+  expect(() =>
+    validateRoutingPolicy({
+      ...orderedPolicy,
+      routes: [{ ...orderedPolicy.routes[0], provider: "codex-plus " }],
+    }),
+  ).toThrow("whitespace");
 });

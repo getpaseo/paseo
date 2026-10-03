@@ -57,9 +57,10 @@ export default function contribute(server: PluginServerContext) {
       title: "Plugin workspace",
     });
     const agent = await workspace.agents.create({
-      config: { provider: "pi/test" },
+      config: { provider: "pi/test-model", routingPolicy: { strategy: "ordered", routes: [{ provider: "pi", model: "test-model" }] } },
       prompt: "Created by a plugin handler",
     });
+    await agent.setRoutingPolicy({ strategy: "ordered", routes: [{ provider: "pi", model: "test-model" }] });
     return { workspaceId: workspace.id, agentId: agent.id };
   });
   server.handle(list, async (_input, { paseo }) => {
@@ -111,6 +112,13 @@ export default function contribute(server: PluginServerContext) {
       agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
     });
     const agentId = Reflect.get(created, "agentId");
+    expect(daemon.daemon.agentManager.getAgent(agentId)?.config.routingPolicy).toEqual({
+      strategy: "ordered",
+      routes: [{ provider: "pi", model: "test-model" }],
+    });
+    expect(daemon.daemon.agentManager.getAgent(agentId)?.labels?.["pandaos.routing.mode"]).toBe(
+      "auto",
+    );
     const initial = await client.invokePluginRpc("paseo-api", "append", {
       agentId,
       id: "review-1",

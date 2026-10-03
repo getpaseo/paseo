@@ -12656,6 +12656,7 @@ async function createCapacityFixture(
     uncertainRouting?: boolean;
     routingMode?: "manual" | "auto";
     quotaOnlyOrigin?: boolean;
+    routingPolicy?: AgentSessionConfig["routingPolicy"];
   } = {},
 ) {
   const workdir = mkdtempSync(join(tmpdir(), "capacity-recovery-"));
@@ -12825,6 +12826,7 @@ async function createCapacityFixture(
       model: "gpt-6.1-sol",
       thinkingOptionId: "medium",
       title: "Recovery task",
+      routingPolicy: options.routingPolicy,
     },
     undefined,
     { workspaceId: undefined, labels: { "pandaos.routing.mode": options.routingMode ?? "auto" } },
@@ -13518,6 +13520,158 @@ test("records the actual Auto reason when the selected model already matches", a
       reason: expect.stringContaining("two-second"),
     });
     expect(fixture.attempts).toHaveLength(0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+const managerOrderedPolicy: NonNullable<AgentSessionConfig["routingPolicy"]> = {
+  strategy: "ordered",
+  routes: [
+    { provider: "codex-plus", model: "gpt-6.1-sol", thinkingOptionId: "medium" },
+    { provider: "claude", model: "claude-opus-5-5", thinkingOptionId: "medium" },
+  ],
+};
+test("ordered quota recovery retains one agent, workspace and allowlist through handoff", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({
+    routingPolicy: managerOrderedPolicy,
+    quotaReset: new Date(Date.now() + 60_000).toISOString(),
+    quotaOnlyOrigin: true,
+    quotaMessage: "Free usage exceeded, subscribe to Go",
+    failures: 1,
+  });
+  try {
+    const workspace = fixture.agent.workspaceId;
+    const run = fixture.manager.runAgent(fixture.agent.id, "Continue the exact registered task");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() =>
+      expect(
+        fixture.attempts.map((attempt) => attempt.profile),
+        JSON.stringify(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice),
+      ).toEqual(["codex-plus", "claude"]),
+    );
+    await fixture.started.claude.promise;
+    await vi.advanceTimersByTimeAsync(0);
+    await run;
+    expect(fixture.attempts.map((attempt) => attempt.profile)).toEqual(["codex-plus", "claude"]);
+    expect(fixture.manager.listAgents()).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)).toMatchObject({
+      id: fixture.agent.id,
+      workspaceId: workspace,
+      lifecycle: "idle",
+      config: {
+        routingPolicy: managerOrderedPolicy,
+        routingNotice: {
+          status: "selected",
+          toProfile: "claude",
+          reason: expect.stringContaining("Ordered route 2/2"),
+        },
+      },
+    });
+    const notifications = fixture.manager
+      .getTimeline(fixture.agent.id)
+      .filter((item) => item.type === "notification");
+    expect(notifications).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("after quota on codex-plus/gpt-6.1-sol"),
+      }),
+    );
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+test("ordered routing rejects mismatched creation without deleting a live agent", async () => {
+  const fixture = await createCapacityFixture({ failures: 0 });
+  try {
+    await expect(
+      fixture.manager.createAgent(
+        {
+          provider: "codex-business",
+          cwd: fixture.agent.cwd,
+          model: "gpt-6.1-sol",
+          thinkingOptionId: "medium",
+          routingPolicy: managerOrderedPolicy,
+        },
+        fixture.agent.id,
+      ),
+    ).rejects.toThrow("must belong to the ordered routing choices");
+    expect(fixture.manager.getAgent(fixture.agent.id)?.provider).toBe("codex-plus");
+    await expect(
+      fixture.manager.createAgent({
+        provider: "codex-plus",
+        cwd: fixture.agent.cwd,
+        model: "gpt-6.1-sol",
+        thinkingOptionId: "medium",
+        routingPolicy: {
+          ...managerOrderedPolicy,
+          routes: [managerOrderedPolicy.routes[0], managerOrderedPolicy.routes[0]],
+        },
+      }),
+    ).rejects.toThrow("unique");
+    expect(fixture.manager.listAgents()).toHaveLength(1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("ordered routing update wakes a manual quota wait without replacing its Cook", async () => {
+  vi.useFakeTimers();
+  const fixture = await createCapacityFixture({
+    routingMode: "manual",
+    quotaReset: new Date(Date.now() + 60_000).toISOString(),
+    quotaOnlyOrigin: true,
+    failures: 1,
+  });
+  try {
+    const run = fixture.manager.runAgent(fixture.agent.id, "Continue existing Cook");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice?.status).toBe(
+      "waiting",
+    );
+    await fixture.manager.setAgentRoutingPolicy(fixture.agent.id, managerOrderedPolicy);
+    await vi.waitFor(() =>
+      expect(fixture.attempts.map((a) => a.profile)).toEqual(["codex-plus", "claude"]),
+    );
+    await fixture.started.claude.promise;
+    await vi.advanceTimersByTimeAsync(0);
+    await run;
+    expect(fixture.manager.listAgents()).toHaveLength(1);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingPolicy).toEqual(
+      managerOrderedPolicy,
+    );
+    await fixture.manager.setAgentRoutingPolicy(fixture.agent.id, null);
+    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingPolicy).toBeUndefined();
+  } finally {
+    await fixture.cleanup();
+    vi.useRealTimers();
+  }
+});
+
+test("ordered route with omitted thinking resets prior effort to model default", async () => {
+  const fixture = await createCapacityFixture({ failures: 0 });
+  try {
+    const agent = fixture.manager.getAgent(fixture.agent.id)!;
+    const setThinking = vi.fn(async () => {});
+    agent.session!.setThinkingOption = setThinking;
+    const policy: NonNullable<AgentSessionConfig["routingPolicy"]> = {
+      strategy: "ordered",
+      routes: [{ provider: "codex-plus", model: "gpt-6.1-sol" }],
+    };
+    await fixture.manager.setAgentRoutingPolicy(agent.id, policy);
+    fixture.manager.setTurnRouter(async (input) => {
+      expect(input.routingPolicy).toEqual(policy);
+      return {
+        profile: { id: "codex-plus", name: "Private", provider: "codex-plus" },
+        model: "gpt-6.1-sol",
+        reason: "Ordered route 1/1",
+        resetsAt: null,
+      };
+    });
+    await fixture.manager.routeNextTurn(agent.id, "Continue with default effort");
+    expect(setThinking).toHaveBeenCalledWith(null);
+    expect(fixture.manager.getAgent(agent.id)?.config.thinkingOptionId).toBeUndefined();
   } finally {
     await fixture.cleanup();
   }

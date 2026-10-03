@@ -1,4 +1,4 @@
-import type { AgentAttachment } from "./messages.js";
+import type { AgentAttachment, AgentRoutingPolicy } from "./messages.js";
 
 export type AgentProvider = string;
 
@@ -517,6 +517,7 @@ export interface ToolPolicy {
 }
 
 export interface AgentSessionConfig {
+  routingPolicy?: AgentRoutingPolicy;
   provider: AgentProvider;
   cwd: string;
   /**

@@ -64,20 +64,20 @@ export function attachAgentStoragePersistence(
 }
 
 export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSessionConfig> {
+  const config = record.config ?? {};
   return stripInternalPaseoMcpServer({
     provider: record.provider,
     cwd: record.cwd,
-    modeId: record.config?.modeId ?? undefined,
-    model: record.config?.model ?? undefined,
-    thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
-    // Recovery jobs do not survive a daemon restart; only the completed selection is history.
-    routingNotice:
-      record.config?.routingNotice?.status === "selected" ? record.config.routingNotice : undefined,
-    featureValues: record.config?.featureValues ?? undefined,
-    providerOptions: record.config?.providerOptions ?? undefined,
-    toolPolicy: record.config?.toolPolicy ?? undefined,
-    systemPrompt: record.config?.systemPrompt ?? undefined,
-    mcpServers: record.config?.mcpServers ?? undefined,
+    modeId: config.modeId ?? undefined,
+    model: config.model ?? undefined,
+    thinkingOptionId: config.thinkingOptionId ?? undefined,
+    routingPolicy: config.routingPolicy,
+    routingNotice: config.routingNotice?.status === "selected" ? config.routingNotice : undefined,
+    featureValues: config.featureValues ?? undefined,
+    providerOptions: config.providerOptions ?? undefined,
+    toolPolicy: config.toolPolicy ?? undefined,
+    systemPrompt: config.systemPrompt ?? undefined,
+    mcpServers: config.mcpServers ?? undefined,
   });
 }
 
@@ -96,6 +96,7 @@ export function buildSessionConfig(
     model: overrides.model,
     thinkingOptionId: overrides.thinkingOptionId,
     routingNotice: overrides.routingNotice,
+    routingPolicy: overrides.routingPolicy,
     featureValues: overrides.featureValues,
     providerOptions: overrides.providerOptions,
     toolPolicy: overrides.toolPolicy,

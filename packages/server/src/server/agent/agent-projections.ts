@@ -301,6 +301,7 @@ export function toRecentProviderSessionDescriptorPayload(
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
   if (config.routingNotice) serializable.routingNotice = config.routingNotice;
+  if (config.routingPolicy) serializable.routingPolicy = config.routingPolicy;
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }
