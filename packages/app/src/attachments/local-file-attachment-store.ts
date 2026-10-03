@@ -93,8 +93,9 @@ export function createLocalFileAttachmentStore(params: {
   releasePreviewUrl?: (input: { attachment: AttachmentMetadata; url: string }) => Promise<void>;
 }): AttachmentStore {
   const { fileSystem } = params;
-  const baseDirectory = fileSystem.cacheDirectory
-    ? `${fileSystem.cacheDirectory}${params.baseDirectoryName}/`
+  const persistentDirectory = fileSystem.documentDirectory ?? fileSystem.cacheDirectory;
+  const baseDirectory = persistentDirectory
+    ? `${persistentDirectory}${params.baseDirectoryName}/`
     : null;
 
   async function resolveTarget(input: SaveAttachmentInput): Promise<{
