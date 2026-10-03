@@ -2,7 +2,7 @@ import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
@@ -128,6 +128,7 @@ import {
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const MAX_RELEASED_TERMINAL_OUTPUT_BYTES = 1024 * 1024;
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -498,6 +499,7 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  terminalProcessSpawner?: typeof spawnProcess;
 }
 
 export interface SpawnedACPProcess {
@@ -632,6 +634,16 @@ interface TerminalEntry {
   waitForExit: Promise<TerminalExit>;
   resolveExit: (exit: TerminalExit) => void;
   rejectExit: (error: Error) => void;
+  releasedResult?: TerminalResult;
+  persistReleasedResult?: () => void;
+}
+
+interface TerminalResult {
+  id: string;
+  output: string;
+  truncated: boolean;
+  exit: TerminalExit | null;
+  filePath: string;
 }
 
 export interface ConfigOptionSelector {
@@ -1694,6 +1706,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
+  private readonly releasedTerminalResults = new Map<string, TerminalResult>();
+  private readonly releasedTerminalOperations = new Map<string, Promise<void>>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
 
@@ -1717,6 +1731,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly terminalProcessSpawner?: typeof spawnProcess;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1725,6 +1740,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
+  private releasedTerminalCacheDir: string | null = null;
+  private releasedTerminalCacheDirPromise: Promise<string> | null = null;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
@@ -1757,6 +1774,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.terminalProcessSpawner = options.terminalProcessSpawner;
   }
 
   get id(): string | null {
@@ -2503,6 +2521,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
     await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
+    await this.clearReleasedTerminalCache();
 
     if (this.child) {
       await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
@@ -2577,6 +2596,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    await this.loadReleasedTerminalResults(params.update);
     const events = this.translateSessionUpdate(params.update);
     this.logger.trace(
       {
@@ -2590,6 +2610,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.parsed_event",
     );
     this.deliverTranslatedEvents(events);
+    await this.cleanupCompletedReleasedTerminalResult(params.update);
   }
 
   private deliverTranslatedEvents(events: AgentStreamEvent[]): void {
@@ -2683,15 +2704,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       terminalCommand.shell === false
         ? [this.launchEnv, env, createStringCommandShellEnvOverlay()]
         : [this.launchEnv, env];
-    const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
-      cwd: params.cwd ?? this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: commandEnvOverlays,
-      }),
-      shell: terminalCommand.shell,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = (this.terminalProcessSpawner ?? spawnProcess)(
+      terminalCommand.command,
+      terminalCommand.args,
+      {
+        cwd: params.cwd ?? this.config.cwd,
+        ...createProviderEnvSpec({
+          runtimeSettings: this.runtimeSettings,
+          overlays: commandEnvOverlays,
+        }),
+        shell: terminalCommand.shell,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
 
     let resolveExit!: (exit: TerminalExit) => void;
     let rejectExit!: (error: Error) => void;
@@ -2727,6 +2752,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.once("exit", (code, signal) => {
       const exit = { exitCode: code, signal };
       entry.exit = exit;
+      if (entry.releasedResult) {
+        entry.releasedResult.exit = exit;
+        entry.persistReleasedResult?.();
+      }
       resolveExit(exit);
     });
 
@@ -2753,6 +2782,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!entry.exit) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
+    const cacheDir = await this.ensureReleasedTerminalCacheDir();
+    const result: TerminalResult = {
+      id: params.terminalId,
+      output: entry.output,
+      truncated: entry.truncated,
+      exit: entry.exit,
+      filePath: this.releasedTerminalResultPath(cacheDir, params.terminalId),
+    };
+    entry.releasedResult = result;
+    entry.persistReleasedResult = () => {
+      void this.persistReleasedTerminalResult(result);
+    };
+    syncReleasedTerminalResult(result, entry);
+    await this.persistReleasedTerminalResult(result, true);
     this.terminalEntries.delete(params.terminalId);
   }
 
@@ -3091,7 +3134,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       snapshot = this.toolSnapshotTransformer(snapshot);
     }
     this.toolCalls.set(toolCallId, snapshot);
-    return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
+    return [
+      this.wrapTimeline(
+        mapToolSnapshotToTimeline(snapshot, this.terminalEntries, this.releasedTerminalResults),
+      ),
+    ];
   }
 
   private createMessageTimelineItem(
@@ -3299,7 +3346,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private synthesizeCanceledToolCalls(): void {
     for (const snapshot of this.toolCalls.values()) {
-      const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
+      const mapped = mapToolSnapshotToTimeline(
+        snapshot,
+        this.terminalEntries,
+        this.releasedTerminalResults,
+      );
       if (mapped.status === "running") {
         this.pushEvent(
           this.wrapTimeline({
@@ -3329,6 +3380,168 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`Unknown terminal '${terminalId}'`);
     }
     return entry;
+  }
+
+  private async ensureReleasedTerminalCacheDir(): Promise<string> {
+    this.releasedTerminalCacheDirPromise ??= fs
+      .mkdtemp(path.join(tmpdir(), "paseo-acp-terminal-"))
+      .then((directory) => {
+        this.releasedTerminalCacheDir = directory;
+        return directory;
+      });
+    return this.releasedTerminalCacheDirPromise;
+  }
+
+  private releasedTerminalResultPath(cacheDir: string, terminalId: string): string {
+    return path.join(cacheDir, `${encodeURIComponent(terminalId)}.json`);
+  }
+
+  private async persistReleasedTerminalResult(
+    result: TerminalResult,
+    create = false,
+  ): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    const write = this.runReleasedTerminalOperation(result.id, () =>
+      this.writeReleasedTerminalFile(result, create),
+    );
+    try {
+      await write;
+    } catch (error) {
+      if (!this.closed && create) {
+        throw error;
+      }
+    }
+  }
+
+  private runReleasedTerminalOperation(
+    terminalId: string,
+    operation: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.releasedTerminalOperations.get(terminalId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(operation);
+    this.releasedTerminalOperations.set(terminalId, next);
+    void next.then(
+      () => {
+        if (this.releasedTerminalOperations.get(terminalId) === next) {
+          this.releasedTerminalOperations.delete(terminalId);
+        }
+        return undefined;
+      },
+      () => {
+        if (this.releasedTerminalOperations.get(terminalId) === next) {
+          this.releasedTerminalOperations.delete(terminalId);
+        }
+        return undefined;
+      },
+    );
+    return next;
+  }
+
+  private async writeReleasedTerminalFile(result: TerminalResult, create: boolean): Promise<void> {
+    const serialized = JSON.stringify({
+      output: result.output,
+      truncated: result.truncated,
+      exit: result.exit,
+    });
+    if (create) {
+      await fs.writeFile(result.filePath, serialized, "utf8");
+      return;
+    }
+    const file = await fs.open(result.filePath, "r+");
+    try {
+      await file.truncate(0);
+      await file.writeFile(serialized, "utf8");
+    } finally {
+      await file.close();
+    }
+  }
+
+  private async loadReleasedTerminalResults(update: SessionUpdate): Promise<void> {
+    this.releasedTerminalResults.clear();
+    if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+      return;
+    }
+
+    const previous = this.toolCalls.get(update.toolCallId);
+    const terminalIds = new Set<string>();
+    const terminalFromUpdate = extractTerminalExitContent(update);
+    if (terminalFromUpdate) {
+      terminalIds.add(terminalFromUpdate.terminalId);
+    }
+    for (const content of [...(update.content ?? []), ...(previous?.content ?? [])]) {
+      if (content.type === "terminal") {
+        terminalIds.add(content.terminalId);
+      }
+    }
+    await Promise.all(
+      [...terminalIds].map((terminalId) => this.loadReleasedTerminalResult(terminalId)),
+    );
+  }
+
+  private async loadReleasedTerminalResult(terminalId: string): Promise<void> {
+    if (this.releasedTerminalResults.has(terminalId)) {
+      return;
+    }
+    const cacheDir = this.releasedTerminalCacheDir;
+    if (!cacheDir) {
+      return;
+    }
+    const filePath = this.releasedTerminalResultPath(cacheDir, terminalId);
+    await this.runReleasedTerminalOperation(terminalId, async () => {
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const parsed = JSON.parse(raw) as Omit<TerminalResult, "id" | "filePath">;
+        this.releasedTerminalResults.set(terminalId, { ...parsed, id: terminalId, filePath });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          this.logger.debug(
+            { err: error, terminalId },
+            "Failed to load released ACP terminal result",
+          );
+        }
+      }
+    });
+  }
+
+  private async cleanupCompletedReleasedTerminalResult(update: SessionUpdate): Promise<void> {
+    if (
+      update.sessionUpdate !== "tool_call_update" ||
+      (update.status !== "completed" && update.status !== "failed")
+    ) {
+      return;
+    }
+    const snapshot = this.toolCalls.get(update.toolCallId);
+    const terminalIds = snapshot?.content
+      ?.flatMap((content) => (content.type === "terminal" ? [content.terminalId] : []))
+      .filter((terminalId, index, all) => all.indexOf(terminalId) === index);
+    for (const terminalId of terminalIds ?? []) {
+      await this.discardReleasedTerminalResult(terminalId);
+    }
+    this.releasedTerminalResults.clear();
+  }
+
+  private async discardReleasedTerminalResult(terminalId: string): Promise<void> {
+    this.releasedTerminalResults.delete(terminalId);
+    const cacheDir = this.releasedTerminalCacheDir;
+    if (cacheDir) {
+      await this.runReleasedTerminalOperation(terminalId, () =>
+        fs.rm(this.releasedTerminalResultPath(cacheDir, terminalId), { force: true }),
+      );
+    }
+  }
+
+  private async clearReleasedTerminalCache(): Promise<void> {
+    await Promise.allSettled(this.releasedTerminalOperations.values());
+    this.releasedTerminalOperations.clear();
+    this.releasedTerminalResults.clear();
+    const cacheDir = this.releasedTerminalCacheDir ?? (await this.releasedTerminalCacheDirPromise);
+    if (cacheDir) {
+      await fs.rm(cacheDir, { recursive: true, force: true });
+    }
+    this.releasedTerminalCacheDir = null;
+    this.releasedTerminalCacheDirPromise = null;
   }
 }
 
@@ -3589,6 +3802,21 @@ function coalesceDefined<T>(next: T | undefined, previous: T | undefined, fallba
   return fallback;
 }
 
+/**
+ * Read a provider's terminal-exit linkage, e.g. Devin CLI's
+ * `_meta.terminal_exit.terminal_id`, into a standard terminal content block.
+ * Agents that stream output through client terminals but never emit a
+ * `type: "terminal"` content item would otherwise lose their output entirely.
+ */
+function extractTerminalExitContent(
+  update: ToolCall | ToolCallUpdate,
+): ToolCallContent | undefined {
+  const meta = readRecord(update._meta);
+  const exit = readRecord(meta?.terminal_exit);
+  const terminalId = readString(exit, ["terminal_id"]);
+  return terminalId ? { type: "terminal", terminalId } : undefined;
+}
+
 function mergeToolSnapshot(
   toolCallId: string,
   update: ToolCall | ToolCallUpdate,
@@ -3599,11 +3827,34 @@ function mergeToolSnapshot(
     title: update.title ?? previous?.title ?? toolCallId,
     kind: update.kind ?? previous?.kind ?? null,
     status: update.status ?? previous?.status ?? null,
-    content: coalesceDefined(update.content, previous?.content, null),
+    content: mergeToolContent(
+      update.content,
+      previous?.content,
+      extractTerminalExitContent(update),
+    ),
     locations: coalesceDefined(update.locations, previous?.locations, null),
     rawInput: update.rawInput !== undefined ? update.rawInput : previous?.rawInput,
     rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
   };
+}
+
+function mergeToolContent(
+  content: ToolCallContent[] | undefined,
+  previousContent: ToolCallContent[] | null | undefined,
+  terminalContent: ToolCallContent | undefined,
+): ToolCallContent[] | null {
+  const mergedContent = coalesceDefined(content, previousContent, null);
+  const previousTerminalContent = previousContent?.find(
+    (item): item is Extract<ToolCallContent, { type: "terminal" }> => item.type === "terminal",
+  );
+  const linkedTerminalContent = terminalContent ?? previousTerminalContent;
+  if (
+    linkedTerminalContent === undefined ||
+    mergedContent?.some((item) => item.type === "terminal")
+  ) {
+    return mergedContent;
+  }
+  return [...(mergedContent ?? []), linkedTerminalContent];
 }
 
 function mapPlanToTimeline(plan: Plan): AgentTimelineItem {
@@ -3619,9 +3870,10 @@ function mapPlanToTimeline(plan: Plan): AgentTimelineItem {
 function mapToolSnapshotToTimeline(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
+  releasedTerminalResults: Map<string, TerminalResult>,
 ): ToolCallTimelineItem {
   const status = mapToolStatus(snapshot.status);
-  const detail = mapToolDetail(snapshot, terminals);
+  const detail = mapToolDetail(snapshot, terminals, releasedTerminalResults);
   const base = {
     type: "tool_call" as const,
     callId: snapshot.toolCallId,
@@ -3679,13 +3931,14 @@ interface MapToolDetailContext {
 function mapToolDetail(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
+  releasedTerminalResults: Map<string, TerminalResult>,
 ): ToolCallDetail {
   const context: MapToolDetailContext = {
     snapshot,
     firstLocation: snapshot.locations?.[0]?.path,
     textContent: extractToolText(snapshot.content),
     diffContent: extractDiffContent(snapshot.content),
-    terminalContent: extractTerminalContent(snapshot.content, terminals),
+    terminalContent: extractTerminalContent(snapshot.content, terminals, releasedTerminalResults),
     rawInput: readRecord(snapshot.rawInput),
     rawOutput: readRecord(snapshot.rawOutput),
   };
@@ -3837,6 +4090,7 @@ function extractDiffContent(
 function extractTerminalContent(
   content: ToolCallContent[] | null | undefined,
   terminals: Map<string, TerminalEntry>,
+  releasedTerminalResults: Map<string, TerminalResult>,
 ):
   | {
       command?: string;
@@ -3851,13 +4105,14 @@ function extractTerminalContent(
   if (!terminal) {
     return undefined;
   }
-  const entry = terminals.get(terminal.terminalId);
-  if (!entry) {
+  const result =
+    terminals.get(terminal.terminalId) ?? releasedTerminalResults.get(terminal.terminalId);
+  if (!result) {
     return undefined;
   }
   return {
-    output: entry.output,
-    exitCode: entry.exit?.exitCode ?? null,
+    output: result.output,
+    exitCode: result.exit?.exitCode ?? null,
   };
 }
 
@@ -3884,7 +4139,7 @@ function mapPermissionRequest(
           text: chooserText,
           icon: "wrench",
         }
-      : mapToolDetail(snapshot, new Map()),
+      : mapToolDetail(snapshot, new Map(), new Map()),
     actions: params.options.map((option) => ({
       id: option.optionId,
       label: option.name,
@@ -3939,12 +4194,31 @@ function isACPChooserRequest(options: PermissionOption[]): boolean {
 function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {
   entry.output += chunk;
   const limit = entry.outputByteLimit;
-  if (!limit) {
-    return;
+  if (limit) {
+    while (Buffer.byteLength(entry.output, "utf8") > limit && entry.output.length > 0) {
+      entry.output = entry.output.slice(1);
+      entry.truncated = true;
+    }
   }
-  while (Buffer.byteLength(entry.output, "utf8") > limit && entry.output.length > 0) {
-    entry.output = entry.output.slice(1);
-    entry.truncated = true;
+  if (entry.releasedResult) {
+    syncReleasedTerminalResult(entry.releasedResult, entry);
+    entry.persistReleasedResult?.();
+  }
+}
+
+function syncReleasedTerminalResult(result: TerminalResult, entry: TerminalEntry): void {
+  result.output = entry.output;
+  result.truncated = entry.truncated;
+  if (Buffer.byteLength(result.output, "utf8") > MAX_RELEASED_TERMINAL_OUTPUT_BYTES) {
+    let start = Math.max(0, result.output.length - MAX_RELEASED_TERMINAL_OUTPUT_BYTES);
+    while (
+      start < result.output.length &&
+      Buffer.byteLength(result.output.slice(start), "utf8") > MAX_RELEASED_TERMINAL_OUTPUT_BYTES
+    ) {
+      start += 1;
+    }
+    result.output = result.output.slice(start);
+    result.truncated = true;
   }
 }
 
