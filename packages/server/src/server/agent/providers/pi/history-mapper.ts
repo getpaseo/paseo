@@ -125,6 +125,10 @@ export class PiHistoryMapper {
   ): AgentStreamEvent[] {
     const extensionMapping = this.extensionHost.mapCustomMessage(message);
     const extensionEvents = this.extensionEvents(extensionMapping);
+    // Hidden notices can still carry structured subagent state for extension adapters.
+    if (message.display === false) {
+      return extensionEvents;
+    }
     const text = getUserMessageText(message.content);
     const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
     if (mappedEvent) {

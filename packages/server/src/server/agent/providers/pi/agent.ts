@@ -2356,7 +2356,7 @@ export class PiRpcAgentSession implements AgentSession {
       const customMapping = this.extensionHost.mapCustomMessage(event.message);
       this.emitExtensionOutput(customMapping, turnId);
       const text = getUserMessageText(event.message.content);
-      if (text) {
+      if (event.message.display !== false && text) {
         this.emit({
           type: "timeline",
           provider: this.provider,
