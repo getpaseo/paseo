@@ -9,10 +9,12 @@ import React, {
 } from "react";
 import {
   defaultRangeExtractor,
+  observeElementOffset,
   measureElement as measureVirtualElement,
   useVirtualizer,
   type Range as VirtualRange,
 } from "@tanstack/react-virtual";
+import { flushSync } from "react-dom";
 import { withUnistyles } from "react-native-unistyles";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -20,10 +22,8 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
-import {
-  estimateStreamItemHeight,
-  shouldAdjustScrollForVirtualRowResize,
-} from "./web-virtualization";
+import { estimateStreamItemHeight } from "./web-virtualization";
+import { createReadingAnchor } from "./reading-anchor";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { createStreamStrategy } from "./strategy";
@@ -49,12 +49,6 @@ interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
 }
 
-interface HistoryStartPrependAnchor {
-  progressKey: string;
-  rowId: string;
-  viewportOffset: number;
-}
-
 type ScrollBehaviorLike = "auto" | "smooth";
 
 const WEB_BOTTOM_SETTLE_TIMEOUT_MS = 200;
@@ -75,15 +69,6 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-
-function findHistoryRowElement(contentNode: HTMLElement, rowId: string): HTMLElement | null {
-  for (const element of contentNode.querySelectorAll<HTMLElement>("[data-history-row-id]")) {
-    if (element.dataset.historyRowId === rowId) {
-      return element;
-    }
-  }
-  return null;
-}
 
 const historyStartSlotStyle: CSSProperties = {
   display: "flex",
@@ -348,14 +333,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
-  const pendingVirtualRowMeasureFramesRef = useRef(new Map<Element, number>());
   const historyStartReadyRef = useRef(false);
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
     createHistoryStartPaginationState,
   );
   const historyStartPaginationStateRef = useRef(historyStartPaginationState);
-  const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
-  const historyStartPrependAnchorActiveRef = useRef(false);
+  const readingAnchor = useMemo(createReadingAnchor, []);
+  const measuredRowHeights = useRef(new Map<string, { width: number; height: number }>());
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
   const lastActiveFollowOutputLayoutRef = useRef<ActiveFollowOutputLayout | null>(null);
   const lastObservedViewportGeometryRef = useRef<ObservedViewportGeometry | null>(null);
@@ -392,11 +376,28 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
       const visible = defaultRangeExtractor(range);
-      if (!chatFindRowIndexes) return visible;
-      return [...new Set([...visible, ...chatFindRowIndexes])].sort((left, right) => left - right);
+      const anchorIndex = segments.historyVirtualized.findIndex(
+        (row) => row.id === readingAnchor.getRowId(),
+      );
+      return [
+        ...new Set([
+          ...visible,
+          ...(chatFindRowIndexes ?? []),
+          ...(anchorIndex < 0 ? [] : [anchorIndex]),
+        ]),
+      ].sort((left, right) => left - right);
     },
-    [chatFindRowIndexes],
+    [chatFindRowIndexes, readingAnchor, segments.historyVirtualized],
   );
+  const virtualOffsetListener = useRef<((offset: number, scrolling: boolean) => void) | null>(null);
+  const observeVirtualOffset = useCallback<typeof observeElementOffset>((instance, onOffset) => {
+    virtualOffsetListener.current = onOffset;
+    const unsubscribe = observeElementOffset(instance, onOffset);
+    return () => {
+      virtualOffsetListener.current = null;
+      unsubscribe?.();
+    };
+  }, []);
   const rowVirtualizer = useVirtualizer({
     count: segments.historyVirtualized.length,
     enabled: shouldUseVirtualizer,
@@ -404,31 +405,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     getItemKey: (index: number) => segments.historyVirtualized[index]?.id ?? index,
     estimateSize: (index: number) => {
       const row = segments.historyVirtualized[index];
+      const measured = row && measuredRowHeights.current.get(row.id);
+      const width = contentRef.current?.getBoundingClientRect().width;
+      if (measured && measured.width === width) return measured.height;
       return row ? estimateStreamItemHeight(row, contentMaxWidth) : 120;
     },
-    measureElement: measureVirtualElement,
+    observeElementOffset: observeVirtualOffset,
     rangeExtractor,
     scrollMargin: VIRTUALIZER_SCROLL_MARGIN_PX,
-    useAnimationFrameWithResizeObserver: true,
     overscan: 8,
   });
-  useEffect(() => {
-    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
-      const viewportHeight = instance.scrollRect?.height ?? 0;
-      const scrollOffset = instance.scrollOffset ?? 0;
-      const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
-      return shouldAdjustScrollForVirtualRowResize({
-        isHistoryStartPrependActive: historyStartPrependAnchorActiveRef.current,
-        rowStart: item.start,
-        scrollOffset,
-        remainingDistanceFromBottom: remainingDistance,
-        bottomThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
-      });
-    };
-    return () => {
-      rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
-    };
-  }, [rowVirtualizer]);
+  // Scroll correction belongs to the viewport's committed layout. The virtualizer
+  // otherwise writes scrollTop before React applies its new row positions.
+  rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput | null => {
@@ -442,7 +431,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       distanceFromHistoryStart: scrollContainer.scrollTop,
       hasOlderHistory,
       isLoadingOlderHistory,
-      isReady: historyStartReadyRef.current && bottomAnchorSettled,
+      // An explicit jump owns the landing position. Revealing another local
+      // page here changes the virtual index before the target has mounted.
+      isReady: historyStartReadyRef.current && bottomAnchorSettled && !isJumpSettling(),
       progressKey: olderHistoryProgressKey,
     };
   });
@@ -453,29 +444,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (transition.state !== previousState) {
         setHistoryStartPaginationState(transition.state);
       }
-      if (!isHistoryStartLoadingOperation(transition.state)) {
-        historyStartPrependAnchorRef.current = null;
-        historyStartPrependAnchorActiveRef.current = false;
-      }
       if (!transition.shouldLoad || olderHistoryProgressKey === null) {
         return;
       }
-      const scrollContainer = scrollContainerRef.current;
-      const contentNode = contentRef.current;
-      const anchorRow = segments.historyMounted.at(-1) ?? segments.historyVirtualized.at(-1);
-      const anchorElement =
-        contentNode && anchorRow ? findHistoryRowElement(contentNode, anchorRow.id) : null;
-      if (scrollContainer && anchorRow && anchorElement) {
-        historyStartPrependAnchorRef.current = {
-          progressKey: olderHistoryProgressKey,
-          rowId: anchorRow.id,
-          viewportOffset:
-            anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
-        };
-      } else {
-        historyStartPrependAnchorRef.current = null;
-      }
-      historyStartPrependAnchorActiveRef.current = false;
       const requestedProgressKey = olderHistoryProgressKey;
       void (async () => {
         const started = await onNearHistoryStart();
@@ -512,27 +483,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     setHistoryStartPaginationState(rearmed);
     evaluateHistoryStart();
   });
-  const applyHistoryStartPrependAnchor = useStableEvent(() => {
-    const scrollContainer = scrollContainerRef.current;
-    const contentNode = contentRef.current;
-    const anchor = historyStartPrependAnchorRef.current;
-    if (
-      !scrollContainer ||
-      !contentNode ||
-      !anchor ||
-      !historyStartPrependAnchorActiveRef.current
-    ) {
-      return;
-    }
-    const anchorElement = findHistoryRowElement(contentNode, anchor.rowId);
-    if (!anchorElement) {
-      return;
-    }
-    const viewportOffset =
-      anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top;
-    scrollContainer.scrollTop += viewportOffset - anchor.viewportOffset;
-    lastKnownScrollTopRef.current = scrollContainer.scrollTop;
-  });
   const scheduleHistoryStartPrependSettle = useStableEvent(() => {
     let scheduler = historyStartSettleSchedulerRef.current;
     if (!scheduler) {
@@ -543,24 +493,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         isSettling: () => historyStartPaginationStateRef.current.status === "settling",
         isLoading: () => {
           const input = getHistoryStartPaginationInput();
-          return (
-            !input ||
-            input.isLoadingOlderHistory ||
-            pendingVirtualRowMeasureFramesRef.current.size > 0
-          );
+          return !input || input.isLoadingOlderHistory;
         },
-        onFrame: applyHistoryStartPrependAnchor,
         onSettle: () => {
           const input = getHistoryStartPaginationInput();
           if (!input) {
             return;
           }
-          historyStartPrependAnchorActiveRef.current = false;
           const transition = settleHistoryStartPagination(
             historyStartPaginationStateRef.current,
             input,
           );
-          historyStartPrependAnchorRef.current = null;
           applyHistoryStartPaginationTransition(transition);
         },
       });
@@ -569,59 +512,35 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scheduler.schedule();
   });
 
-  useLayoutEffect(() => {
-    if (!isActiveRef.current) {
-      return;
-    }
-    const anchor = historyStartPrependAnchorRef.current;
-    if (!anchor || anchor.progressKey === olderHistoryProgressKey) {
-      return;
-    }
-    historyStartPrependAnchorActiveRef.current = true;
-    evaluateHistoryStart();
-    applyHistoryStartPrependAnchor();
-    scheduleHistoryStartPrependSettle();
-  }, [
-    applyHistoryStartPrependAnchor,
-    evaluateHistoryStart,
-    olderHistoryProgressKey,
-    scheduleHistoryStartPrependSettle,
-    segments.historyMounted,
-    segments.historyVirtualized,
-    virtualTotalSize,
-  ]);
-
-  const measureVirtualizedRowElement = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) {
-        rowVirtualizer.measureElement(null);
-        return;
-      }
-      const pendingFrames = pendingVirtualRowMeasureFramesRef.current;
-      const existingFrame = pendingFrames.get(node);
-      if (existingFrame !== undefined) {
-        window.cancelAnimationFrame(existingFrame);
-      }
-      const frame = window.requestAnimationFrame(() => {
-        pendingFrames.delete(node);
-        if (isActiveRef.current && node.isConnected) {
-          rowVirtualizer.measureElement(node);
-        }
-      });
-      pendingFrames.set(node, frame);
-    },
+  // ResizeObserver runs before paint. Batch measurements and commit React's new
+  // positions here so a resized image cannot overlap rows for an extra frame.
+  // Use resizeItem exclusively; measureElement would install a second observer.
+  const virtualRowObserver = useMemo(
+    () =>
+      new ResizeObserver((entries) => {
+        if (!isActiveRef.current) return;
+        flushSync(() => {
+          for (const entry of entries) {
+            const element = entry.target as HTMLElement;
+            if (!element.isConnected) continue;
+            rowVirtualizer.resizeItem(
+              Number(element.dataset.index),
+              measureVirtualElement(element, entry, rowVirtualizer),
+            );
+          }
+        });
+      }),
     [rowVirtualizer],
   );
-
-  useEffect(() => {
-    const pendingFrames = pendingVirtualRowMeasureFramesRef.current;
-    return () => {
-      for (const frame of pendingFrames.values()) {
-        window.cancelAnimationFrame(frame);
-      }
-      pendingFrames.clear();
-    };
-  }, []);
+  const measureVirtualizedRowElement = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      virtualRowObserver.observe(node, { box: "border-box" });
+      return () => virtualRowObserver.unobserve(node);
+    },
+    [virtualRowObserver],
+  );
+  useEffect(() => () => virtualRowObserver.disconnect(), [virtualRowObserver]);
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -660,10 +579,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
     cancelPendingStickToBottom();
     historyStartSettleSchedulerRef.current?.cancel();
-    for (const frame of pendingVirtualRowMeasureFramesRef.current.values()) {
-      window.cancelAnimationFrame(frame);
-    }
-    pendingVirtualRowMeasureFramesRef.current.clear();
     clearMouseScrollGesture();
     clearUpwardInputEvidence();
     lastTouchClientYRef.current = null;
@@ -769,6 +684,42 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     onNearBottomChange,
   });
 
+  const reconcileReadingPosition = useStableEvent((userScrolled = false) => {
+    const container = scrollContainerRef.current;
+    const content = contentRef.current;
+    if (!isActiveRef.current || !container || !content) return;
+    const viewportTop = container.getBoundingClientRect().top;
+    const scrollTop = container.scrollTop;
+    const width = content.getBoundingClientRect().width;
+    const rows = Array.from(
+      content.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+      (element) => {
+        const bounds = element.getBoundingClientRect();
+        const id = element.dataset.historyRowId!;
+        measuredRowHeights.current.set(id, { width, height: bounds.height });
+        return { id, top: bounds.top - viewportTop + scrollTop, height: bounds.height };
+      },
+    );
+    if (followOutputRef.current || isJumpSettling()) {
+      readingAnchor.reset();
+      return;
+    }
+    const correctedTop = readingAnchor.reconcile(container.scrollTop, rows, userScrolled);
+    if (Math.abs(correctedTop - container.scrollTop) > 0.5) {
+      container.scrollTop = correctedTop;
+      lastKnownScrollTopRef.current = container.scrollTop;
+      // The DOM scroll event arrives later. Fill the corrected virtual range in
+      // this layout so the reader does not get a frame containing only the pin.
+      virtualOffsetListener.current?.(container.scrollTop, false);
+    }
+  });
+
+  // Apply row positions and their scroll correction in the same paint, including
+  // the ordinary-to-virtualized handoff and measurements of newly mounted rows.
+  useLayoutEffect(() => {
+    reconcileReadingPosition();
+  });
+
   const stopFollowingOutputFromUserIntent = useStableEvent(() => {
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
@@ -801,11 +752,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
+    reconcileReadingPosition(scrolledUp || scrolledDown);
     updateScrollMetrics();
     evaluateHistoryStart();
   }, [
     evaluateHistoryStart,
     isJumpSettling,
+    reconcileReadingPosition,
     stopFollowingOutputFromUserIntent,
     updateScrollMetrics,
   ]);
@@ -814,8 +767,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const initialHistoryStartState = createHistoryStartPaginationState();
     historyStartPaginationStateRef.current = initialHistoryStartState;
     setHistoryStartPaginationState(initialHistoryStartState);
-    historyStartPrependAnchorRef.current = null;
-    historyStartPrependAnchorActiveRef.current = false;
+    readingAnchor.reset();
     const frame = window.requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
       evaluateHistoryStart();
@@ -826,7 +778,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       historyStartSettleSchedulerRef.current?.cancel();
       historyStartSettleSchedulerRef.current = null;
     };
-  }, [evaluateHistoryStart, props.agentId]);
+  }, [evaluateHistoryStart, props.agentId, readingAnchor]);
 
   useLayoutEffect(() => {
     if (!isActiveRef.current || !isActivationReady) {
@@ -959,9 +911,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       } else {
         lastObservedViewportGeometryRef.current = nextGeometry;
       }
-      if (historyStartPrependAnchorActiveRef.current) {
-        applyHistoryStartPrependAnchor();
-      }
+      reconcileReadingPosition();
       if (historyStartPaginationStateRef.current.status === "settling") {
         scheduleHistoryStartPrependSettle();
       }
@@ -980,7 +930,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       observer.disconnect();
     };
   }, [
-    applyHistoryStartPrependAnchor,
+    reconcileReadingPosition,
     evaluateHistoryStart,
     isActive,
     reportReadingPosition,
@@ -1188,9 +1138,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       overflowX: "hidden",
       overflowY: scrollEnabled ? "auto" : "hidden",
       overscrollBehaviorY: "contain",
+      // The browser still anchors delayed image growth while following output.
+      // Detached reading has one owner: reconcileReadingPosition.
+      overflowAnchor: followOutput ? "auto" : "none",
       scrollbarWidth: overlayScrollbarEnabled ? "none" : undefined,
     };
-  }, [isMobileBreakpoint, scrollEnabled]);
+  }, [followOutput, isMobileBreakpoint, scrollEnabled]);
   const viewportStyle = useMemo(
     (): CSSProperties => ({
       position: "relative",

@@ -726,6 +726,12 @@ export class MockLoadTestAgentClient implements AgentClient {
   }
 }
 
+function getConfiguredAssistantResponses(value: unknown): string[] {
+  return Array.isArray(value) && value.every((response) => typeof response === "string")
+    ? [...value]
+    : [];
+}
+
 export class MockLoadTestAgentSession implements AgentSession {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
@@ -739,6 +745,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly assistantResponse: string | null;
+  private readonly assistantResponses: string[];
   private readonly streamingAssistantResponse: string | null;
   private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
@@ -754,6 +761,9 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
         : null;
+    this.assistantResponses = getConfiguredAssistantResponses(
+      options.config.featureValues?.mockAssistantResponses,
+    );
     this.streamingAssistantResponse =
       typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
         ? options.config.featureValues.mockStreamingAssistantResponse
@@ -833,6 +843,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
+    const assistantResponse = this.assistantResponses.shift() ?? this.assistantResponse;
     const steeringReplayShape = parseSteeringReplayShape(prompt);
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
@@ -841,8 +852,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
         this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
-      } else if (this.assistantResponse !== null) {
-        this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
+      } else if (assistantResponse !== null) {
+        this.scheduleSettledAssistantTurn(turn, assistantResponse);
       } else if (structuredBranchName) {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {
