@@ -155,6 +155,17 @@ function mergeIdentityEntries(existing: WorkingEntry, entry: WorkingEntry): Work
         seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
         ...mergeIdentityMetadata(existing, entry, "tool_lifecycle"),
       };
+    case "assistant_message":
+      if (existing.item.type !== "assistant_message" || existing.turnId !== entry.turnId) {
+        return null;
+      }
+      return {
+        ...existing,
+        item: { ...existing.item, text: `${existing.item.text}${entry.item.text}` },
+        timestamp: entry.timestamp,
+        seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
+        ...mergeIdentityMetadata(existing, entry, "assistant_merge"),
+      };
     case "plugin":
       if (existing.item.type !== "plugin") return null;
       return {
