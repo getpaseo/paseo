@@ -5284,6 +5284,11 @@ export class AgentManager {
     if (failure === "quota") attempted.add(agent.provider);
     this.fallbackAttemptedProfiles.set(agent.id, attempted);
     if (!this.activeForegroundPrompts.has(agent.id) || !logicalTurnId || !this.profileRouter) {
+      this.setRoutingNotice(
+        agent,
+        "exhausted",
+        "Quota limit reached. No configured provider profile is available to continue this turn.",
+      );
       await this.appendTimelineItem(agent.id, inTurnFallbackExhaustedVisibility());
       return false;
     }

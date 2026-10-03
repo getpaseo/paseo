@@ -1410,10 +1410,37 @@ describe("translateOpenCodeEvent", () => {
         item: { type: "error", message: "Provider retry (attempt 3): Internal server error" },
       },
     ]);
-    // Streaming state must NOT be reset — the turn is still alive, opencode
-    // will eventually either succeed or emit session.idle / session.error.
     expect(state.materializedParts.size).toBe(1);
     expect(state.partTypes.size).toBe(1);
+  });
+
+  it("terminates an exhausted free account instead of keeping its retry active", () => {
+    const state = createState();
+    state.partTypes.set("part-1", "text");
+    const result = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: {
+            type: "retry",
+            attempt: 1,
+            message: "Free usage exceeded, subscribe to Go",
+            next: Date.now() + 1000,
+          },
+        },
+      },
+      state,
+    );
+    expect(result).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode",
+        code: "quota_exceeded",
+        error: "Free usage exceeded, subscribe to Go",
+      },
+    ]);
+    expect(state.partTypes.size).toBe(0);
   });
 
   it("forwards retry without a message using just the attempt number", () => {

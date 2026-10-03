@@ -40,6 +40,79 @@ test("dispatches ascending OpenCode message identifiers through the public provi
   await upstream.close();
 });
 
+test("stops a free quota retry once and retains runner ownership until the provider is idle", async () => {
+  const upstream = await createRecoveryUpstream();
+  const fixture = await createPublicRecoverySession(upstream, new RecoveryTiming());
+  const observed: AgentStreamEvent[] = [];
+  fixture.session.subscribe((event) => observed.push(event));
+  let releaseAbort!: () => void;
+  upstream.delayAbort(
+    new Promise<void>((resolve) => {
+      releaseAbort = resolve;
+    }),
+  );
+  try {
+    await upstream.connected(1);
+    upstream.send(0, connectedRecord());
+    const first = await fixture.session.startTurn("finish the existing inventory");
+    await upstream.dispatched(1);
+    upstream.setStatus("busy");
+    const retry = {
+      directory: "/workspace",
+      payload: {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: {
+            type: "retry",
+            attempt: 1,
+            message: "Free usage exceeded, subscribe to Go",
+            next: Date.now() + 1000,
+          },
+        },
+      },
+    };
+    upstream.send(0, retry);
+    await eventually(() => expect(upstream.aborts()).toBe(1));
+    await eventually(() =>
+      expect(observed.filter((event) => event.type === "turn_failed")).toEqual([
+        expect.objectContaining({
+          turnId: first.turnId,
+          code: "quota_exceeded",
+          error: "Free usage exceeded, subscribe to Go",
+        }),
+      ]),
+    );
+    for (let attempt = 2; attempt <= 5; attempt++)
+      upstream.send(0, {
+        ...retry,
+        payload: {
+          ...retry.payload,
+          properties: {
+            ...retry.payload.properties,
+            status: { ...retry.payload.properties.status, attempt },
+          },
+        },
+      });
+    releaseAbort();
+    await eventually(() => expect(upstream.abortReplies()).toBe(1));
+    expect(observed.filter((event) => event.type === "turn_started")).toHaveLength(1);
+    expect(observed.filter((event) => event.type === "turn_canceled")).toHaveLength(0);
+    upstream.setStatus("idle");
+    upstream.send(0, idleRecord());
+    await fixture.session.startTurn("continue after choosing available capacity");
+    await upstream.dispatched(2);
+    expect(observed.filter((event) => event.type === "turn_started")).toHaveLength(2);
+    expect(observed.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+    expect(observed.filter((event) => event.type === "turn_completed")).toHaveLength(0);
+  } finally {
+    releaseAbort();
+    await fixture.session.close();
+    await fixture.manager.shutdown();
+    await upstream.close();
+  }
+});
+
 test("recovers missed output after EOF without failing the active turn", async () => {
   const upstream = await createRecoveryUpstream();
   const timing = new RecoveryTiming();
@@ -340,6 +413,9 @@ async function createRecoveryUpstream() {
   const streams: ServerResponse[] = [];
   const dispatchIds: string[] = [];
   const mcpAddNames: string[] = [];
+  let abortCount = 0;
+  let abortReplyCount = 0;
+  let abortDelay: Promise<void> = Promise.resolve();
   let messages: unknown[] = [];
   let messageReadCount = 0;
   let status: "busy" | "idle" = "idle";
@@ -362,6 +438,12 @@ async function createRecoveryUpstream() {
     if (request.url?.includes("/prompt_async")) {
       const body = JSON.parse(await readBody(request)) as { messageID: string };
       dispatchIds.push(body.messageID);
+      return json(response, {});
+    }
+    if (request.url?.includes("/abort")) {
+      abortCount += 1;
+      await abortDelay;
+      abortReplyCount += 1;
       return json(response, {});
     }
     if (request.url?.includes("/message")) {
@@ -391,6 +473,11 @@ async function createRecoveryUpstream() {
     },
     messageReads: () => messageReadCount,
     mcpAdds: () => [...mcpAddNames],
+    aborts: () => abortCount,
+    abortReplies: () => abortReplyCount,
+    delayAbort(delay: Promise<void>) {
+      abortDelay = delay;
+    },
     setMessages(nextMessages: unknown[]) {
       messages = nextMessages;
     },

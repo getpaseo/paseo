@@ -73,6 +73,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import { isHardQuotaError } from "../../system-one/in-turn-fallback.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
@@ -510,7 +511,7 @@ type TerminalTurnEvent = Extract<
 function toTerminalTurnEvent(event: AgentStreamEvent): TerminalTurnEvent | null {
   if (event.type === "turn_failed") {
     return {
-      type: "turn_failed",
+      ...event,
       provider: "opencode",
       error: toDiagnosticErrorMessage(event.error),
     };
@@ -3126,6 +3127,16 @@ function appendOpenCodeSessionStatus(
   }
   if (status.type === "retry") {
     const message = typeof status.message === "string" ? status.message.trim() : "";
+    if (isHardQuotaError(message)) {
+      resetOpenCodeTurnTrackingState(state);
+      events.push({
+        type: "turn_failed",
+        provider: "opencode",
+        code: "quota_exceeded",
+        error: message,
+      });
+      return;
+    }
     const text = message
       ? `Provider retry (attempt ${status.attempt}): ${message}`
       : `Provider retry (attempt ${status.attempt})`;
@@ -3163,6 +3174,7 @@ type OpenCodeRunnerStatus = "idle" | "busy" | "retry";
 
 interface OpenCodeStop {
   pendingCancellationTurnId: string | null;
+  readonly failure?: Extract<AgentStreamEvent, { type: "turn_failed" }>;
 
   readonly terminal: Deferred<void>;
 }
@@ -4508,7 +4520,16 @@ class OpenCodeAgentSession implements AgentSession {
           turnId,
           type: terminalEvent.type,
         });
-        this.finishForegroundTurn(terminalEvent, turnId);
+        if (terminalEvent.type === "turn_failed" && terminalEvent.code === "quota_exceeded") {
+          void this.issueStop(turnId, terminalEvent).catch((error: unknown) => {
+            this.logger.warn(
+              { err: error, sessionId: this.sessionId, turnId },
+              "Failed to stop the exhausted OpenCode account",
+            );
+          });
+        } else {
+          this.finishForegroundTurn(terminalEvent, turnId);
+        }
         return;
       }
       this.notifySubscribers(e, turnId);
@@ -4604,19 +4625,24 @@ class OpenCodeAgentSession implements AgentSession {
     return this.turnState.status === "stopping" && this.turnState.stop === stop;
   }
 
-  private issueStop(turnId: string | null): Promise<void> {
+  private issueStop(
+    turnId: string | null,
+    failure?: Extract<AgentStreamEvent, { type: "turn_failed" }>,
+  ): Promise<void> {
     if (this.turnState.status === "stopping") {
       return this.issueOwnedAbort(this.turnState.stop);
     }
     const stop: OpenCodeStop = {
       pendingCancellationTurnId: turnId,
       terminal: createDeferred<void>(),
+      ...(failure ? { failure } : {}),
     };
     const abort = this.issueOwnedAbort(stop);
     if (turnId) {
       this.synthesizeInterruptedToolCalls(turnId);
 
       this.turnState = { status: "stopping", stop };
+      if (failure) this.acknowledgeCancellation(stop);
     }
     this.pendingUserMessageText = null;
     this.pendingClientMessageId = null;
@@ -4646,7 +4672,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     stop.pendingCancellationTurnId = null;
     this.notifySubscribers(
-      { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+      stop.failure ?? { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
       turnId,
     );
   }

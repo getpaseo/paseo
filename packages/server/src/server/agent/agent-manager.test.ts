@@ -1888,68 +1888,76 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 
 const logger = createTestLogger();
 
-test("does not replay a limited account through another launch preset", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-quota-fallback-"));
-  const prompts: AgentPromptInput[] = [];
-  let model: string | null = "codex-opus";
-  let starts = 0;
-  const session = new (class extends TestAgentSession {
-    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
-      prompts.push(prompt);
-      const turnId = `quota-turn-${++starts}`;
-      setTimeout(() => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        if (starts === 1) {
+test.each(["provider quota exceeded", "Free usage exceeded, subscribe to Go"])(
+  "does not replay a limited account through another launch preset: %s",
+  async (quotaError) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-quota-fallback-"));
+    const prompts: AgentPromptInput[] = [];
+    let model: string | null = "codex-opus";
+    let starts = 0;
+    const session = new (class extends TestAgentSession {
+      override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+        prompts.push(prompt);
+        const turnId = `quota-turn-${++starts}`;
+        setTimeout(() => {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+          if (starts === 1) {
+            this.pushEvent({
+              type: "turn_failed",
+              provider: this.provider,
+              turnId,
+              error: quotaError,
+            });
+            return;
+          }
           this.pushEvent({
-            type: "turn_failed",
+            type: "timeline",
             provider: this.provider,
             turnId,
-            error: "provider quota exceeded",
-            code: "rate_limit_exceeded",
+            item: { type: "assistant_message", text: "continued" },
           });
-          return;
-        }
-        this.pushEvent({
-          type: "timeline",
-          provider: this.provider,
-          turnId,
-          item: { type: "assistant_message", text: "continued" },
-        });
-        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-      }, 0);
-      return { turnId };
-    }
+          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        }, 0);
+        return { turnId };
+      }
 
-    override async setModel(nextModel: string | null): Promise<void> {
-      model = nextModel;
-    }
-  })({ provider: "codex", cwd: workdir, model });
-  const client = new (class extends TestAgentClient {
-    override async createSession(): Promise<AgentSession> {
-      return session;
-    }
-  })();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-  });
-  const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
-    workspaceId: undefined,
-  });
-  await drainAsyncGenerator(manager.streamAgent(agent.id, "Keep the original prompt"));
-  const timeline = manager.fetchTimeline(agent.id, { projection: "canonical" });
+      override async setModel(nextModel: string | null): Promise<void> {
+        model = nextModel;
+      }
+    })({ provider: "codex", cwd: workdir, model });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
+      workspaceId: undefined,
+    });
+    await drainAsyncGenerator(manager.streamAgent(agent.id, "Keep the original prompt"));
+    const timeline = manager.fetchTimeline(agent.id, { projection: "canonical" });
 
-  expect(starts).toBe(1);
-  expect(prompts).toEqual(["Keep the original prompt"]);
-  expect(model).toBe("codex-opus");
-  expect(timeline.rows.map((entry) => entry.item)).toContainEqual(
-    expect.objectContaining({
-      type: "notification",
-      level: "error",
-      message: expect.stringContaining("No configured provider profile"),
-    }),
-  );
-});
+    expect(starts).toBe(1);
+    expect(prompts).toEqual(["Keep the original prompt"]);
+    expect(model).toBe("codex-opus");
+    expect(toAgentPayload(manager.getAgent(agent.id)!)).toMatchObject({
+      status: "error",
+      lastError: quotaError,
+      routingNotice: { status: "exhausted", resetsAt: null },
+    });
+    expect(manager.getAgent(agent.id)?.activeForegroundTurnId).toBeNull();
+    expect(timeline.rows.map((entry) => entry.item)).toContainEqual(
+      expect.objectContaining({
+        type: "notification",
+        level: "error",
+        message: expect.stringContaining("No configured provider profile"),
+      }),
+    );
+  },
+);
 
 test("preserves the handoff context and old session during a cross-provider fallback", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cross-provider-quota-fallback-"));
@@ -12643,6 +12651,7 @@ async function createCapacityFixture(
     transientAt?: number[];
     throwTransient?: boolean;
     quotaReset?: string;
+    quotaMessage?: string;
     onlyOrigin?: boolean;
     uncertainRouting?: boolean;
     routingMode?: "manual" | "auto";
@@ -12705,7 +12714,7 @@ async function createCapacityFixture(
             provider: this.provider,
             turnId,
             error: options.quotaReset
-              ? "429 quota exceeded"
+              ? (options.quotaMessage ?? "429 quota exceeded")
               : "Selected model is at capacity. Please try a different model.",
           });
         } else this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
@@ -13293,35 +13302,39 @@ test("failed startup history closes the session without registering an agent", a
   }
 });
 
-test("manual quota waiting never silently selects a free account and resumes the selected model after reset", async () => {
-  vi.useFakeTimers();
-  const reset = new Date(Date.now() + 5000).toISOString();
-  const fixture = await createCapacityFixture({
-    routingMode: "manual",
-    quotaReset: reset,
-    quotaOnlyOrigin: true,
-    failures: 1,
-  });
-  try {
-    const run = fixture.manager.runAgent(fixture.agent.id, "Keep my selection");
-    await vi.advanceTimersByTimeAsync(1);
-    expect(fixture.attempts).toHaveLength(1);
-    expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice).toMatchObject({
-      status: "waiting",
-      reason: expect.stringContaining("selected provider"),
-      resetsAt: reset,
+test.each(["429 quota exceeded", "Free usage exceeded, subscribe to Go"])(
+  "manual quota waiting never silently selects a free account and resumes the selected model after reset: %s",
+  async (quotaMessage) => {
+    vi.useFakeTimers();
+    const reset = new Date(Date.now() + 5000).toISOString();
+    const fixture = await createCapacityFixture({
+      routingMode: "manual",
+      quotaReset: reset,
+      quotaMessage,
+      quotaOnlyOrigin: true,
+      failures: 1,
     });
-    await vi.advanceTimersByTimeAsync(5001);
-    await run;
-    expect(fixture.attempts.map((a) => [a.profile, a.model])).toEqual([
-      ["codex-plus", "gpt-6.1-sol"],
-      ["codex-plus", "gpt-6.1-sol"],
-    ]);
-  } finally {
-    vi.useRealTimers();
-    await fixture.cleanup();
-  }
-});
+    try {
+      const run = fixture.manager.runAgent(fixture.agent.id, "Keep my selection");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fixture.attempts).toHaveLength(1);
+      expect(fixture.manager.getAgent(fixture.agent.id)?.config.routingNotice).toMatchObject({
+        status: "waiting",
+        reason: expect.stringContaining("selected provider"),
+        resetsAt: reset,
+      });
+      await vi.advanceTimersByTimeAsync(5001);
+      await run;
+      expect(fixture.attempts.map((a) => [a.profile, a.model])).toEqual([
+        ["codex-plus", "gpt-6.1-sol"],
+        ["codex-plus", "gpt-6.1-sol"],
+      ]);
+    } finally {
+      vi.useRealTimers();
+      await fixture.cleanup();
+    }
+  },
+);
 
 test("explicit model selection disables Auto and later turns keep that model", async () => {
   const fixture = await createCapacityFixture({ failures: 0 });
