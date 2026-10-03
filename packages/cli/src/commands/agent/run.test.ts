@@ -4,6 +4,7 @@ import {
   resolveExistingRunWorkspace,
   resolveRunCallerAgentId,
   runRunCommand,
+  waitsForFinish,
   type AgentRunOptions,
 } from "./run";
 
@@ -20,6 +21,15 @@ function daemonWithAgents(...agentIds: string[]) {
     },
   };
 }
+
+describe("run wait policy", () => {
+  it("waits by default and stops waiting on --no-wait or a legacy alias", () => {
+    expect(waitsForFinish({})).toBe(true);
+    expect(waitsForFinish({ wait: false })).toBe(false);
+    expect(waitsForFinish({ background: true })).toBe(false);
+    expect(waitsForFinish({ detach: true })).toBe(false);
+  });
+});
 
 describe("managed agent caller context", () => {
   it("uses a trimmed PASEO_AGENT_ID when the target daemon runs that agent", async () => {

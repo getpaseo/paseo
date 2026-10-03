@@ -87,18 +87,18 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 ### Agents
 
-| Tool                 | Function                                                                                |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`.     |
-| `send_agent_prompt`  | Send a prompt to an existing agent using its `agentId` and a `prompt`.                  |
-| `get_agent_status`   | Return the latest snapshot for an agent.                                                |
-| `list_agents`        | List recent agents as compact metadata.                                                 |
-| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                  |
-| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                |
-| `kill_agent`         | Terminate an agent session permanently.                                                 |
-| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features. |
-| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                              |
-| `set_agent_mode`     | Switch an agent's session mode.                                                         |
+| Tool                 | Function                                                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. `internal: true` hides it from every listing and History. |
+| `send_agent_prompt`  | Send a prompt to an existing agent using its `agentId` and a `prompt`.                                                                        |
+| `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                      |
+| `list_agents`        | List recent agents as compact metadata.                                                                                                       |
+| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                                                                        |
+| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                                                                      |
+| `kill_agent`         | Terminate an agent session permanently.                                                                                                       |
+| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features.                                                       |
+| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                    |
+| `set_agent_mode`     | Switch an agent's session mode.                                                                                                               |
 
 ### Workspaces
 

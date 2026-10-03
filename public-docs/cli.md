@@ -42,7 +42,8 @@ Use `paseo run` to start a new agent with a task:
 ```bash
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
-paseo run --background "run the focused test suite"
+paseo run --no-wait "run the focused test suite"
+paseo run --internal --output-schema schema.json "name this branch"
 paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
 paseo run --workspace <workspace-id> "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
@@ -55,9 +56,11 @@ Worktree creation accepts `--worktree-mode branch-off|checkout-branch|checkout-p
 
 When an existing Paseo agent runs the same command, Paseo recognizes it through `PASEO_AGENT_ID`. Without explicit placement, the new agent becomes its subagent in the same workspace. `--workspace` can place that subagent elsewhere without changing its parent.
 
-Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--background`.
+Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--no-wait`.
 
-By default, `paseo run` waits for completion. Use `--background` to return immediately while the agent keeps running.
+By default, `paseo run` waits for completion. Use `--no-wait` to return immediately while the agent keeps running, the same flag `paseo send` takes.
+
+Use `--internal` for a helper whose result only the caller needs. An internal agent is hidden from every listing, History, and the subagents track, is never persisted, and does not survive a daemon restart. Combine it with `--output-schema` for a scripted one-shot answer that leaves nothing behind.
 
 ## Projects
 
@@ -391,7 +394,7 @@ The CLI is designed to be used by agents themselves. You can instruct an agent t
 
 ```bash
 # Agent A spawns Agent B and waits for it
-agent_id=$(paseo run --background --quiet --title api-agent "implement the API")
+agent_id=$(paseo run --no-wait --quiet --title api-agent "implement the API")
 paseo wait "$agent_id"
 paseo logs "$agent_id" --tail 5
 ```

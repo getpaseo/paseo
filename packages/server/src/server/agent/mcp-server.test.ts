@@ -1338,6 +1338,42 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("passes internal through to the manager config", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "internal-helper",
+      provider: "codex",
+      cwd: existingCwd,
+      workspaceId: "workspace-created",
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Helper" },
+      internal: true,
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate,
+      logger,
+    });
+
+    await registeredTool(server, "create_agent").handler({
+      title: "Helper",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Summarize",
+      background: true,
+      internal: true,
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: existingCwd, internal: true }),
+      undefined,
+      { workspaceId: "workspace-created" },
+    );
+  });
+
   it("rejects partial explicit workspace shape", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({

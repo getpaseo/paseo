@@ -86,18 +86,22 @@ The provider still owns the underlying runtime. Paseo keeps an agent record so t
 
 ## Internal agents
 
-An internal agent is an ephemeral helper: the daemon's own branch-name and commit-message
-generators, and since 0.9 anything a client or plugin creates with `internal: true` on the create
-request. `AgentManager` never persists one, so it is never in History; it is left out of agent
-lists, global subscriptions, attention tracking, notifications, and plugin lifecycle hooks; and the
-provider session is not kept (`persistSession: false`, which for Claude means the transcript is
-deleted on close). Lookups by id still work, so `waitForFinish`, the timeline, and archive keep
-working for the caller that created it. Archiving one is closing it: there is no record to mark, so
-the runtime is closed, the committed timeline is dropped, attached children are archived as for any
-parent, and `getAgent` returns null from then on. The archived snapshot and last message stay
-readable by exact id for ten minutes (`AgentManager.getRetiredInternalAgent`), which is what keeps
-create-then-`waitForFinish` working for a helper that finishes and auto-archives before the wait
-arrives; storage plays that role for public agents.
+An internal agent is an ephemeral helper. The daemon creates them for its own branch-name and
+commit-message generators; clients create them with `internal: true` on the create request, which
+reaches the SDK as `agents.create({ internal: true })`, the CLI as `paseo run --internal`, and the
+MCP tool as `create_agent({ internal: true })`. The contract:
+
+- `AgentManager` never persists one, so it is never in History and does not survive a daemon
+  restart. The provider session is not kept either (`persistSession: false`; Claude deletes the
+  transcript on close).
+- It is left out of agent lists, global subscriptions, attention tracking, notifications, and
+  plugin lifecycle hooks. Only its exact id reaches it, so prefix and title matching stay public.
+- Archiving one is closing it: the runtime is closed, the committed timeline is dropped, and
+  attached children are archived as for any parent. Live internal children are scanned separately,
+  since the storage scan cannot see them.
+- A one-shot helper can finish and auto-archive before its creator's `waitForFinish` arrives, so the
+  archived snapshot and last message stay readable by exact id for ten minutes after archive.
+  Storage plays that role for public agents.
 
 The flag lives on `create_agent_request`, not in `AgentSessionConfig` on the wire, because that
 config schema is reused for update overrides. The `agent.create` transform hook cannot set it

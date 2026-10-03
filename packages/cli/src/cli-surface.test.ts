@@ -46,10 +46,13 @@ describe("canonical CLI surface", () => {
     expect(help).toContain("--forge <forge>");
   });
 
-  it("uses background for execution and reserves detach for ownership", () => {
+  it("uses --no-wait for execution, --internal for visibility, and reserves detach for ownership", () => {
     const run = createCli().commands.find((command) => command.name() === "run");
-    expect(run?.helpInformation()).toContain("--background");
-    expect(run?.helpInformation()).not.toContain("--detach");
+    const help = run?.helpInformation();
+    expect(help).toContain("--no-wait");
+    expect(help).toContain("--internal");
+    expect(help).not.toContain("--background");
+    expect(help).not.toContain("--detach");
   });
 
   it("offers thinking configuration when running, updating, and scheduling agents", () => {

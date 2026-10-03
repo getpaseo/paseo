@@ -59,7 +59,7 @@ Create a new client after `close()`.
 
 Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `internal`, and `labels`.
 
-`internal: true` creates an ephemeral helper. The daemon never persists, lists, flags, or announces it, plugin lifecycle hooks skip it, and its provider session is not kept. While the agent is live its handle works as usual: `waitForFinish()`, `refresh()`, the timeline, and `archive()`. Requires a host that advertises `features.internalAgents`; older hosts reject the call with "Update the host to create internal agents." See [Run a hidden helper](./agents.md#run-a-hidden-helper).
+`internal: true` creates a helper that no listing, History, or hook ever shows; see [Run an internal helper](./agents.md#run-an-internal-helper).
 
 `config` accepts:
 

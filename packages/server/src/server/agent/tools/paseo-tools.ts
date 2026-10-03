@@ -1016,6 +1016,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
+    internal: z
+      .boolean()
+      .optional()
+      .describe(
+        "Create an internal agent: hidden from every listing, History, and the subagents track, and never persisted. Use for short-lived helpers whose result only you need.",
+      ),
   };
   const legacyCreateAgentPlacementFields = {
     relationship: AgentRelationshipInputSchema.describe(
@@ -1493,6 +1499,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           mode: parsedArgs.settings?.modeId,
           background: requestedBackground,
           notifyOnFinish,
+          internal: parsedArgs.internal,
           detached: resolvedArgs.detached,
           callerAgentId,
           callerContext,

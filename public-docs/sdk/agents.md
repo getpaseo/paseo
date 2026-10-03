@@ -105,7 +105,7 @@ const child = await workspace.agents.create({
 
 `parent` establishes parentage. Archiving a parent cascade-archives its children. Call `detach()` first when a child should continue independently.
 
-## Run a hidden helper
+## Run an internal helper
 
 A one-shot agent that summarizes, classifies, or names something should not appear in History, the sidebar, or the parent's subagents track, and should not notify anyone. Create it with `internal: true`, the same flag the daemon uses for its own branch-name and commit-message helpers:
 
@@ -127,7 +127,7 @@ const helper = await workspace.agents.create({
 const result = await helper.waitForFinish(60_000);
 ```
 
-An internal agent is never written to agent storage, so it cannot be resumed after the daemon restarts, and its provider session is not kept either. After it is archived, its final snapshot and last message stay readable by id for ten minutes, so `waitForFinish()` and `refresh()` still answer when the helper finished and auto-archived before you asked. Plugin lifecycle hooks do not fire for it. Older hosts reject the call; check `features.internalAgents` in `server_info` when you need to degrade.
+An internal agent is never written to agent storage, so it cannot be resumed after the daemon restarts, and its provider session is not kept either. Only its exact id reaches it: `waitForFinish()`, `refresh()`, the timeline, and `archive()` work on the handle, and for ten minutes after archive they still answer, so a helper that finished and auto-archived before you asked returns its result. Plugin lifecycle hooks do not fire for it. Older hosts reject the call with "Update the host to create internal agents."; check `features.internalAgents` in `server_info` when you need to degrade.
 
 ## Request structured output
 
