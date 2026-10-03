@@ -14,7 +14,18 @@ vi.mock("@/stores/navigation-active-workspace-store", () => ({
   navigateToWorkspace: mocks.navigate,
 }));
 vi.mock("@/stores/session-store", () => ({
-  useSessionStore: { getState: () => ({ sessions: { srv: { agents: mocks.agents } } }) },
+  useSessionStore: {
+    getState: () => ({
+      sessions: {
+        srv: {
+          agents: mocks.agents,
+          queuedMessages: new Map(),
+          agentStreamTail: new Map(),
+          agentStreamHead: new Map(),
+        },
+      },
+    }),
+  },
 }));
 vi.mock("@/stores/workspace-layout-store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/stores/workspace-layout-store")>();

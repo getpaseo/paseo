@@ -11429,6 +11429,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       {
         type: "user_message",
         text: "/handled",
+        prompt: "/handled",
         clientMessageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
@@ -11442,6 +11443,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       {
         type: "user_message",
         text: "/handled",
+        prompt: "/handled",
         clientMessageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
@@ -12351,6 +12353,7 @@ test("routeNextTurn publishes structured Jev notice only when the route changes"
     agentId: "00000000-0000-4000-8000-000000000621",
     target: new ProviderSwitchClient("claude"),
   });
+  agent.labels["pandaos.routing.mode"] = "auto";
   const session = manager.getAgent(agent.id)?.session;
   if (session) session.setThinkingOption = async () => {};
   manager.setTurnRouter(async () => ({
@@ -12378,6 +12381,9 @@ test("ordinary unchanged or unverified routing clears stale composer notices", a
     agentId: "00000000-0000-4000-8000-000000000622",
     target: new ProviderSwitchClient("claude"),
   });
+  agent.labels["pandaos.routing.mode"] = "auto";
+  manager.setTurnRouter(async () => null);
+  await manager.routeNextTurn(agent.id, "Initial request");
   agent.config.routingNotice = {
     fromProfile: "codex",
     toProfile: "codex",
@@ -12389,8 +12395,6 @@ test("ordinary unchanged or unverified routing clears stale composer notices", a
     status: "unverified",
     reason: "Unknown usage",
   };
-  agent.lastUserMessageAt = new Date();
-  manager.setTurnRouter(async () => null);
   await manager.routeNextTurn(agent.id, "Ordinary request");
   expect(toAgentPayload(agent).routingNotice).toBeUndefined();
   await manager.routeNextTurn(agent.id, "Another ordinary request");
@@ -12790,7 +12794,7 @@ test("persistent native capacity tries same-model accounts before Jev model reas
       fromProfile: "codex-business",
       toProfile: "claude",
       model: "claude-opus-5-5",
-      reason: expect.stringContaining("Jev reassessed: complex"),
+      reason: expect.stringContaining("for complex architecture, debugging or security work"),
     });
   } finally {
     await fixture.cleanup();

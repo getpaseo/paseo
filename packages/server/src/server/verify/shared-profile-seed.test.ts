@@ -55,7 +55,7 @@ describe("seedSharedProfile", () => {
       await secrets.migrate(legacy, encrypted);
       expect(existsSync(legacy)).toBe(false);
       expect(readFileSync(encrypted).includes(Buffer.from("synthetic-session"))).toBe(false);
-      expect(statSync(encrypted).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(encrypted).mode & 0o777).toBe(0o600);
       expect(
         await new ProfileCookieSecrets(async () => Buffer.alloc(32, 2)).read(encrypted),
       ).toEqual(data);

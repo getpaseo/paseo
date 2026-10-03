@@ -328,6 +328,7 @@ describe("selectSubagentsForParent", () => {
       "kind",
       "provider",
       "requiresAttention",
+      "routingNotice",
       "status",
       "subtitle",
       "title",
