@@ -152,9 +152,9 @@ export async function searchDirectoryEntries(
   if (exact && input.limit === 1) return [exact];
 
   const browsesRoot = input.plan.isPathQuery && !input.plan.normalizedQuery;
-  const browsesAbsoluteParent = input.plan.browseExactPath === true;
+  const browsesParent = input.plan.browseExactPath === true;
   const ranked =
-    browsesRoot || browsesAbsoluteParent ? await searchChildren(input) : await searchTree(input);
+    browsesRoot || browsesParent ? await searchChildren(input) : await searchTree(input);
   const results = sortAndFormat(ranked, input.root, input.pathFormat).slice(0, input.limit);
   return exact
     ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
@@ -583,6 +583,9 @@ function parseQuery(input: {
     parentPart: isPathQuery && slash >= 0 ? normalized.slice(0, slash) : "",
     searchTerm: isPathQuery && slash >= 0 ? normalized.slice(slash + 1) : normalized,
     normalizedQuery: normalized,
+    // A path typed in the directory picker names the parent to browse. Walking the
+    // entire home directory here can enter protected or very large unrelated trees.
+    browseExactPath: rooted && input.policy === "rooted",
   };
 }
 
