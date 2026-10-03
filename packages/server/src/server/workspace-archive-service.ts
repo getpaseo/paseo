@@ -46,6 +46,9 @@ export interface ArchiveDependencies {
   // path (no explicit workspaceId).
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  // Publishes the archived agent snapshot so each subscription applies its own
+  // includeArchived/scope rules before the workspace leaves the active directory.
+  emitArchivedAgent?: (agentId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -452,7 +455,11 @@ function uniqueTeardownTargets<T extends { cwd: string }>(targets: T[]): T[] {
 
 export type ArchiveWorkspaceContentsDependencies = Pick<
   ArchiveDependencies,
-  "agentManager" | "agentStorage" | "killTerminalsForWorkspace" | "sessionLogger"
+  | "agentManager"
+  | "agentStorage"
+  | "killTerminalsForWorkspace"
+  | "emitArchivedAgent"
+  | "sessionLogger"
 >;
 
 // Tears down everything OWNED by a single workspace record: its live agents,
@@ -506,6 +513,20 @@ export async function archiveWorkspaceContents(
         { err: result.reason, workspaceId },
         "Workspace archive teardown step failed; continuing",
       );
+    }
+  }
+
+  if (dependencies.emitArchivedAgent) {
+    const updateResults = await Promise.allSettled(
+      [...archivedAgents].map((agentId) => dependencies.emitArchivedAgent!(agentId)),
+    );
+    for (const result of updateResults) {
+      if (result.status === "rejected") {
+        dependencies.sessionLogger?.warn(
+          { err: result.reason, workspaceId },
+          "Failed to emit archived agent update during workspace archive; continuing",
+        );
+      }
     }
   }
 

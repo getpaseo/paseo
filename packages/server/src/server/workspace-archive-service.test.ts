@@ -189,6 +189,34 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test("emits archived agent updates before archiving the workspace record", async () => {
+    const workspaceId = "ws-archived-agent-update";
+    const events: string[] = [];
+    const deps = createArchiveDeps({
+      paseoHome: "/tmp/paseo-test-home",
+      activeWorkspaces: [{ workspaceId, cwd: "/tmp/repo", kind: "local_checkout" }],
+    });
+    const record = { id: "agent-1", workspaceId } as unknown as StoredAgentRecord;
+    deps.agentStorage.listByWorkspace = vi.fn(async () => [record]);
+    deps.agentManager.archiveSnapshot = vi.fn(async (agentId: string) => {
+      events.push(`archive:${agentId}`);
+      return {};
+    });
+    deps.emitArchivedAgent = vi.fn(async (agentId: string) => {
+      events.push(`update:${agentId}`);
+    });
+    deps.archiveWorkspaceRecord = vi.fn(async () => {
+      events.push("workspace");
+    });
+
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-archived-agent-update",
+    });
+
+    expect(events).toEqual(["archive:agent-1", "update:agent-1", "workspace"]);
+  });
+
   test("workspace scope archives the record and removes the directory on last reference", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
