@@ -312,6 +312,12 @@ export const ar: TranslationResources = {
       runningAgent: "هذا الوكيل لا يزال قيد التشغيل. ستؤدي أرشفته إلى إيقاف الوكيل.",
       archive: "أرشيف",
     },
+    snippetSource: {
+      user: "رسالتك",
+      reply: "الرد",
+      thinking: "التفكير",
+      tool: "أداة",
+    },
   },
   message: {
     diagram: {

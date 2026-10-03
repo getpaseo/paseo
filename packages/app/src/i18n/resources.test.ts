@@ -397,6 +397,10 @@ describe("translation resources", () => {
       "This agent is still running. Archiving it will stop the agent.",
     );
     expect(en.agentList.archiveSheet.archive).toBe("Archive");
+    expect(en.agentList.snippetSource.user).toBe("Your message");
+    expect(en.agentList.snippetSource.reply).toBe("Reply");
+    expect(en.agentList.snippetSource.thinking).toBe("Thinking");
+    expect(en.agentList.snippetSource.tool).toBe("Tool");
   });
 
   it("includes message utility keys for the Batch 4I migration", () => {
