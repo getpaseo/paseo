@@ -6280,9 +6280,12 @@ export class Session {
         },
         "fetch_workspaces_request_received",
       );
-      const payload = request.sync
+      const { payload, clientWorkspaces } = request.sync
         ? await this.readWorkspaceDirectorySync(request)
-        : await this.listFetchWorkspacesEntries(request);
+        : await this.listFetchWorkspacesEntries(request).then((page) => ({
+            payload: page,
+            clientWorkspaces: page.entries,
+          }));
 
       this.sessionLogger.debug(
         {
@@ -6297,7 +6300,7 @@ export class Session {
       if (subscription) {
         this.seedWorkspaceSubscriptionSnapshot(
           subscription,
-          payload.entries,
+          clientWorkspaces,
           payload.emptyProjects,
         );
       }
@@ -6519,6 +6522,10 @@ export class Session {
     return this.directorySync.synchronizeAgents(snapshot.entries, request.sync ?? {});
   }
 
+  // A sequenced read returns only the entries after the client's cursor, each tagged with
+  // `syncSeq`, but once the client applies them it holds every current descriptor. The
+  // subscription must start from that full, untagged set; seeding it from the response entries
+  // made every later git snapshot re-send each workspace the client already had.
   private async readWorkspaceDirectorySync(
     request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
   ) {
@@ -6528,10 +6535,11 @@ export class Session {
         "Sequenced workspace directory reads do not support filters.",
       );
     }
-    return this.directorySync.synchronizeWorkspaces(
-      await this.workspaceDirectory.listDescriptors(),
-      request.sync ?? {},
-    );
+    const clientWorkspaces = await this.workspaceDirectory.listDescriptors();
+    return {
+      payload: this.directorySync.synchronizeWorkspaces(clientWorkspaces, request.sync ?? {}),
+      clientWorkspaces,
+    };
   }
 
   // Build the bootstrap snapshot used by `flushBootstrappedWorkspaceUpdates`

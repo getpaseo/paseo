@@ -8,11 +8,7 @@ const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
 type CheckoutDiffWorkspace = Pick<
   WorkspaceGitService,
-  | "getCheckoutDiff"
-  | "getSnapshot"
-  | "peekSnapshot"
-  | "registerWorkspace"
-  | "requestWorkingTreeWatch"
+  "getCheckoutDiff" | "getSnapshot" | "registerWorkspace" | "requestWorkingTreeWatch"
 >;
 
 export type CheckoutDiffCompareInput = SubscribeCheckoutDiffRequest["compare"];
@@ -365,9 +361,11 @@ export class CheckoutDiffManager {
 
   private async openTarget(target: CheckoutDiffWatchTarget): Promise<void> {
     if (target.compare.mode === "base") {
-      const snapshot =
-        this.workspaceGitService.peekSnapshot(target.cwd) ??
-        (await this.workspaceGitService.getSnapshot(target.cwd, { includeForge: false }));
+      // getSnapshot reuses a live target's snapshot. peekSnapshot can also return a snapshot
+      // retained from an unobserved checkout, whose repo root may no longer hold.
+      const snapshot = await this.workspaceGitService.getSnapshot(target.cwd, {
+        includeForge: false,
+      });
       target.diffCwd = snapshot.git.repoRoot ?? target.cwd;
       if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
         return;
