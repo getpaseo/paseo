@@ -203,4 +203,24 @@ describe("resolveOpenAiSpeechConfig", () => {
     expect(resolved?.stt?.apiKey).toBe("stt-only-key");
     expect(resolved?.tts).toBeUndefined();
   });
+
+  test("accepts a voice and model outside the OpenAI catalog", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: {
+        openai: { tts: { apiKey: "tts-key", baseUrl: "https://tts.example.com/v1" } },
+      },
+      features: {
+        voiceMode: { tts: { provider: "openai", model: "kokoro-v1:Q8_0", voice: "Aiden" } },
+      },
+    });
+
+    const resolved = resolveOpenAiSpeechConfig({
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+      providers: ALL_OPENAI,
+    });
+
+    expect(resolved?.tts?.voice).toBe("aiden");
+    expect(resolved?.tts?.model).toBe("kokoro-v1:Q8_0");
+  });
 });
