@@ -216,9 +216,17 @@ import {
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
 import {
+  mergeRecentDirectoryEntries,
+  normalizeDirectorySuggestionLimit,
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+  type DirectorySuggestionEntry,
+  type SearchDirectoryEntriesOptions,
 } from "../utils/directory-suggestions.js";
+import {
+  createRecentDirectorySources,
+  type RecentDirectorySource,
+} from "../utils/recent-directory-sources/index.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -457,6 +465,11 @@ export interface SessionOptions {
   pushNotifications: PushNotifications;
   paseoHome: string;
   worktreesRoot?: string;
+  // Home directory searched in home mode; injectable for tests, defaults to the process HOME.
+  homeDirectory?: string;
+  // Injected so tests can substitute a stub recent-directory source; defaults to reading the
+  // daemon's `search.recentSources` config.
+  recentDirectorySources?: readonly RecentDirectorySource[];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   messageReceipts: Pick<MessageReceipts, "send">;
@@ -661,6 +674,21 @@ function workspaceLabelErrorCode(error: unknown): string {
   return "workspace_label_failed";
 }
 
+function resolveHomeDirectory(override: string | undefined): string {
+  return override ?? process.env.HOME ?? homedir();
+}
+
+function resolveRecentDirectorySources(
+  override: readonly RecentDirectorySource[] | undefined,
+  paseoHome: string,
+  logger: SessionOptions["logger"],
+): readonly RecentDirectorySource[] {
+  if (override) return override;
+  return createRecentDirectorySources(loadPersistedConfig(paseoHome).search?.recentSources, {
+    logger,
+  });
+}
+
 interface ClientActivity {
   deviceType: "web" | "mobile";
   focusedAgentId: string | null;
@@ -716,6 +744,8 @@ export class Session {
     | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly homeDirectory: string;
+  private readonly recentDirectorySources: readonly RecentDirectorySource[];
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
@@ -882,6 +912,12 @@ export class Session {
       clientId: this.clientId,
       sessionId: this.sessionId,
     });
+    this.recentDirectorySources = resolveRecentDirectorySources(
+      options.recentDirectorySources,
+      paseoHome,
+      this.sessionLogger,
+    );
+    this.homeDirectory = resolveHomeDirectory(options.homeDirectory);
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
@@ -5056,8 +5092,8 @@ export class Session {
     try {
       const workspaceCwd = cwd?.trim();
       const searchesWorkspace = Boolean(workspaceCwd);
-      const entries = await searchDirectoryEntries({
-        root: workspaceCwd ? expandTilde(workspaceCwd) : (process.env.HOME ?? homedir()),
+      const options: SearchDirectoryEntriesOptions = {
+        root: workspaceCwd ? expandTilde(workspaceCwd) : this.homeDirectory,
         query,
         pathFormat: searchesWorkspace ? "relative" : "absolute",
         pathQueryPolicy: searchesWorkspace ? "slashes" : "rooted",
@@ -5072,7 +5108,11 @@ export class Session {
         includeDirectories,
         matchMode,
         limit,
-      });
+      };
+      const scanned = await searchDirectoryEntries(options);
+      const entries = searchesWorkspace
+        ? scanned
+        : await this.mergeRecentDirectorySuggestions(options, scanned);
       const directories = entries
         .filter((entry) => entry.kind === "directory")
         .map((entry) => entry.path);
@@ -5096,6 +5136,29 @@ export class Session {
         },
       });
     }
+  }
+
+  private async mergeRecentDirectorySuggestions(
+    options: SearchDirectoryEntriesOptions,
+    scanned: DirectorySuggestionEntry[],
+  ): Promise<DirectorySuggestionEntry[]> {
+    if (this.recentDirectorySources.length === 0 || !options.query.trim()) return scanned;
+    const limit = normalizeDirectorySuggestionLimit(options.limit);
+    const recentPaths: string[] = [];
+    for (const source of this.recentDirectorySources) {
+      try {
+        recentPaths.push(
+          ...(await source.query({ query: options.query, root: options.root, limit })),
+        );
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, source: source.id },
+          "Recent directory source query failed",
+        );
+      }
+    }
+    if (recentPaths.length === 0) return scanned;
+    return mergeRecentDirectoryEntries(options, scanned, recentPaths);
   }
 
   private async handlePaseoWorktreeListRequest(

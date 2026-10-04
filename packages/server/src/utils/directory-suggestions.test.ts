@@ -15,8 +15,11 @@ import { isPlatform } from "../test-utils/platform.js";
 import { startPathContainmentMetrics, stopPathContainmentMetrics } from "./path.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
+  mergeRecentDirectoryEntries,
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+  type DirectorySuggestionEntry,
+  type SearchDirectoryEntriesOptions,
 } from "./directory-suggestions.js";
 
 const isWindows = isPlatform("win32");
@@ -1023,4 +1026,203 @@ describe("home-tree scan cost", () => {
       rmSync(outside, { recursive: true, force: true });
     },
   );
+});
+
+describe("mergeRecentDirectoryEntries", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-merge-")));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function homeOptions(
+    query: string,
+    overrides: Partial<SearchDirectoryEntriesOptions> = {},
+  ): SearchDirectoryEntriesOptions {
+    return {
+      root,
+      query,
+      pathFormat: "absolute",
+      includeDirectories: true,
+      includeFiles: false,
+      pathQueryPolicy: "rooted",
+      rootAliases: ["~"],
+      blankQueryBehavior: "none",
+      ...overrides,
+    };
+  }
+
+  function makeDirectories(...relativePaths: string[]): string[] {
+    return relativePaths.map((relativePath) => {
+      const absolute = path.join(root, ...relativePath.split("/"));
+      mkdirSync(absolute, { recursive: true });
+      return absolute;
+    });
+  }
+
+  async function scan(query: string, overrides: Partial<SearchDirectoryEntriesOptions> = {}) {
+    return searchDirectoryEntries(homeOptions(query, overrides));
+  }
+
+  it("ranks a visited directory ahead of a weaker same-tier scan match", async () => {
+    const [mirror, visited] = makeDirectories(
+      "OrbStack/docker/containers/syncthing/hertzbeat",
+      "Documents/dev/github/hertzbeat",
+    );
+
+    const merged = await mergeRecentDirectoryEntries(
+      homeOptions("hertzbeat"),
+      await scan("hertzbeat"),
+      [visited],
+    );
+
+    expect(merged.map((entry) => entry.path)).toEqual([visited, mirror]);
+  });
+
+  it("keeps a better-ranked scan match ahead of a same-tier visited one", async () => {
+    const [shallow, visited] = makeDirectories("hertzbeat", "Documents/dev/github/hertzbeat");
+
+    const merged = await mergeRecentDirectoryEntries(
+      homeOptions("hertzbeat"),
+      await scan("hertzbeat"),
+      [visited],
+    );
+
+    expect(merged.map((entry) => entry.path)).toEqual([shallow, visited]);
+  });
+
+  it("hides visited directories the scan would not discover", async () => {
+    const [hidden, ignored] = makeDirectories(".config/hertzbeat", "node_modules/hertzbeat");
+    const scanned = await scan("hertzbeat");
+
+    const merged = await mergeRecentDirectoryEntries(homeOptions("hertzbeat"), scanned, [
+      hidden,
+      ignored,
+    ]);
+
+    expect(merged).toEqual(scanned);
+  });
+
+  it("applies the requested suffix match mode to visited directories", async () => {
+    const [exactSuffix] = makeDirectories("projects/paseo");
+    const [fuzzyOnly] = makeDirectories("paseo-notes");
+
+    const merged = await mergeRecentDirectoryEntries(
+      homeOptions("paseo", { matchMode: "suffix" }),
+      await scan("paseo", { matchMode: "suffix" }),
+      [exactSuffix, fuzzyOnly],
+    );
+
+    expect(merged.map((entry) => entry.path)).toContain(exactSuffix);
+    expect(merged.map((entry) => entry.path)).not.toContain(fuzzyOnly);
+  });
+
+  it("keeps a stronger scan match ahead of a weaker visited one", async () => {
+    const [exact] = makeDirectories("Documents/dev/github/paseo");
+    const [prefix] = makeDirectories("paseo-notes");
+
+    const merged = await mergeRecentDirectoryEntries(homeOptions("paseo"), await scan("paseo"), [
+      prefix,
+    ]);
+
+    expect(merged.map((entry) => entry.path)).toEqual([exact, prefix]);
+  });
+
+  it("adds visited directories the scan budget never reached", async () => {
+    const [deep] = makeDirectories("deep/one/two/three/checkout");
+
+    const scanned = await scan("checkout", { maxDepth: 2 });
+
+    expect(scanned.map((entry) => entry.path)).not.toContain(deep);
+    const merged = await mergeRecentDirectoryEntries(
+      homeOptions("checkout", { maxDepth: 2 }),
+      scanned,
+      [deep],
+    );
+    expect(merged.map((entry) => entry.path)).toContain(deep);
+  });
+
+  it("does not duplicate a visited path the scan already returned", async () => {
+    const [visited] = makeDirectories("projects/hertzbeat");
+
+    const merged = await mergeRecentDirectoryEntries(
+      homeOptions("hertzbeat"),
+      await scan("hertzbeat"),
+      [visited],
+    );
+
+    expect(merged.filter((entry) => entry.path === visited)).toHaveLength(1);
+  });
+
+  it("drops visited paths that do not match the query", async () => {
+    const [unrelated] = makeDirectories("unrelated-directory");
+    const scanned = await scan("hertzbeat");
+
+    const merged = await mergeRecentDirectoryEntries(homeOptions("hertzbeat"), scanned, [
+      unrelated,
+    ]);
+
+    expect(merged).toEqual(scanned);
+  });
+
+  it("returns the scan unchanged for a blank query", async () => {
+    const scanned: DirectorySuggestionEntry[] = [
+      { path: path.join(root, "one"), kind: "directory" },
+    ];
+
+    const merged = await mergeRecentDirectoryEntries(homeOptions(""), scanned, [
+      path.join(root, "two"),
+    ]);
+
+    expect(merged).toEqual(scanned);
+  });
+
+  it("truncates the merged list to the requested limit", async () => {
+    const [first, second, third] = makeDirectories("a/hit", "b/hit", "c/hit");
+
+    const merged = await mergeRecentDirectoryEntries(
+      homeOptions("hit", { limit: 2 }),
+      await scan("hit", { limit: 2 }),
+      [third, second, first],
+    );
+
+    expect(merged).toHaveLength(2);
+  });
+
+  it("keeps file entries alongside visited directories", async () => {
+    writeFileSync(path.join(root, "msgrndr.tsx"), "");
+    const [visited] = makeDirectories("projects/messenger");
+
+    const options = homeOptions("ms", { includeFiles: true, includeDirectories: true });
+    const merged = await mergeRecentDirectoryEntries(
+      options,
+      await scan("ms", {
+        includeFiles: true,
+        includeDirectories: true,
+      }),
+      [visited],
+    );
+
+    expect(merged).toEqual(
+      expect.arrayContaining([
+        { path: path.join(root, "msgrndr.tsx"), kind: "file" },
+        { path: visited, kind: "directory" },
+      ]),
+    );
+  });
+
+  it("ignores visited directories when directories are excluded", async () => {
+    writeFileSync(path.join(root, "notes.md"), "");
+    const [visited] = makeDirectories("notes-directory");
+
+    const options = homeOptions("no", { includeDirectories: false, includeFiles: true });
+    const scanned = await scan("no", { includeDirectories: false, includeFiles: true });
+    const merged = await mergeRecentDirectoryEntries(options, scanned, [visited]);
+
+    expect(merged).toEqual(scanned);
+  });
 });

@@ -59,6 +59,42 @@ describe("PersistedConfigSchema daemon browser tools config", () => {
   });
 });
 
+describe("PersistedConfigSchema search recent sources config", () => {
+  test("accepts zoxide recent-source overrides", () => {
+    const parsed = PersistedConfigSchema.parse({
+      search: {
+        recentSources: {
+          zoxide: {
+            enabled: true,
+            path: "/opt/homebrew/bin/zoxide",
+            dataDir: "~/Library/Application Support/zoxide",
+          },
+        },
+      },
+    });
+
+    expect(parsed.search?.recentSources?.zoxide).toEqual({
+      enabled: true,
+      path: "/opt/homebrew/bin/zoxide",
+      dataDir: "~/Library/Application Support/zoxide",
+    });
+  });
+
+  test("leaves recent sources undefined when unset", () => {
+    const parsed = PersistedConfigSchema.parse({});
+
+    expect(parsed.search).toBeUndefined();
+  });
+
+  test("rejects unknown keys inside the zoxide block", () => {
+    const result = PersistedConfigSchema.safeParse({
+      search: { recentSources: { zoxide: { binary: "/usr/bin/zoxide" } } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("PersistedConfigSchema daemon relay config", () => {
   test("accepts optional relay TLS setting", () => {
     const parsed = PersistedConfigSchema.parse({

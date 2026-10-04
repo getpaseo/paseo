@@ -161,6 +161,145 @@ export async function searchDirectoryEntries(
     : results;
 }
 
+interface MergeCandidate extends RankedEntry {
+  from: "scan" | "recent";
+  order: number;
+}
+
+const MERGE_SOURCE_ORDER: Record<MergeCandidate["from"], number> = { recent: 0, scan: 1 };
+
+/**
+ * Merges discovery results with directories a recent source says the user visited, without letting
+ * recall outrank a stronger match. Recent paths are scored on the same ranking scale as the scan,
+ * so a visited directory only wins when every ranking field ties; the `hertzbeat` mirror vs. the
+ * real checkout case works because the real directory's shallower segment already ranks better.
+ */
+export async function mergeRecentDirectoryEntries(
+  options: SearchDirectoryEntriesOptions,
+  scanEntries: readonly DirectorySuggestionEntry[],
+  recentPaths: readonly string[],
+): Promise<DirectorySuggestionEntry[]> {
+  const root = await resolveDirectory(options.root);
+  if (!root || recentPaths.length === 0) return [...scanEntries];
+
+  const input = buildSearchInput(options, root, new Set());
+  if (!input) return [...scanEntries];
+  // A blank query has no shared ranking scale, and recall only applies to non-empty queries.
+  if (!input.plan.normalizedQuery) return [...scanEntries];
+  if (!input.includeDirectories) return [...scanEntries];
+
+  const candidates = new Map<string, MergeCandidate>();
+  scanEntries.forEach((entry, order) => {
+    const absolutePath = toAbsoluteEntryPath(entry.path, root, input.pathFormat);
+    candidates.set(
+      mergeCandidateKey(entry.kind, absolutePath),
+      buildMergeCandidate(absolutePath, entry.kind, root, input, "scan", order),
+    );
+  });
+  recentPaths.forEach((recentPath, order) => {
+    if (!path.isAbsolute(recentPath)) return;
+    const absolutePath = path.resolve(recentPath);
+    if (!isPathInsideRoot(root, absolutePath)) return;
+    // Recall is still discovery: hide what the picker hides.
+    if (!isDiscoverableRecentPath(absolutePath, root)) return;
+    if (!matchesRequestedMatchMode(absolutePath, root, input)) return;
+    const candidate = buildMergeCandidate(absolutePath, "directory", root, input, "recent", order);
+    if (candidate.matchTier === NO_MATCH_TIER) return;
+    mergeCandidate(candidates, candidate);
+  });
+
+  return [...candidates.values()]
+    .sort(compareMergeCandidates)
+    .slice(0, input.limit)
+    .map((candidate) =>
+      formatEntry({ path: candidate.path, kind: candidate.kind }, root, input.pathFormat),
+    );
+}
+
+function buildMergeCandidate(
+  absolutePath: string,
+  kind: DirectorySuggestionKind,
+  root: string,
+  input: SearchInput,
+  from: MergeCandidate["from"],
+  order: number,
+): MergeCandidate {
+  const relativePath = normalizeRelativePath(root, absolutePath);
+  return {
+    path: absolutePath,
+    kind,
+    ...rankRelativePath(relativePath, input),
+    depth: relativePath === "." ? 0 : relativePath.split("/").length,
+    from,
+    order,
+  };
+}
+
+// A recent path is admissible only if every segment between it and the root would have been
+// discovered by the scan. Home-mode discovery drops hidden and ignored directory names at any depth.
+function isDiscoverableRecentPath(absolutePath: string, root: string): boolean {
+  const relativePath = normalizeRelativePath(root, absolutePath);
+  if (relativePath === ".") return false;
+  return relativePath
+    .split("/")
+    .every(
+      (segment) =>
+        segment.length > 0 && !segment.startsWith(".") && !IGNORED_DIRECTORY_NAMES.has(segment),
+    );
+}
+
+function matchesRequestedMatchMode(
+  absolutePath: string,
+  root: string,
+  input: SearchInput,
+): boolean {
+  if (input.matchMode !== "suffix") return true;
+  return suffixMatches(absolutePath, root, input.plan.normalizedQuery);
+}
+
+function mergeCandidate(map: Map<string, MergeCandidate>, candidate: MergeCandidate): void {
+  const key = mergeCandidateKey(candidate.kind, candidate.path);
+  const existing = map.get(key);
+  if (!existing) {
+    map.set(key, candidate);
+    return;
+  }
+  // Same path means identical ranking fields, so the visited entry keeps the key.
+  const candidateWins =
+    candidate.matchTier < existing.matchTier ||
+    (candidate.matchTier === existing.matchTier &&
+      candidate.from === "recent" &&
+      existing.from !== "recent");
+  if (candidateWins) map.set(key, candidate);
+}
+
+function mergeCandidateKey(kind: DirectorySuggestionKind, absolutePath: string): string {
+  return `${kind}:${absolutePath}`;
+}
+
+// Ranking fields decide first, so recall can't displace a better scan hit; `from` only breaks a
+// full tie. Scan candidates keep their own order (which already encodes depth/kind/path).
+function compareMergeCandidates(left: MergeCandidate, right: MergeCandidate): number {
+  return (
+    left.matchTier - right.matchTier ||
+    left.segmentIndex - right.segmentIndex ||
+    left.matchOffset - right.matchOffset ||
+    left.fuzzyScore - right.fuzzyScore ||
+    left.depth - right.depth ||
+    MERGE_SOURCE_ORDER[left.from] - MERGE_SOURCE_ORDER[right.from] ||
+    left.order - right.order ||
+    left.path.localeCompare(right.path)
+  );
+}
+
+function toAbsoluteEntryPath(
+  entryPath: string,
+  root: string,
+  format: DirectorySuggestionPathFormat,
+): string {
+  return format === "absolute" ? path.resolve(entryPath) : path.resolve(root, entryPath);
+}
+
 function buildSearchInput(
   options: SearchDirectoryEntriesOptions,
   root: string,
@@ -375,19 +514,25 @@ function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
 
 function rank(entry: TraversedEntry, input: SearchInput): RankedEntry {
   const relativePath = normalizeRelativePath(input.root, entry.visiblePath);
+  return {
+    path: entry.visiblePath,
+    kind: entry.kind,
+    ...rankRelativePath(relativePath, input),
+    depth: relativePath === "." ? 0 : relativePath.split("/").length,
+  };
+}
+
+// The one ranking scale every candidate goes through, whether it came from the tree walk or a
+// recent source. Callers must pass the same SearchInput the scan used, or their tiers are not
+// comparable and merging stops meaning anything.
+function rankRelativePath(relativePath: string, input: SearchInput): RankFields {
   const lowerPath = relativePath.toLowerCase();
   const query = getRankQuery(input);
   const segments = lowerPath === "." ? [] : lowerPath.split("/");
   const pathScore = query ? scorePathMatch(query, relativePath) : null;
-  const rankFields = input.plan.isPathQuery
+  return input.plan.isPathQuery
     ? rankPathMatch(pathScore)
     : rankTextMatch({ query, lowerPath, pathFormat: input.pathFormat, pathScore, segments });
-  return {
-    path: entry.visiblePath,
-    kind: entry.kind,
-    ...rankFields,
-    depth: relativePath === "." ? 0 : segments.length,
-  };
 }
 
 function getRankQuery(input: SearchInput): string {
@@ -757,6 +902,10 @@ function normalizeLimit(limit: number | undefined): number {
   const candidate =
     typeof limit === "number" && Number.isFinite(limit) ? Math.trunc(limit) : DEFAULT_LIMIT;
   return Math.max(1, Math.min(MAX_LIMIT, candidate));
+}
+
+export function normalizeDirectorySuggestionLimit(limit: number | undefined): number {
+  return normalizeLimit(limit);
 }
 
 function normalizeRelativePath(root: string, absolutePath: string): string {
