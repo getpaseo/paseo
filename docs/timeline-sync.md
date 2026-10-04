@@ -21,7 +21,8 @@ to 64 KiB, and the same bounded item is used for runtime timeline rows and live 
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload. Search results follow the same shared limiter: search detail `content` is sliced to a
 64 KiB JS string-length ceiling, items at or below the bound pass through unchanged, and every other
-search field (query, result metadata) is preserved.
+search field (query, result metadata) is preserved except `truncated`, which is set to `true` when
+Paseo clips the content.
 
 ## Presence is not delivery
 

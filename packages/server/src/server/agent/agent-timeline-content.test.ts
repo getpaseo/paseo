@@ -98,7 +98,7 @@ describe("agent timeline content", () => {
         numFiles: 1,
         numMatches: 29,
         durationMs: 42,
-        truncated: false,
+        truncated: true,
         mode: "content",
       },
     });

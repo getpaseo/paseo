@@ -65,6 +65,7 @@ function limitSearchDetail(item: AgentTimelineItem): AgentTimelineItem {
     detail: {
       ...item.detail,
       content: item.detail.content.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+      truncated: true,
     },
   };
 }
