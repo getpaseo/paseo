@@ -1,3 +1,4 @@
+import { createHook } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
@@ -1023,4 +1024,58 @@ describe("home-tree scan cost", () => {
       rmSync(outside, { recursive: true, force: true });
     },
   );
+});
+
+// Every pending fs call holds one of libuv's shared threadpool threads (4 by default). A read that
+// never returns, such as one on a hung network mount, keeps its thread, so searches that pile up
+// while the user types must not be able to take every thread from the rest of the daemon.
+describe("filesystem threads held by concurrent searches", () => {
+  const SEARCHES = 8;
+  let scanRoot: string;
+
+  beforeEach(() => {
+    scanRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-scan-threads-")));
+    for (let branch = 0; branch < 20; branch += 1) {
+      mkdirSync(path.join(scanRoot, `b${branch}`, "inner", "leaf"), { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    rmSync(scanRoot, { recursive: true, force: true });
+  });
+
+  async function peakPendingFilesystemRequests(run: () => Promise<unknown>): Promise<number> {
+    const pending = new Set<number>();
+    let peak = 0;
+    const hook = createHook({
+      init(asyncId, type) {
+        if (type !== "FSREQPROMISE" && type !== "FSREQCALLBACK") return;
+        pending.add(asyncId);
+        peak = Math.max(peak, pending.size);
+      },
+      before(asyncId) {
+        pending.delete(asyncId);
+      },
+    });
+    hook.enable();
+    try {
+      await run();
+    } finally {
+      hook.disable();
+    }
+    return peak;
+  }
+
+  function searchWhileTyping() {
+    const queries = Array.from({ length: SEARCHES }, (_, index) => `nomatch${index}`);
+    return Promise.all(
+      queries.map((query) => searchAbsoluteDirectoryPaths({ homeDir: scanRoot, query })),
+    );
+  }
+
+  it("leaves threadpool threads free for the rest of the daemon", async () => {
+    const peak = await peakPendingFilesystemRequests(searchWhileTyping);
+
+    expect(peak).toBeLessThanOrEqual(2);
+  });
 });
