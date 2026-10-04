@@ -59,6 +59,15 @@ describe("ACP provider catalog", () => {
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });
 
+  it("offers Qoder CLI CN through its pinned ACP package", () => {
+    expect(findProvider("qoder-cli-cn")).toMatchObject({
+      title: "Qoder CLI CN",
+      version: "1.1.49",
+      command: ["npx", "-y", "@qodercn-ai/qoderclicn@1.1.49", "--acp"],
+    });
+    expect(findProvider("qoder-cli-cn").iconSvg).toContain("<svg");
+  });
+
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({
       providers: {
