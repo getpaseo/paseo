@@ -7,6 +7,7 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemToCheckoutRequest,
+  resolvePickerSelection,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -77,6 +78,14 @@ describe("pickerItemToCheckoutRequest", () => {
       refName: "orphan",
       checkoutSource: { kind: "change_request", forge: "github", number: 7 },
       githubPrNumber: 7,
+    });
+  });
+
+  it("maps a new branch to branch-off with no base ref, so the daemon picks the default", () => {
+    const item: PickerItem = { kind: "new-branch", name: "feat/picker" };
+    expect(pickerItemToCheckoutRequest(item)).toEqual({
+      action: "branch-off",
+      branchName: "feat/picker",
     });
   });
 
@@ -251,11 +260,16 @@ const mainRow: BranchPickerDetail = {
   localBehind: 0,
 };
 
+function branchItem(input: Omit<Extract<PickerItem, { kind: "branch" }>, "kind">): PickerItem {
+  return { kind: "branch", ...input };
+}
+
 describe("buildPickerOptionData", () => {
   it("marks origin and keeps an ahead local main explicit", () => {
-    const baseItem = defaultBasePickerItem({
-      currentBranch: "main",
-      upstreamRef: "refs/remotes/origin/main",
+    const baseItem = branchItem({
+      name: "main",
+      refName: "refs/remotes/origin/main",
+      accessibilityLabel: "main, origin branch",
     });
     const data = buildPickerOptionData({ branchDetails: [mainRow], prItems: [], baseItem });
 
@@ -264,9 +278,10 @@ describe("buildPickerOptionData", () => {
   });
 
   it("adds and disambiguates a fork upstream absent from branch suggestions", () => {
-    const baseItem = defaultBasePickerItem({
-      currentBranch: "main",
-      upstreamRef: "refs/remotes/upstream/main",
+    const baseItem = branchItem({
+      name: "main",
+      refName: "refs/remotes/upstream/main",
+      accessibilityLabel: "main, upstream branch",
     });
     const data = buildPickerOptionData({
       branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
@@ -278,8 +293,12 @@ describe("buildPickerOptionData", () => {
     expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/upstream/main"));
   });
 
-  it("marks a visible row on an old daemon when local and origin are in sync", () => {
-    const baseItem = defaultBasePickerItem({ currentBranch: "main" });
+  it("marks a local row when the origin ref is absent from suggestions", () => {
+    const baseItem = branchItem({
+      name: "main",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    });
     const data = buildPickerOptionData({
       branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
       prItems: [],
@@ -307,6 +326,47 @@ describe("buildPickerOptionData", () => {
       action: "branch-off",
       refName: "refs/heads/main",
     });
+  });
+
+  it("keeps a new-branch selection marked and first", () => {
+    const newBranch: PickerItem = { kind: "new-branch", name: "feat/picker" };
+    const data = buildPickerOptionData({
+      branchDetails: [mainRow],
+      prItems: [],
+      baseItem: newBranch,
+    });
+    expect(data.options[0]?.label).toBe("feat/picker");
+    expect(data.selectedOptionId).toBe("new-branch:feat/picker");
+    expect(pickerItemToCheckoutRequest(data.itemById.get(data.selectedOptionId) ?? null)).toEqual({
+      action: "branch-off",
+      branchName: "feat/picker",
+    });
+  });
+});
+
+describe("resolvePickerSelection", () => {
+  it("returns a known row unchanged", () => {
+    const branch: PickerItem = {
+      kind: "branch",
+      name: "main",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    };
+    const itemById = new Map([[branchPickerOptionId(branch.refName), branch]]);
+    expect(resolvePickerSelection({ id: branchPickerOptionId(branch.refName), itemById })).toBe(
+      branch,
+    );
+  });
+
+  it("turns an unknown row id into a new branch", () => {
+    expect(resolvePickerSelection({ id: "feat/picker", itemById: new Map() })).toEqual({
+      kind: "new-branch",
+      name: "feat/picker",
+    });
+  });
+
+  it("returns null for a blank unknown row id", () => {
+    expect(resolvePickerSelection({ id: "   ", itemById: new Map() })).toBeNull();
   });
 });
 
