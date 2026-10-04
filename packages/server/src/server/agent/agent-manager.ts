@@ -91,6 +91,11 @@ import {
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import {
+  DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS,
+  runProviderRefreshWithDeadline,
+} from "./provider-refresh-deadline.js";
+import { ProviderIntrospectionQueue } from "./provider-introspection-queue.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -315,6 +320,7 @@ export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
+  providerIntrospectionQueue?: ProviderIntrospectionQueue;
   idFactory?: () => string;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
@@ -714,6 +720,9 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly providerIntrospectionQueue: ProviderIntrospectionQueue;
+  private readonly inFlightDraftCommands = new Map<string, Promise<AgentSlashCommand[]>>();
+  private readonly inFlightDraftFeatures = new Map<string, Promise<AgentFeature[]>>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -754,13 +763,15 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
-    this.idFactory = options?.idFactory ?? (() => randomUUID());
-    this.registry = options?.registry;
-    this.durableTimelineStore = options?.durableTimelineStore;
-    this.onAgentAttention = options?.onAgentAttention;
-    this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
-    this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
-    this.mcpAuthToken = options?.mcpAuthToken ?? null;
+    this.providerIntrospectionQueue =
+      options.providerIntrospectionQueue ?? new ProviderIntrospectionQueue();
+    this.idFactory = options.idFactory ?? (() => randomUUID());
+    this.registry = options.registry;
+    this.durableTimelineStore = options.durableTimelineStore;
+    this.onAgentAttention = options.onAgentAttention;
+    this.onWorkspaceStateMayHaveChanged = options.onWorkspaceStateMayHaveChanged;
+    this.mcpBaseUrl = options.mcpBaseUrl ?? null;
+    this.mcpAuthToken = options.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
@@ -1089,40 +1100,48 @@ export class AgentManager {
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
-    const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model) {
-      return [];
-    }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
-
-    if (client.listCommands) {
-      return await client.listCommands(normalizedConfig);
-    }
-
-    const session = await client.createSession(normalizedConfig);
-    try {
-      if (!session.listCommands) {
+    const requestKey = this.buildDraftRequestKey(config);
+    return await this.runDraftRequest(this.inFlightDraftCommands, requestKey, async () => {
+      const requestedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
+      const client = this.requireClient(requestedConfig.provider);
+      const available = await client.isAvailable();
+      if (!available) {
         throw new Error(
-          `Provider '${normalizedConfig.provider}' does not support listing commands`,
+          `Provider '${requestedConfig.provider}' is not available. Please ensure the CLI is installed.`,
         );
       }
-      return await session.listCommands();
-    } finally {
-      try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft command listing session",
-        );
-      }
-    }
+
+      return await this.providerIntrospectionQueue.run(requestedConfig.provider, async () => {
+        if (client.listCommands) {
+          return await client.listCommands(requestedConfig);
+        }
+
+        const normalizedConfig = await this.resolveDraftModel(requestedConfig);
+        if (!normalizedConfig.model) {
+          throw new Error(
+            `Provider '${normalizedConfig.provider}' has no models available, so its commands cannot be listed.`,
+          );
+        }
+        const session = await client.createSession(normalizedConfig);
+        try {
+          if (!session.listCommands) {
+            throw new Error(
+              `Provider '${normalizedConfig.provider}' does not support listing commands`,
+            );
+          }
+          return await session.listCommands();
+        } finally {
+          try {
+            await session.close();
+          } catch (error) {
+            this.logger.warn(
+              { err: error, provider: normalizedConfig.provider },
+              "Failed to close draft command listing session",
+            );
+          }
+        }
+      });
+    });
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -1131,30 +1150,83 @@ export class AgentManager {
     if (!normalizedConfig.model && !client.listFeatures) {
       return [];
     }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
-
-    if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
-    }
-
-    const session = await client.createSession(normalizedConfig);
-    try {
-      return session.features ?? [];
-    } finally {
-      try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft feature listing session",
+    const requestKey = this.buildDraftRequestKey(normalizedConfig);
+    return await this.runDraftRequest(this.inFlightDraftFeatures, requestKey, async () => {
+      const available = await client.isAvailable();
+      if (!available) {
+        throw new Error(
+          `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
         );
       }
+
+      return await this.providerIntrospectionQueue.run(normalizedConfig.provider, async () => {
+        if (client.listFeatures) {
+          return await client.listFeatures(normalizedConfig);
+        }
+
+        const session = await client.createSession(normalizedConfig);
+        try {
+          return session.features ?? [];
+        } finally {
+          try {
+            await session.close();
+          } catch (error) {
+            this.logger.warn(
+              { err: error, provider: normalizedConfig.provider },
+              "Failed to close draft feature listing session",
+            );
+          }
+        }
+      });
+    });
+  }
+
+  private buildDraftRequestKey(config: AgentSessionConfig): string {
+    return JSON.stringify(config);
+  }
+
+  private async resolveDraftModel(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+    if (config.model) {
+      return config;
     }
+    const client = this.requireClient(config.provider);
+    const catalog = await runProviderRefreshWithDeadline({
+      label: config.provider,
+      timeoutMs: DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS,
+      operation: (context) =>
+        client.fetchCatalog({ scope: "workspace", cwd: config.cwd, force: false }, context),
+    });
+    const model = (catalog.models.find((entry) => entry.isDefault) ?? catalog.models[0])?.id;
+    return model ? { ...config, model } : config;
+  }
+
+  private runDraftRequest<T>(
+    requests: Map<string, Promise<T>>,
+    key: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const existing = requests.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const request = operation();
+    requests.set(key, request);
+    void request.then(
+      () => {
+        if (requests.get(key) === request) {
+          requests.delete(key);
+        }
+        return undefined;
+      },
+      () => {
+        if (requests.get(key) === request) {
+          requests.delete(key);
+        }
+        return undefined;
+      },
+    );
+    return request;
   }
 
   usageSession(id: string) {
