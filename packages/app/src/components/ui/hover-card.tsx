@@ -81,7 +81,6 @@ function WebHoverCard({
   const triggerRef = useRef<View>(null);
   const contentRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
-  const [focusWithin, setFocusWithin] = useState(false);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearGraceTimer = useCallback(() => {
@@ -148,7 +147,7 @@ function WebHoverCard({
   );
 
   const setOverlayScope = useWebOverlayRegistration({
-    active: !disabled && (open || focusWithin),
+    active: !disabled && open,
     layer,
     onKeyDown: keyPressed,
     manageFocus: false,
@@ -172,10 +171,8 @@ function WebHoverCard({
     const focusEntered = (event: FocusEvent) => {
       const target = event.target as Node;
       if (trigger.contains(target)) {
-        setFocusWithin(true);
         openNow();
       } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
-        setFocusWithin(true);
         clearGraceTimer();
       }
     };
@@ -185,9 +182,17 @@ function WebHoverCard({
         !trigger.contains(next) &&
         !(contentRef.current as unknown as HTMLElement | null)?.contains(next)
       ) {
-        setFocusWithin(false);
         scheduleClose();
       }
+    };
+    const activateClosedTrigger = (event: KeyboardEvent) => {
+      if (
+        !open &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        ["ArrowDown", "Enter", " "].includes(event.key)
+      )
+        keyPressed(event);
     };
     const scrolled = (event: Event) => {
       if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
@@ -195,15 +200,17 @@ function WebHoverCard({
     };
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
+    trigger.addEventListener("keydown", activateClosedTrigger);
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     return () => {
       document.removeEventListener("focusin", focusEntered);
       document.removeEventListener("focusout", focusLeft);
+      trigger.removeEventListener("keydown", activateClosedTrigger);
       document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", close);
     };
-  }, [clearGraceTimer, openNow, scheduleClose]);
+  }, [clearGraceTimer, keyPressed, open, openNow, scheduleClose]);
 
   // While open, the safe zone covers trigger + content + the bridge between
   // them. Close only fires when the pointer leaves the safe zone; re-entering
