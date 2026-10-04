@@ -165,6 +165,10 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
       });
     };
     try {
+      // Arm the watchdog before opening the stream. A freshly spawned server can
+      // accept the connection before it answers, and a request stuck in that
+      // window would otherwise stall the retry loop instead of being retried.
+      armWatchdog();
       const result = await this.client.global.event({
         signal: requestAbort.signal,
         sseMaxRetryAttempts: 0,
@@ -172,7 +176,6 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
           sseError = error;
         },
       });
-      armWatchdog();
       for await (const event of result.stream) {
         if (this.closed) {
           return { delivered, phase, outcome: "ended" };

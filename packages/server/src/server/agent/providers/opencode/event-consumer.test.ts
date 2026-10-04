@@ -159,6 +159,43 @@ describe("OpenCodeEventConsumer", () => {
     expect(consumer.diagnostics()).toMatchObject({ attempt: 2, phase: "stream" });
   });
 
+  test("aborts a connection attempt that never responds", async () => {
+    const timing = new ControlledTiming();
+    const logger = createRecordingLogger();
+    let requests = 0;
+    const client = {
+      global: {
+        event: ({ signal }: { signal: AbortSignal }) => {
+          requests += 1;
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      },
+    } as unknown as OpencodeClient;
+    const consumer = new OpenCodeEventConsumer({
+      serverUrl: "http://127.0.0.1:1",
+      processExit: new Promise<Error>(() => undefined),
+      logger,
+      timing,
+      createClient: () => client,
+    });
+    cleanups.push(() => consumer.close());
+
+    await eventually(() => expect(requests).toBe(1));
+    timing.expireWatchdog();
+    await timing.waiting();
+    expect(consumer.diagnostics()).toMatchObject({
+      attempt: 1,
+      phase: "first-record",
+      lastOutcome: "watchdog",
+      lastError: "OpenCode event stream first-record watchdog expired",
+    });
+
+    timing.advanceWait();
+    await eventually(() => expect(requests).toBe(2));
+  });
+
   test("publishes one terminal and stops reconnecting on process exit", async () => {
     const upstream = await createSseUpstream();
     const timing = new ControlledTiming();
