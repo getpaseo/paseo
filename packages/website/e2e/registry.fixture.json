@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "registry": {
+    "name": "Paseo plugins",
+    "url": "https://plugins.paseo.sh"
+  },
+  "generatedAt": "2026-10-04T15:55:47.882Z",
+  "categories": [
+    {
+      "slug": "daemon-management",
+      "label": "Daemon management",
+      "description": "Manage hosts, daemon jobs, resources, approvals, and MCP servers."
+    },
+    {
+      "slug": "themes",
+      "label": "Themes",
+      "description": "Change the app color scheme."
+    },
+    {
+      "slug": "providers",
+      "label": "Providers",
+      "description": "Connect coding agents, ACP servers, and model routers, with account and quota fallback."
+    },
+    {
+      "slug": "orchestration",
+      "label": "Orchestration",
+      "description": "Coordinate agents, delegate work, and send messages across hosts."
+    },
+    {
+      "slug": "git",
+      "label": "Git",
+      "description": "Work with branches, worktrees, pull requests, stacks, diffs, and reviews."
+    },
+    {
+      "slug": "workspaces",
+      "label": "Workspaces",
+      "description": "Add workspace panels and tabs for boards, browsers, documents, and terminals."
+    },
+    {
+      "slug": "sidebar",
+      "label": "Sidebar",
+      "description": "Add sidebar items and panels for usage, notifications, pricing, and links."
+    },
+    {
+      "slug": "extras",
+      "label": "Extras",
+      "description": "Add presence, pets, puzzles, wellbeing reminders, and demos."
+    },
+    {
+      "slug": "utils",
+      "label": "Utils",
+      "description": "Extend the composer and timeline with commands, prompts, skills, and small helpers."
+    }
+  ],
+  "plugins": [
+    {
+      "id": "omercnet/agent-monitor",
+      "name": "Agent Monitor",
+      "description": "A Paseo plugin that provides a host-wide agent triage roster.",
+      "artifact": {
+        "kind": "npm",
+        "package": "@omercnet/paseo-agent-monitor",
+        "version": "1.2.0",
+        "resolved": "https://registry.npmjs.org/@omercnet/paseo-agent-monitor/-/paseo-agent-monitor-1.2.0.tgz",
+        "integrity": "sha512-dY7/3f49sPMVwb+Wr7iUsw4jCoQWRX2UF9Li+uU8yJdN0cj4BvTsz4GDiR3OsKk8zJ1/o01DSRi1e4uDRS3TmA=="
+      },
+      "license": "MIT",
+      "repository": {
+        "url": "https://github.com/omercnet/paseo-plugins/tree/HEAD/agent-monitor",
+        "commit": "d7b3e654f364b5be72edf6fd1d914a3750b53082"
+      },
+      "categories": ["orchestration"],
+      "author": {
+        "npm": "omercnet",
+        "name": "Omer Cohen",
+        "github": "omercnet"
+      },
+      "screenshots": [
+        "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/agent-monitor/docs/images/agent-monitor-roster.png",
+        "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/agent-monitor/docs/images/agent-monitor-settings.png"
+      ],
+      "submittedAt": "2026-09-17T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T00:00:00.000Z",
+      "publishedAt": "2026-10-03T09:36:35.639Z",
+      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "installs": 0,
+      "readme": "# Agent Monitor\n\n## Behavior\n\nA Paseo plugin that provides a host-wide agent triage roster."
+    },
+    {
+      "id": "omercnet/dracula",
+      "name": "Dracula",
+      "description": "Dracula Classic and Alucard Classic themes for Paseo.",
+      "artifact": {
+        "kind": "npm",
+        "package": "@omercnet/paseo-dracula",
+        "version": "1.2.0",
+        "resolved": "https://registry.npmjs.org/@omercnet/paseo-dracula/-/paseo-dracula-1.2.0.tgz",
+        "integrity": "sha512-I3yUiFIvaIe3jdvuQ1tZyngsfgukaUJwEQza2XYkEaB8yIA0pplZehqJLvqqmA403cjNXdVtsdW7umPtmnycqw=="
+      },
+      "license": "MIT",
+      "repository": {
+        "url": "https://github.com/omercnet/paseo-plugins/tree/HEAD/paseo-dracula",
+        "commit": "d7b3e654f364b5be72edf6fd1d914a3750b53082"
+      },
+      "categories": ["themes"],
+      "author": {
+        "npm": "omercnet",
+        "name": "Omer Cohen",
+        "github": "omercnet"
+      },
+      "screenshots": [
+        "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-dracula/screenshot.png",
+        "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-dracula/screenshot-alucard.png"
+      ],
+      "submittedAt": "2026-09-17T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T00:00:00.000Z",
+      "publishedAt": "2026-10-03T09:37:18.185Z",
+      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "installs": 0,
+      "readme": "# Dracula\n\n## Behavior\n\nDracula Classic and Alucard Classic themes for Paseo."
+    },
+    {
+      "id": "omercnet/fresh-worktrees",
+      "name": "Fresh Worktrees",
+      "description": "Fast-forwards clean local base branches before Paseo creates branch-off worktrees",
+      "artifact": {
+        "kind": "npm",
+        "package": "@omercnet/paseo-fresh-worktrees",
+        "version": "2.2.0",
+        "resolved": "https://registry.npmjs.org/@omercnet/paseo-fresh-worktrees/-/paseo-fresh-worktrees-2.2.0.tgz",
+        "integrity": "sha512-WRarzdfTbrZ36JfzmvX9HfnIYh6Pp+GV9TkoeVwM7I6f1MAEZ4gzPEmT51lWuUyMGvwTs2HFB7LthCa+VYs7IA=="
+      },
+      "license": "MIT",
+      "repository": {
+        "url": "https://github.com/omercnet/paseo-plugins/tree/HEAD/fresh-worktrees",
+        "commit": "d7b3e654f364b5be72edf6fd1d914a3750b53082"
+      },
+      "categories": ["git"],
+      "author": {
+        "npm": "omercnet",
+        "name": "Omer Cohen",
+        "github": "omercnet"
+      },
+      "screenshots": [
+        "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/fresh-worktrees/docs/images/fresh-worktrees-behind.png",
+        "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/fresh-worktrees/docs/images/fresh-worktrees-settings.png"
+      ],
+      "submittedAt": "2026-09-18T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T00:00:00.000Z",
+      "publishedAt": "2026-10-03T09:36:06.720Z",
+      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "installs": 0,
+      "readme": "# Fresh Worktrees\n\n## Behavior\n\nFast-forwards clean local base branches before Paseo creates branch-off worktrees"
+    },
+    {
+      "id": "tomgrin10/defer",
+      "name": "Defer",
+      "description": "Defer messages to Paseo coding agents until a chosen time or usage-window reset.",
+      "artifact": {
+        "kind": "npm",
+        "package": "paseo-defer",
+        "version": "2.1.9",
+        "resolved": "https://registry.npmjs.org/paseo-defer/-/paseo-defer-2.1.9.tgz",
+        "integrity": "sha512-xBBf4TUC8zkTh9WMzQRRDt0alRAYPRCmUdBnBI1ZEkatUFC4i9MxFHgaTY939xij99dASM/261IWqctcKsQppQ=="
+      },
+      "license": "MIT",
+      "repository": {
+        "url": "https://github.com/tomgrin10/paseo-defer"
+      },
+      "categories": ["utils"],
+      "author": {
+        "npm": "tomgrin10",
+        "name": "Tom Gringauz",
+        "github": "tomgrin10"
+      },
+      "screenshots": [
+        "https://raw.githubusercontent.com/tomgrin10/paseo-defer/main/docs/defer-popover.png"
+      ],
+      "submittedAt": "2026-09-22T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T00:00:00.000Z",
+      "publishedAt": "2026-09-27T09:59:16.553Z",
+      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "installs": 0,
+      "readme": "# Defer\n\n## Behavior\n\nDefer messages to Paseo coding agents until a chosen time or usage-window reset."
+    },
+    {
+      "id": "tomgrin10/graphite",
+      "name": "Graphite",
+      "description": "Workspace-native Graphite stack status and PR action radar for Paseo.",
+      "artifact": {
+        "kind": "npm",
+        "package": "paseo-graphite",
+        "version": "0.2.4",
+        "resolved": "https://registry.npmjs.org/paseo-graphite/-/paseo-graphite-0.2.4.tgz",
+        "integrity": "sha512-aAFvh+118c5mmSQ3sTsDKO8Is7g1ZU8m2+0fisr8nFrgPMu0m2mokPJnM/LaIqQc3Zaaak1chB6M6k0dWOPeIA=="
+      },
+      "license": "MIT",
+      "repository": {
+        "url": "https://github.com/tomgrin10/paseo-graphite"
+      },
+      "categories": ["git"],
+      "author": {
+        "npm": "tomgrin10",
+        "name": "Tom Gringauz",
+        "github": "tomgrin10"
+      },
+      "screenshots": [],
+      "submittedAt": "2026-09-22T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T00:00:00.000Z",
+      "publishedAt": "2026-09-23T10:36:50.112Z",
+      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "installs": 0,
+      "readme": "# Graphite\n\n## Behavior\n\nWorkspace-native Graphite stack status and PR action radar for Paseo."
+    }
+  ]
+}

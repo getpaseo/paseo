@@ -24,10 +24,16 @@ test("browses from the directory into a category, a plugin, and its author", asy
   });
   await openPlugins(page);
 
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText([
+    "Themes",
+    "Orchestration",
+    "Git",
+    "Utils",
+  ]);
   const themes = page.getByRole("region", { name: "Themes" });
   await expect(themes.getByRole("link", { name: /Dracula/ })).toBeVisible();
 
-  await browseCategory(page, "Git & code review");
+  await browseCategory(page, "Git");
   await expect(page).toHaveURL(/category=/);
   await expect(page.getByRole("heading", { level: 2 })).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Themes" })).toHaveCount(0);
@@ -48,7 +54,7 @@ test("browses from the directory into a category, a plugin, and its author", asy
 
   const breadcrumbs = page.getByRole("navigation", { name: "Breadcrumb" });
   await expect(breadcrumbs).toContainText("Plugins");
-  await expect(breadcrumbs).toContainText("Git & code review");
+  await expect(breadcrumbs).toContainText("Git");
   await expect(breadcrumbs).toContainText("Fresh Worktrees");
 
   await openAuthor(page, "Omer Cohen");
@@ -86,10 +92,7 @@ async function copyInstallCommand(page: Page) {
 }
 
 async function browseCategory(page: Page, category: string) {
-  await page
-    .getByRole("region", { name: category })
-    .getByRole("link", { name: /^View all/ })
-    .click();
+  await page.getByRole("link", { name: category, exact: true }).click();
 }
 async function openPlugin(page: Page, name: RegExp) {
   await page.getByRole("link", { name }).first().click();

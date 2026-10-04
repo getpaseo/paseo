@@ -63,7 +63,7 @@ describe("plugin registry", () => {
       "acme/example",
     ]);
     expect(queryPlugins([plugin, popular], { q: "acme/example", sort: "new" })).toEqual([plugin]);
-    expect(queryPlugins([plugin], { category: "utilities", sort: "popular" })).toEqual([]);
+    expect(queryPlugins([plugin], { category: "utils", sort: "popular" })).toEqual([]);
   });
   it("offers a registry command and an exact explicit command", () => {
     expect(installCommand(plugin)).toBe("paseo plugin install acme/example");
