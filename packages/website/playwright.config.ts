@@ -13,7 +13,7 @@ export default defineConfig({
   webServer: process.env.WEBSITE_TEST_URL
     ? undefined
     : {
-        command: "npm run dev -- --host 127.0.0.1 --port 8187 --strictPort",
+        command: "npm run build && npm run preview -- --host 127.0.0.1 --port 8187 --strictPort",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
       },

@@ -94,10 +94,6 @@ async function browseCategory(page: Page, category: string) {
 async function openPlugin(page: Page, name: RegExp) {
   await page.getByRole("link", { name }).first().click();
 }
-async function readPluginDocument(page: Page, id: string) {
-  // HTML and metadata are ready before third-party screenshot images finish loading.
-  return page.goto(`/plugins/${id}`, { waitUntil: "domcontentloaded" });
-}
 async function openAuthor(page: Page, name: string) {
   await page.getByRole("link", { name }).first().click();
 }
@@ -118,7 +114,7 @@ test.describe("search engine visits without JavaScript", () => {
     await expect(page.getByRole("link", { name: /Fresh Worktrees/ }).first()).toBeVisible();
     await expectPageMetadata(page, "Omer Cohen – Paseo plugins", "/plugins/omercnet");
 
-    const response = await readPluginDocument(page, "omercnet/fresh-worktrees");
+    const response = await page.goto("/plugins/omercnet/fresh-worktrees");
     expect(response?.status()).toBe(200);
     expect(response?.headers()["cache-control"]).toBe("private, no-store");
     expect(response?.headers()["x-robots-tag"]).toBeUndefined();
@@ -141,7 +137,7 @@ test.describe("search engine visits without JavaScript", () => {
     );
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
 
-    await readPluginDocument(page, "tomgrin10/graphite");
+    await page.goto("/plugins/tomgrin10/graphite");
     await expectPageMetadata(page, "Graphite – Paseo plugin", "/plugins/tomgrin10/graphite");
     await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
       "content",
