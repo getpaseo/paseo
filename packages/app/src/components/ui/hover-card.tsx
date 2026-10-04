@@ -81,6 +81,7 @@ function WebHoverCard({
   const triggerRef = useRef<View>(null);
   const contentRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
+  const [focusWithin, setFocusWithin] = useState(false);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearGraceTimer = useCallback(() => {
@@ -119,7 +120,7 @@ function WebHoverCard({
       if (!isWeb) return false;
       const trigger = triggerRef.current as unknown as HTMLElement | null;
       if (!trigger) return false;
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && open) {
         event.preventDefault();
         if (focusInside()) trigger.focus();
         clearGraceTimer();
@@ -143,11 +144,11 @@ function WebHoverCard({
       }
       return false;
     },
-    [clearGraceTimer, focusInside, openNow],
+    [clearGraceTimer, focusInside, open, openNow],
   );
 
   const setOverlayScope = useWebOverlayRegistration({
-    active: open,
+    active: !disabled && (open || focusWithin),
     layer,
     onKeyDown: keyPressed,
     manageFocus: false,
@@ -170,20 +171,23 @@ function WebHoverCard({
     };
     const focusEntered = (event: FocusEvent) => {
       const target = event.target as Node;
-      if (trigger.contains(target)) openNow();
-      else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target))
+      if (trigger.contains(target)) {
+        setFocusWithin(true);
+        openNow();
+      } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
+        setFocusWithin(true);
         clearGraceTimer();
+      }
     };
     const focusLeft = (event: FocusEvent) => {
       const next = event.relatedTarget as Node | null;
       if (
         !trigger.contains(next) &&
         !(contentRef.current as unknown as HTMLElement | null)?.contains(next)
-      )
+      ) {
+        setFocusWithin(false);
         scheduleClose();
-    };
-    const openFromKeyboard = (event: KeyboardEvent) => {
-      if (event.key === "ArrowDown") keyPressed(event);
+      }
     };
     const scrolled = (event: Event) => {
       if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
@@ -191,17 +195,15 @@ function WebHoverCard({
     };
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
-    trigger.addEventListener("keydown", openFromKeyboard);
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     return () => {
       document.removeEventListener("focusin", focusEntered);
       document.removeEventListener("focusout", focusLeft);
-      trigger.removeEventListener("keydown", openFromKeyboard);
       document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", close);
     };
-  }, [clearGraceTimer, keyPressed, openNow, scheduleClose]);
+  }, [clearGraceTimer, openNow, scheduleClose]);
 
   // While open, the safe zone covers trigger + content + the bridge between
   // them. Close only fires when the pointer leaves the safe zone; re-entering

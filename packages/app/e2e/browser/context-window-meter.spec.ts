@@ -396,6 +396,15 @@ test("context details support keyboard entry and dismiss when the viewport moves
   await expect(details).toHaveCount(0);
   await expect(stop).toBeVisible();
   await expect(trigger).toBeFocused();
+  for (const key of ["Enter", " "]) {
+    usage.answerNext([onPersonalLogin(claude!)]);
+    await trigger.press(key);
+    await expect(details).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(details).toHaveCount(0);
+    await expect(stop).toBeVisible();
+    await expect(trigger).toBeFocused();
+  }
   usage.answerNext([onPersonalLogin(claude!)]);
   await trigger.press("ArrowDown");
   await expect(details).toBeVisible();
