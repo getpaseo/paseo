@@ -61,7 +61,10 @@ interface SidebarViewStoreState {
    */
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
+  /** The top group of built-in and plugin rows folded down to its header. */
+  navCollapsed: boolean;
   setGroupMode: (mode: SidebarGroupMode) => void;
+  toggleNavCollapsed: () => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   toggleProjectFilter: (viewKey: string) => void;
@@ -77,6 +80,7 @@ interface SidebarViewPersistedState {
   hostFilters: string[];
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
+  navCollapsed: boolean;
 }
 
 const PersistedSidebarGroupModeSchema = z.enum(["project", "status", "label"]);
@@ -90,6 +94,7 @@ const SidebarViewPersistedStateSchema = z.strictObject({
   projectFilters: z.array(z.string()).optional(),
   groupModeByServerId: z.record(z.string(), PersistedSidebarGroupModeSchema).optional(),
   labelFilter: SidebarLabelFilterSchema.optional(),
+  navCollapsed: z.boolean().optional(),
 });
 
 type SidebarViewStorageState = z.infer<typeof SidebarViewPersistedStateSchema>;
@@ -126,6 +131,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
+      navCollapsed: false,
     };
   }
   const state = result.data;
@@ -137,6 +143,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
+      navCollapsed: false,
     };
   }
 
@@ -147,6 +154,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
     labelFilter: state.labelFilter
       ? normalizeSidebarLabelFilter(state.labelFilter)
       : emptyLabelFilter(),
+    navCollapsed: state.navCollapsed ?? false,
   };
 }
 
@@ -182,7 +190,9 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
+      navCollapsed: false,
       setGroupMode: (mode) => set({ groupMode: mode }),
+      toggleNavCollapsed: () => set((state) => ({ navCollapsed: !state.navCollapsed })),
       toggleHostFilter: (serverId) =>
         set((state) => ({ hostFilters: toggleFilterEntry(state.hostFilters, serverId) })),
       clearHostFilters: () => set({ hostFilters: [] }),
@@ -232,6 +242,7 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
         hostFilters: state.hostFilters,
         projectFilters: state.projectFilters,
         labelFilter: state.labelFilter,
+        navCollapsed: state.navCollapsed,
       }),
       migrate: migrateSidebarViewState,
     },
