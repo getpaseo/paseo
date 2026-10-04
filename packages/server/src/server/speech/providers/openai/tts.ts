@@ -32,12 +32,7 @@ export class OpenAITTS implements TextToSpeechProvider {
     });
 
     this.logger.info(
-      {
-        voice: this.config.voice,
-        model: this.config.model,
-        format: this.config.responseFormat,
-        ...(this.config.baseUrl ? { baseUrl: this.config.baseUrl } : {}),
-      },
+      { voice: this.config.voice, model: this.config.model, format: this.config.responseFormat },
       "TTS (OpenAI) initialized",
     );
   }
