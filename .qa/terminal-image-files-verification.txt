@@ -1,0 +1,39 @@
+PR #3795 follow-up verification, 2026-10-02 (Linux executor)
+
+Behavior
+- TerminalPane forwards image callbacks to every renderer.
+- Image-only DOM paste is intercepted before xterm consumes it as empty text.
+- Transferred bytes are saved privately and a file reference is injected into
+  the selected live PTY. No shared host clipboard is modified.
+- Daemon-owned files survive reconnects and store restarts. Active files are not
+  evicted. Inactive directories retire after a persisted seven-day grace period,
+  swept opportunistically on later pastes. Quotas reject new uploads.
+- New optional wire fields and terminalImageFiles capability gate preserve message
+  parsing across versions. Legacy native clipboard keystrokes remain available.
+
+Passed
+- Full server build, typecheck, lint, and formatting.
+- host-clipboard.test.ts: 11 filesystem/path tests.
+- session.test.ts: 149 tests.
+- terminal-emulator-runtime.browser.test.ts: 35 Chromium tests, including a DOM
+  paste dispatched at xterm's actual input element.
+- terminal-protocol-query.spec.ts: 2 browser/daemon/PTY end-to-end tests. The image
+  case sends distinct valid PNGs concurrently from two panes, reconnects a page,
+  then releases delayed file consumption and verifies each PTY's expected SHA-256
+  and mode 0600. PASEO_HOME contains spaces and an apostrophe.
+- Native OpenCode 1.18.34 composer accepted an apostrophe/space quoted PNG path
+  as [Image 1] and an encoded file URL as [Image 2]. No model prompt was submitted.
+
+Verification limits
+- Native Windows ACL application and Windows/macOS/mobile UI flows were not run.
+- Codex 0.160.0 could not start because its state location is read-only in this
+  executor; CLI flags for writable SQLite/log directories did not fully unblock it.
+- Claude Code 2.1.287 startup failed connecting to api.anthropic.com with
+  ERR_PROXY_TUNNEL. Its attachment consumption was not verified here.
+- Synthetic clipboard events exercise the app integration, not OS clipboard
+  permission prompts or actual mobile clipboard services.
+- CI results are recorded separately for the published commit.
+
+The original image-paste-capture.png is unchanged and remains historical evidence
+for the original implementation, not a screenshot of this follow-up.
+Original Git blob: a67762c640d5cd03767df57a0b395ce0afabbf91
