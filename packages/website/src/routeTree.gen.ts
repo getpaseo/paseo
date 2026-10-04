@@ -60,8 +60,11 @@ import { Route as AmpRouteImport } from "./routes/amp";
 import { Route as AgoragenticRouteImport } from "./routes/agoragentic";
 import { Route as AgentsRouteImport } from "./routes/agents";
 import { Route as IndexRouteImport } from "./routes/index";
+import { Route as PluginsIndexRouteImport } from "./routes/plugins/index";
 import { Route as DocsIndexRouteImport } from "./routes/docs/index";
 import { Route as BlogIndexRouteImport } from "./routes/blog/index";
+import { Route as PluginsAllRouteImport } from "./routes/plugins/all";
+import { Route as PluginsOwnerRouteImport } from "./routes/plugins/$owner";
 import { Route as DownloadThanksRouteImport } from "./routes/download_.thanks";
 import { Route as DocsSplatRouteImport } from "./routes/docs/$";
 import { Route as BlogSplatRouteImport } from "./routes/blog/$";
@@ -73,6 +76,8 @@ import { Route as AlternativesHappyCoderRouteImport } from "./routes/alternative
 import { Route as AlternativesConductorRouteImport } from "./routes/alternatives/conductor";
 import { Route as AlternativesCodexAppRouteImport } from "./routes/alternatives/codex-app";
 import { Route as AlternativesClaudeDesktopRouteImport } from "./routes/alternatives/claude-desktop";
+import { Route as PluginsCategorySlugRouteImport } from "./routes/plugins/category/$slug";
+import { Route as PluginsOwnerSlugRouteImport } from "./routes/plugins/$owner_.$slug";
 
 const VtcodeRoute = VtcodeRouteImport.update({
   id: "/vtcode",
@@ -329,6 +334,11 @@ const IndexRoute = IndexRouteImport.update({
   path: "/",
   getParentRoute: () => rootRouteImport,
 } as any);
+const PluginsIndexRoute = PluginsIndexRouteImport.update({
+  id: "/plugins/",
+  path: "/plugins/",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DocsIndexRoute = DocsIndexRouteImport.update({
   id: "/",
   path: "/",
@@ -338,6 +348,16 @@ const BlogIndexRoute = BlogIndexRouteImport.update({
   id: "/",
   path: "/",
   getParentRoute: () => BlogRoute,
+} as any);
+const PluginsAllRoute = PluginsAllRouteImport.update({
+  id: "/plugins/all",
+  path: "/plugins/all",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PluginsOwnerRoute = PluginsOwnerRouteImport.update({
+  id: "/plugins/$owner",
+  path: "/plugins/$owner",
+  getParentRoute: () => rootRouteImport,
 } as any);
 const DownloadThanksRoute = DownloadThanksRouteImport.update({
   id: "/download_/thanks",
@@ -396,6 +416,16 @@ const AlternativesClaudeDesktopRoute =
     path: "/alternatives/claude-desktop",
     getParentRoute: () => rootRouteImport,
   } as any);
+const PluginsCategorySlugRoute = PluginsCategorySlugRouteImport.update({
+  id: "/plugins/category/$slug",
+  path: "/plugins/category/$slug",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PluginsOwnerSlugRoute = PluginsOwnerSlugRouteImport.update({
+  id: "/plugins/$owner_/$slug",
+  path: "/plugins/$owner/$slug",
+  getParentRoute: () => rootRouteImport,
+} as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
@@ -460,8 +490,13 @@ export interface FileRoutesByFullPath {
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
   "/download/thanks": typeof DownloadThanksRoute;
+  "/plugins/$owner": typeof PluginsOwnerRoute;
+  "/plugins/all": typeof PluginsAllRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
+  "/plugins/": typeof PluginsIndexRoute;
+  "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
@@ -524,8 +559,13 @@ export interface FileRoutesByTo {
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
   "/download/thanks": typeof DownloadThanksRoute;
+  "/plugins/$owner": typeof PluginsOwnerRoute;
+  "/plugins/all": typeof PluginsAllRoute;
   "/blog": typeof BlogIndexRoute;
   "/docs": typeof DocsIndexRoute;
+  "/plugins": typeof PluginsIndexRoute;
+  "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
@@ -591,8 +631,13 @@ export interface FileRoutesById {
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
   "/download_/thanks": typeof DownloadThanksRoute;
+  "/plugins/$owner": typeof PluginsOwnerRoute;
+  "/plugins/all": typeof PluginsAllRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
+  "/plugins/": typeof PluginsIndexRoute;
+  "/plugins/$owner_/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
@@ -659,8 +704,13 @@ export interface FileRouteTypes {
     | "/blog/$"
     | "/docs/$"
     | "/download/thanks"
+    | "/plugins/$owner"
+    | "/plugins/all"
     | "/blog/"
-    | "/docs/";
+    | "/docs/"
+    | "/plugins/"
+    | "/plugins/$owner/$slug"
+    | "/plugins/category/$slug";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
@@ -723,8 +773,13 @@ export interface FileRouteTypes {
     | "/blog/$"
     | "/docs/$"
     | "/download/thanks"
+    | "/plugins/$owner"
+    | "/plugins/all"
     | "/blog"
-    | "/docs";
+    | "/docs"
+    | "/plugins"
+    | "/plugins/$owner/$slug"
+    | "/plugins/category/$slug";
   id:
     | "__root__"
     | "/"
@@ -789,8 +844,13 @@ export interface FileRouteTypes {
     | "/blog/$"
     | "/docs/$"
     | "/download_/thanks"
+    | "/plugins/$owner"
+    | "/plugins/all"
     | "/blog/"
-    | "/docs/";
+    | "/docs/"
+    | "/plugins/"
+    | "/plugins/$owner_/$slug"
+    | "/plugins/category/$slug";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
@@ -854,6 +914,11 @@ export interface RootRouteChildren {
   AlternativesOrcaRoute: typeof AlternativesOrcaRoute;
   AlternativesSupersetRoute: typeof AlternativesSupersetRoute;
   DownloadThanksRoute: typeof DownloadThanksRoute;
+  PluginsOwnerRoute: typeof PluginsOwnerRoute;
+  PluginsAllRoute: typeof PluginsAllRoute;
+  PluginsIndexRoute: typeof PluginsIndexRoute;
+  PluginsOwnerSlugRoute: typeof PluginsOwnerSlugRoute;
+  PluginsCategorySlugRoute: typeof PluginsCategorySlugRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -1215,6 +1280,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof IndexRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/plugins/": {
+      id: "/plugins/";
+      path: "/plugins";
+      fullPath: "/plugins/";
+      preLoaderRoute: typeof PluginsIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/docs/": {
       id: "/docs/";
       path: "/";
@@ -1228,6 +1300,20 @@ declare module "@tanstack/react-router" {
       fullPath: "/blog/";
       preLoaderRoute: typeof BlogIndexRouteImport;
       parentRoute: typeof BlogRoute;
+    };
+    "/plugins/all": {
+      id: "/plugins/all";
+      path: "/plugins/all";
+      fullPath: "/plugins/all";
+      preLoaderRoute: typeof PluginsAllRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins/$owner": {
+      id: "/plugins/$owner";
+      path: "/plugins/$owner";
+      fullPath: "/plugins/$owner";
+      preLoaderRoute: typeof PluginsOwnerRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
     "/download_/thanks": {
       id: "/download_/thanks";
@@ -1304,6 +1390,20 @@ declare module "@tanstack/react-router" {
       path: "/alternatives/claude-desktop";
       fullPath: "/alternatives/claude-desktop";
       preLoaderRoute: typeof AlternativesClaudeDesktopRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins/category/$slug": {
+      id: "/plugins/category/$slug";
+      path: "/plugins/category/$slug";
+      fullPath: "/plugins/category/$slug";
+      preLoaderRoute: typeof PluginsCategorySlugRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins/$owner_/$slug": {
+      id: "/plugins/$owner_/$slug";
+      path: "/plugins/$owner/$slug";
+      fullPath: "/plugins/$owner/$slug";
+      preLoaderRoute: typeof PluginsOwnerSlugRouteImport;
       parentRoute: typeof rootRouteImport;
     };
   }
@@ -1394,6 +1494,11 @@ const rootRouteChildren: RootRouteChildren = {
   AlternativesOrcaRoute: AlternativesOrcaRoute,
   AlternativesSupersetRoute: AlternativesSupersetRoute,
   DownloadThanksRoute: DownloadThanksRoute,
+  PluginsOwnerRoute: PluginsOwnerRoute,
+  PluginsAllRoute: PluginsAllRoute,
+  PluginsIndexRoute: PluginsIndexRoute,
+  PluginsOwnerSlugRoute: PluginsOwnerSlugRoute,
+  PluginsCategorySlugRoute: PluginsCategorySlugRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

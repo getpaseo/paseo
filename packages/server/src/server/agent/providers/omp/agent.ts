@@ -445,7 +445,6 @@ function buildResumeStartInput(input: {
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
     session: input.sessionFile,
-    model: input.resumeConfig.model,
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
     ...(input.launchMode.extraArgs ? { extraArgs: input.launchMode.extraArgs } : {}),
@@ -722,6 +721,19 @@ export class OmpAgentSession implements AgentSession {
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
   private customMessageIndex = 0;
+
+  private readonly usageSessionKey = randomUUID();
+
+  usageSession() {
+    const env = this.runtimeSession.environment;
+    if (this.closed) return null;
+    return {
+      provider: "omp",
+      model: modelToId(this.state.model) ?? undefined,
+      env,
+      sessionKey: this.usageSessionKey,
+    };
+  }
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -2360,16 +2372,17 @@ export class OmpAgentClient implements AgentClient {
         resumeConfig.config,
         startInput.env,
       );
-      const initialState = await this.restoreFastMode(
-        runtimeSession,
-        resumeConfig.config,
-        await runtimeSession.getState(),
-      );
+      const resumedState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
+      const config = {
+        ...resumeConfig.config,
+        model: modelToId(resumedState.model) ?? resumeConfig.config.model,
+      };
+      const initialState = await this.restoreFastMode(runtimeSession, config, resumedState);
       return new OmpAgentSession({
         runtimeSession,
         hostTools,
-        restartRuntime: this.buildRestartRuntime(startInput, resumeConfig.config, launchContext),
-        config: resumeConfig.config,
+        restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),
+        config,
         initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
@@ -2385,6 +2398,35 @@ export class OmpAgentClient implements AgentClient {
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
+  }
+
+  // OMP resumes a session on the model it recorded, or on its default when that model
+  // is gone. Switching afterwards keeps a removed model from blocking the resume.
+  private async applyResumeModel(
+    runtimeSession: OmpRuntimeSession,
+    requestedModel: string | undefined,
+  ): Promise<OmpSessionState> {
+    const state = await runtimeSession.getState();
+    const reference = parseModelReference(requestedModel ?? null);
+    if (!reference?.provider) {
+      return state;
+    }
+    const { provider, id } = reference;
+    const isRequested = (model: OmpModel | null | undefined) =>
+      model?.provider === provider && model.id === id;
+    if (isRequested(state.model)) {
+      return state;
+    }
+    const availableModels = await runtimeSession.getAvailableModels();
+    if (!availableModels.some(isRequested)) {
+      this.logger.warn(
+        { requestedModel, sessionModel: modelToId(state.model) },
+        "OMP resumed on the session's model because the requested model is unavailable",
+      );
+      return state;
+    }
+    await runtimeSession.setModel(provider, id);
+    return runtimeSession.getState();
   }
 
   private buildRestartRuntime(

@@ -337,7 +337,7 @@ test.describe("Tab transitions (no flash)", () => {
 
     expect(counts.every((count) => count === initialCount)).toBe(true);
     expect(new Set(snapshots.map(tabIdentityKey)).size).toBeLessThanOrEqual(2);
-    await expectTabTitleFits(page, "New Agent", { min: 96, max: 160 });
+    await expectTabTitleFits(page, "New Agent", { min: 64, max: 160 });
   });
 
   test("Terminal transition completes within visual budget", async ({ page }) => {

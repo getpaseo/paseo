@@ -1,3 +1,4 @@
+import { handlePluginRegistryRequest } from "~/plugins/published";
 import type { Register } from "@tanstack/react-router";
 import type { RequestHandler } from "@tanstack/react-start/server";
 import { getAndroidVersionCode } from "~/android-version";
@@ -8,6 +9,7 @@ import { buildLlmsTxt } from "~/llms";
 
 interface WebsiteEnv {
   WEBSITE_CACHE?: KVNamespace;
+  PLUGINS_REGISTRY_URL?: string;
 }
 
 function markdownResponse(body: string): Response {
@@ -78,6 +80,12 @@ async function getStartFetch(): Promise<RequestHandler<Register>> {
 export default {
   async fetch(request: Request, env: WebsiteEnv, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    const pluginResponse = await handlePluginRegistryRequest(request, env, {
+      cache: env.WEBSITE_CACHE ?? null,
+      waitUntil: (promise) => context.waitUntil(promise),
+    });
+    if (pluginResponse) return pluginResponse;
 
     const environment = import.meta.env.DEV ? "development" : "production";
     const canonicalRedirect = getCanonicalRedirect(url, environment);

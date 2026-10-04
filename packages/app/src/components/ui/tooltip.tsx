@@ -614,6 +614,7 @@ export function TooltipContent({
           entering={FadeIn.duration(80)}
           exiting={FadeOut.duration(80)}
           collapsable={false}
+          role="tooltip"
           testID={testID}
           onLayout={handleLayout}
           onPointerEnter={ctx.interactive ? handleContentEnter : undefined}
@@ -651,6 +652,7 @@ export function TooltipContent({
             entering={FadeIn.duration(80)}
             exiting={FadeOut.duration(80)}
             collapsable={false}
+            role="tooltip"
             testID={testID}
             onLayout={handleLayout}
             onFocus={handleContentEnter}
@@ -669,6 +671,7 @@ export function TooltipContent({
             entering={FadeIn.duration(80)}
             exiting={FadeOut.duration(80)}
             collapsable={false}
+            role="tooltip"
             testID={testID}
             onLayout={handleLayout}
             style={contentStyle}

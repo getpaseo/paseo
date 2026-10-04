@@ -28,6 +28,7 @@ function highlightStyle(pinned: boolean, hovered: boolean) {
 export function UsageWindowBar({
   window,
   displayAs,
+  pinnable,
   pinned,
   onTogglePin,
   pinLabel,
@@ -35,6 +36,8 @@ export function UsageWindowBar({
 }: {
   window: UsageWindow;
   displayAs: UsageDisplayAs;
+  /** Whether the row pins the window to the sidebar. When false the row is a plain bar. */
+  pinnable: boolean;
   pinned: boolean;
   onTogglePin: () => void;
   /** What the row pins, naming the source and window: "Pin Claude Session". */
@@ -55,6 +58,24 @@ export function UsageWindowBar({
   const value =
     shownPct != null ? formatDisplayPct(shownPct, displayAs, i18n.resolvedLanguage) : "—";
   const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);
+  const content = {
+    label: formatProviderUsageLabel(window.id, window.label),
+    value,
+    trailing,
+    isAtRisk,
+    percent: shownPct ?? 0,
+    tone,
+    pinned,
+  };
+
+  // Same padding as the pinnable row, so bars line up in both modes.
+  if (!pinnable) {
+    return (
+      <View style={styles.row}>
+        <WindowRowContent {...content} highlight={styles.highlightNone} pinnable={false} />
+      </View>
+    );
+  }
 
   // The whole row pins the window to the sidebar Usage item. Pinned or not, it keeps the same
   // padding so toggling only changes the background.
@@ -70,14 +91,9 @@ export function UsageWindowBar({
     >
       {({ hovered }: { hovered?: boolean }) => (
         <WindowRowContent
+          {...content}
           highlight={highlightStyle(pinned, Boolean(hovered))}
-          label={formatProviderUsageLabel(window.id, window.label)}
-          value={value}
-          trailing={trailing}
-          isAtRisk={isAtRisk}
-          percent={shownPct ?? 0}
-          tone={tone}
-          pinned={pinned}
+          pinnable
         />
       )}
     </Pressable>
@@ -92,6 +108,7 @@ function WindowRowContent({
   isAtRisk,
   percent,
   tone,
+  pinnable,
   pinned,
 }: {
   highlight: StyleProp<ViewStyle>;
@@ -101,6 +118,7 @@ function WindowRowContent({
   isAtRisk: boolean;
   percent: number;
   tone: UsageTone;
+  pinnable: boolean;
   pinned: boolean;
 }) {
   return (
@@ -121,7 +139,7 @@ function WindowRowContent({
           </View>
           <UsageMeter percent={percent} tone={tone} />
         </View>
-        <UsagePinGlyph pinned={pinned} />
+        {pinnable ? <UsagePinGlyph pinned={pinned} /> : null}
       </View>
     </>
   );

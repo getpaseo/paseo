@@ -101,7 +101,7 @@ import {fetchUsage, discover} from "./server/usage.js";
 import {inputSchema} from "./shared/input.js";
 export default function contribute(server) {
   server.registerUsageSource({id: "codex-window-qa", label: "Codex", input: inputSchema,
-    discover: () => discover({home: ${JSON.stringify(directory)}, env: {CODEX_HOME: ${JSON.stringify(directory)}}}),
+    discover: (scope) => discover(scope, {home: ${JSON.stringify(directory)}, env: {CODEX_HOME: ${JSON.stringify(directory)}}}),
     fetch: (input) => fetchUsage(input, async () => Response.json(JSON.parse(await readFile(${JSON.stringify(path.join(directory, "payload.json"))}, "utf8")))),
   });
   return () => {};
