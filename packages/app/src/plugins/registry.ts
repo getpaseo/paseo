@@ -1,5 +1,7 @@
+import type { AudioEngine } from "@/audio";
 import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
+import { createPaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -40,6 +42,7 @@ export class PluginRegistry {
     options: {
       replacePluginId?: string;
       client: DaemonClient;
+      audio: Pick<AudioEngine, "play">;
     },
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
@@ -64,6 +67,7 @@ export class PluginRegistry {
     }
     const installed = catalog.flatMap((entry) => {
       const key = `${serverId}/${entry.id}`;
+      let installation: InstalledPlugin | undefined;
       try {
         if (!entry.clientBundle) return [];
         assertPluginCompatibility({ ...entry, version: this.dependencies.version, runtime: "app" });
@@ -74,7 +78,11 @@ export class PluginRegistry {
           this.evaluationErrors.delete(key);
           return [existing];
         }
-        const installation: InstalledPlugin = {
+        const client = options.client;
+        installation = {
+          lifetime: new AbortController(),
+          paseo: createPaseoApi(client),
+          invoke: (method, input) => client.invokePluginRpc(entry.id, method, input),
           id: entry.id,
           serverId,
           clientBundle: entry.clientBundle,
@@ -83,7 +91,8 @@ export class PluginRegistry {
           cleanup: () => undefined,
           surfaces: [],
           settingsScreens: [],
-          sidebarItems: [],
+          sidebarItems: { header: [], footer: [] },
+          legacySidebarItems: [],
           workspacePanels: [],
           commandCenterItems: [],
           clientSlashCommands: [],
@@ -92,16 +101,28 @@ export class PluginRegistry {
           timelineTransformers: [],
           timelineRenderers: [],
         };
-        const evaluated = runPluginClientBundle(
-          entry.id,
-          entry.clientBundle,
-          this.dependencies.createRuntime(installation, options.client),
-          () => this.publish(),
+        const runtime = this.dependencies.createRuntime(installation, options.audio);
+        const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>
+          this.publish(),
         );
         Object.assign(installation, evaluated);
+        const paseo = installation.paseo;
+        installation.cleanup = async () => {
+          const results = await Promise.allSettled([paseo.dispose(), evaluated.cleanup()]);
+          const failures = results.filter((result) => result.status === "rejected");
+          if (failures.length)
+            throw new AggregateError(
+              failures.map((result) => result.reason),
+              "Plugin cleanup failed",
+            );
+        };
         this.evaluationErrors.delete(key);
         return [installation];
       } catch (error) {
+        installation?.lifetime.abort();
+        void installation?.paseo
+          .dispose()
+          .catch((failure) => console.warn(`[Plugins] API cleanup failed for ${key}`, failure));
         this.evaluationErrors.set(key, error instanceof Error ? error.message : String(error));
         console.warn(`[Plugins] Failed to evaluate ${serverId}/${entry.id}`, error);
         return [];
@@ -138,6 +159,7 @@ export class PluginRegistry {
   private dispose(plugin: InstalledPlugin): void {
     if (this.disposed.has(plugin)) return;
     this.disposed.add(plugin);
+    plugin.lifetime.abort();
     plugin.queryClient.clear();
     try {
       void Promise.resolve(plugin.cleanup()).catch((error) => {

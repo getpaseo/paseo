@@ -130,7 +130,7 @@ test.skipIf(process.platform !== "linux")(
     };
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "real-hooks" } });
+      await client.fetchAgents({ subscribe: {} });
       await client.patchDaemonConfig({ pluginsEnabled: true });
       await client.installDirectoryPlugin(path.join(repoRoot, "plugin-examples/lifecycle-logger"));
       await client.installDirectoryPlugin(path.join(repoRoot, "plugin-examples/lifecycle-actions"));
@@ -280,6 +280,7 @@ test.skipIf(process.platform !== "linux")(
         })
         .toEqual([
           "agent.archived",
+          "agent.closed",
           "agent.created",
           "agent.permission_requested",
           "agent.permission_resolved",

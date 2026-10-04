@@ -6,6 +6,7 @@ import {
 
 function makeSources(): DesktopDiagnosticSources {
   return {
+    getSandboxDiagnostics: async () => ({ enabled: true, reason: "user namespaces available" }),
     getStatus: async () => ({
       serverId: "server-1",
       status: "running",
@@ -15,6 +16,8 @@ function makeSources(): DesktopDiagnosticSources {
       home: "/paseo/home",
       version: "1.2.3",
       desktopManaged: true,
+      ownedByDesktop: true,
+      startedAt: "2026-01-01T00:00:00.000Z",
       error: null,
     }),
     getDaemonLogs: async () => ({
@@ -144,4 +147,21 @@ describe("desktop diagnostic report", () => {
     expect(report).toContain("Desktop daemon log tail\n  daemon line one\n  daemon line two");
     expect(report).toContain("Desktop app log tail\n  Error: app log unavailable");
   });
+});
+
+test("reports sandbox degradation and its reason even if daemon diagnostics fail", async () => {
+  const result = await collectDesktopDiagnosticSections({
+    ...makeSources(),
+    getStatus: async () => {
+      throw new Error("daemon unavailable");
+    },
+    getSandboxDiagnostics: async () => ({
+      enabled: false,
+      reason: "user namespaces unavailable; no usable SUID helper",
+    }),
+  });
+  expect(result.sections.join("\n")).toContain(
+    "Chromium sandbox\n  State: Disabled\n  Reason: user namespaces unavailable; no usable SUID helper",
+  );
+  expect(result.status).toBe("failed");
 });

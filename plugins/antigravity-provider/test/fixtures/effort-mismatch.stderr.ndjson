@@ -1,0 +1,1 @@
+{"t_ms": 298, "stream": "stderr", "data": "error: invalid model selection (--model \"gemini-3.1-pro-preview\" --effort \"low\"): --effort is not supported for model \"gemini-3.1-pro-preview\""}

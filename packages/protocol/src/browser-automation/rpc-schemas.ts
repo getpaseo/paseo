@@ -498,6 +498,7 @@ export const BrowserAutomationDialogEventSchema = z.object({
 export const BrowserAutomationExecuteRequestSchema = z
   .object({
     type: z.literal("browser.automation.execute.request"),
+    subscriptionId: z.string().optional(),
     requestId: z.string().min(1),
     agentId: z.string().min(1).optional(),
     cwd: z.string().min(1).optional(),

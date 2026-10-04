@@ -14,7 +14,6 @@ import {
   type ProviderSnapshotTransition,
 } from "../../agent/provider-snapshot-manager.js";
 import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
-import { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 
 type SnapshotChangeHandler = (transition: ProviderSnapshotTransition) => void;
@@ -24,7 +23,6 @@ interface MakeOptions {
   supportsCustomModeIcons?: boolean;
   supportsCompactProviderSnapshots?: boolean;
   snapshot?: Partial<ProviderSnapshotManager>;
-  usage?: { [K in keyof ProviderUsageService]?: unknown };
   host?: Partial<ProviderCatalogSessionHost>;
 }
 
@@ -54,7 +52,10 @@ function makeSubsystem(options: MakeOptions = {}) {
     isProviderVisibleToClient: (provider) => visible.has(provider),
     supportsCustomModeIcons: () => options.supportsCustomModeIcons ?? false,
     supportsProviderSnapshotReferences: () => false,
-    wantsSnapshotChanges: () => true,
+    publishSnapshot: (project) => {
+      const message = project();
+      if (message) emitted.push(message);
+    },
     supportsCompactProviderSnapshots: () => options.supportsCompactProviderSnapshots ?? false,
     listProviderAvailability: async () => [],
     listDraftFeatures: async () => [],
@@ -70,7 +71,6 @@ function makeSubsystem(options: MakeOptions = {}) {
   const subsystem = new ProviderCatalogSession({
     host,
     providerSnapshotManager,
-    providerUsageService: createStub<ProviderUsageService>(options.usage ?? {}),
     logger: pino({ level: "silent" }),
   });
   function pushSnapshotChange(
@@ -296,25 +296,6 @@ describe("ProviderCatalogSession", () => {
     });
   });
 
-  it("surfaces a usage-list failure as an rpc_error envelope", async () => {
-    const { subsystem, emitted } = makeSubsystem({
-      usage: {
-        listUsage: async () => {
-          throw new Error("quota service down");
-        },
-      },
-    });
-
-    await subsystem.handleProviderUsageListRequest({
-      type: "provider.usage.list.request",
-      requestId: "u1",
-    });
-
-    const err = findByType(emitted, "rpc_error");
-    expect(err?.payload.code).toBe("provider_usage_list_failed");
-    expect(err?.payload.requestId).toBe("u1");
-  });
-
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {
@@ -385,10 +366,6 @@ it("announces shared content without retransmitting models or hashing discovery 
     new ProviderCatalogSession({
       providerSnapshotManager: manager,
       logger: pino({ level: "silent" }),
-      providerUsageService: new ProviderUsageService({
-        logger: pino({ level: "silent" }),
-        fetchers: [],
-      }),
       host: {
         emit(message) {
           emitted.push(message);
@@ -396,7 +373,10 @@ it("announces shared content without retransmitting models or hashing discovery 
         isProviderVisibleToClient: () => true,
         supportsCustomModeIcons: () => true,
         supportsCompactProviderSnapshots: () => true,
-        wantsSnapshotChanges: () => true,
+        publishSnapshot: (project) => {
+          const message = project();
+          if (message) emitted.push(message);
+        },
         supportsProviderSnapshotReferences: () => references,
         listProviderAvailability: async () => [],
         listDraftFeatures: async () => [],

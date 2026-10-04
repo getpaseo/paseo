@@ -42,8 +42,9 @@ describe("permission flow: Codex", () => {
       thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       cwd,
       title: "Codex Permission Test",
-      modeId: "read-only",
+      modeId: "always-ask",
     });
+    await ctx.client.subscribeAgentTimeline(agent.id, () => {}).ready;
 
     expect(agent.id).toBeTruthy();
     expect(agent.status).toBe("idle");
@@ -81,17 +82,18 @@ describe("permission flow: Codex", () => {
 
     // Verify permission_resolved event was received
     const queue = messages;
-    const hasPermissionResolved = queue.some((m) => {
-      if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
-        return (
-          m.payload.event.type === "permission_resolved" &&
-          m.payload.event.requestId === permission.id &&
-          m.payload.event.resolution.behavior === "allow"
-        );
-      }
-      return false;
-    });
-    expect(hasPermissionResolved).toBe(true);
+    const hasPermissionResolved = () =>
+      queue.some((m) => {
+        if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
+          return (
+            m.payload.event.type === "permission_resolved" &&
+            m.payload.event.requestId === permission.id &&
+            m.payload.event.resolution.behavior === "allow"
+          );
+        }
+        return false;
+      });
+    await expect.poll(hasPermissionResolved).toBe(true);
 
     rmSync(cwd, { recursive: true, force: true });
   }, 30_000);
@@ -107,8 +109,9 @@ describe("permission flow: Codex", () => {
       thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       cwd,
       title: "Codex Permission Deny Test",
-      modeId: "read-only",
+      modeId: "always-ask",
     });
+    await ctx.client.subscribeAgentTimeline(agent.id, () => {}).ready;
 
     expect(agent.id).toBeTruthy();
 
@@ -145,17 +148,18 @@ describe("permission flow: Codex", () => {
 
     // Verify permission_resolved event was received with deny
     const queue = messages;
-    const hasPermissionDenied = queue.some((m) => {
-      if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
-        return (
-          m.payload.event.type === "permission_resolved" &&
-          m.payload.event.requestId === permission.id &&
-          m.payload.event.resolution.behavior === "deny"
-        );
-      }
-      return false;
-    });
-    expect(hasPermissionDenied).toBe(true);
+    const hasPermissionDenied = () =>
+      queue.some((m) => {
+        if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
+          return (
+            m.payload.event.type === "permission_resolved" &&
+            m.payload.event.requestId === permission.id &&
+            m.payload.event.resolution.behavior === "deny"
+          );
+        }
+        return false;
+      });
+    await expect.poll(hasPermissionDenied).toBe(true);
 
     rmSync(cwd, { recursive: true, force: true });
   }, 30_000);
@@ -172,6 +176,7 @@ describe("permission flow: Codex", () => {
       title: "Codex Interrupt Test",
       modeId: "full-access",
     });
+    await ctx.client.subscribeAgentTimeline(agent.id, () => {}).ready;
 
     expect(agent.id).toBeTruthy();
     expect(agent.currentModeId).toBe("full-access");

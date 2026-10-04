@@ -64,6 +64,23 @@ A Discord starter uses `discord.mention`, your Discord user ID, and `discord.rep
 
 Setup asks before replacing the selected trigger file. It preserves other triggers and any existing legacy bundle. Read [Hub security](/docs/hub/security) before widening `from_users` or the agent's authority.
 
+## Startup timeout
+
+Hub waits up to **two minutes** for agent startup, including worktree creation, provider startup, and initial prompt acceptance. For a slower machine, set `run.startup_timeout` in the trigger YAML:
+
+```yaml
+name: inspect
+on:
+  manual.run: {}
+run:
+  target: { daemon: devbox, cwd: /workspace/project }
+  agent: { provider: codex, mode: full-access }
+  startup_timeout: 5m
+  prompt: Inspect this repository and summarize its current state.
+```
+
+Use a positive duration in `ms`, `s`, `m`, or `h`, up to `24h`. Omitting the field uses `2m`. The existing `max_runtime` and `idle_timeout` limits still apply during startup and can expire sooner. This setting changes Hub's waiting budget; provider-specific timeouts remain in effect.
+
 ## Deploy from the CLI
 
 Run from the repository root:

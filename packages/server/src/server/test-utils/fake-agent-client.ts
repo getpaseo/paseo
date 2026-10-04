@@ -62,6 +62,7 @@ interface FakeAgentSessionOptions {
 }
 
 export interface TestAgentClientOptions {
+  beforeCreateSession?: () => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput) => void;
   supportsMcpServers?: boolean;
@@ -737,6 +738,16 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(turnStarted);
       this.notifySubscribers(turnStarted);
 
+      if (textPrompt === "Emit a provider child") {
+        const child: AgentStreamEvent = {
+          type: "provider_subagent",
+          provider: this.providerName,
+          event: { type: "upsert", id: "fixture-child", title: "Fixture child", status: "running" },
+        };
+        await this.appendHistoryEvent(child);
+        this.notifySubscribers(child);
+      }
+
       if (textPrompt.toLowerCase().includes("emit a turn failure")) {
         const failed: AgentStreamEvent = {
           type: "turn_failed",
@@ -1202,6 +1213,7 @@ class FakeAgentClient implements AgentClient {
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    await this.options.beforeCreateSession?.();
     return new FakeAgentSession({
       providerName: this.provider,
       config: { ...config },

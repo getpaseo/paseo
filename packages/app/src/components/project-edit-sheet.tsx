@@ -81,7 +81,7 @@ export function ProjectEditSheet({
     form.setPickedImage({
       fileName: file.fileName,
       mimeType: file.mimeType,
-      data: Buffer.from(file.bytes).toString("base64"),
+      data: Buffer.from(await file.readBytes()).toString("base64"),
     });
   }, [form, pickFiles]);
 

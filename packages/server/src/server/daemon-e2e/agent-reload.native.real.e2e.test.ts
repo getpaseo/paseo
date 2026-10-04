@@ -61,7 +61,7 @@ async function withNativeConversation(
     });
     client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "native-reload-qa" } });
+    await client.fetchAgents({ subscribe: {} });
     const agent = await client.createAgent({ provider, cwd, ...config });
     process.stdout.write(`${provider}: model=${agent.model ?? "default"}\n`);
     const manager = daemon.daemon.agentManager;

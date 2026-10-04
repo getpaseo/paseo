@@ -49,7 +49,7 @@ async function main(): Promise<void> {
 
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "voice-debug" } });
+    await client.fetchAgents({ subscribe: {} });
 
     const voiceCwd = mkdtempSync(path.join(tmpdir(), "voice-roundtrip-debug-"));
     const voiceAgent = await client.createAgent({
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
       }
     });
 
-    const offStream = client.on("agent_stream", (msg) => {
+    const offStream = client.subscribeAgentTimeline(voiceAgentId, (msg) => {
       if (msg.type !== "agent_stream") return;
       if (msg.payload.event.type !== "timeline") return;
       const item = msg.payload.event.item;
@@ -99,6 +99,8 @@ async function main(): Promise<void> {
         status: item.status,
       });
     });
+
+    await offStream.ready;
 
     let audioChunkCount = 0;
     const firstAudio = new Promise<void>((resolve) => {

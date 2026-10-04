@@ -19,7 +19,6 @@ import {
   type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
-import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import { expandTilde } from "../../../utils/path.js";
 
 // COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
@@ -48,7 +47,7 @@ export interface ProviderCatalogSessionHost {
   supportsCustomModeIcons(): boolean;
   supportsCompactProviderSnapshots(): boolean;
   supportsProviderSnapshotReferences(): boolean;
-  wantsSnapshotChanges(): boolean;
+  publishSnapshot(project: () => SessionOutboundMessage | null): void;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
 }
@@ -56,13 +55,12 @@ export interface ProviderCatalogSessionHost {
 export interface ProviderCatalogSessionOptions {
   host: ProviderCatalogSessionHost;
   providerSnapshotManager: ProviderSnapshotManager;
-  providerUsageService: ProviderUsageService;
   logger: pino.Logger;
 }
 
 /**
  * A client's provider catalog surface: model / mode / feature listing, the providers
- * snapshot push + pull, provider diagnostics, and usage. The snapshot PUSH (start) and
+ * snapshot push + pull, and provider diagnostics. The snapshot PUSH (start) and
  * every PULL handler gate visibility and downgrade mode icons through the SAME predicates,
  * so an older client sees one consistent provider set across both paths — the COMPAT
  * invariant the shell could only enforce by code proximity before this carve.
@@ -70,26 +68,27 @@ export interface ProviderCatalogSessionOptions {
 export class ProviderCatalogSession {
   private readonly host: ProviderCatalogSessionHost;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
-  private readonly providerUsageService: ProviderUsageService;
   private readonly logger: pino.Logger;
   private unsubscribeSnapshotEvents: (() => void) | null = null;
 
   constructor(options: ProviderCatalogSessionOptions) {
     this.host = options.host;
     this.providerSnapshotManager = options.providerSnapshotManager;
-    this.providerUsageService = options.providerUsageService;
     this.logger = options.logger;
   }
 
+  get isObserving(): boolean {
+    return this.unsubscribeSnapshotEvents !== null;
+  }
+
   start(): void {
+    if (this.unsubscribeSnapshotEvents) return;
     const handleProviderSnapshotChange = (transition: ProviderSnapshotTransition) => {
-      if (!this.host.wantsSnapshotChanges()) return;
-      const previous = this.visibleSnapshot(transition.previous);
-      const current = this.visibleSnapshot(transition.current);
-      if (sameSnapshotRecords(previous.records, current.records)) return;
-      this.host.emit({
-        type: "providers_snapshot_update",
-        payload: this.snapshotPayload(current),
+      this.host.publishSnapshot(() => {
+        const previous = this.visibleSnapshot(transition.previous);
+        const current = this.visibleSnapshot(transition.current);
+        if (sameSnapshotRecords(previous.records, current.records)) return null;
+        return { type: "providers_snapshot_update", payload: this.snapshotPayload(current) };
       });
     };
     this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
@@ -479,34 +478,6 @@ export class ProviderCatalogSession {
           requestType: msg.type,
           error: `Failed to get provider diagnostic: ${err.message}`,
           code: "provider_diagnostic_failed",
-        },
-      });
-    }
-  }
-
-  async handleProviderUsageListRequest(
-    msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
-  ): Promise<void> {
-    try {
-      const usage = await this.providerUsageService.listUsage();
-      this.host.emit({
-        type: "provider.usage.list.response",
-        payload: {
-          requestId: msg.requestId,
-          fetchedAt: usage.fetchedAt,
-          providers: usage.providers,
-        },
-      });
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error({ err }, "Failed to list provider usage");
-      this.host.emit({
-        type: "rpc_error",
-        payload: {
-          requestId: msg.requestId,
-          requestType: msg.type,
-          error: `Failed to list provider usage: ${err.message}`,
-          code: "provider_usage_list_failed",
         },
       });
     }

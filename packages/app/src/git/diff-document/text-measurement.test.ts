@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createCachedAsciiTextMetrics,
+  createChunkedWidthMeasurer,
   createFallbackAwareTextMeasurer,
   createMeasuredAdvances,
   requiresShaping,
@@ -56,6 +57,7 @@ describe("cached ASCII text metrics", () => {
     expect(metrics.measureAdvances(["a", "b", "a"])).toEqual([10, 20, 30]);
     expect(metrics.measureAdvances(["b", "a"])).toEqual([10, 20]);
     expect(metrics.measure("abba")).toBe(40);
+    expect(metrics.measureWidth(["a", "b", "b", "a"])).toBe(40);
     expect(measured).toEqual(["a", "b"]);
   });
 
@@ -104,6 +106,27 @@ describe("chunked advance measurement", () => {
   function expected(text: string): number[] {
     return Array.from(text, (_, index) => shapingMeasure(text.slice(0, index + 1)));
   }
+
+  it.each([
+    "",
+    "a => b   ",
+    `${"a".repeat(63)}=>${"b".repeat(70)}`,
+    "=>".repeat(100),
+    "中文 é 👩‍💻 مرحبا".repeat(10),
+  ])("keeps width-only measurement equal to the last shaped advance: %s", (text) => {
+    const graphemes = Array.from(text);
+    const width = createChunkedWidthMeasurer((chunk) => shapingMeasure(chunk.join("")));
+    expect(width(graphemes)).toBe(createMeasuredAdvances(shapingMeasure)(graphemes).at(-1) ?? 0);
+  });
+
+  it("keeps expanded tabs on the same additive width path", () => {
+    const metrics = createCachedAsciiTextMetrics({
+      glyphIds: (text) => Array.from(text, () => 1),
+      measure: (text) => text.length * 3.7,
+    });
+    const graphemes = ["a", "   ", "b", "    "];
+    expect(metrics.measureWidth(graphemes)).toBe(metrics.measureAdvances(graphemes).at(-1));
+  });
 
   it("measures short runs in one shaping context", () => {
     expect(advancesOf("a => b")).toEqual(expected("a => b"));

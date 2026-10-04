@@ -1,22 +1,28 @@
 import {
   decodeTerminalSnapshotPayload,
-  encodeTerminalResizePayload,
-  encodeTerminalStreamFrame,
   TerminalStreamOpcode,
   type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { TerminalInput, TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalState } from "@getpaseo/protocol/messages";
 
-export type TerminalStreamEvent =
-  | { terminalId: string; type: "output"; data: Uint8Array }
-  | { terminalId: string; type: "snapshot"; state: TerminalState }
-  | { terminalId: string; type: "restore"; data: Uint8Array };
+export type TerminalStreamEvent = { terminalId: string; subscriptionId: string } & (
+  | { type: "output"; data: Uint8Array }
+  | { type: "snapshot"; state: TerminalState }
+  | { type: "restore"; data: Uint8Array }
+);
 
 export class TerminalStreamRouter {
-  private readonly terminalSlots = new Map<string, number>();
-  private readonly slotTerminals = new Map<number, string>();
+  private readonly slots = new Map<
+    number,
+    Set<{
+      subscriptionId: string;
+      terminalId: string;
+      receive: (event: TerminalStreamEvent) => void;
+    }>
+  >();
   private readonly listeners = new Set<(event: TerminalStreamEvent) => void>();
 
+  /** Passive wire diagnostics. App state consumes the registration's callback. */
   onEvent(handler: (event: TerminalStreamEvent) => void): () => void {
     this.listeners.add(handler);
     return () => {
@@ -24,109 +30,51 @@ export class TerminalStreamRouter {
     };
   }
 
-  setSlot(terminalId: string, slot: number): void {
-    const existingTerminalId = this.slotTerminals.get(slot);
-    if (existingTerminalId && existingTerminalId !== terminalId) {
-      this.terminalSlots.delete(existingTerminalId);
-    }
-
-    const existingSlot = this.terminalSlots.get(terminalId);
-    if (typeof existingSlot === "number" && existingSlot !== slot) {
-      this.slotTerminals.delete(existingSlot);
-    }
-
-    this.terminalSlots.set(terminalId, slot);
-    this.slotTerminals.set(slot, terminalId);
-  }
-
-  removeTerminal(terminalId: string): void {
-    const slot = this.terminalSlots.get(terminalId);
-    if (typeof slot !== "number") {
-      return;
-    }
-    this.terminalSlots.delete(terminalId);
-    if (this.slotTerminals.get(slot) === terminalId) {
-      this.slotTerminals.delete(slot);
-    }
+  attach(
+    subscriptionId: string,
+    terminalId: string,
+    slot: number,
+    receive: (event: TerminalStreamEvent) => void,
+  ): () => void {
+    const registration = { subscriptionId, terminalId, receive };
+    const registrations = this.slots.get(slot) ?? new Set();
+    registrations.add(registration);
+    this.slots.set(slot, registrations);
+    return () => {
+      registrations.delete(registration);
+      if (registrations.size === 0) this.slots.delete(slot);
+    };
   }
 
   clearSlots(): void {
-    this.terminalSlots.clear();
-    this.slotTerminals.clear();
-  }
-
-  encodeInput(terminalId: string, message: TerminalInput["message"]): Uint8Array | null {
-    const slot = this.terminalSlots.get(terminalId);
-    if (typeof slot !== "number") {
-      return null;
-    }
-
-    if (message.type === "input") {
-      return encodeTerminalStreamFrame({
-        opcode: TerminalStreamOpcode.Input,
-        slot,
-        payload: message.data,
-      });
-    }
-
-    if (message.type === "resize") {
-      return encodeTerminalStreamFrame({
-        opcode: TerminalStreamOpcode.Resize,
-        slot,
-        payload: encodeTerminalResizePayload({
-          rows: message.rows,
-          cols: message.cols,
-          ...(message.intent ? { intent: message.intent } : {}),
-        }),
-      });
-    }
-
-    return null;
+    this.slots.clear();
   }
 
   handleFrame(frame: TerminalStreamFrame): void {
-    const terminalId = this.slotTerminals.get(frame.slot);
-    if (!terminalId) {
-      return;
-    }
-
-    if (frame.opcode === TerminalStreamOpcode.Output) {
-      this.emit({
-        terminalId,
-        type: "output",
-        data: frame.payload,
-      });
-      return;
-    }
-
-    if (frame.opcode === TerminalStreamOpcode.Restore) {
-      this.emit({
-        terminalId,
-        type: "restore",
-        data: frame.payload,
-      });
-      return;
-    }
-
-    if (frame.opcode === TerminalStreamOpcode.Snapshot) {
-      const state = decodeTerminalSnapshotPayload(frame.payload);
-      if (!state) {
-        return;
-      }
-      this.emit({
-        terminalId,
-        type: "snapshot",
-        state,
-      });
-    }
-  }
-
-  private emit(event: TerminalStreamEvent): void {
-    for (const listener of this.listeners) {
-      try {
-        listener(event);
-      } catch {
-        // no-op
+    const registrations = this.slots.get(frame.slot);
+    if (!registrations) return;
+    for (const registration of registrations) {
+      const identity = {
+        subscriptionId: registration.subscriptionId,
+        terminalId: registration.terminalId,
+      };
+      let event: TerminalStreamEvent;
+      if (frame.opcode === TerminalStreamOpcode.Output)
+        event = { ...identity, type: "output", data: frame.payload };
+      else if (frame.opcode === TerminalStreamOpcode.Restore)
+        event = { ...identity, type: "restore", data: frame.payload };
+      else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
+        const state = decodeTerminalSnapshotPayload(frame.payload);
+        if (!state) return;
+        event = { ...identity, type: "snapshot", state };
+      } else return;
+      registration.receive(event);
+      for (const listener of this.listeners) {
+        try {
+          listener(event);
+        } catch {
+          /* Passive diagnostics cannot interrupt delivery. */
+        }
       }
     }
   }

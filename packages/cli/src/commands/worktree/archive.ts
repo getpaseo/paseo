@@ -48,7 +48,7 @@ export async function runArchiveCommandWithDeps(
   options: WorktreeArchiveOptions,
   deps: { connectToDaemon: typeof connectToDaemon },
 ): Promise<WorktreeArchiveCommandResult> {
-  const host = getDaemonHost({ host: options.host });
+  const host = getDaemonHost({ target: options.daemonTarget });
 
   // Validate arguments
   if (!nameArg || nameArg.trim().length === 0) {
@@ -62,8 +62,9 @@ export async function runArchiveCommandWithDeps(
 
   let client: DaemonClient;
   try {
-    client = await deps.connectToDaemon({ host: options.host });
+    client = await deps.connectToDaemon({ target: options.daemonTarget });
   } catch (err) {
+    if (err && typeof err === "object" && "code" in err) throw err;
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",

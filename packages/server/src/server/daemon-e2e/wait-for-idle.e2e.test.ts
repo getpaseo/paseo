@@ -130,7 +130,7 @@ test("waitForFinish resolves first idle edge even if a new run starts immediatel
   const secondary = new DaemonClient({ url: `ws://127.0.0.1:${ctx.daemon.port}/ws` });
 
   await secondary.connect();
-  await secondary.fetchAgents({ subscribe: { subscriptionId: "wait-for-idle-secondary" } });
+  await secondary.fetchAgents({ subscribe: {} });
 
   const agent = await ctx.client.createAgent({
     provider: "codex",
@@ -193,7 +193,7 @@ test("waitForFinish stays blocked when sendMessage transactionally replaces a ru
 
   try {
     await secondary.connect();
-    await secondary.fetchAgents({ subscribe: { subscriptionId: "secondary" } });
+    await secondary.fetchAgents({ subscribe: {} });
 
     await ctx.client.sendMessage(agent.id, "Run: sleep 5");
     await ctx.client.waitForAgentUpsert(

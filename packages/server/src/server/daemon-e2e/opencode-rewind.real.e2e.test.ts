@@ -234,7 +234,7 @@ describe("daemon E2E (real opencode) - rewind", () => {
     });
 
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "opencode-rewind-real" } });
+    await client.fetchAgents({ subscribe: {} });
     harness = { client, daemon };
   }, 30_000);
 

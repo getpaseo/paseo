@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { Buffer } from "buffer";
 import { useState } from "react";
 
-import { createAudioEngine } from "@/voice/audio-engine";
+import { createAudioEngine } from "@/audio";
 
 import type {
   DictationAudioSource,

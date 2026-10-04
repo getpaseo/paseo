@@ -25,6 +25,7 @@ export interface DaemonDiagnosticsOptions {
   listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
   getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
+  getObservationMetrics?: () => Record<string, number>;
   logger: pino.Logger;
 }
 
@@ -68,6 +69,16 @@ export async function collectDaemonDiagnostics(options: DaemonDiagnosticsOptions
     ]),
   ];
 
+  if (options.getObservationMetrics)
+    sections.push(
+      formatSection(
+        "Session observations",
+        Object.entries(options.getObservationMetrics()).map(([label, value]) => ({
+          label,
+          value: String(value),
+        })),
+      ),
+    );
   sections.push(
     await safeSection("Daemon process", () => collectProcessEntries(options), options.logger),
   );

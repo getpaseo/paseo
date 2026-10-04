@@ -1,3 +1,6 @@
+import type { DaemonTarget } from "../../utils/daemon-target.js";
+import { withGlobalOptions } from "../../utils/command-options.js";
+import type { CommandOptions } from "../../output/index.js";
 import {
   cancel,
   confirm,
@@ -49,6 +52,7 @@ const DAEMON_READY_POLL_MS = 250;
 const PROVIDER_READY_TIMEOUT_MS = 60_000;
 
 export interface HubGuidedSetupEnvironment {
+  daemonTarget: DaemonTarget;
   env: Readonly<Record<string, string | undefined>>;
   credentials: HubCredentialStore;
   hub: HubHttpClient;
@@ -80,22 +84,27 @@ function initErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function addHubInitCommand(parent: Command, environment: HubGuidedSetupEnvironment): void {
+export function addHubInitCommand(
+  parent: Command,
+  environment: Omit<HubGuidedSetupEnvironment, "daemonTarget">,
+): void {
   parent
     .command("init")
     .description("Create and optionally deploy a safe starter Hub trigger")
-    .action(async () => {
-      try {
-        await runHubInit(environment);
-      } catch (error) {
-        if (error instanceof HubInitCancelledError) {
-          cancel(error.message);
-          return;
+    .action(
+      withGlobalOptions(async (options: CommandOptions) => {
+        try {
+          await runHubInit({ ...environment, daemonTarget: options.daemonTarget });
+        } catch (error) {
+          if (error instanceof HubInitCancelledError) {
+            cancel(error.message);
+            return;
+          }
+          cancel(initErrorMessage(error));
+          process.exitCode = 1;
         }
-        cancel(initErrorMessage(error));
-        process.exitCode = 1;
-      }
-    });
+      }),
+    );
 }
 
 export async function runHubInit(environment: HubGuidedSetupEnvironment): Promise<void> {
@@ -175,8 +184,10 @@ export async function continueHubGuidedSetup(
   origin: string,
   environment: HubGuidedSetupEnvironment,
 ): Promise<void> {
-  const currentStatus = await withHubDaemon(environment.daemon, undefined, async (daemon) =>
-    daemon.getHubStatus().then((response) => response.status),
+  const currentStatus = await withHubDaemon(
+    environment.daemon,
+    environment.daemonTarget,
+    async (daemon) => daemon.getHubStatus().then((response) => response.status),
   );
   const current = resolveHubInitConnection(currentStatus, origin);
   if (current.kind === "connected") {
@@ -187,7 +198,7 @@ export async function continueHubGuidedSetup(
       }.`,
     );
   } else if (current.kind === "pending") {
-    await waitForDaemonReady(origin, environment.daemon);
+    await waitForDaemonReady(origin, environment);
   } else if (current.kind === "conflict") {
     reportMessage(
       environment,
@@ -273,7 +284,7 @@ async function ensureDaemonConnection(
   confirmed = false,
   permissions: readonly string[] = ["hub.execute"],
 ): Promise<string> {
-  const status = await withHubDaemon(environment.daemon, undefined, async (daemon) =>
+  const status = await withHubDaemon(environment.daemon, environment.daemonTarget, async (daemon) =>
     daemon.getHubStatus().then((response) => response.status),
   );
   const connection = resolveHubInitConnection(status, origin);
@@ -287,7 +298,7 @@ async function ensureDaemonConnection(
     return connection.daemonId;
   }
   if (connection.kind === "pending") {
-    return waitForDaemonReady(origin, environment.daemon);
+    return waitForDaemonReady(origin, environment);
   }
   if (connection.kind === "conflict") {
     throw new HubCommandError(
@@ -315,7 +326,7 @@ async function connectDaemon(
 ): Promise<string> {
   await runHubConnect(
     origin,
-    { permissions },
+    { permissions, daemonTarget: environment.daemonTarget },
     {
       env: environment.env,
       credentials: environment.credentials,
@@ -324,15 +335,15 @@ async function connectDaemon(
       reporter: environment.reporter,
     },
   );
-  return waitForDaemonReady(origin, environment.daemon);
+  return waitForDaemonReady(origin, environment);
 }
 
 async function waitForDaemonReady(
   origin: string,
-  connection: HubDaemonConnection,
+  environment: HubGuidedSetupEnvironment,
 ): Promise<string> {
   return withSpinner("Waiting for the daemon to connect", async (reporter) =>
-    withHubDaemon(connection, undefined, async (daemon) => {
+    withHubDaemon(environment.daemon, environment.daemonTarget, async (daemon) => {
       const deadline = Date.now() + DAEMON_READY_TIMEOUT_MS;
       while (true) {
         const status = (await daemon.getHubStatus()).status;
@@ -436,7 +447,7 @@ async function waitForStarterAgentProviders(
   cwd: string,
 ): Promise<readonly HubStarterAgentProvider[]> {
   return withSpinner("Discovering agent runtimes", async (reporter) =>
-    withHubDaemon(environment.daemon, undefined, async (daemon) => {
+    withHubDaemon(environment.daemon, environment.daemonTarget, async (daemon) => {
       const deadline = Date.now() + PROVIDER_READY_TIMEOUT_MS;
       while (true) {
         const snapshot = await daemon.getProvidersSnapshot({ cwd });
@@ -750,7 +761,9 @@ async function requiredSelect<T extends string>(
   return answer;
 }
 
-function requireInteractiveTerminal(environment: HubGuidedSetupEnvironment): void {
+function requireInteractiveTerminal(
+  environment: Omit<HubGuidedSetupEnvironment, "daemonTarget">,
+): void {
   if (!(environment.isInteractive?.() ?? (process.stdin.isTTY && process.stdout.isTTY))) {
     throw new HubCommandError("HUB_INIT_INTERACTIVE_REQUIRED", "paseo hub init requires a TTY.");
   }

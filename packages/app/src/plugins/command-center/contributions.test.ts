@@ -60,11 +60,24 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     id: "review",
     serverId: "host-1",
     clientBundle: "bundle",
+    lifetime: new AbortController(),
+    paseo: createPaseoApi(
+      new DaemonClient({
+        url: "ws://127.0.0.1:1",
+        clientId: "plugin-command-test",
+        clientType: "cli",
+      }),
+    ),
+    invoke: async (method: string, input: unknown) => {
+      expect(method).toBe("review.inspect");
+      return { value: inspect.input.parse(input).value + 1 };
+    },
     queryClient: new QueryClient(),
     cleanup: () => {},
     settingsScreens: [],
-    surfaces: [{ id: "main", Component: () => null }],
-    sidebarItems: [],
+    surfaces: [{ id: "main", title: "Main", Component: () => null }],
+    sidebarItems: { header: [], footer: [] },
+    legacySidebarItems: [],
     workspacePanels: [
       {
         id: "details",
@@ -120,28 +133,11 @@ function stateSource() {
   };
 }
 
-function createRuntime(pluginId: string) {
-  const client = new DaemonClient({
-    url: "ws://127.0.0.1:1",
-    clientId: "plugin-command-test",
-    clientType: "cli",
-  });
-  return {
-    paseo: createPaseoApi(client),
-    invoke: async (method: string, input: unknown) => {
-      expect(pluginId).toBe("review");
-      expect(method).toBe("review.inspect");
-      return { value: inspect.input.parse(input).value + 1 };
-    },
-  };
-}
-
 describe("plugin Command Center contributions", () => {
   it("shows only contributions whose synchronous context exists", () => {
     const installed = plugin(() => undefined);
     const common = {
       plugins: [installed],
-      runtime: createRuntime,
       state: stateSource(),
       navigation: {
         openSettings() {},
@@ -187,10 +183,8 @@ describe("plugin Command Center contributions", () => {
       context.openSurface("main");
       context.openPanel("details", { location: "explorer" });
     });
-    const runtime = createRuntime("review");
     const actions = buildPluginCommandCenterContributions({
       plugins: [installed],
-      runtime: () => runtime,
       state: stateSource(),
       workspaceId: workspace.id,
       agentId: agent.id,
@@ -214,7 +208,8 @@ describe("plugin Command Center contributions", () => {
     await actions.find((action) => action.id === "review:agent")?.run();
 
     expect(rpcValue).toBe(5);
-    expect(receivedPaseo).toBe(runtime.paseo);
+    // Commands use the plugin's one client.
+    expect(receivedPaseo).toBe(installed.paseo);
     expect(opened).toEqual(["review/surface/main", "review/agent/details/agent-1/explorer"]);
   });
 
@@ -222,7 +217,6 @@ describe("plugin Command Center contributions", () => {
     expect(
       buildPluginCommandCenterContributions({
         plugins: [],
-        runtime: createRuntime,
         state: stateSource(),
         workspaceId: workspace.id,
         agentId: agent.id,

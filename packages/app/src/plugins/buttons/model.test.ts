@@ -6,14 +6,18 @@ import { PluginButtonStore, buttonMatches } from "./model";
 
 function installation(): InstalledPlugin {
   return {
+    lifetime: new AbortController(),
     id: "review",
     serverId: "host-a",
     clientBundle: "bundle",
     queryClient: new QueryClient(),
+    paseo: {} as InstalledPlugin["paseo"],
+    invoke: async () => undefined,
     cleanup: () => undefined,
     settingsScreens: [],
     surfaces: [],
-    sidebarItems: [],
+    sidebarItems: { header: [], footer: [] },
+    legacySidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],

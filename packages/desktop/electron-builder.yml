@@ -17,6 +17,7 @@ files:
   - "!node_modules/@getpaseo/**/*.test.*"
   - "!node_modules/@getpaseo/**/*.spec.*"
   - "!node_modules/@getpaseo/server/dist/server/web-ui/**"
+  - "!node_modules/@getpaseo/server/dist/server/builtin-plugins/**"
   # Workspace packages are symlinked, so anything a dev generates inside them
   # lands in the asar. CI never has these; a local .debug run adds gigabytes.
   - "!node_modules/@getpaseo/*/.debug/**"
@@ -27,6 +28,9 @@ asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
 extraResources:
+  # Preserve physical compiler inputs, including .d.ts files omitted from packaged node_modules.
+  - from: ../server/dist/server/builtin-plugins
+    to: builtin-plugins
   - from: ../app/dist
     to: app-dist
   - from: assets/editor-targets
@@ -66,7 +70,13 @@ linux:
     - deb
     - rpm
     - tar.gz
+deb:
+  afterInstall: scripts/linux-sandbox/after-install.tpl
+rpm:
+  afterInstall: scripts/linux-sandbox/after-install.tpl
 appImage:
+  # A nonempty argument list replaces builder's hardcoded --no-sandbox default.
+  executableArgs: ["--class=Paseo"]
   # Keep the AppImage filename stable across versions (no ${version}) so
   # electron-updater overwrites the file in place instead of renaming it to a new
   # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and

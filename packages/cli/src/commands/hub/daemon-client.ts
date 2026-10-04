@@ -1,3 +1,4 @@
+import type { DaemonTarget } from "../../utils/daemon-target.js";
 import { connectToDaemon } from "../../utils/client.js";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 
@@ -33,19 +34,19 @@ export interface HubDaemonClient {
 }
 
 export interface HubDaemonConnection {
-  connect(host: string | undefined): Promise<HubDaemonClient>;
+  connect(target: DaemonTarget): Promise<HubDaemonClient>;
 }
 
 export const productionHubDaemonConnection: HubDaemonConnection = {
-  connect: (host) => connectToDaemon({ host }),
+  connect: (target) => connectToDaemon({ target }),
 };
 
 export async function withHubDaemon<T>(
   connection: HubDaemonConnection,
-  host: string | undefined,
+  target: DaemonTarget,
   action: (client: HubDaemonClient) => Promise<T>,
 ): Promise<T> {
-  const client = await connection.connect(host);
+  const client = await connection.connect(target);
   try {
     return await action(client);
   } finally {

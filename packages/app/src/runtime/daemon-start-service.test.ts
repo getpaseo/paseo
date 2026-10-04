@@ -36,6 +36,8 @@ function makeStatus(overrides: Partial<DesktopDaemonStatus> = {}): DesktopDaemon
     home: "/home",
     version: "0.0.0",
     desktopManaged: true,
+    ownedByDesktop: true,
+    startedAt: "2026-01-01T00:00:00.000Z",
     error: null,
     ...overrides,
   };
@@ -318,6 +320,15 @@ describe("upsertDesktopDaemonConnection", () => {
     const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
 
     const result = await upsertDesktopDaemonConnection(fake.store, makeStatus());
+
+    expect(result).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([]);
+  });
+
+  it("keeps an already registered host without waiting for a listen address", async () => {
+    const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ listen: null }));
 
     expect(result).toEqual({ ok: true });
     expect(fake.upserts).toEqual([]);

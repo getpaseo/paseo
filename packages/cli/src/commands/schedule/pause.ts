@@ -15,7 +15,7 @@ export async function runPauseCommand(
   options: ScheduleCommandOptions,
   _command: Command,
 ): Promise<SingleResult<ScheduleRow>> {
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     await requireNewAgentSchedule(client, id);
     const payload = await client.schedulePause({ id });

@@ -87,6 +87,31 @@ function selectNodeContents(element: Element): Selection {
   return selection;
 }
 
+interface TranscriptMessage {
+  messageId: string;
+  blocks: string[];
+}
+
+/**
+ * The web transcript's shape: a scroll container holding one row per Markdown block,
+ * each row carrying its message id and wrapping its own assistant message element.
+ */
+function mountTranscript(messages: TranscriptMessage[]): HTMLElement {
+  const transcript = document.createElement("div");
+  transcript.setAttribute("data-testid", "agent-chat-scroll");
+  for (const { messageId, blocks } of messages) {
+    for (const [index, text] of blocks.entries()) {
+      const row = document.createElement("div");
+      row.setAttribute("data-history-row-id", `${messageId}:block:${index}`);
+      row.setAttribute("data-message-id", messageId);
+      row.innerHTML = `<div data-testid="assistant-message"><div data-paseo-markdown-tag="p">${text}</div></div>`;
+      transcript.append(row);
+    }
+  }
+  document.body.append(transcript);
+  return transcript;
+}
+
 function copiedMarkdown(selection: Selection): string | null {
   return createAssistantSelectionClipboardContent(selection)?.plainText ?? null;
 }
@@ -108,6 +133,36 @@ describe("assistant selection copy ranges", () => {
     outside.textContent = "outside";
     document.body.append(outside);
     expect(copiedMarkdown(selectText(outside, 0, 7))).toBeNull();
+  });
+
+  it("copies a selection that runs across the block rows of one message", () => {
+    const transcript = mountTranscript([
+      { messageId: "message-1", blocks: ["First paragraph.", "Second paragraph."] },
+    ]);
+    const blocks = transcript.querySelectorAll('[data-paseo-markdown-tag="p"]');
+    expect(copiedMarkdown(selectRange(blocks[0]!, 6, blocks[1]!, 6))).toBe("paragraph.\n\nSecond");
+  });
+
+  it("does not replace the browser clipboard for a selection reaching a second message", () => {
+    const transcript = mountTranscript([
+      { messageId: "message-1", blocks: ["First paragraph.", "Second paragraph."] },
+      { messageId: "message-2", blocks: ["Reply paragraph."] },
+    ]);
+    const blocks = transcript.querySelectorAll('[data-paseo-markdown-tag="p"]');
+    expect(copiedMarkdown(selectRange(blocks[1]!, 0, blocks[2]!, 5))).toBeNull();
+  });
+
+  // A retained inactive panel renders the same agent, so the same message id can exist
+  // twice in the document. A group is only ever read out of one transcript, and rows
+  // that belong to no transcript are not a group at all.
+  it("does not assemble a message group from rows outside a transcript", () => {
+    const transcript = mountTranscript([
+      { messageId: "message-1", blocks: ["First paragraph.", "Second paragraph."] },
+    ]);
+    document.body.append(...transcript.children);
+    transcript.remove();
+    const blocks = document.querySelectorAll('[data-paseo-markdown-tag="p"]');
+    expect(copiedMarkdown(selectRange(blocks[0]!, 0, blocks[1]!, 17))).toBeNull();
   });
 
   it("does not replace the browser clipboard for a range spanning assistant messages", () => {

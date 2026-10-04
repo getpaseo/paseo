@@ -429,7 +429,7 @@ function ReadFailureCallout({ kind, error, onReload }: ReadFailureCalloutProps) 
   });
   return (
     <View style={styles.errorBlock}>
-      <Alert testID={testID} variant="error" title={title} description={description}>
+      <Alert size="md" testID={testID} variant="error" title={title} description={description}>
         <Button testID={`${testID}-action-0`} onPress={onReload} variant="outline" size="sm">
           {t("settings.project.actions.reload")}
         </Button>
@@ -817,6 +817,7 @@ function ProjectConfigForm({
         >
           {hasUncommittedWorktreeSetupChanges ? (
             <Alert
+              size="sm"
               variant="warning"
               title={t("settings.project.worktree.uncommittedTitle")}
               description={t("settings.project.worktree.uncommittedDescription")}
@@ -918,6 +919,7 @@ function ProjectConfigForm({
       {isStale ? (
         <View style={styles.calloutWrap}>
           <Alert
+            size="sm"
             testID="stale-callout"
             variant="error"
             title={t("settings.project.writeFailures.staleTitle")}
@@ -938,6 +940,7 @@ function ProjectConfigForm({
       {isWriteFailed ? (
         <View style={styles.calloutWrap}>
           <Alert
+            size="sm"
             testID="write-failed-callout"
             variant="error"
             title={t("settings.project.writeFailures.failedTitle")}

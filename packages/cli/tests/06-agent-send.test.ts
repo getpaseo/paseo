@@ -18,6 +18,7 @@
  */
 
 import assert from "node:assert";
+import { getAvailablePort } from "./helpers/network.ts";
 import { $ } from "zx";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -27,8 +28,8 @@ $.verbose = false;
 
 console.log("=== Send Command Tests ===\n");
 
-// Get random port that's definitely not in use (never 6767)
-const port = 10000 + Math.floor(Math.random() * 50000);
+// Allocate an unused endpoint for connection-error and argument-validation checks.
+const port = await getAvailablePort();
 const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
 const promptFilePath = join(paseoHome, "send-prompt.txt");
 await writeFile(promptFilePath, "prompt from file");
@@ -58,7 +59,7 @@ try {
   {
     console.log("Test 2: send requires id argument");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail without id");
     const output = result.stdout + result.stderr;
     // Commander should complain about missing argument
@@ -74,7 +75,7 @@ try {
   {
     console.log("Test 3: send requires prompt argument");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send abc123`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail without prompt");
     const output = result.stdout + result.stderr;
     // Commander should complain about missing argument
@@ -90,7 +91,7 @@ try {
   {
     console.log("Test 4: send handles daemon not running");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send abc123 "test prompt"`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send abc123 "test prompt"`.nothrow();
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, "should fail when daemon not running");
     const output = result.stdout + result.stderr;
@@ -106,7 +107,7 @@ try {
   {
     console.log("Test 5: send --no-wait flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send --no-wait abc123 "test prompt"`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send --no-wait abc123 "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --no-wait flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -117,7 +118,7 @@ try {
   {
     console.log("Test 5b: send --prompt flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send --prompt "test prompt" abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send --prompt "test prompt" abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --prompt flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -128,7 +129,7 @@ try {
   {
     console.log("Test 5c: send --prompt-file flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send --prompt-file ${promptFilePath} abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send --prompt-file ${promptFilePath} abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --prompt-file flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -150,7 +151,7 @@ try {
   {
     console.log("Test 7: -q (quiet) flag is accepted with send");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo -q send --no-wait abc123 "test prompt"`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} -q send --no-wait abc123 "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -161,7 +162,7 @@ try {
   {
     console.log("Test 8: Combined flags work together");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo -q send --no-wait abc123 "Run the linter"`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} -q send --no-wait abc123 "Run the linter"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept all combined flags");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -172,7 +173,7 @@ try {
   {
     console.log("Test 8b: conflicting prompt sources are rejected");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo send abc123 "positional prompt" --prompt "flag prompt"`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} send abc123 "positional prompt" --prompt "flag prompt"`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail for conflicting prompt sources");
     const output = result.stdout + result.stderr;
     assert(

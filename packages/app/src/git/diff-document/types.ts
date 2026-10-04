@@ -4,6 +4,8 @@ import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 
 interface DiffDocumentBaseProps {
   files: ParsedDiffFile[];
+  /** Scrollable space kept below the last line so a floating control never traps content. */
+  contentInsetBottom?: number;
   displayPreferences: {
     layout: "unified" | "split";
     wrapLines: boolean;
@@ -167,6 +169,8 @@ export interface DiffDocumentModel {
 export interface TextMeasurer {
   measure(text: string, weight?: "regular" | "semibold"): number;
   measureAdvances?(graphemes: readonly string[]): number[];
+  /** Same width as the last cumulative advance, without computing every position. */
+  measureWidth?(graphemes: readonly string[]): number;
 }
 
 export interface BuildDiffDocumentModelInput {

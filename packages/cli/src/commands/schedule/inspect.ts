@@ -16,7 +16,7 @@ export async function runInspectCommand(
   options: ScheduleCommandOptions,
   _command: Command,
 ): Promise<ListResult<ScheduleInspectRow>> {
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     const payload = await client.scheduleInspect({ id });
     if (payload.error || !payload.schedule) {

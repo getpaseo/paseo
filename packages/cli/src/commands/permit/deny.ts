@@ -1,8 +1,12 @@
 import type { Command } from "commander";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, CommandError } from "../../output/index.js";
-import { permitResponseSchema, type PermissionResponseItem } from "./allow.js";
+import {
+  permitResponseSchema,
+  toPermissionResponseItem,
+  type PermissionResponseItem,
+} from "./allow.js";
 
 export type PermitDenyResult = ListResult<PermissionResponseItem>;
 
@@ -19,8 +23,6 @@ export async function runDenyCommand(
   options: PermitDenyOptions,
   _command: Command,
 ): Promise<PermitDenyResult> {
-  const host = getDaemonHost({ host: options.host });
-
   // Validate arguments
   if (!options.all && !reqId) {
     const error: CommandError = {
@@ -31,18 +33,7 @@ export async function runDenyCommand(
     throw error;
   }
 
-  let client;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
-    };
-    throw error;
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const fetchResult = await client.fetchAgent({ agentId: agentIdOrPrefix });
@@ -96,13 +87,7 @@ export async function runDenyCommand(
           ...(options.message ? { message: options.message } : {}),
           ...(options.interrupt ? { interrupt: true } : {}),
         });
-        return {
-          requestId: permission.id.slice(0, 8),
-          agentId: resolvedAgentId,
-          agentShortId: resolvedAgentId.slice(0, 7),
-          name: permission.name,
-          result: "denied",
-        };
+        return toPermissionResponseItem(resolvedAgentId, permission, "denied");
       }),
     );
 

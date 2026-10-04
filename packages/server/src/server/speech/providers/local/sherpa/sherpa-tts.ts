@@ -25,12 +25,12 @@ function assertFileExists(filePath: string, label: string): void {
 
 interface SherpaOfflineTtsNative {
   sampleRate?: number;
-  generate: (args: {
+  generateAsync: (args: {
     text: string;
     sid: number;
     speed: number;
     enableExternalBuffer: boolean;
-  }) => { samples?: Float32Array | number[]; sampleRate?: number } | undefined;
+  }) => Promise<{ samples?: Float32Array | number[]; sampleRate?: number } | undefined>;
   free?: () => void;
 }
 
@@ -39,13 +39,22 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
   private readonly speakerId: number;
   private readonly speed: number;
   private readonly logger: pino.Logger;
+  private synthesisQueue: Promise<void> = Promise.resolve();
+  private closed = false;
 
-  constructor(config: SherpaTtsConfig, logger: pino.Logger) {
+  constructor(
+    config: SherpaTtsConfig,
+    logger: pino.Logger,
+    loadNative: () => Pick<
+      ReturnType<typeof loadSherpaOnnxNode>,
+      "OfflineTts"
+    > = loadSherpaOnnxNode,
+  ) {
     this.logger = logger.child({ module: "speech", provider: "local", component: "tts" });
     this.speakerId = config.speakerId ?? 0;
     this.speed = config.speed ?? 1.0;
 
-    const sherpa = loadSherpaOnnxNode();
+    const sherpa = loadNative();
     if (typeof sherpa.OfflineTts !== "function") {
       throw new Error("sherpa-onnx-node OfflineTts is unavailable");
     }
@@ -61,6 +70,9 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     assertFileExists(dataDir, "TTS espeak-ng dataDir");
 
     const modelConfig = {
+      // The native parser reads these under model, despite the upstream JS typedef.
+      numThreads: config.numThreads ?? 2,
+      provider: "cpu",
       kokoro: {
         model: modelPath,
         voices: voicesPath,
@@ -72,8 +84,6 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
 
     const offlineTtsConfig = {
       model: modelConfig,
-      numThreads: config.numThreads ?? 2,
-      provider: "cpu",
       maxNumSentences: 1,
     };
 
@@ -92,8 +102,22 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       throw new Error("Cannot synthesize empty text");
     }
 
-    const audio = this.tts.generate({
-      text: trimmed,
+    // The native handle is not reentrant. Keep prefetch off the worker event loop
+    // while allowing only one generation at a time on this model.
+    const result = this.synthesisQueue.then(() => this.generateSpeech(trimmed));
+    this.synthesisQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async generateSpeech(text: string): Promise<SpeechStreamResult> {
+    if (this.closed) {
+      throw new Error("TTS provider closed");
+    }
+    const audio = await this.tts.generateAsync({
+      text,
       sid: this.speakerId,
       speed: this.speed,
       // Electron rejects native external-backed typed arrays. Request a copied buffer
@@ -138,10 +162,19 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
   }
 
   free(): void {
-    try {
-      this.tts?.free?.();
-    } catch {
-      // ignore
+    if (this.closed) {
+      return;
     }
+    this.closed = true;
+    // Let the active native call finish before releasing its handle. Queued
+    // calls observe closed and never enter native code.
+    void this.synthesisQueue.then(() => {
+      try {
+        this.tts.free?.();
+      } catch {
+        // ignore
+      }
+      return undefined;
+    });
   }
 }

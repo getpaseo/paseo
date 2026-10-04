@@ -177,3 +177,16 @@ describe("desktop packaging", () => {
     }
   });
 });
+
+it("installs the Linux helper as root-owned 4755 regardless of root's namespace access", () => {
+  const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+  expect(config).toContain("afterInstall: scripts/linux-sandbox/after-install.tpl");
+  const installer = readFileSync(
+    join(packageRoot, "scripts/linux-sandbox/after-install.tpl"),
+    "utf8",
+  );
+  expect(installer).not.toContain("unshare");
+  expect(installer).toContain("chown root:root '/opt/${sanitizedProductName}/chrome-sandbox'");
+  expect(installer).toContain("chmod 4755 '/opt/${sanitizedProductName}/chrome-sandbox'");
+  expect(installer).not.toContain("chmod 0755");
+});

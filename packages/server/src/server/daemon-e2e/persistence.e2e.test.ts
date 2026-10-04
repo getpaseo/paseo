@@ -61,6 +61,7 @@ describe("daemon E2E - persistence", () => {
       const resumed = await ctx.client.resumeAgent(handle);
       expect(resumed.provider).toBe("codex");
       expect(resumed.cwd).toBe(cwd);
+      await ctx.client.subscribeAgentTimeline(resumed.id, () => {}).ready;
 
       messages.length = 0;
       await ctx.client.sendMessage(resumed.id, "What did I ask you to say earlier?");

@@ -1,3 +1,4 @@
+import type { OwnedSubscription } from "@getpaseo/client";
 import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanstack/react-query";
 import type {
   ListTerminalsResponse,
@@ -21,19 +22,12 @@ type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
   { type: "providers_snapshot_update" }
 >;
-type CheckoutDiffUpdateMessage = Extract<SessionOutboundMessage, { type: "checkout_diff_update" }>;
 type SubscribeCheckoutDiffResponseMessage = Extract<
   SessionOutboundMessage,
   { type: "subscribe_checkout_diff_response" }
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
-type ServerDataEventType =
-  | "providers_snapshot_update"
-  | "checkout_diff_update"
-  | "subscribe_checkout_diff_response"
-  | "status"
-  | "terminals_changed";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -53,12 +47,20 @@ interface CheckoutDiffRoute {
   compare: CheckoutDiffCompare;
 }
 
+interface CheckoutDiffRegistration extends CheckoutDiffRoute {
+  subscription: OwnedSubscription<CheckoutDiffResponsePayload>;
+}
+
 interface WorkspaceTerminalsRoute {
   domain: "workspaceTerminals";
   enabled: boolean;
   serverId: string;
   cwd: string;
   workspaceId?: string;
+}
+
+interface WorkspaceTerminalsRegistration extends WorkspaceTerminalsRoute {
+  subscription: OwnedSubscription<TerminalsChangedMessage["payload"]>;
 }
 
 type ServerDataRoute = CheckoutDiffRoute | WorkspaceTerminalsRoute;
@@ -71,18 +73,9 @@ export type ProvidersSnapshotUpdate = ProvidersSnapshotUpdateMessage;
 
 interface ServerDataPushClient {
   getProvidersSnapshot: import("@getpaseo/client/internal/daemon-client").DaemonClient["getProvidersSnapshot"];
-  on<TType extends ServerDataEventType>(
-    type: TType,
-    handler: (message: Extract<SessionOutboundMessage, { type: TType }>) => void,
-  ): () => void;
-  subscribeCheckoutDiff(
-    cwd: string,
-    compare: CheckoutDiffCompare,
-    options: { subscriptionId: string; requestId?: string },
-  ): Promise<CheckoutDiffResponsePayload>;
-  unsubscribeCheckoutDiff(subscriptionId: string): void;
-  subscribeTerminals(input: { cwd: string; workspaceId?: string }): void;
-  unsubscribeTerminals(input: { cwd: string; workspaceId?: string }): void;
+  observeEvents: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeEvents"];
+  observeCheckoutDiff: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeCheckoutDiff"];
+  observeTerminals: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeTerminals"];
 }
 
 interface PushRouterInput {
@@ -137,7 +130,6 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     },
   },
 ];
-const reconnectSubscriptionRepairsByServerId = new Map<string, Set<() => void>>();
 
 export function checkoutDiffPushRoute(input: {
   enabled: boolean;
@@ -182,10 +174,6 @@ export function invalidateServerDataQueriesAfterReconnect(input: {
   for (const policy of RECONNECT_REPAIR_POLICIES) {
     policy.invalidate(input);
   }
-  for (const repairSubscriptions of reconnectSubscriptionRepairsByServerId.get(input.serverId) ??
-    []) {
-    repairSubscriptions();
-  }
 }
 
 export async function applyProvidersSnapshotUpdate(input: {
@@ -226,8 +214,8 @@ export async function applyProvidersSnapshotUpdate(input: {
 }
 
 export function mountServerDataPushRouter(input: PushRouterInput): () => void {
-  const activeCheckoutDiffSubscriptions = new Map<string, CheckoutDiffRoute>();
-  const activeTerminalSubscriptions = new Map<string, WorkspaceTerminalsRoute>();
+  const activeCheckoutDiffSubscriptions = new Map<string, CheckoutDiffRegistration>();
+  const activeTerminalSubscriptions = new Map<string, WorkspaceTerminalsRegistration>();
   let disposed = false;
 
   function reconcileSubscriptions(
@@ -262,22 +250,22 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       client: input.client,
       desired: desiredCheckoutDiffSubscriptions,
       serverId: input.serverId,
+      queryClient: input.queryClient,
     });
     reconcileTerminalSubscriptions({
       active: activeTerminalSubscriptions,
       client: input.client,
       desired: desiredTerminalSubscriptions,
+      apply: (route, payload) =>
+        applyTerminalsChanged({
+          activeCheckoutDiffSubscriptions,
+          activeTerminalSubscriptions,
+          queryClient: input.queryClient,
+          serverId: input.serverId,
+          route,
+          message: { type: "terminals_changed", payload },
+        }),
     });
-  }
-
-  function resetSubscriptionsAfterReconnect(): void {
-    const fallbackActive = {
-      checkoutDiff: new Map(activeCheckoutDiffSubscriptions),
-      workspaceTerminals: new Map(activeTerminalSubscriptions),
-    };
-    activeCheckoutDiffSubscriptions.clear();
-    activeTerminalSubscriptions.clear();
-    reconcileSubscriptions(fallbackActive);
   }
 
   const unsubscribeQueryCache = input.queryClient.getQueryCache().subscribe((event) => {
@@ -291,137 +279,131 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     }
     reconcileSubscriptions();
   });
-  const unsubscribeProviders = input.client.on("providers_snapshot_update", (message) => {
-    void applyProvidersSnapshotUpdate({
-      client: input.client,
-      queryClient: input.queryClient,
-      serverId: input.serverId,
-      message,
-    }).catch(() => {
-      /* Query state owns fetch failures; reconnect/refetch repairs them. */
-    });
-  });
-  const unsubscribeDaemonConfig = input.client.on("status", (message) => {
-    applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
-  });
-  const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
-    applyCheckoutDiffUpdate({
-      activeCheckoutDiffSubscriptions,
-      queryClient: input.queryClient,
-      serverId: input.serverId,
-      message,
-    });
-  });
-  const unsubscribeCheckoutDiffResponse = input.client.on(
-    "subscribe_checkout_diff_response",
-    (message) => {
-      applyCheckoutDiffSubscribeResponse({
-        activeCheckoutDiffSubscriptions,
-        queryClient: input.queryClient,
-        serverId: input.serverId,
-        message,
-      });
+  const events = input.client.observeEvents([
+    "providers_snapshot_update",
+    "status.daemon_config_changed",
+  ]);
+  events.subscribe({
+    snapshot: () => {},
+    update: (message) => {
+      if (message.type === "providers_snapshot_update") {
+        void applyProvidersSnapshotUpdate({
+          client: input.client,
+          queryClient: input.queryClient,
+          serverId: input.serverId,
+          message,
+        }).catch(() => {
+          /* Query state owns fetch failures; reconnect/refetch repairs them. */
+        });
+      }
+      if (message.type === "status")
+        applyDaemonConfigStatus({
+          queryClient: input.queryClient,
+          serverId: input.serverId,
+          message,
+        });
     },
-  );
-  const unsubscribeTerminalsChanged = input.client.on("terminals_changed", (message) => {
-    applyTerminalsChanged({
-      activeCheckoutDiffSubscriptions,
-      activeTerminalSubscriptions,
-      queryClient: input.queryClient,
-      serverId: input.serverId,
-      message,
-    });
   });
-  let reconnectSubscriptionRepairs = reconnectSubscriptionRepairsByServerId.get(input.serverId);
-  if (!reconnectSubscriptionRepairs) {
-    reconnectSubscriptionRepairs = new Set();
-    reconnectSubscriptionRepairsByServerId.set(input.serverId, reconnectSubscriptionRepairs);
-  }
-  reconnectSubscriptionRepairs.add(resetSubscriptionsAfterReconnect);
 
   reconcileSubscriptions();
 
   return () => {
     disposed = true;
-    reconnectSubscriptionRepairs.delete(resetSubscriptionsAfterReconnect);
-    if (reconnectSubscriptionRepairs.size === 0) {
-      reconnectSubscriptionRepairsByServerId.delete(input.serverId);
-    }
     unsubscribeQueryCache();
-    unsubscribeProviders();
-    unsubscribeDaemonConfig();
-    unsubscribeCheckoutDiffUpdate();
-    unsubscribeCheckoutDiffResponse();
-    unsubscribeTerminalsChanged();
-    for (const subscriptionId of activeCheckoutDiffSubscriptions.keys()) {
-      unsubscribeCheckoutDiff(input.client, subscriptionId);
+    void events.release().catch(console.error);
+    for (const current of activeCheckoutDiffSubscriptions.values()) {
+      void current.subscription.release().catch(console.error);
     }
     activeCheckoutDiffSubscriptions.clear();
     for (const route of activeTerminalSubscriptions.values()) {
-      input.client.unsubscribeTerminals(workspaceTerminalSubscriptionInput(route));
+      void route.subscription.release().catch(console.error);
     }
     activeTerminalSubscriptions.clear();
   };
 }
 
 function reconcileCheckoutDiffSubscriptions(input: {
-  active: Map<string, CheckoutDiffRoute>;
+  active: Map<string, CheckoutDiffRegistration>;
   client: ServerDataPushClient;
   desired: Map<string, CheckoutDiffRoute>;
   serverId: string;
+  queryClient: QueryClient;
 }): void {
-  for (const [subscriptionId, current] of input.active) {
-    const desired = input.desired.get(subscriptionId);
-    if (desired && areCheckoutDiffRoutesEqual(current, desired)) {
-      continue;
-    }
-    unsubscribeCheckoutDiff(input.client, subscriptionId);
-    input.active.delete(subscriptionId);
+  for (const [key, current] of input.active) {
+    const desired = input.desired.get(key);
+    if (desired && areCheckoutDiffRoutesEqual(current, desired)) continue;
+    input.active.delete(key);
+    void current.subscription.release().catch(console.error);
   }
-
-  for (const [subscriptionId, desired] of input.desired) {
-    if (input.active.has(subscriptionId)) {
-      continue;
-    }
-    input.active.set(subscriptionId, desired);
-    void input.client
-      .subscribeCheckoutDiff(desired.cwd, desired.compare, {
-        subscriptionId,
-        requestId: `push-router:${input.serverId}:${subscriptionId}`,
-      })
-      .catch((error) => {
-        if (areCheckoutDiffRoutesEqual(input.active.get(subscriptionId), desired)) {
-          input.active.delete(subscriptionId);
-        }
-        console.error("[server-data] subscribeCheckoutDiff failed", {
+  for (const [key, desired] of input.desired) {
+    if (input.active.has(key)) continue;
+    const subscription = input.client.observeCheckoutDiff(desired.cwd, desired.compare);
+    const registration = { ...desired, subscription };
+    input.active.set(key, registration);
+    const apply = (
+      payload: Omit<CheckoutDiffResponsePayload, "requestId"> & { requestId?: string },
+    ) => {
+      if (input.active.get(key) !== registration) return;
+      const { subscriptionId, ...snapshot } = payload;
+      setCheckoutDiffPayload({
+        activeCheckoutDiffSubscriptions: input.active,
+        queryClient: input.queryClient,
+        serverId: input.serverId,
+        subscriptionId: key,
+        payload: {
+          ...snapshot,
+          files: orderCheckoutDiffFiles(payload.files),
+          requestId: payload.requestId ?? `subscription:${subscriptionId}`,
+        },
+      });
+    };
+    subscription.subscribe({
+      snapshot: apply,
+      update: (message) => {
+        if (message.type === "checkout_diff_update") apply(message.payload);
+      },
+      error: (error) => {
+        if (input.active.get(key) === registration) input.active.delete(key);
+        console.error("[server-data] observeCheckoutDiff failed", {
           serverId: input.serverId,
           cwd: desired.cwd,
           error,
         });
-      });
+      },
+    });
   }
 }
 
 function reconcileTerminalSubscriptions(input: {
-  active: Map<string, WorkspaceTerminalsRoute>;
+  active: Map<string, WorkspaceTerminalsRegistration>;
   client: ServerDataPushClient;
   desired: Map<string, WorkspaceTerminalsRoute>;
+  apply(route: WorkspaceTerminalsRoute, payload: TerminalsChangedMessage["payload"]): void;
 }): void {
   for (const [key, current] of input.active) {
     const desired = input.desired.get(key);
-    if (desired && areWorkspaceTerminalsRoutesEqual(current, desired)) {
-      continue;
-    }
-    input.client.unsubscribeTerminals(workspaceTerminalSubscriptionInput(current));
+    if (desired && areWorkspaceTerminalsRoutesEqual(current, desired)) continue;
     input.active.delete(key);
+    void current.subscription.release().catch(console.error);
   }
-
   for (const [key, desired] of input.desired) {
-    if (input.active.has(key)) {
-      continue;
-    }
-    input.active.set(key, desired);
-    input.client.subscribeTerminals(workspaceTerminalSubscriptionInput(desired));
+    if (input.active.has(key)) continue;
+    const subscription = input.client.observeTerminals(workspaceTerminalSubscriptionInput(desired));
+    const registration = { ...desired, subscription };
+    input.active.set(key, registration);
+    const apply = (payload: TerminalsChangedMessage["payload"]) => {
+      if (input.active.get(key) === registration) input.apply(desired, payload);
+    };
+    subscription.subscribe({
+      snapshot: apply,
+      update: (message) => {
+        if (message.type === "terminals_changed") apply(message.payload);
+      },
+      error: (error) => {
+        if (input.active.get(key) === registration) input.active.delete(key);
+        console.error("[server-data] observeTerminals failed", { cwd: desired.cwd, error });
+      },
+    });
   }
 }
 
@@ -440,52 +422,6 @@ function applyDaemonConfigStatus(input: {
   );
   void input.queryClient.invalidateQueries({
     queryKey: daemonPairingOfferQueryKey(input.serverId),
-  });
-}
-
-function applyCheckoutDiffUpdate(input: {
-  activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
-  queryClient: QueryClient;
-  serverId: string;
-  message: CheckoutDiffUpdateMessage;
-}): void {
-  setCheckoutDiffPayload({
-    activeCheckoutDiffSubscriptions: input.activeCheckoutDiffSubscriptions,
-    queryClient: input.queryClient,
-    serverId: input.serverId,
-    subscriptionId: input.message.payload.subscriptionId,
-    payload: {
-      cwd: input.message.payload.cwd,
-      files: orderCheckoutDiffFiles(input.message.payload.files),
-      error: input.message.payload.error,
-      ...(input.message.payload.diffTooLarge !== undefined
-        ? { diffTooLarge: input.message.payload.diffTooLarge }
-        : {}),
-      requestId: `subscription:${input.message.payload.subscriptionId}`,
-    },
-  });
-}
-
-function applyCheckoutDiffSubscribeResponse(input: {
-  activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
-  queryClient: QueryClient;
-  serverId: string;
-  message: SubscribeCheckoutDiffResponseMessage;
-}): void {
-  setCheckoutDiffPayload({
-    activeCheckoutDiffSubscriptions: input.activeCheckoutDiffSubscriptions,
-    queryClient: input.queryClient,
-    serverId: input.serverId,
-    subscriptionId: input.message.payload.subscriptionId,
-    payload: {
-      cwd: input.message.payload.cwd,
-      files: orderCheckoutDiffFiles(input.message.payload.files),
-      error: input.message.payload.error,
-      ...(input.message.payload.diffTooLarge !== undefined
-        ? { diffTooLarge: input.message.payload.diffTooLarge }
-        : {}),
-      requestId: input.message.payload.requestId,
-    },
   });
 }
 
@@ -523,6 +459,7 @@ function applyTerminalsChanged(input: {
   queryClient: QueryClient;
   serverId: string;
   message: TerminalsChangedMessage;
+  route: WorkspaceTerminalsRoute;
 }): void {
   for (const query of input.queryClient.getQueryCache().getAll()) {
     const route = getActiveServerDataRoute(query, input.serverId, {
@@ -532,7 +469,7 @@ function applyTerminalsChanged(input: {
     if (
       !route ||
       route.domain !== "workspaceTerminals" ||
-      route.cwd !== input.message.payload.cwd
+      !areWorkspaceTerminalsRoutesEqual(route, input.route)
     ) {
       continue;
     }
@@ -774,14 +711,6 @@ function workspaceTerminalSubscriptionInput(route: WorkspaceTerminalsRoute): {
     cwd: route.cwd,
     ...(route.workspaceId ? { workspaceId: route.workspaceId } : {}),
   };
-}
-
-function unsubscribeCheckoutDiff(client: ServerDataPushClient, subscriptionId: string): void {
-  try {
-    client.unsubscribeCheckoutDiff(subscriptionId);
-  } catch {
-    // Disconnect cleanup can race with explicit subscription teardown.
-  }
 }
 
 function isQueryForServer(queryKey: QueryKey, kind: string, serverId: string): boolean {

@@ -34,17 +34,31 @@ Field-by-field detail is in the [configuration reference](/docs/hub/configuratio
 
 ## Choose the agent in Hub
 
-When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub then asks that daemon for its available providers, models, execution modes, and thinking options. The suggested model and mode are the daemon's defaults.
+When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub does not prefill the directory: it is a path on that machine, it has to exist, and only you know which repository the agent should work in. Hub then asks that daemon for its available providers, models, execution modes, and thinking options. The suggested model and mode are the daemon's defaults.
+
+Only daemons that were granted `hub.execute` are offered as targets, and only Claude, Codex, and OpenCode are offered as providers. Hub preapproves its own tools on every run because nobody is at the keyboard to approve them, and those are the providers whose daemon contract accepts that.
 
 Changing the daemon or working directory reloads the choices. If an existing trigger names a model, mode, or thinking option that the daemon no longer reports, Hub marks that value unavailable without replacing it. You can keep the authored value, choose a current value, or switch to YAML editing.
 
 If the daemon is offline or needs a newer Paseo version, the agent selectors show an error and a retry action. The rest of the trigger and its YAML remain editable.
 
+## Saving checks the agent against the daemon
+
+Saving a trigger asks the target daemon to validate the agent it would launch: the provider, model, mode, thinking option, and provider-native options, and every named agent a choice can select. A value the daemon does not offer is refused at save, naming the field, instead of failing on the first run.
+
+```text
+run.agent.mode: Mode 'default' is not available for provider 'opencode'
+```
+
+The check needs the daemon connected. A new trigger, or a change of daemon, working directory, or agent, cannot be saved while its daemon is offline; the refusal names the daemon. Editing the prompt, filters, or limits of an existing trigger saves either way.
+
+The same checks run wherever a trigger is authored: the dashboard form, its YAML mode, `POST /api/v1/triggers/install`, `paseo hub init`, and `paseo hub deploy`.
+
 ## Continue the same agent
 
 Dashboard triggers default to **Same conversation**. Messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent in that project. An event without a conversation starts a new agent.
 
-If the agent is busy, the new prompt steers its current work. If its workspace is archived, Hub asks Paseo to restore it before sending the prompt. Each arrival still has its own deadline, output limits, and completion status.
+If the agent is busy, the new prompt steers its current work. Each arrival keeps its own output limits and completion status. If a reusable workspace is archived, Hub asks Paseo to restore it before sending the prompt.
 
 Choose **Custom key** to group arrivals by an input, or **New agent** to keep them separate. A self-contained trigger document can express the same choice:
 
@@ -67,7 +81,7 @@ run:
   prompt: Handle this request and call finish_execution when complete.
 ```
 
-The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) describes keys and compatibility. The run detail shows whether each arrival created, continued, or restored an agent.
+The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) covers keys and agent reuse. The run detail shows whether each arrival created, continued, or restored an agent.
 
 Hub includes an `executionId` in each prompt. When using a continuing agent, pass that ID to `reply` and `finish_execution`. These tools act on that arrival's destination and contract; an old or unrelated execution ID is rejected.
 

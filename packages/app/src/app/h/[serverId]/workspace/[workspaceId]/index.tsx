@@ -115,8 +115,7 @@ function HostWorkspaceRouteContent() {
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
   const openIntent = useMemo(() => parseWorkspaceOpenIntent(openValue), [openValue]);
-  const recoveryAgentId = openIntent?.kind === "agent" ? openIntent.agentId : null;
-  const isAgentOpenIntent = recoveryAgentId !== null;
+  const isAgentOpenIntent = openIntent?.kind === "agent";
   const isOpenIntentWaitingForWorkspace = Boolean(
     isAgentOpenIntent && (!hasHydratedWorkspaces || !workspaceExists),
   );
@@ -191,16 +190,10 @@ function HostWorkspaceRouteContent() {
     return null;
   }
 
-  return <WorkspaceDeck recoveryRequested={isAgentOpenIntent} recoveryAgentId={recoveryAgentId} />;
+  return <WorkspaceDeck recoveryRequested={isAgentOpenIntent} />;
 }
 
-function WorkspaceDeck({
-  recoveryRequested,
-  recoveryAgentId,
-}: {
-  recoveryRequested: boolean;
-  recoveryAgentId: string | null;
-}) {
+function WorkspaceDeck({ recoveryRequested }: { recoveryRequested: boolean }) {
   const activeSelection = useActiveWorkspaceSelection();
   const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
     activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],
@@ -272,7 +265,6 @@ function WorkspaceDeck({
               selection={selection}
               active={active}
               recoveryRequested={recoveryRequested}
-              recoveryAgentId={recoveryAgentId}
               onUnmountInactive={unmountWorkspaceSelection}
             />
           );
@@ -286,13 +278,11 @@ function WorkspaceDeckEntry({
   selection,
   active,
   recoveryRequested,
-  recoveryAgentId,
   onUnmountInactive,
 }: {
   selection: ActiveWorkspaceSelection;
   active: boolean;
   recoveryRequested: boolean;
-  recoveryAgentId: string | null;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
 }) {
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(selection.serverId);
@@ -323,7 +313,6 @@ function WorkspaceDeckEntry({
         workspaceId={selection.workspaceId}
         isRouteFocused={active}
         recoveryRequested={active && recoveryRequested}
-        recoveryAgentId={active ? recoveryAgentId : null}
       />
     </RetainedPanel>
   );

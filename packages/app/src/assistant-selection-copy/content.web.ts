@@ -17,6 +17,9 @@ import {
 } from "./markup";
 
 const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
+const MESSAGE_ROW_SELECTOR = "[data-message-id]";
+const CHAT_SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
+const messageRowSelector = (messageId: string) => `[data-message-id="${CSS.escape(messageId)}"]`;
 const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
 const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
 
@@ -64,20 +67,22 @@ export function createAssistantSelectionClipboardContent(
   }
 
   const range = selection.getRangeAt(0);
-  const startMessage = closestAssistantMessage(range.startContainer);
-  const endMessage = closestAssistantMessage(range.endContainer);
-  if (!startMessage || startMessage !== endMessage) {
+  const parts = selectedMessageParts(range);
+  if (!parts) {
     return null;
   }
 
-  const partialCode = createPartialCodeContent(range, startMessage);
-  if (partialCode) {
-    return partialCode;
+  if (parts.length === 1) {
+    const partialCode = createPartialCodeContent(range, parts[0]!.message);
+    if (partialCode) {
+      return partialCode;
+    }
   }
 
   const container = document.createElement("div");
-  const selected = cloneMarkdownSelection(range, startMessage);
-  container.append(selected);
+  for (const part of parts) {
+    container.append(cloneMarkdownSelection(part.range, part.message));
+  }
   restoreMarkdownElements(container);
 
   const markdown = turndown.turndown(container.innerHTML).trim();
@@ -405,6 +410,70 @@ function isTableStructure(tag: string | null): boolean {
 function closestAssistantMessage(node: Node): Element | null {
   const element = node instanceof Element ? node : node.parentElement;
   return element?.closest(ASSISTANT_MESSAGE_SELECTOR) ?? null;
+}
+
+interface SelectedMessagePart {
+  message: Element;
+  range: Range;
+}
+
+function messageIdOf(node: Element): string | undefined {
+  return node.closest<HTMLElement>(MESSAGE_ROW_SELECTOR)?.dataset.messageId;
+}
+
+/**
+ * A retained inactive panel keeps rendering its chat, so the same agent — and the same
+ * message id — can exist twice in the document. The selection's own transcript is the
+ * only one that can answer for it.
+ */
+function assistantMessagesOfGroup(node: Element, messageId: string): Element[] {
+  const transcript = node.closest(CHAT_SCROLL_SELECTOR);
+  if (!transcript) {
+    return [];
+  }
+  const rows = transcript.querySelectorAll<HTMLElement>(messageRowSelector(messageId));
+  return Array.from(rows).flatMap((row) => {
+    const message = row.querySelector(ASSISTANT_MESSAGE_SELECTOR);
+    return message ? [message] : [];
+  });
+}
+
+/**
+ * The selection cut into one range per assistant message element it covers.
+ *
+ * An assistant message renders one row per Markdown block, so a selection that runs
+ * past a paragraph ends in a different element of the same message. Each block is
+ * serialized against its own element, exactly as a selection inside one block is, and
+ * the results are concatenated — Turndown never sees the row wrappers between them.
+ * A selection reaching a second message, or anything that is not assistant Markdown,
+ * copies as plain text.
+ */
+function selectedMessageParts(range: Range): SelectedMessagePart[] | null {
+  const start = closestAssistantMessage(range.startContainer);
+  const end = closestAssistantMessage(range.endContainer);
+  if (!start || !end) {
+    return null;
+  }
+  if (start === end) {
+    return [{ message: start, range }];
+  }
+  const messageId = messageIdOf(start);
+  if (!messageId || messageId !== messageIdOf(end)) {
+    return null;
+  }
+  const messages = assistantMessagesOfGroup(start, messageId);
+  const first = messages.indexOf(start);
+  const last = messages.indexOf(end);
+  if (first < 0 || last < first) {
+    return null;
+  }
+  return messages.slice(first, last + 1).map((message) => {
+    const part = message.ownerDocument.createRange();
+    part.selectNodeContents(message);
+    if (message === start) part.setStart(range.startContainer, range.startOffset);
+    if (message === end) part.setEnd(range.endContainer, range.endOffset);
+    return { message, range: part };
+  });
 }
 
 function restoreMarkdownElements(container: HTMLElement): void {

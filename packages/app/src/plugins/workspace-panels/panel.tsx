@@ -1,13 +1,9 @@
-import type {
-  PluginAgentPanelProps,
-  PluginHostProps,
-  PluginWorkspacePanelProps,
-} from "@getpaseo/plugin/client";
+import type { PluginAgentPanelProps, PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import { CircleAlert } from "lucide-react-native";
 import { useMemo } from "react";
-import { Platform, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -23,20 +19,14 @@ import { createPluginClientStateSource } from "../client-state/source";
 import { toPluginTheme } from "../theme";
 import { resolvePluginIcon } from "../icons";
 import { useInstalledPlugin } from "../registry";
-import { PluginRuntimeBoundary } from "../runtime-boundary";
-import { createPluginSurfaceRuntime } from "../surface-runtime";
+import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { resolvePluginWorkspacePanel } from "./resolution";
+import { resolvePluginPlatform } from "../platform";
 
 const pluginThemeMapping = (theme: Theme) => ({
   theme: toPluginTheme(theme),
 });
-
-function resolvePlatform(): PluginHostProps["layout"]["platform"] {
-  if (Platform.OS === "ios") return "ios";
-  if (Platform.OS === "android") return "android";
-  return "web";
-}
 
 function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const { serverId, workspaceId, target } = usePaneContext();
@@ -54,22 +44,18 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
     );
   });
   const client = useHostRuntimeClient(serverId);
-  const runtime = useMemo(
-    () => createPluginSurfaceRuntime(client, target.pluginId),
-    [client, target.pluginId],
-  );
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
+  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
   const navigation = usePluginHostNavigation(serverId);
 
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;
   }
-  if (!runtime) {
+  if (!client) {
     return <PluginPanelUnavailable message="Plugin host is offline." />;
   }
 
@@ -110,9 +96,9 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       Surface={Surface}
       key={`${serverId}/${target.pluginId}/${target.panelId}/${target.context}`}
     >
-      <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
+      <PluginInstallationProvider plugin={plugin}>
         <PluginClientStateProvider source={stateSource}>{panel}</PluginClientStateProvider>
-      </PluginRuntimeBoundary>
+      </PluginInstallationProvider>
     </SurfaceErrorBoundary>
   );
 }

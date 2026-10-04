@@ -13,7 +13,7 @@ export async function runStopCommand(
   options: WorkspaceScriptCommandOptions,
   _command: Command,
 ): Promise<SingleResult<WorkspaceScriptRow>> {
-  const client = await connectWorkspaceScriptClient(options.host);
+  const client = await connectWorkspaceScriptClient(options.daemonTarget);
   try {
     const workspaceId = await resolveWorkspaceScriptWorkspaceId(client, options);
     const payload = await client.stopWorkspaceScript(workspaceId, scriptName);

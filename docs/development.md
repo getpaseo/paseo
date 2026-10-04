@@ -444,16 +444,17 @@ so the port may already be bound. `portScript` takes precedence when both values
 
 The daemon can optionally serve the browser web client from the same HTTP server. This is disabled by default.
 
-Enable it for a running daemon with:
+Enable it in persistent configuration:
 
 ```bash
-paseo daemon start --web-ui
+paseo daemon config set features.webUi.enabled true
+paseo daemon start
 ```
 
 Or set the environment variable:
 
 ```bash
-PASEO_WEB_UI_ENABLED=true paseo daemon start
+PASEO_WEB_UI_ENABLED=true paseo daemon run
 ```
 
 Or persist it in `config.json`:
@@ -564,7 +565,7 @@ npm run cli -- --host ssh://user@host ls -a
 ```
 
 Set `PASEO_HOST` to use the same target across invocations. An explicit
-`--host` overrides the environment variable.
+selector overrides both environment selectors. With both `PASEO_HOME` and `PASEO_HOST` set, pass an explicit selector. See [CLI target selection](../public-docs/cli.md#select-one-daemon).
 
 In an SSH URI, the URL port is the SSH server port. The remote daemon defaults to `127.0.0.1:6767`; use `?daemonPort=7777` to override it. The transport runs non-interactively through the local OpenSSH client and never installs, starts, or configures the remote daemon. User-facing setup and troubleshooting live in [public-docs/connectivity.md](../public-docs/connectivity.md#ssh).
 

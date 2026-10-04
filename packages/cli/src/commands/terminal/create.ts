@@ -17,7 +17,7 @@ export async function runCreateCommand(
   options: TerminalCreateOptions,
   _command: Command,
 ): Promise<SingleResult<TerminalRow>> {
-  const { client, close } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.daemonTarget);
   try {
     const cwd = options.cwd ?? (options.workspace ? undefined : process.cwd());
     const workspaceId =

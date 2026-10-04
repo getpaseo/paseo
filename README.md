@@ -29,7 +29,7 @@
   </a>
 </p>
 
-<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents.</p>
+<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code agents.</p>
 
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
@@ -42,7 +42,7 @@
 Run agents in parallel on your own machines. Ship from your phone or your desk.
 
 - **Self-hosted:** Agents run on your machine with your full dev environment. Use your tools, your configs, and your skills.
-- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, and Pi through the same interface. Pick the right model for each job.
+- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code through the same interface. Pick the right model for each job.
 - **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
@@ -50,10 +50,9 @@ Run agents in parallel on your own machines. Ship from your phone or your desk.
 ## Plugins
 
 Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
-TypeScript plugins. Install from a local directory or Git repository with `paseo plugin add <source>`.
+TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`.
 
-See the [plugin docs](https://paseo.sh/docs/plugins) for your Paseo version, or start with the
-[0.8 beta quickstart](https://paseo.sh/docs/plugins/v0.8). Plugins run with access to your daemon
+Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
 machine and inside connected clients; install only code you trust.
 
 ## Getting Started
@@ -69,6 +68,8 @@ You need at least one agent CLI installed and configured with your credentials:
 - [GitHub Copilot](https://github.com/features/copilot/cli/)
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
+- [Antigravity](https://paseo.sh/docs/supported-providers#antigravity)
+- [Muse Code](https://paseo.sh/docs/muse-code)
 
 ### Desktop app (recommended)
 
@@ -193,6 +194,12 @@ npm run build:server
 # repo-wide checks
 npm run typecheck
 ```
+
+## Sponsors
+
+Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
+
+<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
 
 ## Related projects
 

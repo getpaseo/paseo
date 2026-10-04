@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type pino from "pino";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
@@ -8,6 +9,8 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 
 const REPO_CWD = path.resolve("/tmp/paseo-observation-repo");
 const GIT_DIR = path.join(REPO_CWD, ".git");
+// Checkout observation must not depend on installed forge CLIs or host-auth probes.
+const REMOTE_URL = pathToFileURL(path.join(REPO_CWD, "remote.git")).href;
 const WORKTREE_A = path.resolve("/tmp/paseo-observation-worktree-a");
 const WORKTREE_B = path.resolve("/tmp/paseo-observation-worktree-b");
 
@@ -145,6 +148,50 @@ function getWatcherSubscribeCallCount(
     .length;
 }
 
+// Recovery backoff ladder: base 30s, doubling each attempt, capped at 300s
+// (base * 2 ** 4). Mirrors WATCH_RECOVERY_BASE_DELAY_MS /
+// WATCH_RECOVERY_MAX_BACKOFF_STEPS / WATCH_RECOVERY_MAX_DELAY_MS in
+// workspace-git-service.ts.
+const WATCH_RECOVERY_LADDER_DELAYS_MS = [30_000, 60_000, 120_000, 240_000, 300_000, 300_000];
+
+/**
+ * Drives a watch target (working tree or repository metadata) through six
+ * recovery cycles, proving three things about `advanceWatchRecoveryLadder`:
+ *  - recovery keeps retrying well past the old cap of 3 attempts (this walks
+ *    it to 6, i.e. 7 total subscriptions),
+ *  - the delay between attempts follows 30s/60s/120s/240s and then plateaus
+ *    at 300s rather than growing without bound, and
+ *  - a recovered subscription that emits an event (proving it is live) and
+ *    then errors again immediately — before surviving the 300s durability
+ *    window — does NOT reset the ladder back to the 30s base. Each "advance
+ *    by 30s only" check below would observe a premature retry if a reset had
+ *    happened.
+ */
+async function driveWatchRecoveryLadder(
+  watcher: ReturnType<typeof createWatcherHarness>,
+  directory: string,
+): Promise<void> {
+  for (const [index, delayMs] of WATCH_RECOVERY_LADDER_DELAYS_MS.entries()) {
+    const expectedCallCount = index + 2;
+    if (delayMs > 30_000) {
+      await vi.advanceTimersByTimeAsync(30_000);
+      // Not yet reset to the 30s base: no new attempt after only 30s.
+      expect(getWatcherSubscribeCallCount(watcher, directory)).toBe(expectedCallCount - 1);
+      await vi.advanceTimersByTimeAsync(delayMs - 30_000);
+    } else {
+      await vi.advanceTimersByTimeAsync(delayMs);
+    }
+    await vi.waitFor(() => {
+      expect(getWatcherSubscribeCallCount(watcher, directory)).toBe(expectedCallCount);
+    });
+    const recoveredWatcher = getWatcherRecordsForDirectory(watcher, directory)[index + 1];
+    recoveredWatcher?.callback(null, [
+      { path: path.join(directory, `recovered-${index + 1}.txt`), type: "update" },
+    ]);
+    recoveredWatcher?.callback(new Error(`recovered watcher stopped ${index + 1}`), []);
+  }
+}
+
 function createService(
   watcher: ReturnType<typeof createWatcherHarness>,
   overrides?: Record<string, unknown>,
@@ -214,6 +261,35 @@ describe("WorkspaceGitService checkout observation", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  test("waits for the initial watcher inventory before building a cold diff", async () => {
+    const watcher = createWatcherHarness();
+    const inventoryFinished = createDeferred<void>();
+    let builds = 0;
+    const service = createService(watcher, {
+      subscribe: async (...args: Parameters<typeof watcher.subscribe>) => {
+        await inventoryFinished.promise;
+        return watcher.subscribe(...args);
+      },
+      getCheckoutDiff: async () => {
+        builds += 1;
+        return { diff: "", structured: [] };
+      },
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+    try {
+      const read = service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+      await flushPromises();
+      expect(builds).toBe(0);
+      inventoryFinished.resolve();
+      await read;
+      expect(builds).toBe(1);
+    } finally {
+      inventoryFinished.resolve();
+      subscription.unsubscribe();
+      await service.dispose();
+    }
   });
 
   test("dispose waits for file observation to finish closing", async () => {
@@ -500,7 +576,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
       currentBranch: "feature",
-      remoteUrl: "https://example.com/repo.git",
+      remoteUrl: REMOTE_URL,
       resolvedBaseRef: "main",
       comparisonBaseRef: "origin/main",
     }));
@@ -525,7 +601,7 @@ describe("WorkspaceGitService checkout observation", () => {
           currentBranch: "feature",
           baseRef: "main",
           hasRemote: true,
-          remoteUrl: "https://example.com/repo.git",
+          remoteUrl: REMOTE_URL,
         }),
       ),
       hasOriginRemote: vi.fn(async () => true),
@@ -569,7 +645,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
       currentBranch: "feature",
-      remoteUrl: "https://example.com/repo.git",
+      remoteUrl: REMOTE_URL,
       resolvedBaseRef: "main",
       comparisonBaseRef: "origin/main",
     }));
@@ -626,7 +702,7 @@ describe("WorkspaceGitService checkout observation", () => {
       const releaseFetch = createDeferred<void>();
       const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
         ...createCheckoutFacts(cwd),
-        remoteUrl: "https://example.com/repo.git",
+        remoteUrl: REMOTE_URL,
       }));
       const runGitFetch = vi.fn(async (_cwd, observer) => {
         if (phase === "before") {
@@ -681,7 +757,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const releaseFetch = createDeferred<void>();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
-      remoteUrl: "https://example.com/repo.git",
+      remoteUrl: REMOTE_URL,
     }));
     const getCheckoutRefDerivedState = vi.fn();
     const service = createService(watcher, {
@@ -731,7 +807,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
       currentBranch: "feature",
-      remoteUrl: "https://example.com/repo.git",
+      remoteUrl: REMOTE_URL,
       resolvedBaseRef: "main",
       comparisonBaseRef: "origin/main",
     }));
@@ -791,7 +867,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
       currentBranch: "feature",
-      remoteUrl: "https://example.com/repo.git",
+      remoteUrl: REMOTE_URL,
       resolvedBaseRef: "main",
       comparisonBaseRef: "origin/main",
     }));
@@ -820,7 +896,7 @@ describe("WorkspaceGitService checkout observation", () => {
           currentBranch: "feature",
           baseRef: "main",
           hasRemote: true,
-          remoteUrl: "https://example.com/repo.git",
+          remoteUrl: REMOTE_URL,
         }),
       ),
       hasOriginRemote: vi.fn(async () => true),
@@ -864,7 +940,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
       currentBranch: "feature",
-      remoteUrl: "https://example.com/repo.git",
+      remoteUrl: REMOTE_URL,
       resolvedBaseRef: "main",
       comparisonBaseRef: "origin/main",
     }));
@@ -875,7 +951,7 @@ describe("WorkspaceGitService checkout observation", () => {
           currentBranch: "feature",
           baseRef: "main",
           hasRemote: true,
-          remoteUrl: "https://example.com/repo.git",
+          remoteUrl: REMOTE_URL,
         }),
       ),
       hasOriginRemote: vi.fn(async () => true),
@@ -920,27 +996,44 @@ describe("WorkspaceGitService checkout observation", () => {
 
   test("origin/main refreshes a main checkout without configured upstream", async () => {
     const watcher = createWatcherHarness();
-    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
-      ...createCheckoutFacts(cwd),
-      currentBranch: "main",
-      remoteUrl: "https://example.com/repo.git",
-      resolvedBaseRef: "main",
-      comparisonBaseRef: null,
-      branchRemoteName: null,
-      branchMergeRef: null,
-      upstreamStatus: null,
+    const releaseInitialFacts = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      await releaseInitialFacts.promise;
+      return {
+        ...createCheckoutFacts(cwd),
+        currentBranch: "main",
+        remoteUrl: REMOTE_URL,
+        resolvedBaseRef: "main",
+        comparisonBaseRef: null,
+        branchRemoteName: null,
+        branchMergeRef: null,
+        upstreamStatus: null,
+      };
+    });
+    const runGitFetch = vi.fn(async () => ({
+      changes: [],
+      nonRemoteRefsChanged: false,
+      error: null,
     }));
-    const service = createService(watcher, { getCheckoutSnapshotFacts });
+    const service = createService(watcher, { getCheckoutSnapshotFacts, runGitFetch });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     });
 
-    watcher.records
-      .find((record) => record.directory === GIT_DIR)
-      ?.callback(null, [
-        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
-      ]);
+    releaseInitialFacts.resolve();
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
+    });
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    const repoWatcher = getWatcherRecordsForDirectory(watcher, GIT_DIR)[0]!;
+    repoWatcher.callback(null, [
+      { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+    ]);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
@@ -1463,6 +1556,87 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("degraded polling backs off while the snapshot is unchanged and resets on a change", async () => {
+    // A repository large enough to defeat the recursive watcher makes every degraded refresh
+    // expensive, so a fixed cadence keeps the daemon shelling out Git on an untouched workspace.
+    const watcher = createWatcherHarness({ failDirectories: new Set([REPO_CWD]) });
+    let isDirty = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const service = createService(watcher, { getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workingTreeWatchTargetCount).toBe(1);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    });
+
+    // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
+    for (const [elapsedMs, expectedCalls] of [
+      [5_000, 2],
+      [10_000, 3],
+      [20_000, 4],
+      [40_000, 5],
+      [60_000, 6],
+      [60_000, 7],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(expectedCalls);
+    }
+
+    // A fixed 5s cadence would have run 39 polls over the same 195s.
+    expect(getCheckoutStatus.mock.calls.length).toBeLessThan(10);
+
+    // A real change snaps the loop back to the base interval.
+    isDirty = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(8);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(9);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("degraded repository-metadata polling backs off and resets on a change", async () => {
+    // Only the Git-directory watcher fails, so the metadata fallback is the one poll loop running.
+    const watcher = createWatcherHarness({ failDirectories: new Set([GIT_DIR]) });
+    let isDirty = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const service = createService(watcher, { getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    const callsBeforePolling = getCheckoutStatus.mock.calls.length;
+    function pollCount(): number {
+      return getCheckoutStatus.mock.calls.length - callsBeforePolling;
+    }
+
+    // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
+    for (const [elapsedMs, expectedPolls] of [
+      [5_000, 1],
+      [10_000, 2],
+      [20_000, 3],
+      [40_000, 4],
+      [60_000, 5],
+      [60_000, 6],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(pollCount()).toBe(expectedPolls);
+    }
+
+    isDirty = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pollCount()).toBe(7);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pollCount()).toBe(8);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("non-Git fallback promotes an externally initialized checkout", async () => {
     const watcher = createWatcherHarness();
     let isGit = false;
@@ -1676,17 +1850,17 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
     });
     const statusCallsAfterSetup = getCheckoutStatus.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
-    });
-    await vi.advanceTimersByTimeAsync(24_000);
+    await vi.advanceTimersByTimeAsync(29_000);
     expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(1);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(2);
     });
     expect(erroredUnsubscribe).toHaveBeenCalledTimes(1);
+    // Recovery schedules a debounced refresh. Advance the fake clock past the debounce
+    // explicitly; vi.waitFor alone runs out of real time before it on a slow runner.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
 
     subscription.unsubscribe();
     service.dispose();
@@ -1756,7 +1930,7 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
-  test("watcher recovery remains capped when recovered subscriptions emit events before failing", async () => {
+  test("watcher recovery keeps retrying past the old attempt cap and the ladder does not reset on immediate re-failure", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService(watcher, {
@@ -1771,50 +1945,27 @@ describe("WorkspaceGitService checkout observation", () => {
     const checkoutWatcher = getWatcherRecordsForDirectory(watcher, REPO_CWD)[0];
 
     checkoutWatcher?.callback(new Error("watcher stopped"), []);
-    await vi.advanceTimersByTimeAsync(30_000);
-    await vi.waitFor(() => {
-      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(2);
-    });
-    getWatcherRecordsForDirectory(watcher, REPO_CWD)[1]?.callback(null, [
-      { path: path.join(REPO_CWD, "recovered-1.txt"), type: "update" },
-    ]);
-    getWatcherRecordsForDirectory(watcher, REPO_CWD)[1]?.callback(
-      new Error("recovered watcher stopped"),
-      [],
-    );
-    await vi.advanceTimersByTimeAsync(60_000);
-    await vi.waitFor(() => {
-      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(3);
-    });
-    getWatcherRecordsForDirectory(watcher, REPO_CWD)[2]?.callback(null, [
-      { path: path.join(REPO_CWD, "recovered-2.txt"), type: "update" },
-    ]);
-    getWatcherRecordsForDirectory(watcher, REPO_CWD)[2]?.callback(
-      new Error("recovered watcher stopped again"),
-      [],
-    );
-    await vi.advanceTimersByTimeAsync(120_000);
-    await vi.waitFor(() => {
-      expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(4);
-    });
-    getWatcherRecordsForDirectory(watcher, REPO_CWD)[3]?.callback(null, [
-      { path: path.join(REPO_CWD, "recovered-3.txt"), type: "update" },
-    ]);
-    getWatcherRecordsForDirectory(watcher, REPO_CWD)[3]?.callback(
-      new Error("last recovered watcher stopped"),
-      [],
-    );
+    await driveWatchRecoveryLadder(watcher, REPO_CWD);
 
-    const statusCallsAtCap = getCheckoutStatus.mock.calls.length;
+    // Past the old cap of 3 recovery attempts (4 total subscriptions), the
+    // service keeps retrying instead of giving up permanently.
+    expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(
+      WATCH_RECOVERY_LADDER_DELAYS_MS.length + 1,
+    );
+    const statusCallsAfterLadder = getCheckoutStatus.mock.calls.length;
     await vi.advanceTimersByTimeAsync(300_000);
-    expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(4);
-    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAtCap);
+    await vi.waitFor(() => {
+      expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(
+        WATCH_RECOVERY_LADDER_DELAYS_MS.length + 2,
+      );
+    });
+    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterLadder);
 
     subscription.unsubscribe();
     service.dispose();
   });
 
-  test("repository watcher recovery remains capped after recovered subscriptions emit events", async () => {
+  test("repository watcher recovery keeps retrying past the old attempt cap and the ladder does not reset on immediate re-failure", async () => {
     const watcher = createWatcherHarness();
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService(watcher, {
@@ -1830,21 +1981,21 @@ describe("WorkspaceGitService checkout observation", () => {
       new Error("repository watcher stopped"),
       [],
     );
+    await driveWatchRecoveryLadder(watcher, GIT_DIR);
 
-    for (const [recoveryIndex, delayMs] of [30_000, 60_000, 120_000].entries()) {
-      await vi.advanceTimersByTimeAsync(delayMs);
-      await vi.waitFor(() => {
-        expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(recoveryIndex + 2);
-      });
-      const recoveredWatcher = getWatcherRecordsForDirectory(watcher, GIT_DIR)[recoveryIndex + 1];
-      recoveredWatcher?.callback(null, [{ path: path.join(GIT_DIR, "HEAD"), type: "update" }]);
-      recoveredWatcher?.callback(new Error("recovered repository watcher stopped"), []);
-    }
-
-    const statusCallsAtCap = getCheckoutStatus.mock.calls.length;
+    // Past the old cap of 3 recovery attempts (4 total subscriptions), the
+    // service keeps retrying instead of giving up permanently.
+    expect(getWatcherSubscribeCallCount(watcher, GIT_DIR)).toBe(
+      WATCH_RECOVERY_LADDER_DELAYS_MS.length + 1,
+    );
+    const statusCallsAfterLadder = getCheckoutStatus.mock.calls.length;
     await vi.advanceTimersByTimeAsync(300_000);
-    expect(getWatcherSubscribeCallCount(watcher, GIT_DIR)).toBe(4);
-    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAtCap);
+    await vi.waitFor(() => {
+      expect(getWatcherSubscribeCallCount(watcher, GIT_DIR)).toBe(
+        WATCH_RECOVERY_LADDER_DELAYS_MS.length + 2,
+      );
+    });
+    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterLadder);
 
     subscription.unsubscribe();
     service.dispose();
@@ -1945,6 +2096,441 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(getCheckoutStatus).toHaveBeenCalledTimes(statusCallsAfterRefresh + 1);
     });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("pruneKnownDirectories case-folds a Windows-shaped watch root", () => {
+    // `pruneKnownDirectories` only needs to fold case when the watch root
+    // *looks* like a Windows path (drive letter or UNC) — see
+    // `looksLikeDefiniteWindowsPath` in `../utils/path.js`, the same rule
+    // `isPathInsideRoot`/`isRealpathInsideRoot` used before this method was
+    // rewritten from realpath comparisons to string prefixes (see the
+    // class-level comment on `pruneKnownDirectories`). macOS's real
+    // filesystem is already case-insensitive, so a test built from real
+    // directories on disk would pass whether or not that fold logic
+    // exists — a synthetic Windows-shaped root exercises the comparison
+    // logic itself instead of relying on host filesystem behavior.
+    //
+    // Driven directly against the private target rather than through
+    // `registerWorkspace`, for two independent reasons, both checked before
+    // settling on this shape:
+    //
+    // 1. Reachability: `registerWorkspace` resolves `cwd` through
+    //    `node:path`'s `resolve()` before anything else runs, and on this
+    //    POSIX test host that rewrites a drive-letter path into an ordinary
+    //    POSIX one, destroying the shape this test depends on. This step can
+    //    be routed around — mocking `git rev-parse --show-toplevel`'s stdout
+    //    lets `target.watchPath` carry the raw Windows-shaped string, since
+    //    `parseGitRevParsePath` does not call `resolve()` — but
+    //    `loadIgnoredDirs` then calls `resolve(rootPath, rel)` on that same
+    //    watch path to build `ignoredDirectories`, which on POSIX prefixes it
+    //    with `process.cwd()` and breaks the shared prefix the fold logic
+    //    compares against. Two independent `resolve()` calls, each assuming
+    //    host-platform semantics, block the public path from both sides.
+    // 2. Observability: even granting reachability, `knownDirectories` has
+    //    exactly one reader outside this method — the Set-lookup fast path in
+    //    `noteWorkingTreeDirectories` — and that method's fallback branch
+    //    re-derives ignored-ness via `isPathInsideRoot`, which already folds
+    //    case correctly on its own. Verified by deleting this method's fold
+    //    logic (forcing `foldCase = false`) and running this file plus the
+    //    integration suite: only this test failed. No public-surface
+    //    assertion distinguishes a correctly pruned directory from one left
+    //    stale, because the redundant check downstream produces the same
+    //    outcome either way.
+    const service = createService(createWatcherHarness());
+    const target = {
+      watchPath: "C:/Users/dev/Repo",
+      knownDirectories: new Set<string>(["C:/Users/dev/Repo/Deps/package-a"]),
+      ignoredDirectories: new Set<string>(["C:/Users/dev/Repo/deps"]),
+    };
+
+    (
+      service as unknown as { pruneKnownDirectories: (t: typeof target) => void }
+    ).pruneKnownDirectories(target);
+
+    expect(target.knownDirectories.has("C:/Users/dev/Repo/Deps/package-a")).toBe(false);
+
+    service.dispose();
+  });
+
+  test("a previously unseen directory refreshes the ignore set", async () => {
+    const watcher = createWatcherHarness();
+    // A fresh worktree has no ignored directories on disk yet.
+    let ignoredDirectories = "";
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : ignoredDirectories,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, {
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000,
+      runGitCommand,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
+    expect(checkoutWatcher?.ignore).not.toContain(path.join(REPO_CWD, "deps"));
+
+    // Dependencies get installed. No .gitignore is touched.
+    ignoredDirectories = "deps/\n";
+    checkoutWatcher?.callback(null, [
+      { path: path.join(REPO_CWD, "deps", "package-a", "index.js"), type: "create" },
+    ]);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await vi.waitFor(() => {
+      expect(checkoutWatcher?.updateIgnore).toHaveBeenCalledWith(
+        expect.arrayContaining([path.join(REPO_CWD, "deps")]),
+      );
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("a failed ignore refresh does not permanently mark a directory known", async () => {
+    // Regression for the failure path reintroducing the original #4558 bug:
+    // `noteWorkingTreeDirectories` marks a newly seen directory known and
+    // schedules a debounced refresh, but `loadIgnoredDirs` deliberately keeps
+    // the previous ignore set when `git ls-files` fails (a transient failure
+    // must not un-ignore the whole dependency tree). If that success/failure
+    // distinction is not carried back, the directory stays "known" forever
+    // with the fast-path Set lookup in `noteWorkingTreeDirectories` skipping
+    // it on every later event — so no refresh is ever attempted again and
+    // the directory is watched forever, same as before #4558 was fixed.
+    const watcher = createWatcherHarness();
+    let ignoredDirectories = "";
+    let lsFilesCallCount = 0;
+    const runGitCommand = vi.fn(async (args: string[]) => {
+      if (args[0] === "rev-parse") {
+        return { stdout: `${REPO_CWD}\n`, stderr: "", truncated: false, exitCode: 0, signal: null };
+      }
+      lsFilesCallCount += 1;
+      // The seed load at registration (call 1) succeeds. The refresh
+      // triggered by the newly discovered "deps" directory (call 2) fails
+      // transiently.
+      if (lsFilesCallCount === 2) {
+        throw new Error("git ls-files timed out");
+      }
+      return {
+        stdout: ignoredDirectories,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    });
+    const service = createService(watcher, {
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000,
+      runGitCommand,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
+    expect(lsFilesCallCount).toBe(1);
+
+    // Dependencies get installed. No .gitignore is touched, so this only
+    // schedules a refresh via directory discovery — the one wired to fail.
+    ignoredDirectories = "deps/\n";
+    checkoutWatcher?.callback(null, [
+      { path: path.join(REPO_CWD, "deps", "package-a", "index.js"), type: "create" },
+    ]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount).toBe(2);
+    });
+    // The failed refresh must not have applied "deps" to the live watcher.
+    expect(checkoutWatcher?.updateIgnore).not.toHaveBeenCalled();
+
+    // A later write under the same directory. If the directory were left
+    // permanently "known" by the failed refresh, `noteWorkingTreeDirectories`
+    // would silently skip it here and no second refresh would ever happen.
+    checkoutWatcher?.callback(null, [
+      { path: path.join(REPO_CWD, "deps", "package-a", "index2.js"), type: "create" },
+    ]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount).toBe(3);
+      expect(checkoutWatcher?.updateIgnore).toHaveBeenCalledWith(
+        expect.arrayContaining([path.join(REPO_CWD, "deps")]),
+      );
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("repeat writes in known directories do not re-run git ls-files", async () => {
+    const watcher = createWatcherHarness();
+    let ignoredDirectories = "";
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : ignoredDirectories,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, {
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000,
+      runGitCommand,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
+    // Registration itself performs one ls-files call to seed the ignore set. Measure the
+    // burst's effect as a delta from this baseline, not an absolute count, so the assertion
+    // cannot pass vacuously off of setup's own call.
+    const lsFilesAtSetup = runGitCommand.mock.calls.filter(
+      (call) => call[0][0] === "ls-files",
+    ).length;
+
+    // One burst in a new directory: one debounced refresh, not one per event.
+    ignoredDirectories = "deps/\n";
+    for (let index = 0; index < 500; index += 1) {
+      checkoutWatcher?.callback(null, [
+        { path: path.join(REPO_CWD, "deps", `module-${index}.js`), type: "create" },
+      ]);
+    }
+    await vi.advanceTimersByTimeAsync(3_000);
+    const lsFilesAfterBurst = runGitCommand.mock.calls.filter(
+      (call) => call[0][0] === "ls-files",
+    ).length;
+    // The burst must have refreshed the ignore set at least once...
+    expect(lsFilesAfterBurst - lsFilesAtSetup).toBeGreaterThanOrEqual(1);
+    // ...but debounced into at most 2 calls, not one per event. (The brief's original absolute
+    // bound was <= 3 total calls with a baseline of 1 from setup, i.e. at most 2 burst-triggered
+    // refreshes — preserve that numeric intent here as a delta.)
+    expect(lsFilesAfterBurst - lsFilesAtSetup).toBeLessThanOrEqual(2);
+
+    // The directory is known now. Further writes trigger nothing.
+    for (let index = 0; index < 200; index += 1) {
+      checkoutWatcher?.callback(null, [
+        { path: path.join(REPO_CWD, "src", `file-${index}.ts`), type: "update" },
+      ]);
+    }
+    await vi.advanceTimersByTimeAsync(3_000);
+    const lsFilesAtEnd = runGitCommand.mock.calls.filter(
+      (call) => call[0][0] === "ls-files",
+    ).length;
+    expect(lsFilesAtEnd).toBeLessThanOrEqual(lsFilesAfterBurst + 1);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("a deleted known directory is dropped, so a later event under it re-runs git ls-files", async () => {
+    // Regression for the finding that `knownDirectories` only ever grows:
+    // nothing previously removed an entry once its directory was deleted
+    // from disk, so a long-lived daemon over a churning tree (deps
+    // installed and removed, build output cycling) would accumulate
+    // tombstones for the life of the target and slow every future
+    // `pruneKnownDirectories` pass. `removeDeletedKnownDirectories` must
+    // drop a directory (and anything nested under it) once a `delete`
+    // event reports the directory path itself — proven here by making a
+    // write reappear under the same path afterward and asserting it costs
+    // a fresh `git ls-files` refresh rather than being silently skipped by
+    // the known-directory fast path.
+    const watcher = createWatcherHarness();
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : "",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, {
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000,
+      runGitCommand,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
+    const lsFilesCallCount = () =>
+      runGitCommand.mock.calls.filter((call) => call[0][0] === "ls-files").length;
+    const lsFilesAtSetup = lsFilesCallCount();
+
+    const depsDir = path.join(REPO_CWD, "deps");
+    // First sight of `deps`: marks it known and schedules one debounced refresh.
+    checkoutWatcher?.callback(null, [{ path: path.join(depsDir, "index.js"), type: "create" }]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount()).toBeGreaterThan(lsFilesAtSetup);
+    });
+    const lsFilesAfterDepsDiscovery = lsFilesCallCount();
+
+    // A nested directory under `deps` becomes known too. A directory delete
+    // does not guarantee a delete event for everything beneath it, so
+    // removal must drop this along with `deps` itself.
+    const nestedDir = path.join(depsDir, "nested");
+    checkoutWatcher?.callback(null, [{ path: path.join(nestedDir, "index.js"), type: "create" }]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount()).toBeGreaterThan(lsFilesAfterDepsDiscovery);
+    });
+    const lsFilesAfterNestedDiscovery = lsFilesCallCount();
+
+    // Steady state: another write in a known directory triggers nothing.
+    checkoutWatcher?.callback(null, [{ path: path.join(depsDir, "index2.js"), type: "update" }]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(lsFilesCallCount()).toBe(lsFilesAfterNestedDiscovery);
+
+    // `deps` (the parent) is deleted from disk. The watcher reports the
+    // directory path itself, not just files under it.
+    checkoutWatcher?.callback(null, [{ path: depsDir, type: "delete" }]);
+
+    // A write reappears directly under `deps`. If the delete had not
+    // dropped it from `knownDirectories`, the known-directory fast path
+    // would skip this event and no refresh would run.
+    checkoutWatcher?.callback(null, [
+      { path: path.join(depsDir, "reinstalled.js"), type: "create" },
+    ]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount()).toBeGreaterThan(lsFilesAfterNestedDiscovery);
+    });
+    const lsFilesAfterDepsRediscovery = lsFilesCallCount();
+
+    // The formerly nested `deps/nested` must have been dropped too, even
+    // though only `deps` itself received a delete event.
+    checkoutWatcher?.callback(null, [
+      { path: path.join(nestedDir, "reinstalled.js"), type: "create" },
+    ]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount()).toBeGreaterThan(lsFilesAfterDepsRediscovery);
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("a large event batch refreshes ignored roots without scanning every new directory", async () => {
+    const watcher = createWatcherHarness();
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : "",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, {
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000,
+      runGitCommand,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
+    const lsFilesCallCount = () =>
+      runGitCommand.mock.calls.filter((call) => call[0][0] === "ls-files").length;
+    const lsFilesAtSetup = lsFilesCallCount();
+
+    // Establish one directory as known and steady before the flood.
+    const markerDir = path.join(REPO_CWD, "marker");
+    checkoutWatcher?.callback(null, [{ path: path.join(markerDir, "file.js"), type: "create" }]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount()).toBeGreaterThan(lsFilesAtSetup);
+    });
+    const lsFilesAfterMarker = lsFilesCallCount();
+
+    // Steady state: another write under the marker directory triggers nothing.
+    checkoutWatcher?.callback(null, [{ path: path.join(markerDir, "file2.js"), type: "update" }]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(lsFilesCallCount()).toBe(lsFilesAfterMarker);
+
+    // A single discovery refreshes Git's complete ignored-directory inventory.
+    // The other directories in this batch need not enter the known cache.
+    const floodEvents = Array.from({ length: 50_000 }, (_, index) => ({
+      path: path.join(REPO_CWD, "gen", `d${index}`, "file.js"),
+      type: "create" as const,
+    }));
+    checkoutWatcher?.callback(null, floodEvents);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => {
+      expect(lsFilesCallCount()).toBeGreaterThan(lsFilesAfterMarker);
+    });
+    const lsFilesAfterFlood = lsFilesCallCount();
+
+    // The flood must not evict an unrelated known directory by processing
+    // every entry before the cap is checked. Its later edit stays on the
+    // cache fast path and does not trigger a redundant Git refresh.
+    checkoutWatcher?.callback(null, [{ path: path.join(markerDir, "file3.js"), type: "create" }]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(lsFilesCallCount()).toBe(lsFilesAfterFlood);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("watcher recovery keeps retrying after repeated failures", async () => {
+    // The initial subscribe must succeed so the target starts out healthy; only subscribe
+    // attempts made *after* that (i.e. recovery attempts) should fail. `failDirectories` is
+    // read live on every `subscribe()` call, so mutating it after registration is enough —
+    // no need to fork the harness.
+    const failDirectories = new Set<string>();
+    const watcher = createWatcherHarness({ failDirectories });
+    let ignoredDirectories = "node_modules/\n";
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : ignoredDirectories,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, {
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000,
+      runGitCommand,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
+    const subscribeCallsBeforeFailure = getWatcherSubscribeCallCount(watcher, REPO_CWD);
+
+    // From here on, every further subscribe attempt for this directory fails — a watcher that
+    // cannot be re-established (permission error, unmounted volume, etc).
+    failDirectories.add(REPO_CWD);
+
+    // Force the live subscription to fail and enter recovery. A rejected updateIgnore is the
+    // most direct trigger: it nulls target.subscription and schedules recovery.
+    checkoutWatcher?.updateIgnore.mockRejectedValueOnce(new Error("update failed"));
+    ignoredDirectories = "node_modules/\nbuild/\n";
+    checkoutWatcher?.callback(null, [{ path: path.join(REPO_CWD, ".gitignore"), type: "update" }]);
+
+    // Recovery backs off at WATCH_RECOVERY_BASE_DELAY_MS * 2**(attempt-1) with base 30_000ms,
+    // landing at 30s, 60s, 120s, 240s for the first 4 attempts (WATCH_RECOVERY_MAX_BACKOFF_STEPS
+    // caps the exponent at 4, and WATCH_RECOVERY_MAX_DELAY_MS's 300s ceiling doesn't bind until
+    // the 5th). A 4th recovery attempt needs the first four delays to have elapsed:
+    // 30_000 + 60_000 + 120_000 + 240_000 = 450_000ms. Advance past that with headroom.
+    await vi.advanceTimersByTimeAsync(500_000);
+
+    const subscribeCallsAfterRecoveryWindow = getWatcherSubscribeCallCount(watcher, REPO_CWD);
+    // 1 initial success + 3 capped recovery attempts = 4 total. A 5th call would prove recovery
+    // keeps retrying past the hard cap instead of giving up on this target forever.
+    expect(subscribeCallsAfterRecoveryWindow).toBeGreaterThan(subscribeCallsBeforeFailure + 3);
 
     subscription.unsubscribe();
     service.dispose();

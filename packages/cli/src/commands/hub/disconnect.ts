@@ -9,6 +9,7 @@ import { hubStatusResult } from "./status-output.js";
 interface HubDisconnectOptions {
   force?: boolean;
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   json?: boolean;
 }
 
@@ -21,7 +22,7 @@ export function runHubDisconnect(
   options: HubDisconnectOptions,
   dependencies: HubDisconnectDependencies,
 ) {
-  return withHubDaemon(dependencies.daemon, options.host, async (client) => {
+  return withHubDaemon(dependencies.daemon, options.daemonTarget, async (client) => {
     const current = (await client.getHubStatus()).status;
     if (current.hubOrigin !== null) {
       reportHubProgress(

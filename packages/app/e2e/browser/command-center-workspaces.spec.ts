@@ -3,6 +3,7 @@ import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { createIdleAgent } from "../support/helpers/archive-tab";
+import { expectAgentTabActive } from "../support/helpers/launcher";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { addOfflineHostAndReload } from "../support/helpers/hosts";
 import { expectAppRoute } from "../support/helpers/route-assertions";
@@ -108,6 +109,13 @@ test.describe("Command center workspaces", () => {
 
       await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), seeded.workspaceId), {
         timeout: 30_000,
+      });
+
+      await test.step("find an agent and open its workspace tab", async () => {
+        const agentPanel = await openCommandCenter(page);
+        await agentPanel.getByTestId("command-center-input").fill(AGENT_TITLE);
+        await page.keyboard.press("Enter");
+        await expectAgentTabActive(page, agent.id);
       });
     } finally {
       await seeded.cleanup();

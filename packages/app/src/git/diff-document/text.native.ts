@@ -10,6 +10,7 @@ import { codeTextColor } from "./palette";
 import {
   createCachedAsciiTextMetrics,
   createChunkedAdvanceMeasurer,
+  createChunkedWidthMeasurer,
   requiresShaping,
   type CachedAsciiTextMetrics,
 } from "./text-measurement";
@@ -202,49 +203,52 @@ export function createNativeTextMeasurer(input: {
   };
   const asciiMetrics = createCachedAsciiTextMetrics(primary);
   const black = Skia.Color("black");
-  const measureParagraph = (text: string) => {
-    const paragraph = createParagraph({
+  const shapeParagraph = (text: string) =>
+    createParagraph({
       text,
       families,
       fontSize: input.fontSize,
       lineHeight: Math.round(input.fontSize * 1.5),
       color: black,
     });
-    const width = paragraph.getLongestLine();
-    paragraph.dispose();
-    return width;
-  };
   return {
     measure(text) {
-      return requiresRetainedParagraph(text, asciiMetrics)
-        ? measureParagraph(text)
-        : asciiMetrics.measure(text);
+      if (!requiresRetainedParagraph(text, asciiMetrics)) return asciiMetrics.measure(text);
+      const paragraph = shapeParagraph(text);
+      const width = paragraph.getLongestLine();
+      paragraph.dispose();
+      return width;
     },
+    measureWidth: createChunkedWidthMeasurer((graphemes) => {
+      const text = graphemes.join("");
+      if (!requiresRetainedParagraph(text, asciiMetrics))
+        return asciiMetrics.measureWidth(graphemes);
+      const paragraph = shapeParagraph(text);
+      const width = paragraphAdvance(paragraph, text.length);
+      paragraph.dispose();
+      return width;
+    }),
     measureAdvances: createChunkedAdvanceMeasurer({
       requiresShaping: (text) => requiresRetainedParagraph(text, asciiMetrics),
       measureAdditive: (graphemes) => asciiMetrics.measureAdvances(graphemes),
       measureShaped(graphemes) {
-        const paragraph = createParagraph({
-          text: graphemes.join(""),
-          families,
-          fontSize: input.fontSize,
-          lineHeight: Math.round(input.fontSize * 1.5),
-          color: black,
-        });
+        const paragraph = shapeParagraph(graphemes.join(""));
         let end = 0;
         const advances = graphemes.map((grapheme) => {
           end += grapheme.length;
-          const rectangles = paragraph.getRectsForRange(0, end);
-          return rectangles.reduce(
-            (right, rectangle) => Math.max(right, rectangle.x + rectangle.width),
-            0,
-          );
+          return paragraphAdvance(paragraph, end);
         });
         paragraph.dispose();
         return advances;
       },
     }),
   };
+}
+
+function paragraphAdvance(paragraph: SkParagraph, end: number): number {
+  return paragraph
+    .getRectsForRange(0, end)
+    .reduce((right, rectangle) => Math.max(right, rectangle.x + rectangle.width), 0);
 }
 
 function requiresRetainedParagraph(text: string, asciiMetrics: CachedAsciiTextMetrics): boolean {

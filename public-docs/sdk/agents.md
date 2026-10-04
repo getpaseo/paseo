@@ -156,12 +156,17 @@ The handle exposes `status`, `capabilities`, `availableModes`, `pendingPermissio
 
 A handle from `ref()` has observed nothing, so every one of them is `null` until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Use `current()` when you need the whole snapshot or need to distinguish those states.
 
-`subscribe()` keeps the properties current, so a long-lived handle can poll them without another RPC:
+`subscribe()` is a local listener. An owned agent-directory observation supplies its updates:
 
 ```ts
 const unsubscribe = agent.subscribe(() => {
   if (agent.status === "error") console.error(agent.lastError);
 });
+const directory = await client.agents.list({ subscribe: {} });
+
+// When this view closes:
+unsubscribe();
+await directory.subscription.release();
 ```
 
 ## List the commands a session loaded

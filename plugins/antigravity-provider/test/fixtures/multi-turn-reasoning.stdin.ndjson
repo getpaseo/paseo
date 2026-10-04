@@ -1,0 +1,2 @@
+{"t_ms": 304, "stream": "stdin", "data": {"event": "user", "message": {"role": "user", "content": "Remember the secret word COBALT. Solve 17*23 with reasoning, then reply with the answer. No tools."}}}
+{"t_ms": 4752, "stream": "stdin", "data": {"event": "user", "message": {"role": "user", "content": "What secret word did I give you? Reply with only that word. No tools."}}}

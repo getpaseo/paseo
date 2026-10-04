@@ -254,11 +254,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const { client, cwd } = resources;
       if (!client) throw new Error("Codex steering test client was not created");
       await within("connect steering test client", 15_000, client.connect());
-      await within(
-        "subscribe steering test client",
-        15_000,
-        client.fetchAgents({ subscribe: { subscriptionId: "steer" } }),
-      );
+      await within("subscribe steering test client", 15_000, client.fetchAgents({ subscribe: {} }));
       const agent = await within(
         "create Codex steering test agent",
         30_000,
@@ -399,7 +395,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         cwd,
@@ -478,7 +474,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         cwd,

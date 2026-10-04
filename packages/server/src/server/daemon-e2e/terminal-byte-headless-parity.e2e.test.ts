@@ -8,7 +8,7 @@ import { expect, test } from "vitest";
 
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
-import type { TerminalStreamEvent } from "@getpaseo/client/internal/terminal-stream-router";
+import type { TerminalStreamEvent } from "@getpaseo/client/internal/daemon-client";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
@@ -48,7 +48,7 @@ test("byte-stream headless terminal matches daemon state after high-output attac
     });
     const initialSnapshot = waitForTerminalStreamEvent(client, terminal.id, "snapshot");
 
-    await subscribeTerminal(client, terminal.id);
+    const liveSubscription = await subscribeTerminal(client, terminal.id);
     await initialSnapshot;
     client.sendTerminalInput(terminal.id, { type: "resize", ...BYTE_TEST_SIZE });
     liveHeadless.resize(BYTE_TEST_SIZE);
@@ -70,7 +70,7 @@ test("byte-stream headless terminal matches daemon state after high-output attac
     expect(liveHeadless.cursor()).toEqual(daemonSnapshot.cursor);
     expect(liveHeadless.visibleLines()).toEqual(capturedViewport.lines);
 
-    client.unsubscribeTerminal(terminal.id);
+    await liveSubscription.release();
     stopLive();
 
     const restoreHeadless = new ClientHeadlessTerminal(BYTE_TEST_SIZE);
@@ -179,11 +179,12 @@ async function subscribeTerminal(
   client: DaemonClient,
   terminalId: string,
   options?: Parameters<DaemonClient["subscribeTerminal"]>[1],
-): Promise<void> {
+) {
   const response = await client.subscribeTerminal(terminalId, options);
   if (response.error) {
     throw new Error(response.error);
   }
+  return response.subscription;
 }
 
 async function readTerminalSnapshot(input: {

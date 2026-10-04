@@ -11,27 +11,24 @@
  */
 
 import assert from "node:assert";
-import { $ } from "zx";
+import { runLocalPaseo } from "./helpers/local-cli.ts";
+import { getAvailablePort } from "./helpers/network.ts";
+import { runPaseoCli, startTestDaemon } from "./helpers/test-daemon.ts";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
-
-$.verbose = false;
+import { join } from "path";
 
 console.log("=== Delete Command Tests ===\n");
 
-const cliRoot = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(cliRoot, "..", "..", "..");
-const port = 10000 + Math.floor(Math.random() * 50000);
+const port = await getAvailablePort();
 const paseoHome = await mkdtemp(join(tmpdir(), "paseo-delete-test-home-"));
 
 async function runCli(args: string[]) {
-  return $`npm --prefix ${repoRoot} run cli -- ${args}`.nothrow();
+  return runLocalPaseo(["--host", `localhost:${port}`, ...args], { PASEO_HOME: paseoHome });
 }
 
 async function runDelete(args: string[]) {
-  return $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm --prefix ${repoRoot} run cli -- delete ${args}`.nothrow();
+  return runCli(["delete", ...args]);
 }
 
 try {
@@ -110,12 +107,33 @@ try {
 
   {
     console.log("Test 8: -q (quiet) flag is accepted with delete");
-    const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm --prefix ${repoRoot} run cli -- -q delete abc123`.nothrow();
+    const result = await runCli(["-q", "delete", "abc123"]);
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
     console.log("✓ -q (quiet) flag is accepted with delete\n");
+  }
+
+  {
+    console.log("Test 9: delete reports AGENT_NOT_FOUND for an unknown ID");
+    const daemon = await startTestDaemon();
+    try {
+      const result = await runPaseoCli(daemon, [
+        "agent",
+        "delete",
+        "does-not-exist",
+        "--host",
+        `127.0.0.1:${daemon.port}`,
+        "--json",
+      ]);
+      assert.notStrictEqual(result.exitCode, 0, "delete should fail for an unknown ID");
+      const { error } = JSON.parse(result.stderr);
+      assert.strictEqual(error.code, "AGENT_NOT_FOUND", result.stderr);
+      assert.match(error.details, /paseo ls/);
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ delete reports AGENT_NOT_FOUND for an unknown ID\n");
   }
 } finally {
   await rm(paseoHome, { recursive: true, force: true });

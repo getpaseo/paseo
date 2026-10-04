@@ -451,7 +451,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-abc-a" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -524,7 +524,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-abc-b" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -597,7 +597,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-abc-c" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -663,7 +663,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-wake-real" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -721,7 +721,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-followup-real" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -767,7 +767,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-hang-repro-real" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -869,7 +869,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-background-repro-real" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -941,7 +941,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-race-stress-real" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({
@@ -1027,7 +1027,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-transcript-parity-race" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({

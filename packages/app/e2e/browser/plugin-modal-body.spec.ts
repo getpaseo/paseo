@@ -14,6 +14,8 @@ async function openExample(page: Page, example: string) {
 
 async function closeExample(page: Page) {
   await page.getByRole("button", { name: "Close", exact: true }).last().click();
+  // The launcher is visible behind a closing sheet; wait for dismissal before reopening.
+  await expect(page.getByText(/^Modal example:/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Open Form", exact: true })).toBeVisible();
 }
 

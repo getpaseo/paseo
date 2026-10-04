@@ -11,7 +11,7 @@
  * - daemon status reports stopped when daemon not running
  * - daemon status --json outputs valid JSON
  * - daemon stop handles daemon not running gracefully
- * - daemon restart starts the daemon and can be cleaned up
+ * - daemon restart refuses to start a stopped daemon
  * - daemon status probes the live relay state over local IPC
  */
 
@@ -140,7 +140,7 @@ try {
     const result = await daemonCommand(["status"]);
     assert.strictEqual(result.exitCode, 0, "status should succeed when daemon is stopped");
     const output = result.stdout.toLowerCase();
-    assert(output.includes("local daemon"), "status table should include Local Daemon row");
+    assert(output.includes("localdaemon"), "status table should include Local Daemon row");
     assert(output.includes("stopped"), "status should report stopped");
     console.log("✓ daemon status reports stopped when not running\n");
   }
@@ -164,7 +164,7 @@ try {
     const result = await daemonCommand(["status", "--json"]);
     assert.strictEqual(result.exitCode, 0, "--json status should succeed");
     const status = JSON.parse(result.stdout);
-    assert.strictEqual(typeof status.serverId, "string", "json status should include serverId");
+    assert.strictEqual(status.serverId, undefined, "stopped observation must not invent identity");
     assert.strictEqual(status.localDaemon, "stopped", "json status should report stopped");
     assert.strictEqual(status.home, paseoHome, "json status should reflect the isolated home");
     assert.strictEqual(
@@ -175,20 +175,12 @@ try {
     console.log("✓ daemon status --json outputs valid JSON\n");
   }
 
-  // Global hosts do not change local daemon lifecycle commands.
   {
-    console.log("Test 5b: daemon status ignores a global --host");
-    const result = await runLocalPaseo(["--host", "localhost:1", "daemon", "status", "--json"], {
+    const result = await runLocalPaseo(["--host", "127.0.0.1:1", "daemon", "status", "--json"], {
       PASEO_HOME: paseoHome,
     });
-    assert.strictEqual(result.exitCode, 0, `daemon status should stay local: ${result.stderr}`);
-    const parsed = JSON.parse(result.stdout);
-    assert.strictEqual(
-      parsed.localDaemon,
-      "stopped",
-      "daemon should report the local stopped state",
-    );
-    console.log("✓ daemon status ignores a global --host\n");
+    assert.strictEqual(result.exitCode, 1, "an explicit endpoint must not report local status");
+    assert.match(result.stderr, /127.0.0.1:1/);
   }
 
   // Test 6: daemon stop handles daemon not running gracefully
@@ -205,16 +197,12 @@ try {
     console.log("✓ daemon stop succeeds gracefully when daemon not running\n");
   }
 
-  // Test 7: daemon restart starts daemon and can be stopped
   {
-    console.log("Test 7: daemon restart starts daemon and can be stopped");
-    const result = await daemonCommand(["restart", "--port", String(port)]);
-    assert.strictEqual(result.exitCode, 0, "restart should succeed even when previously stopped");
-    assert(result.stdout.toLowerCase().includes("restarted"), "output should report restart");
-
-    const cleanup = await daemonCommand(["stop", "--force"]);
-    assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after restart");
-    console.log("✓ daemon restart starts and stop cleanup succeeds\n");
+    const result = await daemonCommand(["restart", "--json"]);
+    assert.strictEqual(result.exitCode, 1, "restart must not start a stopped daemon");
+    assert.match(result.stderr, /DAEMON_NOT_RUNNING/);
+    const configured = await daemonCommand(["config", "set", "daemon.listen", `127.0.0.1:${port}`]);
+    assert.strictEqual(configured.exitCode, 0, configured.stderr);
   }
 
   // Test 8: status uses the running daemon as relay authority over local IPC
@@ -256,10 +244,10 @@ try {
       const relayProbe = await retryWhileWorkerRuns(
         worker,
         async () => {
-          const statusResult = await daemonCommand(["status", "--json"]);
+          const statusResult = await daemonCommand(["status", "--host", listen, "--json"]);
           const statusPayload =
             statusResult.exitCode === 0 ? JSON.parse(statusResult.stdout) : null;
-          const pairingResult = await daemonCommand(["pair", "--json"]);
+          const pairingResult = await daemonCommand(["pair", "--host", listen, "--json"]);
           return { statusResult, statusPayload, pairingResult };
         },
         (result) =>
@@ -280,8 +268,8 @@ try {
       assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
       assert.strictEqual(
         payload.localDaemon,
-        "stopped",
-        "missing PID should report stopped locally",
+        undefined,
+        "endpoint status must not invent local PID state",
       );
       assert.notStrictEqual(payload.relay, "disabled", "status should use live relay state");
       assert.strictEqual(
@@ -303,6 +291,7 @@ try {
       const nestedReload = await daemonCommand(["reload", "--host", listen, "--json"]);
       assert.strictEqual(nestedReload.exitCode, 0, nestedReload.stderr);
       assert.deepStrictEqual(JSON.parse(nestedReload.stdout), {
+        restartCommand: `paseo daemon restart --host ${JSON.stringify(listen)}`,
         appliedPaths: ["daemon.browserTools.enabled"],
         restartRequiredPaths: [],
         overrideControlledPaths: ["daemon.listen"],
@@ -315,6 +304,7 @@ try {
       });
       assert.strictEqual(aliasReload.exitCode, 0, aliasReload.stderr);
       assert.deepStrictEqual(JSON.parse(aliasReload.stdout), {
+        restartCommand: `paseo daemon restart --host ${JSON.stringify(listen)}`,
         appliedPaths: ["daemon.browserTools.enabled"],
         restartRequiredPaths: [],
         overrideControlledPaths: [],
@@ -323,6 +313,7 @@ try {
       const yamlReload = await daemonCommand(["reload", "--host", listen, "--format", "yaml"]);
       assert.strictEqual(yamlReload.exitCode, 0, yamlReload.stderr);
       assert.deepStrictEqual(YAML.parse(yamlReload.stdout), {
+        restartCommand: `paseo daemon restart --host ${JSON.stringify(listen)}`,
         appliedPaths: [],
         restartRequiredPaths: [],
         overrideControlledPaths: [],
@@ -335,31 +326,16 @@ try {
       try {
         await writeFile(
           join(foreignHome, "config.json"),
-          `${JSON.stringify({ daemon: { listen } }, null, 2)}\n`,
+          `${JSON.stringify({ daemon: { listen, relay: { enabled: false } } }, null, 2)}\n`,
           "utf-8",
         );
-        const foreignPairing = await retryWhileWorkerRuns(
-          worker,
-          () =>
-            runLocalPaseo(["daemon", "pair", "--home", foreignHome, "--json"], {
-              PASEO_HOME: foreignHome,
-            }),
-          (result) => result.stderr.includes("different Paseo home"),
-          (result) => `Pairing did not report the daemon identity mismatch: ${result.stderr}`,
+        const foreignPairing = await runLocalPaseo(
+          ["daemon", "pair", "--home", foreignHome, "--json"],
+          { PASEO_HOME: foreignHome },
         );
-        assert.notStrictEqual(
-          foreignPairing.exitCode,
-          0,
-          "pairing should reject a daemon owned by another home",
-        );
-        assert(
-          foreignPairing.stderr.includes("different Paseo home"),
-          "pairing should explain the daemon identity mismatch",
-        );
-        assert(
-          !foreignPairing.stdout.includes("#offer="),
-          "pairing should not expose another offer",
-        );
+        assert.strictEqual(foreignPairing.exitCode, 1);
+        assert.match(foreignPairing.stderr, /RELAY_DISABLED/);
+        assert(!foreignPairing.stdout.includes("#offer="));
       } finally {
         await rm(foreignHome, { recursive: true, force: true });
       }
@@ -369,14 +345,14 @@ try {
     console.log("✓ daemon status probes live relay state over local IPC\n");
   }
 
-  // Test 9: --relay accepts an already-enabled persisted relay while stopped
+  // Test 9: explicit offline relay consent persists for subsequent pairing
   {
-    console.log("Test 9: daemon pair --relay accepts persisted relay while stopped");
+    console.log("Test 9: daemon pair --relay persists offline relay consent");
     const configPath = join(paseoHome, "config.json");
     const config = JSON.parse(await readFile(configPath, "utf-8"));
     config.daemon = {
       ...config.daemon,
-      relay: { ...config.daemon?.relay, enabled: true },
+      relay: { ...config.daemon?.relay, enabled: false },
     };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 
@@ -390,7 +366,13 @@ try {
     const payload = JSON.parse(pairing.stdout);
     assert.strictEqual(payload.relayEnabled, true, "pairing should preserve persisted relay state");
     assert.match(payload.url, /#offer=/, "pairing should include the offline offer");
-    console.log("✓ daemon pair --relay accepts persisted relay while stopped\n");
+    const persistedRelay = await daemonCommand(["config", "get", "daemon.relay.enabled", "--json"]);
+    assert.strictEqual(persistedRelay.exitCode, 0, persistedRelay.stderr);
+    assert.strictEqual(JSON.parse(persistedRelay.stdout).value, true);
+    const subsequentPairing = await daemonCommand(["pair", "--json"]);
+    assert.strictEqual(subsequentPairing.exitCode, 0, subsequentPairing.stderr);
+    assert.match(JSON.parse(subsequentPairing.stdout).url, /#offer=/);
+    console.log("✓ daemon pair --relay persists offline consent for subsequent pairing\n");
   }
 } finally {
   // Best-effort daemon cleanup in case assertions fail before explicit stop.

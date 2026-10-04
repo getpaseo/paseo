@@ -3,13 +3,11 @@ import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
 import { resolvePluginIcon } from "../icons";
 import { resolvePluginPanelOpenLocation } from "../workspace-panels/locations";
-import type { PluginSurfaceRuntime } from "../surface-runtime";
 import type { InstalledPlugin } from "../types";
 import { createPluginCapabilities, type PluginNavigation } from "../actions";
 
 export interface PluginCommandCenterSource {
   plugins: readonly InstalledPlugin[];
-  runtime(pluginId: string): PluginSurfaceRuntime;
   state: PluginClientStateSource;
   workspaceId: string | null;
   agentId: string | null;
@@ -22,12 +20,11 @@ export function buildPluginCommandCenterContributions(
 ): CommandCenterContribution[] {
   const contributions: CommandCenterContribution[] = [];
   for (const plugin of source.plugins) {
-    const runtime = source.runtime(plugin.id);
-    const common = createPluginCapabilities(plugin, runtime, source.navigation);
     for (const [rank, item] of plugin.commandCenterItems.entries()) {
       if (item.context === "workspace" && !source.workspaceId) continue;
       if (item.context === "agent" && (!source.workspaceId || !source.agentId)) continue;
       const run = async () => {
+        const common = createPluginCapabilities(plugin, source.navigation);
         try {
           if (item.context === "global") {
             await item.onSelect({ context: "global", ...common });

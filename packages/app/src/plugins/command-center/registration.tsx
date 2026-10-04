@@ -11,7 +11,6 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
 import { hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
-import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { buildPluginCommandCenterContributions } from "./contributions";
 import { getFocusedAgentId } from "./context";
 import { createPluginNavigation } from "../navigation";
@@ -53,11 +52,6 @@ export function PluginCommandCenterActions() {
     if (!client || !serverId || !stateSource) return [];
     return buildPluginCommandCenterContributions({
       plugins,
-      runtime(pluginId) {
-        const runtime = createPluginSurfaceRuntime(client, pluginId);
-        if (!runtime) throw new Error("Plugin host is offline");
-        return runtime;
-      },
       state: stateSource,
       workspaceId: workspaceExists ? workspaceId : null,
       agentId: agentExists ? focusedAgentId : null,

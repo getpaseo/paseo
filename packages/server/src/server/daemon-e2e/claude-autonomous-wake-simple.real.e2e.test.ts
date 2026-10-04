@@ -45,7 +45,7 @@ describe("daemon E2E (real claude) - autonomous wake simple", () => {
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-autonomous-simple-real" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({

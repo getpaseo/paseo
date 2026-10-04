@@ -16,11 +16,9 @@ export interface TerminalCaptureOptions extends TerminalCommandOptions {
 
 export async function runCaptureCommand(
   terminalId: string,
-  _options: TerminalCaptureOptions,
-  command: Command,
+  options: TerminalCaptureOptions,
+  _command: Command,
 ): Promise<void> {
-  const options = command.optsWithGlobals() as TerminalCaptureOptions;
-
   try {
     const payload = await executeCaptureCommand(terminalId, options);
     if (options.json) {
@@ -55,7 +53,7 @@ async function executeCaptureCommand(
   terminalId: string,
   options: TerminalCaptureOptions,
 ): Promise<{ terminalId: string; lines: string[]; totalLines: number }> {
-  const { client, close } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.daemonTarget);
 
   try {
     const resolvedId = await resolveTerminalId(client, terminalId);

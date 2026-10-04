@@ -130,7 +130,7 @@ describe("cancelAgent", () => {
     const cwd = tmpCwd();
 
     await ctx.client.fetchAgents({
-      subscribe: { subscriptionId: "agent-operations-cancel" },
+      subscribe: {},
     });
 
     // Create Codex agent
@@ -203,7 +203,7 @@ describe("setAgentMode", () => {
     const cwd = tmpCwd();
 
     await ctx.client.fetchAgents({
-      subscribe: { subscriptionId: "agent-operations-mode" },
+      subscribe: {},
     });
 
     // Create a Codex agent with default mode ("auto")

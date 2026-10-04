@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pino } from "pino";
 import { afterEach, describe, expect, test } from "vitest";
-import type { SessionOutboundMessage, StartWorkspaceScriptRequest } from "../../messages.js";
+import type {
+  ScriptStatusUpdateMessage,
+  SessionOutboundMessage,
+  StartWorkspaceScriptRequest,
+} from "../../messages.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "../../service-proxy.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type {
@@ -82,6 +86,7 @@ interface BuildOptions {
 
 function buildService(options: BuildOptions = {}) {
   const emitted: SessionOutboundMessage[] = [];
+  const published: ScriptStatusUpdateMessage[] = [];
   const spawnCalls: SpawnWorkspaceScriptOptions[] = [];
   const workspace =
     options.workspace === undefined
@@ -108,6 +113,7 @@ function buildService(options: BuildOptions = {}) {
     resolveScriptHealth: null,
     logger,
     emit: (message) => emitted.push(message),
+    publishStatusUpdate: (message) => published.push(message),
     async spawnWorkspaceScript(spawnOptions): Promise<WorktreeScriptResult> {
       spawnCalls.push(spawnOptions);
       if (options.spawnThrows) {
@@ -126,7 +132,7 @@ function buildService(options: BuildOptions = {}) {
     },
   });
 
-  return { service, emitted, spawnCalls };
+  return { service, emitted, published, spawnCalls };
 }
 
 const request: StartWorkspaceScriptRequest = {
@@ -247,10 +253,11 @@ describe("buildSnapshot", () => {
 });
 
 describe("emitStatusUpdate", () => {
-  test("emits one script_status_update carrying the snapshot", async () => {
-    const { service, emitted } = buildService();
+  test("publishes one script_status_update carrying the snapshot", async () => {
+    const { service, emitted, published } = buildService();
     await service.emitStatusUpdate("ws-1", "/tmp/repo");
-    expect(emitted).toEqual([
+    expect(emitted).toEqual([]);
+    expect(published).toEqual([
       { type: "script_status_update", payload: { workspaceId: "ws-1", scripts: [] } },
     ]);
   });
@@ -478,7 +485,7 @@ describe("start", () => {
   });
 
   test("spawns the script with resolved git metadata and reports success", async () => {
-    const { service, emitted, spawnCalls } = buildService();
+    const { service, emitted, published, spawnCalls } = buildService();
     await service.start(request);
 
     expect(spawnCalls).toHaveLength(1);
@@ -491,7 +498,7 @@ describe("start", () => {
       daemonPort: 6767,
       daemonListenHost: "127.0.0.1",
     });
-    expect(emitted).toContainEqual({
+    expect(published).toContainEqual({
       type: "script_status_update",
       payload: { workspaceId: "ws-1", scripts: [] },
     });

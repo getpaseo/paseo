@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { buildDaemonConnectionCommandError, connectToDaemon } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
+import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 import { openDesktopWithAgent } from "../open.js";
 import type {
   CommandError,
@@ -30,18 +31,24 @@ export function addOpenOptions(command: Command): Command {
     .option("--server <server-id>", "Server ID (defaults to the local daemon)");
 }
 
-async function resolveServerId(options: CommandOptions): Promise<string> {
+function toOpenError(err: unknown): CommandError {
+  if (err && typeof err === "object" && "code" in err) {
+    return err as CommandError;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return { code: "OPEN_FAILED", message: `Failed to open agent: ${message}` };
+}
+
+async function resolveAgentTarget(
+  agentId: string,
+  options: CommandOptions,
+): Promise<AgentDeepLinkTarget> {
   const explicitServerId = typeof options.server === "string" ? options.server.trim() : "";
   if (explicitServerId) {
-    return explicitServerId;
+    return { serverId: explicitServerId, agentId };
   }
 
-  let client;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (error) {
-    throw buildDaemonConnectionCommandError({ host: options.host, error });
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const serverId = client.getLastServerInfoMessage()?.serverId.trim();
     if (!serverId) {
@@ -51,7 +58,19 @@ async function resolveServerId(options: CommandOptions): Promise<string> {
       };
       throw error;
     }
-    return serverId;
+
+    const fetchResult = await client.fetchAgent({ agentId });
+    if (!fetchResult) {
+      const error: CommandError = {
+        code: "AGENT_NOT_FOUND",
+        message: `Agent not found: ${agentId}`,
+        details: 'Use "paseo ls" to list available agents',
+      };
+      throw error;
+    }
+    return { serverId, agentId: fetchResult.agent.id };
+  } catch (err) {
+    throw toOpenError(err);
   } finally {
     await client.close().catch(() => {});
   }
@@ -71,12 +90,12 @@ export async function runOpenCommand(
     throw error;
   }
 
-  const serverId = await resolveServerId(options);
-  await openDesktopWithAgent({ serverId, agentId });
+  const target = await resolveAgentTarget(agentId, options);
+  await openDesktopWithAgent(target);
 
   return {
     type: "single",
-    data: { agentId, serverId, status: "opened" },
+    data: { ...target, status: "opened" },
     schema: openAgentSchema,
   };
 }

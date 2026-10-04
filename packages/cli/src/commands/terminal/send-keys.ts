@@ -14,11 +14,9 @@ export interface TerminalSendKeysOptions extends TerminalCommandOptions {
 export async function runSendKeysCommand(
   terminalId: string,
   keys: string[],
-  _options: TerminalSendKeysOptions,
-  command: Command,
+  options: TerminalSendKeysOptions,
+  _command: Command,
 ): Promise<void> {
-  const options = command.optsWithGlobals() as TerminalSendKeysOptions;
-
   try {
     const payload = await executeSendKeysCommand(terminalId, keys, options);
     if (options.json) {
@@ -39,7 +37,7 @@ async function executeSendKeysCommand(
   keys: string[],
   options: TerminalSendKeysOptions,
 ): Promise<{ terminalId: string; keysSent: number }> {
-  const { client, close } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.daemonTarget);
 
   try {
     const resolvedId = await resolveTerminalId(client, terminalId);

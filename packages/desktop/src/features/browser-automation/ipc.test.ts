@@ -1,6 +1,5 @@
-import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
-import type { TabImage } from "./service.js";
+import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
@@ -108,16 +107,22 @@ type ConsoleMessageListener = (
 ) => void;
 
 class FakeWebContents {
+  public backgroundThrottling = true;
+  public getBackgroundThrottling(): boolean {
+    return this.backgroundThrottling;
+  }
+  public setBackgroundThrottling(allowed: boolean): void {
+    if (this.destroyed) throw new Error("Object has been destroyed");
+    this.backgroundThrottling = allowed;
+  }
   public readonly debugger = new FakeDebugger();
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   public readonly loadedUrls: string[] = [];
-  public readonly captures: Array<{
-    rect: Rectangle | undefined;
-    options: { stayHidden?: boolean } | undefined;
-  }> = [];
+  public frameListener: ((image: TabImage) => void) | null = null;
+  public endedFrameSubscriptions = 0;
   public readonly invalidations: string[] = [];
   private consoleMessageListener: ConsoleMessageListener | null = null;
-  private destroyedListener: (() => void) | null = null;
+  public readonly destroyedListeners = new Set<() => void>();
   public destroyed = false;
 
   public constructor(private readonly webContentsId: number) {}
@@ -167,12 +172,14 @@ class FakeWebContents {
 
   public reload(): void {}
 
-  public async capturePage(
-    rect?: Rectangle,
-    options?: { stayHidden?: boolean },
-  ): Promise<TabImage> {
-    this.captures.push({ rect, options });
-    return new FakeImage();
+  public beginFrameSubscription(onlyDirty: boolean, callback: (image: TabImage) => void): void {
+    expect(onlyDirty).toBe(false);
+    this.frameListener = callback;
+  }
+
+  public endFrameSubscription(): void {
+    this.frameListener = null;
+    this.endedFrameSubscriptions += 1;
   }
 
   public invalidate(): void {
@@ -190,7 +197,12 @@ class FakeWebContents {
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListener = listener;
+    this.destroyedListeners.add(listener);
+  }
+
+  public removeListener(event: "destroyed", listener: () => void): void {
+    expect(event).toBe("destroyed");
+    this.destroyedListeners.delete(listener);
   }
 
   public emitConsoleMessage(input: {
@@ -208,7 +220,11 @@ class FakeWebContents {
   public destroy(): void {
     this.destroyed = true;
     this.debugger.emitDetach();
-    this.destroyedListener?.();
+    this.frameListener = null;
+    for (const listener of this.destroyedListeners) {
+      this.destroyedListeners.delete(listener);
+      listener();
+    }
   }
 }
 
@@ -237,16 +253,86 @@ describe("browser automation IPC adapter", () => {
     ]);
   });
 
-  test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
+  test("captures one rendered frame and releases the subscription", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const capture = tab.captureFrame(controller.signal);
+    contents.frameListener?.(new FakeImage());
 
-    const image = await tab.capturePage({ stayHidden: false });
-    tab.invalidate();
+    expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
+    expect(contents.frameListener).toBeNull();
+    controller.abort();
+    expect(contents.endedFrameSubscriptions).toBe(1);
+  });
 
-    expect(image.getSize()).toEqual({ width: 640, height: 480 });
-    expect(contents.captures).toEqual([{ rect: undefined, options: { stayHidden: false } }]);
-    expect(contents.invalidations).toEqual(["invalidate"]);
+  test("cancels a pending frame subscription when the capture budget expires", async () => {
+    const contents = new FakeWebContents(2001);
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const capture = tab.captureFrame(controller.signal);
+    const failure = expect(capture).rejects.toThrow("capture deadline");
+    controller.abort(new Error("capture deadline"));
+
+    await failure;
+    expect(contents.frameListener).toBeNull();
+    expect(contents.endedFrameSubscriptions).toBe(1);
+  });
+
+  test("closing a guest settles its screenshot and releases the next queued capture", async () => {
+    vi.useFakeTimers();
+    try {
+      const closing = new FakeWebContents(2002);
+      const next = new FakeWebContents(2003);
+      const tabs = new Map([
+        ["closing", adaptWebContents(closing)],
+        ["next", adaptWebContents(next)],
+      ]);
+      const registry: BrowserRegistry = {
+        listRegisteredBrowserIds: () => [...tabs.keys()],
+        listRegisteredBrowserIdsForWorkspace: () => [...tabs.keys()],
+        getTabContents: (id) => tabs.get(id) ?? null,
+        getBrowserWorkspaceId: () => null,
+        getWorkspaceActiveBrowserId: () => null,
+      };
+      const capture = (browserId: string) =>
+        executeAutomationCommand(
+          {
+            type: "browser.automation.execute.request",
+            requestId: browserId,
+            command: { command: "screenshot", args: { browserId, fullPage: false } },
+          },
+          registry,
+        );
+      let closedResult: unknown;
+      const closedCapture = Promise.resolve(capture("closing")).then((result) => {
+        closedResult = result;
+        return result;
+      });
+      const nextCapture = capture("next");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(closing.frameListener).not.toBeNull();
+      closing.destroy();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(closedResult).toEqual({
+        requestId: "closing",
+        ok: false,
+        error: {
+          code: "browser_tab_closed",
+          message: "Browser tab closing has been closed",
+          retryable: false,
+        },
+      });
+      expect(closing.destroyedListeners.size).toBe(0);
+      expect(next.frameListener).not.toBeNull();
+      next.frameListener?.(new FakeImage());
+      await expect(nextCapture).resolves.toMatchObject({ ok: true });
+      await closedCapture;
+      expect(next.destroyedListeners.size).toBe(1);
+    } finally {
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
   });
 
   test("collects console messages until the guest is destroyed", () => {
@@ -672,3 +758,38 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+describe("pixel capture frame production", () => {
+  test.each([true, false])(
+    "restores the prior throttling policy (%s) after capture or failure",
+    async (previous) => {
+      const contents = new FakeWebContents(8001);
+      contents.backgroundThrottling = previous;
+      const tab = adaptWebContents(contents);
+      expect(
+        await tab.withFrameProduction(async () => {
+          expect(contents.backgroundThrottling).toBe(false);
+          return "pixels";
+        }),
+      ).toBe("pixels");
+      expect(contents.backgroundThrottling).toBe(previous);
+      await expect(
+        tab.withFrameProduction(async () => {
+          throw new Error("capture failed");
+        }),
+      ).rejects.toThrow("capture failed");
+      expect(contents.backgroundThrottling).toBe(previous);
+    },
+  );
+
+  test("does not touch a guest destroyed during capture", async () => {
+    const contents = new FakeWebContents(8002);
+    const tab = adaptWebContents(contents);
+    await expect(
+      tab.withFrameProduction(async () => {
+        contents.destroyed = true;
+        throw new Error("capture closed");
+      }),
+    ).rejects.toThrow("capture closed");
+  });
+});
