@@ -1,4 +1,5 @@
 import { mapOpencodeToolCall } from "../tool-call-mapper.js";
+import { userMessageImages } from "../../user-message-images.js";
 import type { SessionMessageAssistantTool } from "@opencode/client";
 import { STRUCTURED_OUTPUT_TOOL } from "./structured-output.js";
 import type { SessionMessageInfo } from "@opencode/client";
@@ -68,10 +69,14 @@ export class V2Timeline {
     if (this.content.has(message.id)) return;
     this.content.set(message.id, message.text);
     const clientMessageId = message.metadata?.paseoClientMessageId;
+    const images = userMessageImages(
+      message.files?.map((file) => ({ type: "file", data: file.data, mime: file.mime })),
+    );
     push({
       type: "user_message",
       text: message.text,
       messageId: message.id,
+      ...(images.length ? { images } : {}),
       ...(this.includeClientMessageId && typeof clientMessageId === "string"
         ? { clientMessageId }
         : {}),

@@ -1,4 +1,5 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import { userMessageImages } from "./user-message-images.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -613,6 +614,7 @@ interface PendingPermission {
 interface PendingUserMessage {
   text: string;
   messageId?: string;
+  images?: ReturnType<typeof userMessageImages>;
 }
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
@@ -3045,7 +3047,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const chunkText = contentBlockToText(update.content);
-    if (!chunkText) {
+    const images = userMessageImages([update.content]);
+    if (!chunkText && !images.length) {
       return [];
     }
 
@@ -3063,6 +3066,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.pendingUserMessage.messageId = messageId;
     }
     this.pendingUserMessage.text += chunkText;
+    if (images.length)
+      this.pendingUserMessage.images = [...(this.pendingUserMessage.images ?? []), ...images];
     return events;
   }
 
@@ -3076,6 +3081,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.wrapTimeline({
         type: "user_message",
         text: pending.text,
+        ...(pending.images?.length ? { images: pending.images } : {}),
         ...(pending.messageId ? { messageId: pending.messageId } : {}),
       }),
     ];

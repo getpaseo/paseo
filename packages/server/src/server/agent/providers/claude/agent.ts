@@ -83,6 +83,7 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
+import { userMessageImages } from "../user-message-images.js";
 import { claudeConfigDir, claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
@@ -5158,10 +5159,12 @@ class ClaudeAgentSession implements AgentSession {
       });
     }
 
-    if (textMessageType === "user_message" && userTextParts.length > 0) {
+    const images = textMessageType === "user_message" ? userMessageImages(content) : [];
+    if (textMessageType === "user_message" && (userTextParts.length > 0 || images.length > 0)) {
       items.unshift({
         type: "user_message",
         text: userTextParts.join("\n\n"),
+        ...(images.length ? { images } : {}),
       });
     }
 
@@ -6068,6 +6071,20 @@ function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
 }
 
+function historicalUserMessage(content: unknown, messageId: string | null): AgentTimelineItem[] {
+  const text = extractUserMessageText(content);
+  const images = userMessageImages(content);
+  if (!text && !images.length) return [];
+  return [
+    {
+      type: "user_message",
+      text: text ?? "",
+      ...(messageId ? { messageId } : {}),
+      ...(images.length ? { images } : {}),
+    },
+  ];
+}
+
 export function convertClaudeHistoryEntry(
   entry: ClaudeHistoryEntry,
   mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
@@ -6098,14 +6115,7 @@ export function convertClaudeHistoryEntry(
   const timeline: AgentTimelineItem[] = [];
 
   if (entry.type === "user") {
-    const text = extractUserMessageText(content);
-    if (text) {
-      timeline.push({
-        type: "user_message",
-        text,
-        ...(userMessageId ? { messageId: userMessageId } : {}),
-      });
-    }
+    timeline.push(...historicalUserMessage(content, userMessageId));
   }
 
   if (hasToolBlock && normalizedBlocks) {

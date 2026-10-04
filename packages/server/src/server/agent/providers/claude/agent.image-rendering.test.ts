@@ -17,6 +17,37 @@ interface ClaudeImageTestSession {
   convertHistoryEntry(entry: unknown): AgentTimelineItem[];
 }
 
+test("restores an image-only user message from Claude transcript history", async () => {
+  const session = await createSession();
+  const items = session.convertHistoryEntry({
+    type: "user",
+    uuid: "user-upload",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: ONE_BY_ONE_PNG_BASE64 },
+        },
+      ],
+    },
+  });
+  expect(items).toEqual([
+    {
+      type: "user_message",
+      text: "",
+      messageId: "user-upload",
+      images: [
+        {
+          id: expect.any(String),
+          mimeType: "image/png",
+          source: expect.stringMatching(MATERIALIZED_PNG_PATH_PATTERN),
+        },
+      ],
+    },
+  ]);
+});
+
 async function createSession(): Promise<ClaudeImageTestSession> {
   const client = new ClaudeAgentClient({
     logger: createTestLogger(),

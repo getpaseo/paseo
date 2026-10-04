@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import { AgentFeatureSchema, AgentStatusSchema, AgentTimelineImageSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -42,6 +42,12 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+const STORED_SUBMITTED_MESSAGE_IMAGES_SCHEMA = z.object({
+  clientMessageId: z.string(),
+  providerMessageId: z.string().optional(),
+  images: z.array(AgentTimelineImageSchema),
+});
+
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
@@ -75,6 +81,7 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  submittedMessageImages: z.array(STORED_SUBMITTED_MESSAGE_IMAGES_SCHEMA).optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -90,6 +97,7 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+export type StoredSubmittedMessageImages = z.infer<typeof STORED_SUBMITTED_MESSAGE_IMAGES_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
@@ -259,7 +267,63 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (existing?.submittedMessageImages) {
+        record.submittedMessageImages = existing.submittedMessageImages;
+      }
       return record;
+    });
+  }
+
+  async setSubmittedMessageImages(
+    agentId: string,
+    entry: StoredSubmittedMessageImages,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const entries = (existing.submittedMessageImages ?? []).filter(
+        (candidate) => candidate.clientMessageId !== entry.clientMessageId,
+      );
+      return { ...existing, submittedMessageImages: [...entries, entry] };
+    });
+  }
+
+  async setSubmittedMessageProviderId(
+    agentId: string,
+    clientMessageId: string,
+    providerMessageId: string,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const entries = existing.submittedMessageImages ?? [];
+      return {
+        ...existing,
+        submittedMessageImages: entries.map((entry) =>
+          entry.clientMessageId === clientMessageId
+            ? { clientMessageId: entry.clientMessageId, images: entry.images, providerMessageId }
+            : entry,
+        ),
+      };
+    });
+  }
+
+  async retainSubmittedMessageImages(
+    agentId: string,
+    messageIds: ReadonlySet<string>,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const entries = existing.submittedMessageImages ?? [];
+      return {
+        ...existing,
+        submittedMessageImages: entries.filter(
+          (entry) =>
+            messageIds.has(entry.clientMessageId) ||
+            (entry.providerMessageId !== undefined && messageIds.has(entry.providerMessageId)),
+        ),
+      };
     });
   }
 

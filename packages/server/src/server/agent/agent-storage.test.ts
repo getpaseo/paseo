@@ -317,6 +317,77 @@ describe("AgentStorage", () => {
     expect(persisted?.title).toBe("Fix Login Bug");
   });
 
+  test("stores submitted image references across snapshots and provider acknowledgement", async () => {
+    const agentId = "agent-images";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    await storage.setSubmittedMessageImages(agentId, {
+      clientMessageId: "client-message-1",
+      images: [
+        {
+          id: "image-hash",
+          mimeType: "image/png",
+          source: "/paseo/conversation-images/image-hash.png",
+          byteSize: 42,
+        },
+      ],
+    });
+    await storage.setSubmittedMessageProviderId(agentId, "client-message-1", "provider-message-1");
+
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect((await reloaded.get(agentId))?.submittedMessageImages).toEqual([
+      {
+        clientMessageId: "client-message-1",
+        providerMessageId: "provider-message-1",
+        images: [
+          {
+            id: "image-hash",
+            mimeType: "image/png",
+            source: "/paseo/conversation-images/image-hash.png",
+            byteSize: 42,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("prunes image references by either message identity and keeps snapshot writes from restoring them", async () => {
+    const agentId = "agent-rewound-images";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    for (const clientMessageId of ["keep-client", "keep-provider", "remove"]) {
+      await storage.setSubmittedMessageImages(agentId, {
+        clientMessageId,
+        providerMessageId: `provider-${clientMessageId}`,
+        images: [
+          { id: clientMessageId, mimeType: "image/png", source: `/images/${clientMessageId}.png` },
+        ],
+      });
+    }
+    await storage.retainSubmittedMessageImages(
+      agentId,
+      new Set(["keep-client", "provider-keep-provider"]),
+    );
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const reloaded = new AgentStorage(storagePath, logger);
+    const record = await reloaded.get(agentId);
+    expect(record?.submittedMessageImages?.map((entry) => entry.clientMessageId)).toEqual([
+      "keep-client",
+      "keep-provider",
+    ]);
+    await storage.retainSubmittedMessageImages(agentId, new Set());
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    expect(
+      (await new AgentStorage(storagePath, logger).get(agentId))?.submittedMessageImages,
+    ).toEqual([]);
+  });
+
   test("setTitle throws when the agent record does not exist", async () => {
     await expect(storage.setTitle("missing-agent", "Impossible")).rejects.toThrow(
       "Agent missing-agent not found",

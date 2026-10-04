@@ -1944,6 +1944,14 @@ describe("OpenCode adapter startTurn error handling", () => {
                   type: "text",
                   text: "Reply with exactly: probe ok",
                 },
+                {
+                  id: "prt_image",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "file",
+                  mime: "image/png",
+                  url: "data:image/png;base64,aW1hZ2U=",
+                },
               ],
             },
             {
@@ -2000,6 +2008,7 @@ describe("OpenCode adapter startTurn error handling", () => {
           type: "user_message",
           text: "Reply with exactly: probe ok",
           messageId: "msg_user",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
         },
       },
       {

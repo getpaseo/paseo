@@ -322,6 +322,12 @@ export async function sendPromptToAgent(
     logger: params.logger,
   });
 
+  await params.agentManager.persistSubmittedPromptImages(
+    params.agentId,
+    params.prompt,
+    params.messageId,
+  );
+
   if (params.sessionMode) {
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
@@ -349,6 +355,12 @@ export async function startCreatedAgentInitialPrompt(
   if (params.prompt === null) {
     return currentSnapshot;
   }
+
+  await params.agentManager.persistSubmittedPromptImages(
+    params.agentId,
+    params.prompt,
+    params.runOptions?.clientMessageId,
+  );
 
   const dispatchResult = await startAgentRun(
     params.agentManager,

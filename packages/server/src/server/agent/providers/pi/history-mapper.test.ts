@@ -50,6 +50,7 @@ describe("Pi history mapper", () => {
         item: {
           type: "user_message",
           text: "read this\n\nthen answer",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
         },
       },
       {

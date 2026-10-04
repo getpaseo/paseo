@@ -57,6 +57,11 @@ function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: strin
 }
 
 test("session create forwards clientMessageId to the initial prompt run options", async () => {
+  const image = { data: "cG5n", mimeType: "image/png" };
+  const prompt = [
+    { type: "text", text: "hello from create" },
+    { type: "image", ...image },
+  ];
   const snapshot = {
     id: "agent-1",
     provider: "codex",
@@ -64,10 +69,12 @@ test("session create forwards clientMessageId to the initial prompt run options"
     runtimeInfo: null,
   } as ManagedAgent;
   const streamAgent = vi.fn(() => (async function* noop() {})());
+  const persistSubmittedPromptImages = vi.fn(async () => undefined);
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
       createAgent: vi.fn(async () => snapshot),
       getAgent: vi.fn(() => snapshot),
+      persistSubmittedPromptImages,
       tryRunOutOfBand: vi.fn(() => false),
       hasInFlightRun: vi.fn(() => false),
       streamAgent,
@@ -84,15 +91,17 @@ test("session create forwards clientMessageId to the initial prompt run options"
     workspaceId: "ws-create-test",
     initialPrompt: "hello from create",
     clientMessageId: "msg-create-1",
+    images: [image],
     labels: {},
     provisionalTitle: null,
     firstAgentContext: { attachments: [] },
     buildSessionConfig: async (config) => ({ sessionConfig: config }),
   });
 
-  expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
+  expect(streamAgent).toHaveBeenCalledWith("agent-1", prompt, {
     clientMessageId: "msg-create-1",
   });
+  expect(persistSubmittedPromptImages).toHaveBeenCalledWith("agent-1", prompt, "msg-create-1");
 });
 
 test("session create validates the requested mode against the provider's modes", async () => {
