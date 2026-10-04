@@ -195,7 +195,5 @@ async function expectFingerSizedFooterTargets(page: Page): Promise<void> {
 
 async function tapHelpNearTargetEdge(page: Page): Promise<void> {
   const button = page.getByRole("button", { name: "Help and support", exact: true });
-  const bounds = await button.boundingBox();
-  expect(bounds).not.toBeNull();
-  await page.touchscreen.tap(bounds!.x + 40, bounds!.y + 40);
+  await button.tap({ position: { x: 40, y: 40 } });
 }
