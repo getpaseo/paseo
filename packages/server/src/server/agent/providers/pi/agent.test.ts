@@ -1495,7 +1495,7 @@ describe("PiRpcAgentSession", () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
-    await client.resumeSession(
+    const session = await client.resumeSession(
       {
         provider: "pi",
         sessionId: "pi-session-1",
@@ -1510,6 +1510,12 @@ describe("PiRpcAgentSession", () => {
       { env: { RESUME_PROBE: "expected" } },
     );
 
+    expect(session.usageSession?.()).toMatchObject({
+      provider: "pi",
+      sessionKey: expect.any(String),
+    });
+    await session.close();
+    expect(session.usageSession?.()).toBeNull();
     expect(pi.recordedLaunches).toHaveLength(1);
     const actualLaunch = pi.recordedLaunches[0]!;
     expect(actualLaunch).toMatchObject({

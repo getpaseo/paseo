@@ -1,3 +1,4 @@
+import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
   ProviderStatusSchema,
   type ProviderStatus,
@@ -402,10 +403,15 @@ export class PluginRuntime {
     return this.request(loaded, { type: "usage.fetch", requestId: randomUUID(), sourceId, input });
   }
 
-  discoverUsage(pluginId: string, sourceId: string): Promise<unknown> {
+  discoverUsage(pluginId: string, sourceId: string, scope: UsageScope): Promise<unknown> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
-    return this.request(loaded, { type: "usage.discover", requestId: randomUUID(), sourceId });
+    return this.request(loaded, {
+      type: "usage.discover",
+      requestId: randomUUID(),
+      sourceId,
+      scope,
+    });
   }
 
   async getProviderStatus(

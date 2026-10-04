@@ -3466,7 +3466,7 @@ test("fetch_agent_request still resolves archived historical agents", async () =
   session.resolveAgentIdentifier = async (identifier: string) =>
     identifier === "Archived History Agent"
       ? { ok: true, agentId: agent.id }
-      : { ok: false, error: `Agent not found: ${identifier}` };
+      : { ok: false, notFound: true, error: `Agent not found: ${identifier}` };
   session.getAgentPayloadById = async (agentId: string) => (agentId === agent.id ? agent : null);
   session.buildProjectPlacementForWorkspaceId = async () => ({
     projectKey: "proj-history-detail",

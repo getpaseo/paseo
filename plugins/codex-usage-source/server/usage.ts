@@ -6,6 +6,7 @@ import {
   hashAccountKey,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   toneFromUsedPct,
   windowFromReportedDuration,
   type UsageReport,
@@ -57,7 +58,26 @@ interface Auth {
   expires?: number;
 }
 
-export async function discover(lookup: StoreLookup = {}): Promise<UsageAccount[]> {
+export async function discover(
+  scope: UsageScope,
+  lookup: StoreLookup = {},
+): Promise<UsageAccount[]> {
+  if (scope.kind === "session")
+    lookup = {
+      ...lookup,
+      env: scope.env,
+      home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
+    };
+  const candidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
+  const present: UsageAccount[] = [];
+  for (const input of candidates) {
+    const auth = await readAuth(input, lookup);
+    if (auth) present.push({ ...accountIdentity(auth, input), input });
+  }
+  return present;
+}
+
+function globalRoutes(lookup: StoreLookup): CodexUsageInput[] {
   const env = lookup.env ?? process.env;
   const home = lookup.home ?? homedir();
   const paths = [
@@ -77,12 +97,36 @@ export async function discover(lookup: StoreLookup = {}): Promise<UsageAccount[]
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
   );
-  const present: UsageAccount[] = [];
-  for (const input of candidates) {
-    const auth = await readAuth(input, lookup);
-    if (auth) present.push({ ...accountIdentity(auth, input), input });
+  return candidates;
+}
+
+function sessionRoutes(
+  scope: Extract<UsageScope, { kind: "session" }>,
+  lookup: StoreLookup,
+): CodexUsageInput[] {
+  const env = scope.env;
+  const home = lookup.home ?? homedir();
+  if (scope.provider === "codex") {
+    if (env.OPENAI_BASE_URL) return [];
+    return [
+      {
+        route: { store: "codex", path: join(env.CODEX_HOME || join(home, ".codex"), "auth.json") },
+      },
+    ];
   }
-  return present;
+  if (!scope.model?.startsWith("openai/")) return [];
+  if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
+  if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
+  if (scope.provider === "opencode")
+    return [
+      {
+        route: {
+          store: "opencode",
+          path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
+        },
+      },
+    ];
+  return [];
 }
 
 export async function readAuth(

@@ -168,11 +168,46 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
   return scope.getByRole("checkbox", { name: new RegExp(`^Pin ${source} ${window}, `) });
 }
 
+/**
+ * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
+ * but buttons, so no row presses or highlights on hover.
+ */
+export async function expectUnpinnableRows(card: Locator): Promise<void> {
+  await expect(card.getByRole("checkbox")).toHaveCount(0);
+  await expect(card.locator('[data-testid^="usage-pin-"]')).toHaveCount(0);
+  const focusable = await card
+    .locator("[tabindex]")
+    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("role") !== "button").length);
+  expect(focusable).toBe(0);
+}
+
 export async function togglePin(scope: Locator, source: string, window: string) {
   const row = pinRow(scope, source, window);
   const pinned = await row.isChecked();
   await row.click();
   await expect(row).toBeChecked({ checked: !pinned });
+}
+
+/** The footer's Usage icon, which is there whether or not the Usage item is on. */
+export async function openUsageScreenFromIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Usage", exact: true }).click({ timeout: 30_000 });
+  await expectOnUsageScreen(page);
+}
+
+function summaryInSidebarSwitch(page: Page): Locator {
+  return page.getByRole("switch", { name: "Summary in sidebar", exact: true });
+}
+
+/** Turns the sidebar Usage summary on or off from the Usage screen's Settings. */
+export async function setSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await summaryInSidebarSwitch(page).click();
+  await expectSummaryInSidebar(page, on);
+}
+
+export async function expectSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await expect(summaryInSidebarSwitch(page)).toBeChecked({ checked: on });
 }
 
 /** Expand the inline Settings row when its controls are folded. */

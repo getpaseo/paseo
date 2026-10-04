@@ -1,3 +1,4 @@
+import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
@@ -411,6 +412,8 @@ export interface PaseoDaemonConfig {
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
+  pluginRegistries?: PluginRegistries;
+  pluginRegistryUrl?: string;
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -615,8 +618,15 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
-  const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion, {
-    managedSources: new ManagedPluginSources(config.paseoHome),
+  const pluginRuntime: PluginService = new PluginService(logger, daemonConfigStore, daemonVersion, {
+    usageAgents: {
+      hasAgent: (id) => agentManager.getAgent(id) !== null,
+      usageSession: (id) => agentManager.usageSession(id),
+    },
+    managedSources: new ManagedPluginSources(config.paseoHome, {
+      registries: config.pluginRegistries,
+      defaultUrl: config.pluginRegistryUrl,
+    }),
     builtinPlugins: resolveBuiltinPluginLoader(dependencies),
     settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
   });
@@ -1160,7 +1170,6 @@ export async function createPaseoDaemon(
         emit: emitExternalSessionMessage,
         sessionLogger: logger,
         terminalManager,
-        archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         serviceProxy,
         scriptRuntimeStore,
         getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
@@ -1411,9 +1420,8 @@ export async function createPaseoDaemon(
       serviceProxyPublicBaseUrl,
       resolveScriptHealth: (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
       logger,
-      // MCP operations do not belong to one WebSocket session, so lifecycle
-      // status updates fan out to every connected client.
       emit: (message) => wsServer?.broadcast(wrapSessionMessage(message)),
+      publishStatusUpdate: (message) => wsServer?.publishScriptStatusUpdate(message),
       spawnWorkspaceScript,
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),

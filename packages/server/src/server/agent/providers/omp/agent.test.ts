@@ -958,6 +958,9 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
+    await omp.close();
+    expect(omp.usageSession()).toBeNull();
   });
 
   test("maps permissions and sends the selected OMP response", async () => {

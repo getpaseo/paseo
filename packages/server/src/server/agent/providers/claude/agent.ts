@@ -2053,6 +2053,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
+  private readonly harnessEnvironment: Record<string, string>;
+  private readonly usageSessionKey = randomUUID();
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   /** The exact SDK query/input pair that owns the current foreground turn. */
@@ -2128,6 +2130,7 @@ class ClaudeAgentSession implements AgentSession {
     this.agentId = options.agentId;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
+    this.harnessEnvironment = this.buildSdkEnv();
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
@@ -2422,7 +2425,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeModeCanRun(normalized, this.buildSdkEnv());
+    assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -3241,10 +3244,18 @@ class ClaudeAgentSession implements AgentSession {
       return { thinking: { type: "disabled" }, effort: undefined, ultracode: false };
     }
     if (thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) {
-      return { thinking: { type: "adaptive" }, effort: "xhigh", ultracode: true };
+      return {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: "xhigh",
+        ultracode: true,
+      };
     }
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      return { thinking: { type: "adaptive" }, effort: thinkingOptionId, ultracode: false };
+      return {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: thinkingOptionId,
+        ultracode: false,
+      };
     }
     return { thinking: undefined, effort: undefined, ultracode: false };
   }
@@ -3255,7 +3266,17 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private buildSdkEnv(): NodeJS.ProcessEnv {
+  usageSession() {
+    if (this.closed) return null;
+    return {
+      provider: "claude",
+      model: this.config.model,
+      env: this.harnessEnvironment,
+      sessionKey: this.usageSessionKey,
+    };
+  }
+
+  private buildSdkEnv() {
     return createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
@@ -3271,7 +3292,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.toolPolicy,
     );
     const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
-    const sdkEnv = this.buildSdkEnv();
+    const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(this.currentMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
@@ -5064,7 +5085,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = claudeConfigDir(this.buildSdkEnv());
+    const configDir = claudeConfigDir(this.harnessEnvironment);
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);

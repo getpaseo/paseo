@@ -566,6 +566,10 @@ export class OmpHarness {
     return this.events.filter((event) => event.type === "turn_canceled").length;
   }
 
+  usageSession() {
+    return this.requireSession().usageSession();
+  }
+
   async close(): Promise<void> {
     await this.requireSession().close();
     await waitForImmediate();

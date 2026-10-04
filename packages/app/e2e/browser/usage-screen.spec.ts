@@ -8,6 +8,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { getServerId } from "../support/helpers/server-id";
+import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import {
   installUsageReportsFixture,
   type UsageListRequest,
@@ -55,6 +56,11 @@ test.use({
     ZAI_API_KEY: "",
     GLM_API_KEY: "",
   },
+});
+
+// These tests read the sidebar summary and pin windows, which both need the Usage item on.
+test.beforeEach(async ({ page }) => {
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
 });
 
 function forcedRefreshes(usage: UsageReportsFixture): UsageListRequest[] {

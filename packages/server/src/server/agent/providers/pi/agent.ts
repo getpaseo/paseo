@@ -1202,6 +1202,19 @@ export class PiRpcAgentSession implements AgentSession {
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
 
+  private readonly usageSessionKey = randomUUID();
+
+  usageSession() {
+    const env = this.runtimeSession.environment;
+    if (this.closed) return null;
+    return {
+      provider: "pi",
+      model: modelToId(this.state.model) ?? undefined,
+      env,
+      sessionKey: this.usageSessionKey,
+    };
+  }
+
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;

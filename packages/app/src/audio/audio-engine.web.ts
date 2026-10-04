@@ -1,15 +1,8 @@
+import { parsePcmSampleRate, resampleToPcm16 } from "./pcm";
 import { isElectronRuntime } from "@/desktop/host";
-import type {
-  AudioEngine,
-  AudioEngineCallbacks,
-  AudioPlaybackSource,
-} from "@/voice/audio-engine-types";
+import type { AudioEngine, AudioEngineCallbacks, AudioPlaybackSource } from "./audio-engine-types";
 
-interface QueuedAudio {
-  audio: AudioPlaybackSource;
-  resolve: (duration: number) => void;
-  reject: (error: Error) => void;
-}
+import { createPlaybackQueue } from "./playback";
 
 function getAudioContextCtor(): typeof AudioContext | null {
   if (typeof window === "undefined") {
@@ -19,40 +12,6 @@ function getAudioContextCtor(): typeof AudioContext | null {
     webkitAudioContext?: typeof AudioContext;
   };
   return browserWindow.AudioContext ?? browserWindow.webkitAudioContext ?? null;
-}
-
-function floatToInt16(sample: number): number {
-  const clamped = Math.max(-1, Math.min(1, sample));
-  return clamped < 0 ? Math.round(clamped * 0x8000) : Math.round(clamped * 0x7fff);
-}
-
-function resampleToPcm16(input: Float32Array, inputRate: number, outputRate: number): Uint8Array {
-  if (input.length === 0) {
-    return new Uint8Array(0);
-  }
-
-  const ratio = inputRate / outputRate;
-  const outputLength = Math.max(1, Math.round(input.length / ratio));
-  const output = new Int16Array(outputLength);
-  for (let i = 0; i < outputLength; i += 1) {
-    const sourceIndex = i * ratio;
-    const i0 = Math.floor(sourceIndex);
-    const i1 = Math.min(input.length - 1, i0 + 1);
-    const frac = sourceIndex - i0;
-    const sample = input[i0] * (1 - frac) + input[i1] * frac;
-    output[i] = floatToInt16(sample);
-  }
-
-  return new Uint8Array(output.buffer, output.byteOffset, output.byteLength);
-}
-
-function parsePcmSampleRate(mimeType: string): number | null {
-  const match = /rate=(\d+)/i.exec(mimeType);
-  if (!match) {
-    return null;
-  }
-  const rate = Number(match[1]);
-  return Number.isFinite(rate) && rate > 0 ? rate : null;
 }
 
 function pcm16LeToAudioBuffer(
@@ -98,14 +57,6 @@ export function createAudioEngine(
     gain: GainNode | null;
     started: boolean;
     muted: boolean;
-    queue: QueuedAudio[];
-    processingQueue: boolean;
-    activePlayback: {
-      source: AudioBufferSourceNode;
-      resolve: (duration: number) => void;
-      reject: (error: Error) => void;
-      settled: boolean;
-    } | null;
   } = {
     playbackContext: null,
     captureContext: null,
@@ -115,29 +66,31 @@ export function createAudioEngine(
     gain: null,
     started: false,
     muted: false,
-    queue: [],
-    processingQueue: false,
-    activePlayback: null,
   };
 
   async function ensurePlaybackContext(): Promise<AudioContext> {
-    if (refs.playbackContext) {
-      if (refs.playbackContext.state === "suspended") {
-        await refs.playbackContext.resume().catch(() => undefined);
-      }
-      return refs.playbackContext;
+    if (!refs.playbackContext) {
+      const AudioContextCtor = getAudioContextCtor();
+      if (!AudioContextCtor) throw new Error("AudioContext unavailable");
+      refs.playbackContext = new AudioContextCtor();
     }
-
-    const AudioContextCtor = getAudioContextCtor();
-    if (!AudioContextCtor) {
-      throw new Error("AudioContext unavailable");
-    }
-
-    const context = new AudioContextCtor();
+    const context = refs.playbackContext;
     if (context.state === "suspended") {
-      await context.resume().catch(() => undefined);
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          context.resume(),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error("Audio playback requires a user interaction")),
+              2000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
     }
-    refs.playbackContext = context;
     return context;
   }
 
@@ -162,7 +115,7 @@ export function createAudioEngine(
     return context;
   }
 
-  async function playAudio(audio: AudioPlaybackSource): Promise<number> {
+  async function playAudio(audio: AudioPlaybackSource, signal: AbortSignal): Promise<number> {
     const context = await ensurePlaybackContext();
     const arrayBuffer = await audio.arrayBuffer();
     const type = (audio.type || "").toLowerCase();
@@ -174,53 +127,39 @@ export function createAudioEngine(
         )
       : await decodeAudioData(context, arrayBuffer);
 
+    if (signal.aborted) throw new Error("Playback stopped");
     const durationSec = audioBuffer.duration;
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(context.destination);
 
     return await new Promise<number>((resolve, reject) => {
-      refs.activePlayback = { source, resolve, reject, settled: false };
-
-      const settle = (fn: () => void) => {
-        const active = refs.activePlayback;
-        if (!active || active.source !== source || active.settled) {
-          return;
-        }
-        active.settled = true;
-        refs.activePlayback = null;
-        fn();
+      const abort = () => {
+        source.stop();
+        source.disconnect();
+        reject(new Error("Playback stopped"));
       };
-
-      source.addEventListener("ended", () => {
-        settle(() => resolve(durationSec));
-      });
-
+      signal.addEventListener("abort", abort, { once: true });
+      source.addEventListener(
+        "ended",
+        () => {
+          signal.removeEventListener("abort", abort);
+          source.disconnect();
+          resolve(durationSec);
+        },
+        { once: true },
+      );
       try {
         source.start();
       } catch (error) {
-        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+        signal.removeEventListener("abort", abort);
+        source.disconnect();
+        reject(error);
       }
     });
   }
 
-  async function processQueue(): Promise<void> {
-    if (refs.processingQueue || refs.queue.length === 0) {
-      return;
-    }
-
-    refs.processingQueue = true;
-    while (refs.queue.length > 0) {
-      const item = refs.queue.shift()!;
-      try {
-        const duration = await playAudio(item.audio);
-        item.resolve(duration);
-      } catch (error) {
-        item.reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    }
-    refs.processingQueue = false;
-  }
+  const playback = createPlaybackQueue(playAudio);
 
   async function stopCapture(): Promise<void> {
     refs.started = false;
@@ -263,8 +202,7 @@ export function createAudioEngine(
     },
 
     async destroy() {
-      this.stop();
-      this.clearQueue();
+      playback.destroy();
       await stopCapture();
 
       const playbackContext = refs.playbackContext;
@@ -334,7 +272,8 @@ export function createAudioEngine(
             return;
           }
 
-          callbacks.onCaptureData(resampleToPcm16(input, context.sampleRate, 16000));
+          const pcm = resampleToPcm16(input, context.sampleRate, 16000);
+          callbacks.onCaptureData(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
         };
 
         source.connect(processor);
@@ -370,40 +309,9 @@ export function createAudioEngine(
       return refs.muted;
     },
 
-    async play(audio: AudioPlaybackSource) {
-      return await new Promise<number>((resolve, reject) => {
-        refs.queue.push({ audio, resolve, reject });
-        if (!refs.processingQueue) {
-          void processQueue();
-        }
-      });
-    },
-
-    stop() {
-      if (refs.activePlayback) {
-        const active = refs.activePlayback;
-        refs.activePlayback = null;
-        try {
-          active.source.stop();
-        } catch {
-          // Ignore best-effort stop errors.
-        }
-        if (!active.settled) {
-          active.settled = true;
-          active.reject(new Error("Playback stopped"));
-        }
-      }
-    },
-
-    clearQueue() {
-      while (refs.queue.length > 0) {
-        refs.queue.shift()!.reject(new Error("Playback stopped"));
-      }
-      refs.processingQueue = false;
-    },
-
-    isPlaying() {
-      return refs.activePlayback !== null;
-    },
+    play: playback.play,
+    stop: playback.stop,
+    clearQueue: playback.clearQueue,
+    isPlaying: playback.isPlaying,
   };
 }
