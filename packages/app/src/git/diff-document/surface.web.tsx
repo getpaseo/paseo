@@ -30,6 +30,7 @@ import { retainHorizontalOffsetMapForPaths } from "./horizontal-offsets";
 import { HorizontalScroll } from "./horizontal-scroll.web";
 import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
 import { paintWebFileHeader, paintWebViewport } from "./paint.web";
+import { DiffMinimap } from "./minimap.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
 import { createMeasuredAdvances } from "./text-measurement";
 import { retainDiffViewport } from "./viewport";
@@ -85,6 +86,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const modelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
   const previousModelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
   const consumedFocusRef = useRef<string | null>(null);
+  const revealedFirstChangeRef = useRef<string | null>(null);
   const scrollTopRef = useRef(0);
   const horizontalOffsetsRef = useRef(new Map<string, number>());
   const selectionRef = useRef<DiffSelection | null>(null);
@@ -485,6 +487,24 @@ export function DiffSurface(props: DiffSurfaceProps) {
       consumedFocusRef.current = requestKey;
     }
   }, [collapsedFilePaths, mode, model.files, onToggleFile]);
+  const revealFirstChange = props.revealFirstChange === true;
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!revealFirstChange || !scroll || viewport.height <= 0 || model.rows.length === 0) return;
+    const revealKey = model.files.map((file) => file.path).join("\0");
+    if (revealedFirstChangeRef.current === revealKey) return;
+    revealedFirstChangeRef.current = revealKey;
+    const firstChange = model.rows.find(
+      (row) =>
+        row.kind === "line" &&
+        row.cells.some((cell) => cell?.type === "add" || cell?.type === "remove"),
+    );
+    if (!firstChange) return;
+    // Leave a few lines of lead-in above the change, as an editor does when it jumps.
+    const nextScrollTop = Math.max(0, firstChange.top - viewport.height / 3);
+    scrollTopRef.current = nextScrollTop;
+    scroll.scrollTop = nextScrollTop;
+  }, [model.files, model.rows, revealFirstChange, viewport.height]);
 
   const handleVerticalScroll = useCallback(
     (scrollElement: HTMLDivElement) => {
@@ -881,7 +901,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     </div>
   );
 
-  return (
+  const surfaceWithContextMenu = (
     <ContextMenu>
       <ContextMenuTrigger contextOnly style={CONTEXT_TRIGGER_STYLE}>
         {surface}
@@ -907,6 +927,19 @@ export function DiffSurface(props: DiffSurfaceProps) {
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+
+  if (!props.minimap) return surfaceWithContextMenu;
+  return (
+    <div style={MINIMAP_ROW_STYLE}>
+      {surfaceWithContextMenu}
+      <DiffMinimap
+        model={model}
+        palette={props.palette}
+        scrollRef={scrollRef}
+        viewportHeight={viewport.height}
+      />
+    </div>
   );
 }
 
@@ -1072,7 +1105,14 @@ const ROOT_STYLE: React.CSSProperties = {
   minHeight: 0,
   overflow: "hidden",
 };
-const CONTEXT_TRIGGER_STYLE: ViewStyle = { flex: 1, minHeight: 0 };
+const CONTEXT_TRIGGER_STYLE: ViewStyle = { flex: 1, minHeight: 0, minWidth: 0 };
+const MINIMAP_ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "row",
+  flex: 1,
+  minHeight: 0,
+  minWidth: 0,
+};
 const SCROLL_STYLE: React.CSSProperties = {
   position: "absolute",
   inset: 0,

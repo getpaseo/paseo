@@ -15,6 +15,7 @@ const changesPreferencesSchema = z.strictObject({
   hideWhitespace: z.boolean().optional(),
   inlineDiff: z.boolean().optional(),
   commitsCollapsed: z.boolean().optional(),
+  fullFile: z.boolean().optional(),
 });
 
 export interface ChangesPreferences {
@@ -24,6 +25,8 @@ export interface ChangesPreferences {
   hideWhitespace: boolean;
   inlineDiff: boolean;
   commitsCollapsed: boolean;
+  /** Show one file at a time with every line, instead of hunks from every changed file. */
+  fullFile: boolean;
 }
 
 export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
@@ -33,6 +36,7 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   hideWhitespace: false,
   inlineDiff: false,
   commitsCollapsed: true,
+  fullFile: false,
 };
 
 export interface KeyValueStorage {

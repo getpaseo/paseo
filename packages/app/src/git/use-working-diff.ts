@@ -9,6 +9,7 @@ import {
   useReviewAttachmentSnapshot,
 } from "@/review";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
+import { useReviewContextFiles } from "@/git/full-file-review-context";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useWorkingDiffComparison } from "@/git/working-diff-comparison";
 
@@ -82,9 +83,10 @@ export function useWorkingDiff({
     [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
   );
   const reviewActions = useInlineReviewController({ reviewDraftKey });
+  const reviewContextFiles = useReviewContextFiles(cwd, files);
   const reviewAttachment = useReviewAttachmentSnapshot({
     key: reviewDraftKey,
-    diffFiles: files,
+    diffFiles: reviewContextFiles,
     cwd,
     mode: diffMode,
     baseRef,

@@ -65,6 +65,20 @@ describe("buildSplitDiffRows", () => {
     expect(rows[1].right?.reviewTarget?.key).toBe("example.ts:new:10");
   });
 
+  it("omits the header row for a header-less whole-file hunk", () => {
+    const rows = buildSplitDiffRows(
+      makeFile(
+        [
+          { type: "context", content: "first" },
+          { type: "add", content: "second" },
+        ],
+        { oldStart: 1, newStart: 1 },
+      ),
+    );
+
+    expect(rows.map((row) => row.kind)).toEqual(["pair", "pair"]);
+  });
+
   it("pairs replacement runs by index", () => {
     const rows = buildSplitDiffRows(
       makeFile([

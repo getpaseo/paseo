@@ -18,6 +18,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
   ChevronDown,
+  ChevronUp,
   Columns2,
   ExternalLink,
   ListChevronsDownUp,
@@ -26,13 +27,15 @@ import {
   MoreHorizontal,
   Pilcrow,
   RotateCw,
+  UnfoldVertical,
   WrapText,
 } from "lucide-react-native";
 import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
-import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
+import { DiffDocument, type DiffDocumentProps, type WorkingDiffMode } from "@/git/diff-document";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
+import { FullFileDiffView } from "@/git/full-file-diff-view";
 import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
 import {
   selectPrHintFromStatus,
@@ -201,6 +204,8 @@ const ThemedAlignJustify = withUnistyles(AlignJustify);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
+const ThemedUnfoldVertical = withUnistyles(UnfoldVertical);
+const ThemedChevronUp = withUnistyles(ChevronUp);
 const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
 const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
 const ThemedMaximize = withUnistyles(Maximize);
@@ -346,6 +351,12 @@ interface ChangesToolbarRefreshAction {
   onRefresh: () => void;
 }
 
+/** Steps through changed files while the full-file view shows one at a time. */
+interface ChangesToolbarFileNavigation {
+  onPrevious: () => void;
+  onNext: () => void;
+}
+
 interface ChangesToolbarInlineDiffToggle {
   value: boolean;
   onToggle: () => void;
@@ -359,6 +370,10 @@ interface ChangesToolbarDiffOptions {
   } | null;
   layout: {
     value: "unified" | "split";
+    onToggle: () => void;
+  } | null;
+  fullFile: {
+    value: boolean;
     onToggle: () => void;
   } | null;
   hideWhitespace: boolean;
@@ -378,11 +393,13 @@ type ChangesToolbarMode =
       kind: "diff";
       options: ChangesToolbarDiffOptions;
       refresh: ChangesToolbarRefreshAction | null;
+      fileNavigation: ChangesToolbarFileNavigation | null;
     }
   | {
       kind: "combined";
       options: ChangesToolbarDiffOptions;
       refresh: ChangesToolbarRefreshAction | null;
+      fileNavigation: ChangesToolbarFileNavigation | null;
       treeToggle: { visible: boolean; onToggle: () => void } | null;
       inlineDiff: ChangesToolbarInlineDiffToggle | null;
     };
@@ -395,6 +412,8 @@ function buildChangesToolbarMode(input: {
   refreshSupported: boolean;
   isRefreshing: boolean;
   layout: "unified" | "split";
+  fullFile: boolean;
+  fileNavigation: ChangesToolbarFileNavigation | null;
   hideWhitespace: boolean;
   wrapLines: boolean;
   treeVisible: boolean;
@@ -405,6 +424,7 @@ function buildChangesToolbarMode(input: {
   onExpandAll: () => void;
   allFilesCollapsed: boolean;
   onToggleLayout: () => void;
+  onToggleFullFile: () => void;
   onToggleHideWhitespace: () => void;
   onToggleWrapLines: () => void;
   onToggleTree: () => void;
@@ -431,18 +451,24 @@ function buildChangesToolbarMode(input: {
     layout: input.canUseSplitLayout
       ? { value: input.layout, onToggle: input.onToggleLayout }
       : null,
+    // The full-file view pairs with the minimap and a pointer-driven layout, so it follows
+    // the same wide-web gate as the side-by-side layout.
+    fullFile: input.canUseSplitLayout
+      ? { value: input.fullFile, onToggle: input.onToggleFullFile }
+      : null,
     hideWhitespace: input.hideWhitespace,
     wrapLines: input.wrapLines,
     onToggleHideWhitespace: input.onToggleHideWhitespace,
     onToggleWrapLines: input.onToggleWrapLines,
   };
   if (input.presentation === "diff") {
-    return { kind: "diff", options, refresh };
+    return { kind: "diff", options, refresh, fileNavigation: input.fileNavigation };
   }
   return {
     kind: "combined",
     options,
     refresh,
+    fileNavigation: input.fileNavigation,
     treeToggle:
       !input.compact && input.hasChanges
         ? { visible: input.treeVisible, onToggle: input.onToggleTree }
@@ -762,6 +788,9 @@ function ChangesToolbarActions({ mode, compact }: { mode: ChangesToolbarMode; co
   if (mode.kind === "diff") {
     return (
       <>
+        {mode.fileNavigation ? (
+          <ChangesFileNavigationButtons navigation={mode.fileNavigation} compact={compact} />
+        ) : null}
         {mode.refresh ? <ChangesRefreshButton refresh={mode.refresh} compact={compact} /> : null}
         <ChangesDiffToolbar options={mode.options} compact={compact} />
       </>
@@ -769,6 +798,12 @@ function ChangesToolbarActions({ mode, compact }: { mode: ChangesToolbarMode; co
   }
   return (
     <>
+      {mode.fileNavigation ? (
+        <ChangesFileNavigationButtons navigation={mode.fileNavigation} compact={compact} />
+      ) : null}
+      {mode.options.fullFile ? (
+        <ChangesFullFileButton toggle={mode.options.fullFile} compact={compact} />
+      ) : null}
       {mode.treeToggle ? (
         <TreeRailToggle
           visible={mode.treeToggle.visible}
@@ -779,6 +814,65 @@ function ChangesToolbarActions({ mode, compact }: { mode: ChangesToolbarMode; co
       {mode.refresh ? <ChangesRefreshButton refresh={mode.refresh} compact={compact} /> : null}
       <ChangesOptionsMenu mode={mode} compact={compact} />
     </>
+  );
+}
+
+function ChangesFileNavigationButtons({
+  navigation,
+  compact,
+}: {
+  navigation: ChangesToolbarFileNavigation;
+  compact: boolean;
+}) {
+  const { t } = useTranslation();
+  const iconSize = paneContentToolbarIconSize(compact);
+  return (
+    <>
+      <ToolbarButton
+        compact={compact}
+        label={t("workspace.git.diff.previousFile")}
+        testID="changes-previous-file"
+        onPress={navigation.onPrevious}
+      >
+        <ThemedChevronUp size={iconSize} uniProps={extraMutedIconColorMapping} />
+      </ToolbarButton>
+      <ToolbarButton
+        compact={compact}
+        label={t("workspace.git.diff.nextFile")}
+        testID="changes-next-file"
+        onPress={navigation.onNext}
+      >
+        <ThemedChevronDown size={iconSize} uniProps={extraMutedIconColorMapping} />
+      </ToolbarButton>
+    </>
+  );
+}
+
+function ChangesFullFileButton({
+  toggle,
+  compact,
+}: {
+  toggle: NonNullable<ChangesToolbarDiffOptions["fullFile"]>;
+  compact: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <ToolbarButton
+      compact={compact}
+      label={
+        toggle.value
+          ? t("workspace.git.diff.showChangesOnly")
+          : t("workspace.git.diff.showFullFile")
+      }
+      selected={toggle.value}
+      testID="changes-toggle-full-file"
+      onPress={toggle.onToggle}
+    >
+      <ThemedUnfoldVertical
+        size={paneContentToolbarIconSize(compact)}
+        uniProps={extraMutedIconColorMapping}
+      />
+    </ToolbarButton>
   );
 }
 
@@ -836,6 +930,9 @@ function ChangesDiffToolbar({
         >
           <ThemedColumns2 size={iconSize} uniProps={extraMutedIconColorMapping} />
         </ToolbarButton>
+      ) : null}
+      {options.fullFile ? (
+        <ChangesFullFileButton toggle={options.fullFile} compact={compact} />
       ) : null}
       <ToolbarButton
         compact={compact}
@@ -1238,6 +1335,93 @@ function buildForgeSetupMessage(input: {
   return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
 }
 
+/**
+ * The file the full-file view shows (the focused file while it is still changed, else the
+ * first) and the controls that step through the others.
+ */
+function useFullFileSelection(input: {
+  available: boolean;
+  preferred: boolean;
+  presentation: ChangesPresentation;
+  files: ParsedDiffFile[];
+  focusRequest: { path: string } | null;
+  onSelectFile: (path: string) => void;
+}): { fullFile: ParsedDiffFile | null; fileNavigation: ChangesToolbarFileNavigation | null } {
+  const { files, onSelectFile } = input;
+  // The tree presentation is a file list; it never renders a document.
+  const enabled = input.available && input.preferred && input.presentation !== "tree";
+  const focusPath = input.focusRequest?.path;
+  const focusedIndex = focusPath ? files.findIndex((file) => file.path === focusPath) : -1;
+  const index = Math.max(0, focusedIndex);
+  const selectOffset = useCallback(
+    (offset: number) => {
+      const target = files[(index + offset + files.length) % files.length];
+      if (target) onSelectFile(target.path);
+    },
+    [files, index, onSelectFile],
+  );
+  const fileNavigation = useMemo(
+    () =>
+      enabled && files.length > 1
+        ? { onPrevious: () => selectOffset(-1), onNext: () => selectOffset(1) }
+        : null,
+    [enabled, files.length, selectOffset],
+  );
+  return { fullFile: enabled ? (files[index] ?? null) : null, fileNavigation };
+}
+
+function ChangesDiffDocument({
+  serverId,
+  cwd,
+  files,
+  fullFile,
+  diffMode,
+  status,
+  contentInsetBottom,
+  collapseState,
+  displayPreferences,
+  mode,
+  onSelectUncommitted,
+}: {
+  serverId: string;
+  cwd: string;
+  files: ParsedDiffFile[];
+  fullFile: ParsedDiffFile | null;
+  diffMode: "uncommitted" | "base";
+  status: CheckoutStatusPayload | null;
+  contentInsetBottom: number;
+  collapseState: { paths: readonly string[]; onChange: (paths: string[]) => void };
+  displayPreferences: DiffDocumentProps["displayPreferences"];
+  mode: WorkingDiffMode;
+  onSelectUncommitted: () => void;
+}) {
+  if (!fullFile) {
+    return (
+      <DiffDocument
+        files={files}
+        contentInsetBottom={contentInsetBottom}
+        collapseState={collapseState}
+        displayPreferences={displayPreferences}
+        mode={mode}
+      />
+    );
+  }
+  return (
+    <FullFileDiffView
+      serverId={serverId}
+      cwd={cwd}
+      file={fullFile}
+      diffMode={diffMode}
+      isDirty={Boolean(status?.isDirty)}
+      contentInsetBottom={contentInsetBottom}
+      collapseState={collapseState}
+      displayPreferences={displayPreferences}
+      mode={mode}
+      onSelectUncommitted={onSelectUncommitted}
+    />
+  );
+}
+
 function buildToggleButtonStyle(
   selected: boolean,
   baseStyles?: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
@@ -1490,6 +1674,10 @@ export function ChangesSurface({
     const layout = preferences.layout === "unified" ? "split" : "unified";
     void updatePreferences({ layout });
   }, [preferences.layout, updatePreferences]);
+
+  const handleToggleFullFile = useCallback(() => {
+    void updatePreferences({ fullFile: !preferences.fullFile });
+  }, [preferences.fullFile, updatePreferences]);
   const codeFontSize = appSettings.codeFontSize;
 
   const toast = useToast();
@@ -1730,6 +1918,14 @@ export function ChangesSurface({
   );
 
   const hasChanges = files.length > 0;
+  const { fullFile, fileNavigation } = useFullFileSelection({
+    available: canUseSplitLayout,
+    preferred: preferences.fullFile,
+    presentation,
+    files,
+    focusRequest: documentFocusRequest,
+    onSelectFile: handleSelectTreeFile,
+  });
   const jumpToFileInset = jumpToFileClearance({
     isCompact: isMobile,
     presentation,
@@ -1791,12 +1987,18 @@ export function ChangesSurface({
       checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
       notRepositoryLabel={t("workspace.git.diff.notRepository")}
     >
-      <DiffDocument
+      <ChangesDiffDocument
+        serverId={serverId}
+        cwd={cwd}
         files={files}
+        fullFile={fullFile}
+        diffMode={diffMode}
+        status={status}
         contentInsetBottom={jumpToFileInset}
         collapseState={collapseState}
         displayPreferences={sharedDisplayPreferences}
         mode={workingMode}
+        onSelectUncommitted={handleSelectUncommitted}
       />
     </DiffBodyContent>
   );
@@ -1826,6 +2028,8 @@ export function ChangesSurface({
         refreshSupported,
         isRefreshing,
         layout: preferences.layout,
+        fullFile: preferences.fullFile,
+        fileNavigation,
         hideWhitespace: preferences.hideWhitespace,
         wrapLines,
         treeVisible: desktopTreeVisible,
@@ -1838,6 +2042,7 @@ export function ChangesSurface({
         onExpandAll: handleExpandAllFiles,
         allFilesCollapsed,
         onToggleLayout: handleToggleLayout,
+        onToggleFullFile: handleToggleFullFile,
         onToggleHideWhitespace: handleToggleHideWhitespace,
         onToggleWrapLines: handleToggleWrapLines,
         onToggleTree: handleToggleDesktopTree,
@@ -1846,16 +2051,19 @@ export function ChangesSurface({
       allFilesCollapsed,
       canUseSplitLayout,
       desktopTreeVisible,
+      fileNavigation,
       handleCollapseAllFiles,
       handleExpandAllFiles,
       handleOpenDiff,
       handleToggleInlineDiff,
       handleRefresh,
       handleToggleDesktopTree,
+      handleToggleFullFile,
       handleToggleHideWhitespace,
       handleToggleLayout,
       handleToggleWrapLines,
       hasChanges,
+      preferences.fullFile,
       preferences.hideWhitespace,
       preferences.inlineDiff,
       preferences.layout,
