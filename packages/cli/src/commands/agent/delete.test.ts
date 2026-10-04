@@ -36,15 +36,16 @@ const historyPage = (cursor: string | undefined) => {
 const cancelAgent = vi.fn(async () => {
   throw new Error("active run cancellation was not acknowledged");
 });
+const fetchAgentHistory = vi.fn(async (options: { page: { cursor?: string } }) =>
+  historyPage(options.page.cursor),
+);
 const deleteAgent = vi.fn(async () => undefined);
 const close = vi.fn(async () => undefined);
 
 vi.mock("../../utils/client.js", () => ({
   connectToDaemon: vi.fn(async () => ({
     fetchAgents: vi.fn(async () => historyPage(undefined)),
-    fetchAgentHistory: vi.fn(async (options: { page: { cursor?: string } }) =>
-      historyPage(options.page.cursor),
-    ),
+    fetchAgentHistory,
     fetchAgent: vi.fn(async () => ({ agent })),
     cancelAgent,
     deleteAgent,
@@ -57,11 +58,13 @@ describe("runDeleteCommand", () => {
   beforeEach(() => {
     daemonAgents = [agent];
     deleteAgent.mockClear();
+    fetchAgentHistory.mockClear();
   });
 
   it("force-deletes a running agent when graceful cancellation is refused", async () => {
     const result = await runDeleteCommand(agent.id, { daemonTarget }, {} as never);
 
+    expect(fetchAgentHistory).not.toHaveBeenCalled();
     expect(cancelAgent).toHaveBeenCalledWith(agent.id);
     expect(deleteAgent).toHaveBeenCalledWith(agent.id);
     expect(result.data).toEqual({

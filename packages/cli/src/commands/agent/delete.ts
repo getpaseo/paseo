@@ -65,15 +65,16 @@ export async function runDeleteCommand(
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
-    let agents = await fetchHistoryAgents(client);
     const deletedIds: string[] = [];
+    let agents: FetchAgentHistoryEntry["agent"][];
 
-    if (!options.all && options.cwd) {
-      agents = agents.filter((a) => {
-        return isSameOrDescendantPath(options.cwd!, a.cwd);
-      });
-    } else if (!options.all && id) {
-      const fetchResult = await client.fetchAgent({ agentId: id });
+    if (options.all || options.cwd) {
+      agents = await fetchHistoryAgents(client);
+      if (!options.all) {
+        agents = agents.filter((a) => isSameOrDescendantPath(options.cwd!, a.cwd));
+      }
+    } else {
+      const fetchResult = await client.fetchAgent({ agentId: id! });
       if (!fetchResult) {
         const error: CommandError = {
           code: "AGENT_NOT_FOUND",
