@@ -17,6 +17,8 @@ import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/alert";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isNative, isWeb } from "@/constants/platform";
@@ -26,6 +28,7 @@ interface StartupSplashScreenProps {
   bootstrapState?: {
     splashError: string | null;
     retry: () => void;
+    continueWithoutDaemon: () => void;
   };
 }
 
@@ -296,6 +299,48 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
+function StartupRecoveryActions({
+  retry,
+  continueWithoutDaemon,
+}: {
+  retry: () => void;
+  continueWithoutDaemon: () => void;
+}) {
+  const { t } = useTranslation();
+  const { updateSettings, isSaving } = useDesktopSettings();
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const handleContinue = useCallback(async () => {
+    if (isSaving) return;
+    setSaveError(null);
+    try {
+      // Keep the startup error actionable until the choice is safely persisted.
+      await updateSettings({ daemon: { manageBuiltInDaemon: false } });
+      continueWithoutDaemon();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSaveError(t("startup.continueWithoutServerFailed", { message }));
+    }
+  }, [isSaving, updateSettings, continueWithoutDaemon, t]);
+
+  return (
+    <>
+      <Text style={styles.errorDescription}>{t("startup.continueWithoutServerDescription")}</Text>
+      <View style={styles.actionRow}>
+        <Button variant="default" leftIcon={RotateCw} onPress={retry} disabled={isSaving}>
+          {t("common.actions.retry")}
+        </Button>
+        <Button variant="outline" onPress={handleContinue} loading={isSaving} disabled={isSaving}>
+          {t("startup.continueWithoutServer")}
+        </Button>
+      </View>
+      {saveError ? (
+        <Alert testID="startup-recovery-error" variant="error" description={saveError} />
+      ) : null}
+    </>
+  );
+}
+
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -376,10 +421,6 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     () => <BookOpen size={16} color={theme.colors.foreground} />,
     [theme.colors.foreground],
   );
-  const retryIcon = useMemo(
-    () => <RotateCw size={16} color={theme.colors.palette.white} />,
-    [theme.colors.palette.white],
-  );
 
   if (!isError) {
     return (
@@ -405,6 +446,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
           </View>
 
           <Text style={styles.errorDescription}>{t("startup.errorDescription")}</Text>
+
+          <StartupRecoveryActions
+            retry={bootstrapState.retry}
+            continueWithoutDaemon={bootstrapState.continueWithoutDaemon}
+          />
 
           <Text dataSet={CODE_SURFACE_DATASET} style={styles.errorMessage}>
             {bootstrapState.splashError}
@@ -433,9 +479,6 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
             </Button>
             <Button variant="outline" leftIcon={bookIcon} onPress={openDocs}>
               Docs
-            </Button>
-            <Button variant="default" leftIcon={retryIcon} onPress={bootstrapState.retry}>
-              Retry
             </Button>
           </View>
         </View>

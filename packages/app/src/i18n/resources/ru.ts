@@ -1490,6 +1490,10 @@ export const ru: TranslationResources = {
     details: "Подробности",
   },
   startup: {
+    continueWithoutServer: "Продолжить без локального сервера",
+    continueWithoutServerDescription:
+      "Отключите автоматический запуск локального сервера и подключитесь к существующему хосту. Встроенный daemon можно снова включить в настройках.",
+    continueWithoutServerFailed: "Не удалось сохранить настройку локального сервера: {{message}}",
     errorTitle: "Что-то пошло не так",
     errorDescription:
       "Не удалось запустить локальный сервер. Если ошибка повторится, сообщите о ней на GitHub и приложите приведённые ниже журналы.",

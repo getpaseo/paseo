@@ -1479,6 +1479,10 @@ export const ja: TranslationResources = {
     details: "詳細",
   },
   startup: {
+    continueWithoutServer: "ローカルサーバーなしで続ける",
+    continueWithoutServerDescription:
+      "ローカルサーバーの自動起動をオフにして、既存のホストに接続します。内蔵 daemon は設定で再度有効にできます。",
+    continueWithoutServerFailed: "ローカルサーバーの設定を保存できません：{{message}}",
     errorTitle: "問題が発生しました",
     errorDescription:
       "ローカルサーバーの起動に失敗しました。この問題が続く場合は、以下のログを添えてGitHubでIssueを作成してください。",

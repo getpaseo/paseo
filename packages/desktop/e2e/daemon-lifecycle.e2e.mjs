@@ -1,4 +1,5 @@
 import { verifyAttachedDaemonControls } from "./daemon-lifecycle-renderer.electron.mjs";
+import { verifyStartupFailureRecovery } from "./daemon-startup-recovery.electron.mjs";
 import { once } from "node:events";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, copyFile } from "node:fs/promises";
@@ -30,10 +31,17 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const port = server.address().port;
 await new Promise((resolve) => server.close(resolve));
 assert.ok(port !== 6767 && port !== 6768);
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const metroPort = server.address().port;
+await new Promise((resolve) => server.close(resolve));
 await mkdir(path.join(root, "web"));
 await writeFile(path.join(root, "web/index.html"), "<html><body>Lifecycle web UI</body></html>");
 savePersistedConfig(home, {
-  daemon: { listen: `127.0.0.1:${port}`, relay: { enabled: false } },
+  daemon: {
+    listen: `127.0.0.1:${port}`,
+    relay: { enabled: false },
+    cors: { allowedOrigins: [`http://127.0.0.1:${metroPort}`] },
+  },
   features: {
     dictation: { enabled: false },
     voiceMode: { enabled: false },
@@ -89,6 +97,15 @@ try {
     timeoutMs: 30_000,
   });
   captured = launch.instance;
+  await verifyStartupFailureRecovery({
+    repo,
+    root,
+    env,
+    home,
+    port,
+    metroPort,
+    instance: captured,
+  });
   await openDesktop();
   const attached = await command("start_desktop_daemon");
   assert.equal(attached.pid, captured.pid);
@@ -206,7 +223,7 @@ try {
     (await mkdtemp(path.join(tmpdir(), "paseo-desktop-lifecycle-artifacts-")));
   await mkdir(artifacts, { recursive: true });
   for (const name of await readdir(root))
-    if (name.endsWith(".png") || name === "metro.log")
+    if (name.endsWith(".png") || name.endsWith(".log"))
       await copyFile(path.join(root, name), path.join(artifacts, name));
   await rm(root, { recursive: true, force: true });
   console.log(`Lifecycle artifacts: ${artifacts}`);

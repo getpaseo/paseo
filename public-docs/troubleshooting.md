@@ -69,6 +69,19 @@ Either way, the fix for a missing tool lives in your shell config (`.zshrc`, `.z
 
 This login-shell step runs on macOS and Linux. On Windows, Paseo uses the environment it was launched with.
 
+## Desktop cannot start its local server
+
+If the local server fails to start, choose **Continue without local server** on
+the error screen. This turns off automatic local server startup for this Desktop
+client and lets you open Settings or connect to an existing host. You can enable
+the built-in daemon again in Settings.
+
+`EADDRINUSE` means another process already holds the configured listen address.
+An independently started Paseo daemon using a different `PASEO_HOME` can cause
+this too: Desktop checks its own home for a running instance. To use the existing
+daemon, continue without the local server, then add its address with
+**Settings → Add host → Direct connection**. See [Connectivity](/docs/connectivity).
+
 ## Reading the logs
 
 - **Desktop app** — the login-shell resolution is logged here. Look for `[login-shell-env]`: `applied` means it worked (it logs the `PATH` before and after); `failed; keeping inherited env` means it fell back to the stripped-down environment, with a `reason` (a timeout, a non-zero exit from your shell config, no output, …). A slow or erroring `.zshrc`/`.zprofile` is the usual cause.

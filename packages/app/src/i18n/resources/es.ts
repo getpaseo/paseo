@@ -1508,6 +1508,11 @@ export const es: TranslationResources = {
     details: "Detalles",
   },
   startup: {
+    continueWithoutServer: "Continuar sin servidor local",
+    continueWithoutServerDescription:
+      "Desactiva el inicio automático del servidor local y conéctate a un host existente. Puedes volver a activar el daemon integrado en Configuración.",
+    continueWithoutServerFailed:
+      "No se pudo guardar la configuración del servidor local: {{message}}",
     errorTitle: "algo salió mal",
     errorDescription:
       "El servidor local no pudo iniciarse. Si esto continúa sucediendo, informe el problema enGitHube incluya los registros a continuación.",

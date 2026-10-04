@@ -1463,6 +1463,10 @@ export const ar: TranslationResources = {
     details: "التفاصيل",
   },
   startup: {
+    continueWithoutServer: "المتابعة بدون خادم محلي",
+    continueWithoutServerDescription:
+      "أوقف التشغيل التلقائي للخادم المحلي واتصل بمضيف موجود. يمكنك إعادة تفعيل الخدمة المضمنة من الإعدادات.",
+    continueWithoutServerFailed: "تعذر حفظ إعداد الخادم المحلي: {{message}}",
     errorTitle: "حدث خطأ ما",
     errorDescription:
       "فشل الخادم المحلي في البدء. إذا استمر حدوث ذلك، فيرجى الإبلاغ عن المشكلة على GitHub وتضمين السجلات أدناه.",

@@ -1447,6 +1447,10 @@ export const zhCN: TranslationResources = {
     details: "详情",
   },
   startup: {
+    continueWithoutServer: "继续使用，不启动本地服务",
+    continueWithoutServerDescription:
+      "关闭本地服务自动启动，连接已有主机。你可以在设置中重新启用内置 daemon。",
+    continueWithoutServerFailed: "无法保存本地服务设置：{{message}}",
     errorTitle: "出现问题",
     errorDescription: "本地服务器启动失败。如果持续发生，请在 GitHub 报告问题并附上下方日志。",
     logs: {
