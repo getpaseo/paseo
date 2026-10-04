@@ -82,10 +82,13 @@ export function addedAgo(plugin: Plugin, now: string): string {
   if (days < 14) return `${days}d ago`;
   return `${Math.round(days / 7)}w ago`;
 }
-/** A README usually opens with the plugin's name and quoted description; the page shows both. */
+/**
+ * A README usually opens with the plugin's name and quoted description; the page shows both.
+ * A leading GitHub alert (`> [!WARNING]`) is a note for the reader and stays.
+ */
 export function readmeBody(readme: string): string {
   return readme
     .replace(/^\s*#\s[^\n]*\n+/, "")
-    .replace(/^(>[^\n]*\n)+\n*/, "")
+    .replace(/^(?!>\s*\[!)(>[^\n]*\n)+\n*/, "")
     .trimStart();
 }

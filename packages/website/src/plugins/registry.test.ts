@@ -96,6 +96,9 @@ describe("plugin registry", () => {
   it("strips the README title and quoted description that the page already shows", () => {
     expect(readmeBody("# Example\n\n> An example\n> plugin\n\n## Usage\n")).toBe("## Usage\n");
     expect(readmeBody("## Usage\n\n> Note\n")).toBe("## Usage\n\n> Note\n");
+    expect(readmeBody("# Example\n\n> [!WARNING]\n> Needs Docker\n\n## Usage\n")).toBe(
+      "> [!WARNING]\n> Needs Docker\n\n## Usage\n",
+    );
   });
   it("offers a registry install command", () => {
     expect(installCommand(plugin)).toBe("paseo plugin install acme/example");
