@@ -41,6 +41,7 @@ export interface PlanWorkspaceOpenTargetsInput {
   isLocalExecution: boolean;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
   forge?: Forge | null;
+  repositoryWebUrl?: string | null;
 }
 
 function resolveActiveFileForOpenTargets(
@@ -118,6 +119,7 @@ function buildForgeWebUrl(
   forge: Forge,
   input: {
     remoteUrl: string | null | undefined;
+    repositoryWebUrl?: string | null;
     branch: string | null | undefined;
     path: string | null;
     lineStart?: number;
@@ -129,6 +131,7 @@ function buildForgeWebUrl(
     return (
       presentation.buildBlobUrl?.({
         remoteUrl: input.remoteUrl,
+        repositoryWebUrl: input.repositoryWebUrl,
         branch: input.branch,
         path: input.path,
         lineStart: input.lineStart,
@@ -139,6 +142,7 @@ function buildForgeWebUrl(
   return (
     presentation.buildBranchTreeUrl?.({
       remoteUrl: input.remoteUrl,
+      repositoryWebUrl: input.repositoryWebUrl,
       branch: input.branch,
     }) ?? null
   );
@@ -149,6 +153,7 @@ function planForgeOpenTarget(input: {
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
   forge?: Forge | null;
+  repositoryWebUrl?: string | null;
 }): PlannedForgeOpenTarget | null {
   if (!input.checkoutStatus?.isGit) {
     return null;
@@ -159,6 +164,7 @@ function planForgeOpenTarget(input: {
   }
   const url = buildForgeWebUrl(forge, {
     remoteUrl: input.checkoutStatus.remoteUrl,
+    repositoryWebUrl: input.repositoryWebUrl,
     branch: input.checkoutStatus.currentBranch,
     path: input.resolvedFile?.relativePath ?? null,
     lineStart: input.activeFile?.lineStart,
