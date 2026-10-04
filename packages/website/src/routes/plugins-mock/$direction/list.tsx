@@ -34,7 +34,7 @@ function MockList() {
   const { direction } = Route.useParams();
   const { List } = DIRECTIONS[direction as Direction];
   return (
-    <SiteShell width="default">
+    <SiteShell width={direction === "final" ? "wide" : "default"}>
       <List
         plugins={plugins}
         category={search.category}

@@ -3,12 +3,16 @@ import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
 
 interface SiteFooterProps {
-  width?: "default" | "prose";
+  width?: "default" | "prose" | "wide";
 }
 
 export function SiteFooter({ width = "default" }: SiteFooterProps) {
   const widthClasses =
-    width === "prose" ? "max-w-prose p-6 md:p-12 md:pt-0" : "max-w-5xl p-6 md:p-20 md:pt-0";
+    width === "prose"
+      ? "max-w-prose p-6 md:p-12 md:pt-0"
+      : width === "wide"
+        ? "max-w-7xl p-6 md:p-20 md:pt-0"
+        : "max-w-5xl p-6 md:p-20 md:pt-0";
   const alternatives = getAlternativePages();
   return (
     <footer className={`${widthClasses} mx-auto`}>

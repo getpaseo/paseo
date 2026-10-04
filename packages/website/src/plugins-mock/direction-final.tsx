@@ -1,6 +1,6 @@
 // Final combination. Directory: A's shelves with a time window on Most installed.
 // Browse pages: B's category rail with a list of screenshot cards. Detail: D's single column.
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Download } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatInstalls } from "~/plugins";
 import {
@@ -9,7 +9,6 @@ import {
   listHref,
   MOCK_CATEGORIES,
   MOCK_WINDOWS,
-  type MockLayout,
   type MockPlugin,
   type MockSort,
   type MockWindow,
@@ -52,10 +51,6 @@ function WindowSwitch({
       ))}
     </nav>
   );
-}
-
-function installsIn(plugin: MockPlugin, window: MockWindow): string {
-  return `${formatInstalls(plugin.installsIn[window])} installs`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -198,7 +193,6 @@ interface BrowseQuery {
   category?: string;
   sort: MockSort;
   window: MockWindow;
-  layout: MockLayout;
 }
 
 const NAV_BASE =
@@ -289,46 +283,28 @@ function SortBar({ query }: { query: BrowseQuery }) {
   );
 }
 
-function CardText({ plugin, meta }: { plugin: MockPlugin; meta: string }) {
-  return (
-    <div className="flex min-w-0 flex-1 items-center gap-3">
-      <PluginTile plugin={plugin} size="sm" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="truncate text-sm font-medium text-white">{plugin.name}</p>
-          <p className="flex-shrink-0 text-xs tabular-nums text-extra-muted-foreground">{meta}</p>
-        </div>
-        <p className="truncate text-sm text-muted-foreground">{plugin.description}</p>
-      </div>
-    </div>
-  );
-}
-
-function StackedCard({ plugin, meta }: { plugin: MockPlugin; meta: string }) {
+/** The What's new card from the directory, plus a clamped description. */
+function GridCard({ plugin, meta }: { plugin: MockPlugin; meta: ReactNode }) {
   return (
     <a href={pluginHref("final", plugin)} className="group block">
       <Shot
         plugin={plugin}
-        className="aspect-video rounded-xl transition-colors group-hover:border-white/20"
+        className="aspect-[16/10] rounded-xl transition-colors group-hover:border-white/20"
       />
-      <div className="mt-3">
-        <CardText plugin={plugin} meta={meta} />
+      <div className="mt-3 flex items-start gap-2.5">
+        <PluginTile plugin={plugin} size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="truncate text-sm font-medium text-white">{plugin.name}</p>
+            <span className="inline-flex flex-shrink-0 items-center gap-1 text-xs tabular-nums text-extra-muted-foreground">
+              {meta}
+            </span>
+          </div>
+          <p className="mt-0.5 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+            {plugin.description}
+          </p>
+        </div>
       </div>
-    </a>
-  );
-}
-
-function HorizontalCard({ plugin, meta }: { plugin: MockPlugin; meta: string }) {
-  return (
-    <a
-      href={pluginHref("final", plugin)}
-      className="group -mx-2 flex items-center gap-4 rounded-xl p-2 transition-colors hover:bg-white/[0.03] sm:gap-5"
-    >
-      <Shot
-        plugin={plugin}
-        className="aspect-video w-28 flex-shrink-0 rounded-lg transition-colors group-hover:border-white/20 sm:w-56"
-      />
-      <CardText plugin={plugin} meta={meta} />
     </a>
   );
 }
@@ -338,19 +314,16 @@ function List({
   category: slug,
   sort = "installs",
   window = "week",
-  layout = "stacked",
 }: {
   plugins: MockPlugin[];
   category?: string;
   sort?: MockSort;
   window?: MockWindow;
-  layout?: MockLayout;
 }) {
   const category = slug ? mockCategory(slug) : null;
-  const query: BrowseQuery = { category: category?.slug, sort, window, layout };
+  const query: BrowseQuery = { category: category?.slug, sort, window };
   const scoped = category ? inCategory(plugins, category.slug) : plugins;
   const results = sort === "new" ? sortBy(scoped, "new") : sortByInstalls(scoped, window);
-  const Card = layout === "horizontal" ? HorizontalCard : StackedCard;
   return (
     <div className="lg:flex lg:gap-12">
       <Rail plugins={plugins} query={query} />
@@ -362,12 +335,21 @@ function List({
           </span>
         </h1>
         <SortBar query={query} />
-        <div className={layout === "horizontal" ? "mt-4 space-y-2" : "mt-8 space-y-10"}>
+        <div className="mt-8 grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {results.map((plugin) => (
-            <Card
+            <GridCard
               key={plugin.id}
               plugin={plugin}
-              meta={sort === "new" ? addedAgo(plugin) : installsIn(plugin, window)}
+              meta={
+                sort === "new" ? (
+                  addedAgo(plugin)
+                ) : (
+                  <>
+                    <Download className="h-3 w-3" />
+                    {formatInstalls(plugin.installsIn[window])}
+                  </>
+                )
+              }
             />
           ))}
         </div>
