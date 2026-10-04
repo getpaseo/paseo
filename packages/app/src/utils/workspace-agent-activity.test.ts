@@ -201,7 +201,10 @@ describe("workspace agent activity index", () => {
     });
   });
 
-  it("treats a cross-workspace subagent as activity in its own workspace", () => {
+  it("shows a parent waiting on a running cross-workspace subagent, not done", () => {
+    // The reported bug: parent and child live in different workspaces, so the child's work is
+    // activity in its own workspace and the parent used to read as done the moment its turn
+    // ended. Ownership is the parent relationship, not the workspace.
     const index = buildWorkspaceAgentActivityIndex(
       new Map([
         [
@@ -231,7 +234,7 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "parent",
-            status: "done",
+            status: "waiting_on_subagent",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
           },
         ],
@@ -245,6 +248,358 @@ describe("workspace agent activity index", () => {
         ],
       ]),
     );
+  });
+
+  it("returns to done once the last descendant finishes", () => {
+    const withRunningChild = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+    );
+    expect(withRunningChild.get("workspace-a")?.status).toBe("waiting_on_subagent");
+
+    const withFinishedChild = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+      withRunningChild,
+    );
+    expect(withFinishedChild.get("workspace-a")).toEqual({
+      agentId: "parent",
+      status: "done",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+  });
+
+  it("waits on an initializing child", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            status: "initializing",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.status).toBe("waiting_on_subagent");
+  });
+
+  it("surfaces a child blocked on permission as needs_input, not a quiet wait", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            pendingPermissionCount: 1,
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.status).toBe("needs_input");
+  });
+
+  it("ignores archived and detached children", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "archived-child",
+          agent({
+            id: "archived-child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            archivedAt: "2026-06-01T10:02:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+        [
+          "detached-child",
+          agent({
+            id: "detached-child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:03:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.status).toBe("done");
+  });
+
+  it("does not wait on an unrelated agent that shares the cwd", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "unrelated",
+          agent({
+            id: "unrelated",
+            workspaceId: "workspace-c",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.status).toBe("done");
+  });
+
+  it("lets the parent's own running, permission, and error states win", () => {
+    const runningParent = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+    );
+    expect(runningParent.get("workspace-a")?.status).toBe("running");
+
+    const blockedParent = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            pendingPermissionCount: 1,
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+    );
+    expect(blockedParent.get("workspace-a")?.status).toBe("needs_input");
+
+    const failedParent = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            status: "error",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+      ]),
+    );
+    expect(failedParent.get("workspace-a")?.status).toBe("failed");
+  });
+
+  it("waits on a running grandchild", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+        [
+          "grandchild",
+          agent({
+            id: "grandchild",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:02:00.000Z",
+            parentAgentId: "child",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.status).toBe("waiting_on_subagent");
+  });
+
+  it("folds several root agents in a workspace by urgency, not recency", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "parent",
+          agent({
+            id: "parent",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-b",
+            status: "running",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "parent",
+          }),
+        ],
+        [
+          "newer-root",
+          agent({
+            id: "newer-root",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T11:00:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    // A newer done root must not hide an older root that is waiting on a subagent.
+    expect(index.get("workspace-a")).toEqual({
+      agentId: "parent",
+      status: "waiting_on_subagent",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+  });
+
+  it("leaves the parent's runtime status untouched", () => {
+    const parent = agent({
+      id: "parent",
+      workspaceId: "workspace-a",
+      status: "idle",
+      updatedAt: "2026-06-01T10:00:00.000Z",
+    });
+    const child = agent({
+      id: "child",
+      workspaceId: "workspace-b",
+      status: "running",
+      updatedAt: "2026-06-01T10:01:00.000Z",
+      parentAgentId: "parent",
+    });
+
+    buildWorkspaceAgentActivityIndex(
+      new Map([
+        ["parent", parent],
+        ["child", child],
+      ]),
+    );
+
+    // Waiting is a presentation state: the daemon still owns `idle` and the client must not write
+    // a fake `running` back into the directory.
+    expect(parent.status).toBe("idle");
+    expect(parent.turn.phase).toBe("idle");
   });
 
   it("preserves the activity index while the same agent remains in the same status", () => {

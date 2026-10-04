@@ -1,6 +1,10 @@
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 
-export type ProjectStatusBadgeDotBucket = "failed" | "attention" | "running";
+export type ProjectStatusBadgeDotBucket =
+  | "failed"
+  | "attention"
+  | "running"
+  | "waiting_on_subagent";
 
 export type ProjectStatusBadgeContent =
   | { kind: "alert" }
@@ -22,7 +26,12 @@ export function getProjectStatusBadgeContent(
   if (statusBucket === "needs_input") {
     return { kind: "alert" };
   }
-  if (statusBucket === "failed" || statusBucket === "attention" || statusBucket === "running") {
+  if (
+    statusBucket === "failed" ||
+    statusBucket === "attention" ||
+    statusBucket === "running" ||
+    statusBucket === "waiting_on_subagent"
+  ) {
     return { kind: "dot", bucket: statusBucket };
   }
   return null;

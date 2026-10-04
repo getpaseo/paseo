@@ -8,14 +8,18 @@ import type {
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
+import {
+  aggregateSidebarStateBuckets,
+  getSidebarStateBucketPriority,
+  type SidebarStateBucket,
+} from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
+export type { SidebarStateBucket };
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -123,7 +127,7 @@ export function areSidebarWorkspaceSessionsEqual(
 }
 
 interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 
@@ -192,21 +196,25 @@ function deriveEffectiveWorkspaceStatus(input: {
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): EffectiveWorkspaceStatus {
-  if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-  }
-
   const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
     serverId: input.serverId,
     workspaceId: input.workspace.id,
     pendingCreateAttempts: input.pendingCreateAttempts,
   });
-  if (pendingStartedAt) {
+  if (pendingStartedAt && input.workspace.status === "done") {
     return { status: "running", enteredAt: pendingStartedAt };
   }
 
+  // The daemon aggregate cannot see a client-derived waiting state, and its turn liveness can
+  // lag. Whenever the owning agent's derived state is more urgent than the daemon's, the client's
+  // wins: done becomes running/attention/needs_input/waiting, and a finished turn's attention
+  // becomes waiting while the subagent runs. Anything less urgent leaves the daemon's status.
   const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
-  if (rootAgentActivity && rootAgentActivity.status !== "done") {
+  if (
+    rootAgentActivity &&
+    getSidebarStateBucketPriority(rootAgentActivity.status) <
+      getSidebarStateBucketPriority(input.workspace.status)
+  ) {
     return rootAgentActivity;
   }
 
