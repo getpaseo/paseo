@@ -9,7 +9,13 @@ export const routeSchema = z.discriminatedUnion("store", [
       credentialId: z.number().int().positive(),
     })
     .strict(),
-  z.object({ store: z.literal("keychain") }).strict(),
+  z
+    .object({
+      store: z.literal("keychain"),
+      service: z.string().optional(),
+      account: z.string().optional(),
+    })
+    .strict(),
 ]);
 export const inputSchema = z.object({ route: routeSchema }).strict();
 export type UsageInput = z.infer<typeof inputSchema>;

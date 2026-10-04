@@ -126,7 +126,7 @@ test("rediscovery removes an old account from targeted refreshes", async () => {
   expect(await registry.listReports({ reportIds: ["source:old"] })).toEqual([]);
 });
 
-test("discovery failures log once and produce no card", async () => {
+test("discovery failures log once while other sources still report", async () => {
   const warnings: unknown[][] = [];
   const registry = new UsageSourceRegistry(Date.now, 300_000, {
     warn: (...args: unknown[]) => {
@@ -142,7 +142,11 @@ test("discovery failures log once and produce no card", async () => {
       },
     }),
   );
-  expect(await registry.listReports()).toEqual([]);
+  registry.register(source({ id: "healthy", discover: async () => [{ key: "one", input: {} }] }));
+  const updates: string[] = [];
+  const reports = await registry.listReports({ onReport: (report) => updates.push(report.id) });
+  expect(reports.map((report) => report.id)).toEqual(["healthy:one"]);
+  expect(updates).toEqual(["healthy:one"]);
   expect(warnings).toEqual([[{ sourceId: "kimi", err }, "Usage source discovery failed"]]);
 });
 
@@ -278,4 +282,94 @@ test("failed fallbacks preserve the final problem", async () => {
     status: "unavailable",
     problem: { kind: "rejected", status: 403 },
   });
+});
+
+test("session discovery reuses accounts, separates launches, and retains live agent reports globally", async () => {
+  const sessions = new Map([
+    ["one", { provider: "claude", env: { HOME: "/one" }, sessionKey: "launch-1" }],
+    ["two", { provider: "claude", env: { HOME: "/two" }, sessionKey: "launch-2" }],
+  ]);
+  const existing = new Set(["one", "two", "closed"]);
+  const discoveries: string[] = [];
+  let fetches = 0;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => existing.has(id),
+    usageSession: (id) => sessions.get(id) ?? null,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      discoveries.push(scope.kind === "global" ? "global" : scope.env.HOME);
+      if (scope.kind === "global") return [{ key: "default", input: "default" }];
+      return [{ key: scope.env.HOME === "/new" ? "new" : "same", input: scope.env.HOME }];
+    },
+    fetch: async () => {
+      fetches++;
+      return { status: "available", windows: [] };
+    },
+  });
+  expect(await registry.listReports({ agentId: "closed" })).toEqual([]);
+  expect((await registry.listReports({ agentId: "one" })).map((r) => r.id)).toEqual([
+    "claude:same",
+  ]);
+  await registry.listReports({ agentId: "one" });
+  await registry.listReports({ agentId: "two" });
+  expect(discoveries).toEqual(["/one", "/two"]);
+  expect(fetches).toBe(1);
+  expect((await registry.listReports()).map((r) => r.id)).toEqual([
+    "claude:default",
+    "claude:same",
+  ]);
+  sessions.set("one", { provider: "claude", env: { HOME: "/new" }, sessionKey: "launch-3" });
+  expect((await registry.listReports({ agentId: "one" })).map((r) => r.id)).toEqual(["claude:new"]);
+  existing.delete("two");
+  sessions.delete("two");
+  expect((await registry.listReports()).map((r) => r.id)).toEqual(["claude:default", "claude:new"]);
+  await expect(registry.listReports({ agentId: "missing" })).rejects.toThrow("Unknown agent");
+  await expect(registry.listReports({ agentId: "one", reportIds: [] })).rejects.toThrow("agentId");
+});
+
+test("reports arrive independently and a hung fetch settles as an error before completion", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, undefined, 25);
+  let finishSlow!: (value: unknown) => void;
+  const slow = new Promise<unknown>((resolve) => {
+    finishSlow = resolve;
+  });
+  const reports: string[] = [];
+  let firstReport!: () => void;
+  const first = new Promise<void>((resolve) => {
+    firstReport = resolve;
+  });
+  for (const id of ["slow", "fast", "also-fast"]) {
+    registry.register(
+      source({
+        id,
+        discover: async () => [{ key: "account", input: {} }],
+        fetch: async () => (id === "slow" ? slow : { status: "available", windows: [] }),
+      }),
+    );
+  }
+  let complete = false;
+  const request = registry
+    .listReports({
+      onReport: (entry) => {
+        reports.push(entry.id);
+        firstReport();
+      },
+    })
+    .then((entries) => {
+      complete = true;
+      return entries;
+    });
+  await first;
+  expect(reports).toEqual(["fast:account", "also-fast:account"]);
+  expect(complete).toBe(false);
+  const entries = await request;
+  expect(reports).toEqual(["fast:account", "also-fast:account", "slow:account"]);
+  expect(entries[0]?.report).toEqual({ status: "error", error: "Usage fetch timed out" });
+  finishSlow({ status: "available", windows: [] });
+  expect((await registry.listReports({ reportIds: ["slow:account"] }))[0]?.report).toEqual(
+    entries[0]?.report,
+  );
 });

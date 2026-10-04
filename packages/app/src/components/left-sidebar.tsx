@@ -26,6 +26,7 @@ import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
@@ -275,7 +276,7 @@ function FooterIconButton({
   testID,
   label,
   icon: Icon,
-  iconSize,
+  iconSizeAdjustment = 0,
   shortcutKeys,
   theme,
 }: {
@@ -284,17 +285,20 @@ function FooterIconButton({
   label: string;
   icon: typeof FolderPlus;
   /** Only for a glyph that reads larger than the others at the same size. */
-  iconSize?: number;
+  iconSizeAdjustment?: number;
   shortcutKeys?: ReturnType<typeof useShortcutKeys>;
   theme: SidebarTheme;
   buttonRef?: RefObject<View | null>;
 }) {
+  const isCompact = useIsCompactFormFactor();
+  const iconSize = isCompact ? theme.iconSize.xl : theme.iconSize.md;
+
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
-          style={styles.footerIconButton}
+          style={styles.footerIconButton(isCompact)}
           testID={testID}
           nativeID={testID}
           collapsable={false}
@@ -305,7 +309,7 @@ function FooterIconButton({
         >
           {({ hovered }) => (
             <Icon
-              size={iconSize ?? theme.iconSize.md}
+              size={iconSize + iconSizeAdjustment}
               color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
             />
           )}
@@ -367,7 +371,7 @@ function SidebarHostPicker({
         label={label}
         icon={Server}
         // Server's two boxes fill more of the square than the other glyphs.
-        iconSize={theme.iconSize.md - 1}
+        iconSizeAdjustment={-1}
         theme={theme}
       />
     </HostPicker>
@@ -924,7 +928,7 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
-  // The icons' 28pt buttons sit edge to edge; their own inset spaces the glyphs.
+  // Buttons sit edge to edge; their own inset spaces the glyphs.
   sidebarFooter: {
     flexDirection: "row",
     alignItems: "center",
@@ -941,14 +945,14 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1.5],
     gap: 2,
   },
-  footerIconButton: {
-    width: 28,
-    height: 28,
+  footerIconButton: (isCompact: boolean) => ({
+    width: isCompact ? buttonControlHeight.md : buttonControlHeight.xs,
+    height: isCompact ? buttonControlHeight.md : buttonControlHeight.xs,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
-  },
+  }),
   tooltipRow: {
     flexDirection: "row",
     alignItems: "center",

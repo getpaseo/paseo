@@ -27,6 +27,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
@@ -279,6 +280,8 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
 }
 
 function renderContextWindowMeter(
+  serverId: string,
+  agentId: string,
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
@@ -292,6 +295,8 @@ function renderContextWindowMeter(
   }
   return (
     <ContextWindowMeter
+      serverId={serverId}
+      agentId={agentId}
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
@@ -1308,6 +1313,7 @@ function ComposerContentImpl({
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
+  const hasFinePointer = useHasFinePointer();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const hasText = useSyncExternalStore(
@@ -2076,6 +2082,8 @@ function ComposerContentImpl({
   const contextWindowMeter = useMemo(
     () =>
       renderContextWindowMeter(
+        serverId,
+        agentId,
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
@@ -2084,6 +2092,8 @@ function ComposerContentImpl({
         contextWindowMeterGlyphSize,
       ),
     [
+      serverId,
+      agentId,
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
@@ -2375,7 +2385,8 @@ function ComposerContentImpl({
     { disabled: isSubmitLoadingVisible },
   );
 
-  const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
+  // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
+  const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint && hasFinePointer;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
     () =>

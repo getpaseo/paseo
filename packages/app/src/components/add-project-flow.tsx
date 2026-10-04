@@ -8,7 +8,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  Github,
   HardDrive,
   Plus,
   Search,
@@ -36,6 +35,7 @@ import {
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { GitHubIcon } from "@/components/icons/github-icon";
 import {
   applyAvailableAddProjectHosts,
   backAddProjectPage,
@@ -164,7 +164,7 @@ function FlowBackButton({ onPress }: { onPress: () => void }) {
 }
 
 function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
-  if (method === "github") return Github;
+  if (method === "github") return GitHubIcon;
   if (method === "browse") return FolderOpen;
   if (method === "new-directory") return FolderPlus;
   return Search;
@@ -666,7 +666,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             })
           : repository.nameWithOwner,
         subtitle: repository.description,
-        icon: Github,
+        icon: GitHubIcon,
         testID: `add-project-flow-repository-${repository.id}`,
         select: () =>
           setState((current) => openGithubLocationPage(current, page.hostId, repository)),

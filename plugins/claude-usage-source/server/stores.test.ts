@@ -29,15 +29,15 @@ async function accountIdentity(
   input: Parameters<typeof fetchUsage>[0],
   env: NodeJS.ProcessEnv = {},
 ) {
-  const accounts = await discover(lookup(env), profile);
+  const accounts = await discover({ kind: "global" }, lookup(env), profile);
   const account = accounts.find(
     (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
   );
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
-async function logins(options: Parameters<typeof discover>[0]) {
-  return (await discover(options, profile)).map(
+async function logins(options: Parameters<typeof discover>[1]) {
+  return (await discover({ kind: "global" }, options, profile)).map(
     (account) => account.input as Parameters<typeof fetchUsage>[0],
   );
 }
@@ -204,9 +204,12 @@ test("Claude Keychain login replaces the fallback file", async () => {
   const inputs = await logins({
     ...lookup(),
     platform: "darwin",
+    env: { USER: "fixture-user" },
     readKeychainCredentials: async () => ({ claudeAiOauth: { accessToken: "fixture-keychain" } }),
   });
-  expect(inputs).toEqual([{ route: { store: "keychain" } }]);
+  expect(inputs).toEqual([
+    { route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" } },
+  ]);
 });
 
 test("Claude account metadata alone does not discover a login", async () => {
@@ -221,16 +224,23 @@ test("keychain identity belongs to its token even when Claude Code metadata name
     oauthAccount: { accountUuid: "stale", organizationUuid: "stale-org" },
   });
   const [identity] = await discover(
+    { kind: "global" },
     {
       ...lookup(),
       platform: "darwin",
+      env: { USER: "fixture-user" },
       readKeychainCredentials: async () => ({
         claudeAiOauth: { accessToken: "fixture-keychain-other" },
       }),
     },
     profile,
   );
-  expect(identity).toEqual({ key: "pi-account.pi-org", input: { route: { store: "keychain" } } });
+  expect(identity).toEqual({
+    key: "pi-account.pi-org",
+    input: {
+      route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
+    },
+  });
 });
 
 test("OMP fetch re-reads its row after rotation and skips a newly disabled login", async () => {

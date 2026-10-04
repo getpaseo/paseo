@@ -595,7 +595,10 @@ export const ICON_SIZE = {
   sm: 14,
   md: 16,
   lg: 20,
+  xl: 24,
 } as const;
+
+export const ICON_STROKE_WIDTH = 1.5;
 
 export const FONT_WEIGHT = {
   normal: "normal" as const,

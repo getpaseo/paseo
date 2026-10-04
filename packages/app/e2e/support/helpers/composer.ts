@@ -52,6 +52,10 @@ export async function expectComposerFocused(page: Page): Promise<void> {
   await expect(composerInput(page)).toBeFocused();
 }
 
+export async function expectComposerNotFocused(page: Page): Promise<void> {
+  await expect(composerInput(page)).not.toBeFocused();
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });
