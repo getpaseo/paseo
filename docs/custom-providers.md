@@ -627,7 +627,7 @@ Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/fea
 
 [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) is an open-source coding assistant and reasoning agent by Prime Intellect. It supports ACP via the `--mode acp` flag.
 
-1. Install: `curl -fsSL https://raw.githubusercontent.com/PrimeIntellect-ai/prime-agent/main/scripts/install.sh | bash`
+1. Install: `curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh`
 2. Authenticate or configure models in `~/.prime/agent/`
 3. Add to config.json:
 
