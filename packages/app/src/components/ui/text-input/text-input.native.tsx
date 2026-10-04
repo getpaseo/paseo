@@ -128,9 +128,12 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       (error: string | null | undefined, files: PastedFile[]) => {
         if (error) {
           onPasteError?.(error);
-        } else if (files.length > 0) {
-          onPasteImages?.(files);
+          return;
         }
+        // Empty files still go through: native paste emits [] when the
+        // pasteboard has an image the extractor could not decode, and the
+        // composer clipboard fallback handles that.
+        onPasteImages?.(files);
       },
       [onPasteError, onPasteImages],
     );

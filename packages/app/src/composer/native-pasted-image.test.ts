@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeNativePastedImages, UnsupportedPastedImageError } from "./native-pasted-image";
+import {
+  normalizeNativePastedImages,
+  resolveNativePasteImages,
+  UnsupportedPastedImageError,
+} from "./native-pasted-image";
 
 describe("normalizeNativePastedImages", () => {
   it("turns pasted native image files into the existing picked-image input", () => {
@@ -43,5 +47,76 @@ describe("normalizeNativePastedImages", () => {
         },
       ]),
     ).toThrow(UnsupportedPastedImageError);
+  });
+});
+
+describe("resolveNativePasteImages", () => {
+  it("uses native files when they are images", async () => {
+    await expect(
+      resolveNativePasteImages({
+        files: [
+          {
+            fileName: "clipboard.jpg",
+            fileSize: 128,
+            type: "image/jpg",
+            uri: "file:///cache/clipboard.jpg",
+          },
+        ],
+        readClipboardImage: async () => {
+          throw new Error("clipboard should not be read");
+        },
+      }),
+    ).resolves.toEqual([
+      {
+        source: { kind: "file_uri", uri: "file:///cache/clipboard.jpg" },
+        mimeType: "image/jpeg",
+        fileName: "clipboard.jpg",
+      },
+    ]);
+  });
+
+  it("falls back to the clipboard when native files are not images", async () => {
+    await expect(
+      resolveNativePasteImages({
+        files: [
+          {
+            fileName: "notes.txt",
+            fileSize: 12,
+            type: "text/plain",
+            uri: "file:///cache/notes.txt",
+          },
+        ],
+        readClipboardImage: async () => ({
+          source: { kind: "data_url", dataUrl: "data:image/png;base64,abc" },
+          mimeType: "image/png",
+          fileName: "clipboard.png",
+        }),
+      }),
+    ).resolves.toEqual([
+      {
+        source: { kind: "data_url", dataUrl: "data:image/png;base64,abc" },
+        mimeType: "image/png",
+        fileName: "clipboard.png",
+      },
+    ]);
+  });
+
+  it("falls back to the clipboard when native paste reports no files", async () => {
+    await expect(
+      resolveNativePasteImages({
+        files: [],
+        readClipboardImage: async () => ({
+          source: { kind: "data_url", dataUrl: "data:image/png;base64,abc" },
+          mimeType: "image/png",
+          fileName: "clipboard.png",
+        }),
+      }),
+    ).resolves.toEqual([
+      {
+        source: { kind: "data_url", dataUrl: "data:image/png;base64,abc" },
+        mimeType: "image/png",
+        fileName: "clipboard.png",
+      },
+    ]);
   });
 });
