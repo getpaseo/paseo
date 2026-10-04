@@ -2186,6 +2186,12 @@ export const ar: TranslationResources = {
         header: {
           title: "الرأس",
           description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
+          layout: {
+            title: "التخطيط",
+            hint: "يعرض الوضع المضغوط العنصر الأول في صف واحد والباقي كأيقونات",
+            list: "قائمة",
+            compact: "مضغوط",
+          },
         },
         footer: {
           title: "التذييل",

@@ -15,8 +15,10 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
+import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Switch } from "@/components/ui/switch";
+import { useAppSettings, type SidebarHeaderLayout } from "@/hooks/use-settings";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import {
@@ -76,6 +78,8 @@ function NavItemShortcut({ item }: { item: SidebarNavItem }): ReactElement | nul
 interface SidebarNavRowProps {
   item: SidebarNavItem;
   isFirst: boolean;
+  /** The divider follows the card's rows, which can include rows that are not items. */
+  hasRowAbove: boolean;
   isLast: boolean;
   onMove: (key: string, direction: "up" | "down") => void;
   onSetVisible: (key: string, visible: boolean) => void;
@@ -84,6 +88,7 @@ interface SidebarNavRowProps {
 function SidebarNavRow({
   item,
   isFirst,
+  hasRowAbove,
   isLast,
   onMove,
   onSetVisible,
@@ -99,8 +104,8 @@ function SidebarNavRow({
   );
 
   const rowStyle = useMemo(
-    () => [settingsStyles.row, isFirst ? null : settingsStyles.rowBorder, styles.row],
-    [isFirst],
+    () => [settingsStyles.row, hasRowAbove ? settingsStyles.rowBorder : null, styles.row],
+    [hasRowAbove],
   );
 
   return (
@@ -153,9 +158,56 @@ const SECTION_COPY = {
   },
 } as const satisfies Record<SidebarSection, { title: string; info: string }>;
 
+function HeaderLayoutRow(): ReactElement {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const options = useMemo<SegmentedControlOption<SidebarHeaderLayout>[]>(
+    () => [
+      {
+        value: "list",
+        label: t("settings.appearance.sidebar.header.layout.list"),
+        testID: "sidebar-header-layout-list",
+      },
+      {
+        value: "compact",
+        label: t("settings.appearance.sidebar.header.layout.compact"),
+        testID: "sidebar-header-layout-compact",
+      },
+    ],
+    [t],
+  );
+  const handleChange = useCallback(
+    (layout: SidebarHeaderLayout) => {
+      void updateSettings({ sidebarHeaderLayout: layout });
+    },
+    [updateSettings],
+  );
+
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.appearance.sidebar.header.layout.title")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.sidebar.header.layout.hint")}
+        </Text>
+      </View>
+      <SegmentedControl
+        options={options}
+        value={settings.sidebarHeaderLayout}
+        onValueChange={handleChange}
+        size="sm"
+        testID="sidebar-header-layout"
+      />
+    </View>
+  );
+}
+
 function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElement {
   const { t } = useTranslation();
   const { items, setVisible, move } = useSidebarNavItems(section);
+  const hasLayoutRow = section === "header";
 
   return (
     <SettingsSection
@@ -164,11 +216,13 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
       testID={`sidebar-nav-section-${section}`}
     >
       <View style={settingsStyles.card}>
+        {hasLayoutRow ? <HeaderLayoutRow /> : null}
         {items.map((item, index) => (
           <SidebarNavRow
             key={item.key}
             item={item}
             isFirst={index === 0}
+            hasRowAbove={hasLayoutRow || index > 0}
             isLast={index === items.length - 1}
             onMove={move}
             onSetVisible={setVisible}

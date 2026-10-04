@@ -2197,6 +2197,12 @@ export const ko: TranslationResources = {
         header: {
           title: "헤더",
           description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+          layout: {
+            title: "레이아웃",
+            hint: "컴팩트는 첫 번째 항목을 한 줄에 두고 나머지를 아이콘으로 표시합니다",
+            list: "목록",
+            compact: "컴팩트",
+          },
         },
         footer: {
           title: "푸터",

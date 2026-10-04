@@ -226,6 +226,38 @@ describe("loadAppSettingsFromStorage", () => {
     ]);
   });
 
+  it("defaults the sidebar header layout to a list", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarHeaderLayout).toBe("list");
+  });
+
+  it("loads a stored compact sidebar header layout", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarHeaderLayout: "compact" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarHeaderLayout).toBe("compact");
+  });
+
+  it("falls back to the list sidebar header layout for an unknown stored value", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarHeaderLayout: "grid" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarHeaderLayout).toBe("list");
+  });
+
   it("falls back to the default sidebar navigation items when the stored list is malformed", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
