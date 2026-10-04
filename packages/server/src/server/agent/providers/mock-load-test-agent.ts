@@ -66,7 +66,7 @@ const MODELS: AgentModelDefinition[] = [
     aliases: ["legacy-five-minute-stream"],
     label: "Five minute stream",
     description:
-      "Realistic agent flow streamed as sub-word tokens for five minutes (good for scroll/coalesce debugging).",
+      "Realistic agent flow streamed as sub-word tokens for five minutes (good for scroll/coalesce debugging). Opens with a long Thinking panel that overflows its viewport.",
     isDefault: true,
     thinkingOptions: [
       { id: "low", label: "Low", isDefault: true },
@@ -109,7 +109,14 @@ const MODELS: AgentModelDefinition[] = [
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "one-minute-stream",
     label: "One minute stream",
-    description: "Shorter realistic stream for quick manual checks.",
+    description:
+      "Shorter realistic stream for quick manual checks. Opens with a long Thinking panel that overflows its viewport.",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: 60_000,
       intervalMs: 40,
@@ -510,8 +517,46 @@ function buildIntroParagraph(cycle: number): string {
   ].join("\n");
 }
 
-function buildReasoningText(): string {
+function buildShortReasoningText(): string {
   return "Need to find the scroll container, the layout effect that watches for new messages, and any gesture handler that might fight with programmatic scrolling. Probably a ref on the FlatList plus a near-bottom threshold.";
+}
+
+function buildOverflowReasoningText(cycle: number): string {
+  return [
+    buildShortReasoningText(),
+    "",
+    `This is the long Thinking panel for cycle ${cycle}. It has to keep going well past the 400px detail cap so the nested scroll can follow new output the way the chat viewport does, then stop if I scroll up, then reattach if I come back to the bottom.`,
+    "",
+    "Start with the container. The conversation list is inverted on native and a plain overflow div on web. Follow-output is a sticky-bottom mode, not a one-shot scrollToEnd. Content growth while following pins to the latest line. An upward user scroll detaches. Returning to the last pixel reattaches. Nested panels have to copy that contract or the latest thinking sits below the fold.",
+    "",
+    "The Thinking panel is a ToolCall with a maxHeight of 400. Until that cap, the chat grows and the chat's own follow-output keeps the panel in view. After the cap, the panel's inner ScrollView has to keep sticking on content-size changes. If it does not, the user has to chase the stream by hand.",
+    "",
+    "Walk the render path. ThoughtSlot paces reasoning with the same reveal hook as assistant text, then hands the revealed string to ToolCall as unknown plain-text args. ToolCallDetailsContent wraps that string in ScrollablePlainTextSection. That section is the nested scroller. While the turn is executing, follow-output is on. onContentSizeChange calls scrollToEnd only when following is still true.",
+    "",
+    "Watch the false positives. Programmatic scrollToEnd increases offsetY, which is a downward move, so it must not detach. A 1px jitter must not detach. A downward move that is still above the bottom must not reattach. Only an actual return to the bottom should resume sticking.",
+    "",
+    "Keep going through the layout math. 400px of viewport at a 22px line height is about eighteen lines. This block is several times that so the overflow is obvious within a couple of seconds at a 40ms token interval. If the panel is expanded, the latest sentence should stay pinned without anyone touching the scrollbar.",
+    "",
+    "Now consider the reader who scrolls up to re-read an earlier sentence. New tokens must keep appending below their current position. Yanking them back to the bottom would make the panel unusable for inspection. That is the same reason the chat viewport refuses to push the reader down after an upward wheel.",
+    "",
+    "If they later drag or wheel back to the end, following turns on again and the rest of this monologue should catch up. That reattach path is easy to miss because it only happens when the stream is still live and the inner scroller is already past max height.",
+    "",
+    "Still more filler, on purpose. I want enough wrapped lines that a real overflow appears even on a tall desktop pane, not just a phone. The sentences are doing the same work a model does when it thinks out loud: restating the problem, listing suspects, then committing to a check. The difference is I will keep talking until the panel has no choice but to scroll.",
+    "",
+    "Suspects again, slower. Maybe the wheel blocker on ExpandableBadge is swallowing events. Maybe onContentSizeChange never fires for RN Web Text growth. Maybe follow-output starts detached because the first inner layout is not at the bottom. The mock has to produce the overflow so those guesses can be tested by eye.",
+    "",
+    "Last stretch. If this text is visible and the panel is following, the caret of the stream should sit on the last line. If I scroll up, it should freeze. If I return to the bottom, it should resume. That is the whole check. After this, the cycle continues into tool calls and assistant text the way it always has.",
+  ].join("\n");
+}
+
+function enqueueTokens(
+  queue: CycleEvent[],
+  kind: "assistant_token" | "reasoning_token",
+  text: string,
+): void {
+  for (const tok of tokenize(text)) {
+    queue.push({ kind, text: tok });
+  }
 }
 
 function buildMidParagraph(): string {
@@ -550,16 +595,25 @@ function buildEditDiff(filePath: string): string {
   ].join("\n");
 }
 
-function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
+interface BuildCycleQueueOptions {
+  turnId: string;
+  cycle: number;
+  overflowReasoning: boolean;
+}
+
+function buildCycleQueue({
+  turnId,
+  cycle,
+  overflowReasoning,
+}: BuildCycleQueueOptions): CycleEvent[] {
   const queue: CycleEvent[] = [];
 
-  for (const tok of tokenize(buildIntroParagraph(cycle))) {
-    queue.push({ kind: "assistant_token", text: tok });
-  }
-
-  for (const tok of tokenize(buildReasoningText())) {
-    queue.push({ kind: "reasoning_token", text: tok });
-  }
+  enqueueTokens(queue, "assistant_token", buildIntroParagraph(cycle));
+  enqueueTokens(
+    queue,
+    "reasoning_token",
+    overflowReasoning ? buildOverflowReasoningText(cycle) : buildShortReasoningText(),
+  );
 
   const readDetail: ToolCallDetail = {
     type: "read",
@@ -601,9 +655,7 @@ function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
     },
   });
 
-  for (const tok of tokenize(buildMidParagraph())) {
-    queue.push({ kind: "assistant_token", text: tok });
-  }
+  enqueueTokens(queue, "assistant_token", buildMidParagraph());
 
   const editFile = "packages/app/src/hooks/use-scroll-anchor.ts";
   const editDetail: ToolCallDetail = {
@@ -629,9 +681,7 @@ function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
   queue.push({ kind: "tool_running", callId: shellId, name: "bash", detail: shellDetail });
   queue.push({ kind: "tool_completed", callId: shellId, name: "bash", detail: shellDetail });
 
-  for (const tok of tokenize(buildClosingParagraph())) {
-    queue.push({ kind: "assistant_token", text: tok });
-  }
+  enqueueTokens(queue, "assistant_token", buildClosingParagraph());
 
   queue.push({ kind: "usage" });
 
@@ -1521,7 +1571,11 @@ export class MockLoadTestAgentSession implements AgentSession {
         turn.cycle += 1;
         turn.queue = turn.burst
           ? buildBurstyStreamQueue(turn.cycle)
-          : buildCycleQueue(turn.turnId, turn.cycle);
+          : buildCycleQueue({
+              turnId: turn.turnId,
+              cycle: turn.cycle,
+              overflowReasoning: turn.durationMs >= 60_000,
+            });
       }
       const event = turn.queue.shift();
       if (!event) {

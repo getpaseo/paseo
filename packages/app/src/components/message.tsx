@@ -3036,6 +3036,7 @@ interface ToolCallProps {
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
+  followOutputPersistKey?: string;
 }
 
 export const ToolCall = memo(function ToolCall({
@@ -3055,6 +3056,7 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
+  followOutputPersistKey,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
@@ -3160,6 +3162,8 @@ export const ToolCall = memo(function ToolCall({
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
+        followOutput={status === "executing" || status === "running"}
+        followOutputPersistKey={followOutputPersistKey}
       />
     );
   }, [
@@ -3169,6 +3173,8 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+    status,
+    followOutputPersistKey,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
@@ -3216,5 +3222,6 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
+  if (previous.followOutputPersistKey !== next.followOutputPersistKey) return false;
   return true;
 }
