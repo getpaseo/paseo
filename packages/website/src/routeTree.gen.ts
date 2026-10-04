@@ -75,7 +75,10 @@ import { Route as AlternativesHappyCoderRouteImport } from "./routes/alternative
 import { Route as AlternativesConductorRouteImport } from "./routes/alternatives/conductor";
 import { Route as AlternativesCodexAppRouteImport } from "./routes/alternatives/codex-app";
 import { Route as AlternativesClaudeDesktopRouteImport } from "./routes/alternatives/claude-desktop";
+import { Route as PluginsMockDirectionIndexRouteImport } from "./routes/plugins-mock/$direction/index";
 import { Route as PluginsOwnerSlugRouteImport } from "./routes/plugins/$owner_.$slug";
+import { Route as PluginsMockDirectionListRouteImport } from "./routes/plugins-mock/$direction/list";
+import { Route as PluginsMockDirectionOwnerSlugRouteImport } from "./routes/plugins-mock/$direction/$owner.$slug";
 
 const VtcodeRoute = VtcodeRouteImport.update({
   id: "/vtcode",
@@ -409,11 +412,29 @@ const AlternativesClaudeDesktopRoute =
     path: "/alternatives/claude-desktop",
     getParentRoute: () => rootRouteImport,
   } as any);
+const PluginsMockDirectionIndexRoute =
+  PluginsMockDirectionIndexRouteImport.update({
+    id: "/plugins-mock/$direction/",
+    path: "/plugins-mock/$direction/",
+    getParentRoute: () => rootRouteImport,
+  } as any);
 const PluginsOwnerSlugRoute = PluginsOwnerSlugRouteImport.update({
   id: "/plugins/$owner_/$slug",
   path: "/plugins/$owner/$slug",
   getParentRoute: () => rootRouteImport,
 } as any);
+const PluginsMockDirectionListRoute =
+  PluginsMockDirectionListRouteImport.update({
+    id: "/plugins-mock/$direction/list",
+    path: "/plugins-mock/$direction/list",
+    getParentRoute: () => rootRouteImport,
+  } as any);
+const PluginsMockDirectionOwnerSlugRoute =
+  PluginsMockDirectionOwnerSlugRouteImport.update({
+    id: "/plugins-mock/$direction/$owner/$slug",
+    path: "/plugins-mock/$direction/$owner/$slug",
+    getParentRoute: () => rootRouteImport,
+  } as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
@@ -482,7 +503,10 @@ export interface FileRoutesByFullPath {
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
   "/plugins/": typeof PluginsIndexRoute;
+  "/plugins-mock/$direction/list": typeof PluginsMockDirectionListRoute;
   "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins-mock/$direction/": typeof PluginsMockDirectionIndexRoute;
+  "/plugins-mock/$direction/$owner/$slug": typeof PluginsMockDirectionOwnerSlugRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
@@ -549,7 +573,10 @@ export interface FileRoutesByTo {
   "/blog": typeof BlogIndexRoute;
   "/docs": typeof DocsIndexRoute;
   "/plugins": typeof PluginsIndexRoute;
+  "/plugins-mock/$direction/list": typeof PluginsMockDirectionListRoute;
   "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins-mock/$direction": typeof PluginsMockDirectionIndexRoute;
+  "/plugins-mock/$direction/$owner/$slug": typeof PluginsMockDirectionOwnerSlugRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
@@ -619,7 +646,10 @@ export interface FileRoutesById {
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
   "/plugins/": typeof PluginsIndexRoute;
+  "/plugins-mock/$direction/list": typeof PluginsMockDirectionListRoute;
   "/plugins/$owner_/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins-mock/$direction/": typeof PluginsMockDirectionIndexRoute;
+  "/plugins-mock/$direction/$owner/$slug": typeof PluginsMockDirectionOwnerSlugRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
@@ -690,7 +720,10 @@ export interface FileRouteTypes {
     | "/blog/"
     | "/docs/"
     | "/plugins/"
-    | "/plugins/$owner/$slug";
+    | "/plugins-mock/$direction/list"
+    | "/plugins/$owner/$slug"
+    | "/plugins-mock/$direction/"
+    | "/plugins-mock/$direction/$owner/$slug";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
@@ -757,7 +790,10 @@ export interface FileRouteTypes {
     | "/blog"
     | "/docs"
     | "/plugins"
-    | "/plugins/$owner/$slug";
+    | "/plugins-mock/$direction/list"
+    | "/plugins/$owner/$slug"
+    | "/plugins-mock/$direction"
+    | "/plugins-mock/$direction/$owner/$slug";
   id:
     | "__root__"
     | "/"
@@ -826,7 +862,10 @@ export interface FileRouteTypes {
     | "/blog/"
     | "/docs/"
     | "/plugins/"
-    | "/plugins/$owner_/$slug";
+    | "/plugins-mock/$direction/list"
+    | "/plugins/$owner_/$slug"
+    | "/plugins-mock/$direction/"
+    | "/plugins-mock/$direction/$owner/$slug";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
@@ -892,7 +931,10 @@ export interface RootRouteChildren {
   DownloadThanksRoute: typeof DownloadThanksRoute;
   PluginsOwnerRoute: typeof PluginsOwnerRoute;
   PluginsIndexRoute: typeof PluginsIndexRoute;
+  PluginsMockDirectionListRoute: typeof PluginsMockDirectionListRoute;
   PluginsOwnerSlugRoute: typeof PluginsOwnerSlugRoute;
+  PluginsMockDirectionIndexRoute: typeof PluginsMockDirectionIndexRoute;
+  PluginsMockDirectionOwnerSlugRoute: typeof PluginsMockDirectionOwnerSlugRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -1359,11 +1401,32 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AlternativesClaudeDesktopRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/plugins-mock/$direction/": {
+      id: "/plugins-mock/$direction/";
+      path: "/plugins-mock/$direction";
+      fullPath: "/plugins-mock/$direction/";
+      preLoaderRoute: typeof PluginsMockDirectionIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/plugins/$owner_/$slug": {
       id: "/plugins/$owner_/$slug";
       path: "/plugins/$owner/$slug";
       fullPath: "/plugins/$owner/$slug";
       preLoaderRoute: typeof PluginsOwnerSlugRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins-mock/$direction/list": {
+      id: "/plugins-mock/$direction/list";
+      path: "/plugins-mock/$direction/list";
+      fullPath: "/plugins-mock/$direction/list";
+      preLoaderRoute: typeof PluginsMockDirectionListRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins-mock/$direction/$owner/$slug": {
+      id: "/plugins-mock/$direction/$owner/$slug";
+      path: "/plugins-mock/$direction/$owner/$slug";
+      fullPath: "/plugins-mock/$direction/$owner/$slug";
+      preLoaderRoute: typeof PluginsMockDirectionOwnerSlugRouteImport;
       parentRoute: typeof rootRouteImport;
     };
   }
@@ -1456,7 +1519,10 @@ const rootRouteChildren: RootRouteChildren = {
   DownloadThanksRoute: DownloadThanksRoute,
   PluginsOwnerRoute: PluginsOwnerRoute,
   PluginsIndexRoute: PluginsIndexRoute,
+  PluginsMockDirectionListRoute: PluginsMockDirectionListRoute,
   PluginsOwnerSlugRoute: PluginsOwnerSlugRoute,
+  PluginsMockDirectionIndexRoute: PluginsMockDirectionIndexRoute,
+  PluginsMockDirectionOwnerSlugRoute: PluginsMockDirectionOwnerSlugRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
