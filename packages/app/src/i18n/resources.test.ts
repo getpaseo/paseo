@@ -9,6 +9,7 @@ import { ja } from "./resources/ja";
 import { ko } from "./resources/ko";
 import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
+import { uk } from "./resources/uk";
 import { zhCN } from "./resources/zh-CN";
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -113,6 +114,7 @@ describe("translation resources", () => {
     expect(flattenKeys(ko).sort()).toEqual(englishKeys);
     expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
+    expect(flattenKeys(uk).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
   });
 
@@ -126,11 +128,12 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(ko)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(uk)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
   it("localizes the pull request empty state in every supported language", () => {
-    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, uk, zhCN]) {
       expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
       expect(resource.panels.pullRequest.emptyDescription).not.toBe(
         en.panels.pullRequest.emptyDescription,
@@ -146,6 +149,7 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(ko)).toEqual([]);
     expect(findInterpolationMismatches(ptBR)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
+    expect(findInterpolationMismatches(uk)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
   });
 
@@ -168,6 +172,7 @@ describe("translation resources", () => {
     expect(ko.modelSelector.modelCountPlural).toBe("모델 {{count}}개");
     expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
+    expect(uk.modelSelector.modelCountPlural).toBe("Моделей: {{count}}");
     expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
     expect(ar.settings.providers.models.many).toBe("{{count}} نماذج");
     expect(es.settings.providers.models.many).toBe("{{count}} modelos");
@@ -175,6 +180,7 @@ describe("translation resources", () => {
     expect(ja.settings.providers.models.many).toBe("{{count}}つのモデル");
     expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
+    expect(uk.settings.providers.models.many).toBe("Моделей: {{count}}");
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
 

@@ -76,6 +76,18 @@ export const ptBR: TranslationResources = {
       error: "Erro",
       idle: "Ocioso",
     },
+    time: {
+      justNow: "agora mesmo",
+      now: "agora",
+      ago: "há {{time}}",
+      minutes: "{{count}} min",
+      hours: "{{count}} h",
+      days: "{{count}} d",
+      seconds: "{{count}} s",
+      minutesSeconds: "{{minutes}} min {{seconds}} s",
+      hoursMinutes: "{{hours}} h {{minutes}} min",
+      milliseconds: "{{count}} ms",
+    },
   },
   shell: {
     menu: {
@@ -1097,8 +1109,8 @@ export const ptBR: TranslationResources = {
       save: "Salvar",
       delete: "Excluir",
       deleteTitle: "Excluir {{name}}?",
-      deleteMessage_one: "Isso remove a etiqueta de {{count}} workspace neste host.",
-      deleteMessage_other: "Isso remove a etiqueta de {{count}} workspaces neste host.",
+      deleteMessageOne: "Isso remove a etiqueta de {{count}} workspace neste host.",
+      deleteMessageMany: "Isso remove a etiqueta de {{count}} workspaces neste host.",
       offline: "Este host está offline.",
       updateHost: "Atualize este host para gerenciar etiquetas.",
     },
@@ -1521,6 +1533,12 @@ export const ptBR: TranslationResources = {
         description: "Conecte seu celular a este daemon",
       },
     },
+  },
+  hostPicker: {
+    addHost: "Adicionar host",
+    allHosts: "Todos os hosts",
+    enableBuiltInDaemon: "Ativar o daemon integrado",
+    fallback: "Host",
   },
   projectPicker: {
     placeholder: "Digite para pesquisar...",
@@ -2134,6 +2152,7 @@ export const ptBR: TranslationResources = {
           ko: "Coreano",
           ptBR: "Português brasileiro",
           ru: "Russo",
+          uk: "Ucraniano",
           zhCN: "Chinês simplificado",
         },
       },
@@ -2470,6 +2489,13 @@ export const ptBR: TranslationResources = {
           delete: "Excluir skill",
         },
       },
+      browserTools: {
+        title: "Ferramentas do navegador",
+        warning:
+          "Permite que os agentes acessem e controlem as abas do navegador do Paseo, incluindo o estado de sessões conectadas. Ative apenas para agentes em que você confia.",
+        updating: "Atualizando ferramentas do navegador…",
+        accessibilityLabel: "Ativar ferramentas do navegador",
+      },
       orchestration: {
         title: "Orquestração",
         unavailable: "Conecte-se a este host para gerenciar a orquestração",
@@ -2782,6 +2808,15 @@ export const ptBR: TranslationResources = {
         saving: "Salvando...",
         cancel: "Cancelar",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} restante",
+      resettingNow: "reiniciando agora",
+      resets: "reinicia em {{time}}",
+      runsOutNow: "esgotando agora",
+      runsOut: "esgota em {{time}}",
     },
   },
 };

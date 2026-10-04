@@ -76,6 +76,18 @@ export const ja: TranslationResources = {
       error: "エラー",
       idle: "アイドル",
     },
+    time: {
+      justNow: "たった今",
+      now: "今",
+      ago: "{{time}}前",
+      minutes: "{{count}}分",
+      hours: "{{count}}時間",
+      days: "{{count}}日",
+      seconds: "{{count}}秒",
+      minutesSeconds: "{{minutes}}分{{seconds}}秒",
+      hoursMinutes: "{{hours}}時間{{minutes}}分",
+      milliseconds: "{{count}}ミリ秒",
+    },
   },
   shell: {
     menu: {
@@ -1084,8 +1096,8 @@ export const ja: TranslationResources = {
       save: "保存",
       delete: "削除",
       deleteTitle: "{{name}}を削除しますか？",
-      deleteMessage_one: "このホストの{{count}}個のワークスペースからラベルを削除します。",
-      deleteMessage_other: "このホストの{{count}}個のワークスペースからラベルを削除します。",
+      deleteMessageOne: "このホストの{{count}}個のワークスペースからラベルを削除します。",
+      deleteMessageMany: "このホストの{{count}}個のワークスペースからラベルを削除します。",
       offline: "このホストはオフラインです。",
       updateHost: "ラベルを管理するにはホストを更新してください。",
     },
@@ -1507,6 +1519,12 @@ export const ja: TranslationResources = {
         description: "このデーモンにスマートフォンを接続",
       },
     },
+  },
+  hostPicker: {
+    addHost: "ホストを追加",
+    allHosts: "すべてのホスト",
+    enableBuiltInDaemon: "組み込みデーモンを有効にする",
+    fallback: "ホスト",
   },
   projectPicker: {
     placeholder: "入力して検索...",
@@ -2118,6 +2136,7 @@ export const ja: TranslationResources = {
           ko: "韓国語",
           ptBR: "ブラジルポルトガル語",
           ru: "ロシア語",
+          uk: "ウクライナ語",
           zhCN: "簡体字中国語",
         },
       },
@@ -2456,6 +2475,13 @@ export const ja: TranslationResources = {
           delete: "スキルを削除",
         },
       },
+      browserTools: {
+        title: "ブラウザツール",
+        warning:
+          "エージェントが Paseo のブラウザタブにアクセスして操作できるようにします。ログイン中のブラウザの状態も含まれます。信頼できるエージェントにのみ有効にしてください。",
+        updating: "ブラウザツールを更新中…",
+        accessibilityLabel: "ブラウザツールを有効にする",
+      },
       orchestration: {
         title: "オーケストレーション",
         unavailable: "オーケストレーションを管理するにはこのホストに接続してください",
@@ -2768,6 +2794,15 @@ export const ja: TranslationResources = {
         saving: "保存中...",
         cancel: "キャンセル",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} 残り",
+      resettingNow: "リセット中",
+      resets: "{{time}}でリセット",
+      runsOutNow: "まもなく終了",
+      runsOut: "{{time}}で終了",
     },
   },
 } as const;

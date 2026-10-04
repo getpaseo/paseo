@@ -76,6 +76,18 @@ export const ru: TranslationResources = {
       error: "Ошибка",
       idle: "Ожидание",
     },
+    time: {
+      justNow: "только что",
+      now: "сейчас",
+      ago: "{{time}} назад",
+      minutes: "{{count}} мин",
+      hours: "{{count}} ч",
+      days: "{{count}} д",
+      seconds: "{{count}} с",
+      minutesSeconds: "{{minutes}} мин {{seconds}} с",
+      hoursMinutes: "{{hours}} ч {{minutes}} мин",
+      milliseconds: "{{count}} мс",
+    },
   },
   shell: {
     menu: {
@@ -1088,8 +1100,8 @@ export const ru: TranslationResources = {
       save: "Сохранить",
       delete: "Удалить",
       deleteTitle: "Удалить метку «{{name}}»?",
-      deleteMessage_one: "Метка будет снята с {{count}} рабочего пространства на этом хосте.",
-      deleteMessage_other: "Метка будет снята с {{count}} рабочих пространств на этом хосте.",
+      deleteMessageOne: "Метка будет снята с {{count}} рабочего пространства на этом хосте.",
+      deleteMessageMany: "Метка будет снята с {{count}} рабочих пространств на этом хосте.",
       offline: "Этот хост не в сети.",
       updateHost: "Обновите этот хост для управления метками.",
     },
@@ -1518,6 +1530,12 @@ export const ru: TranslationResources = {
         description: "Подключите свой телефон к этому демону",
       },
     },
+  },
+  hostPicker: {
+    addHost: "Добавить хост",
+    allHosts: "Все хосты",
+    enableBuiltInDaemon: "Включить встроенный демон",
+    fallback: "Хост",
   },
   projectPicker: {
     placeholder: "Введите текст для поиска...",
@@ -2135,6 +2153,7 @@ export const ru: TranslationResources = {
           ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
+          uk: "Українська",
           zhCN: "简体中文",
         },
       },
@@ -2478,6 +2497,13 @@ export const ru: TranslationResources = {
           delete: "Удалить навык",
         },
       },
+      browserTools: {
+        title: "Инструменты браузера",
+        warning:
+          "Агенты смогут получать доступ к вкладкам браузера Paseo и управлять ими, включая состояние входа в аккаунты. Включайте только для агентов, которым доверяете.",
+        updating: "Обновление инструментов браузера…",
+        accessibilityLabel: "Включить инструменты браузера",
+      },
       orchestration: {
         title: "Оркестрация",
         unavailable: "Подключитесь к этому хосту, чтобы управлять оркестрацией.",
@@ -2793,6 +2819,15 @@ export const ru: TranslationResources = {
         saving: "Сохранение...",
         cancel: "Отмена",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} осталось",
+      resettingNow: "сбрасывается сейчас",
+      resets: "сбросится через {{time}}",
+      runsOutNow: "исчерпано",
+      runsOut: "исчерпается через {{time}}",
     },
   },
 };

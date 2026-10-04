@@ -75,6 +75,18 @@ export const ar: TranslationResources = {
       error: "خطأ",
       idle: "عاطل",
     },
+    time: {
+      justNow: "منذ لحظات",
+      now: "الآن",
+      ago: "منذ {{time}}",
+      minutes: "{{count}} د",
+      hours: "{{count}} س",
+      days: "{{count}} ي",
+      seconds: "{{count}} ث",
+      minutesSeconds: "{{minutes}} د {{seconds}} ث",
+      hoursMinutes: "{{hours}} س {{minutes}} د",
+      milliseconds: "{{count}} ms",
+    },
   },
   shell: {
     menu: {
@@ -1071,8 +1083,8 @@ export const ar: TranslationResources = {
       save: "حفظ",
       delete: "حذف",
       deleteTitle: "حذف {{name}}؟",
-      deleteMessage_one: "سيؤدي هذا إلى إزالة التسمية من {{count}} مساحة عمل على هذا المضيف.",
-      deleteMessage_other: "سيؤدي هذا إلى إزالة التسمية من {{count}} مساحات عمل على هذا المضيف.",
+      deleteMessageOne: "سيؤدي هذا إلى إزالة التسمية من {{count}} مساحة عمل على هذا المضيف.",
+      deleteMessageMany: "سيؤدي هذا إلى إزالة التسمية من {{count}} مساحات عمل على هذا المضيف.",
       offline: "هذا المضيف غير متصل.",
       updateHost: "حدّث هذا المضيف لإدارة التسميات.",
     },
@@ -1491,6 +1503,12 @@ export const ar: TranslationResources = {
         description: "قم بتوصيل هاتفك بهذا البرنامج الخفي",
       },
     },
+  },
+  hostPicker: {
+    addHost: "أضف مضيفًا",
+    allHosts: "كل المضيفين",
+    enableBuiltInDaemon: "تفعيل البرنامج الخفي المدمج",
+    fallback: "المضيف",
   },
   projectPicker: {
     placeholder: "اكتب للبحث...",
@@ -2099,6 +2117,7 @@ export const ar: TranslationResources = {
           ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
+          uk: "Українська",
           zhCN: "中文",
         },
       },
@@ -2432,6 +2451,13 @@ export const ar: TranslationResources = {
           delete: "حذف المهارة",
         },
       },
+      browserTools: {
+        title: "أدوات المتصفح",
+        warning:
+          "يسمح للوكلاء بالوصول إلى علامات تبويب متصفح Paseo والتحكم فيها، بما في ذلك حالة تسجيل الدخول في المتصفح. فعّل هذا فقط للوكلاء الذين تثق بهم.",
+        updating: "جارٍ تحديث أدوات المتصفح…",
+        accessibilityLabel: "تفعيل أدوات المتصفح",
+      },
       orchestration: {
         title: "التنسيق",
         unavailable: "اتصل بهذا المضيف لإدارة التنسيق",
@@ -2739,6 +2765,15 @@ export const ar: TranslationResources = {
         saving: "جارٍ الحفظ...",
         cancel: "يلغي",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} متبقي",
+      resettingNow: "إعادة التعيين الآن",
+      resets: "إعادة التعيين خلال {{time}}",
+      runsOutNow: "ينفد الآن",
+      runsOut: "ينفد خلال {{time}}",
     },
   },
 };

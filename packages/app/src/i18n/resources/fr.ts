@@ -77,6 +77,18 @@ export const fr: TranslationResources = {
       error: "Erreur",
       idle: "Inactif",
     },
+    time: {
+      justNow: "à l’instant",
+      now: "maintenant",
+      ago: "il y a {{time}}",
+      minutes: "{{count}} min",
+      hours: "{{count}} h",
+      days: "{{count}} j",
+      seconds: "{{count}} s",
+      minutesSeconds: "{{minutes}} min {{seconds}} s",
+      hoursMinutes: "{{hours}} h {{minutes}} min",
+      milliseconds: "{{count}} ms",
+    },
   },
   shell: {
     menu: {
@@ -1106,8 +1118,8 @@ export const fr: TranslationResources = {
       save: "Enregistrer",
       delete: "Supprimer",
       deleteTitle: "Supprimer {{name}} ?",
-      deleteMessage_one: "Cela retire l’étiquette de {{count}} espace de travail sur cet hôte.",
-      deleteMessage_other: "Cela retire l’étiquette de {{count}} espaces de travail sur cet hôte.",
+      deleteMessageOne: "Cela retire l’étiquette de {{count}} espace de travail sur cet hôte.",
+      deleteMessageMany: "Cela retire l’étiquette de {{count}} espaces de travail sur cet hôte.",
       offline: "Cet hôte est hors ligne.",
       updateHost: "Mettez à jour cet hôte pour gérer les étiquettes.",
     },
@@ -1539,6 +1551,12 @@ export const fr: TranslationResources = {
         description: "Connectez votre téléphone à ce démon",
       },
     },
+  },
+  hostPicker: {
+    addHost: "Ajouter un hôte",
+    allHosts: "Tous les hôtes",
+    enableBuiltInDaemon: "Activer le démon intégré",
+    fallback: "Hôte",
   },
   projectPicker: {
     placeholder: "Tapez pour rechercher...",
@@ -2154,6 +2172,7 @@ export const fr: TranslationResources = {
           ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
+          uk: "Українська",
           zhCN: "中文",
         },
       },
@@ -2495,6 +2514,13 @@ export const fr: TranslationResources = {
           delete: "Supprimer la compétence",
         },
       },
+      browserTools: {
+        title: "Outils du navigateur",
+        warning:
+          "Autorise les agents à accéder aux onglets du navigateur Paseo et à les contrôler, y compris l’état des sessions connectées. N’activez cette option que pour des agents de confiance.",
+        updating: "Mise à jour des outils du navigateur…",
+        accessibilityLabel: "Activer les outils du navigateur",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connectez-vous à cet hôte pour gérer l'orchestration",
@@ -2810,6 +2836,15 @@ export const fr: TranslationResources = {
         saving: "Sauvegarde...",
         cancel: "Annuler",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} restant",
+      resettingNow: "réinitialisation en cours",
+      resets: "réinitialisation dans {{time}}",
+      runsOutNow: "épuisé maintenant",
+      runsOut: "épuisé dans {{time}}",
     },
   },
 };

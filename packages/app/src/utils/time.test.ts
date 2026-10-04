@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   describeCompactTimeAgo,
   describeTimeAgo,
@@ -151,5 +152,35 @@ describe("formatMessageTimestamp", () => {
     const formatted = formatMessageTimestamp(date, now);
     expect(formatted).toMatch(/Apr|April/);
     expect(formatted).toMatch(/2026/);
+  });
+});
+
+describe("relative time in Ukrainian", () => {
+  const now = new Date("2026-07-16T12:00:00.000Z");
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("uk");
+  });
+
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("words prose and compact labels in the active language", () => {
+    expect(formatTimeAgo(new Date("2026-07-16T11:59:30.000Z"), now)).toBe("щойно");
+    expect(formatTimeAgo(new Date("2026-07-16T11:55:00.000Z"), now)).toBe("5 хв тому");
+    expect(formatCompactTimeAgo(new Date("2026-07-16T10:00:00.000Z"), now)).toBe("2 год");
+    expect(formatTimeAgo(new Date("2026-01-15T12:00:00.000Z"), now)).toBe("15 січ.");
+  });
+
+  it("leaves a date that starts with a digit out of prose", () => {
+    expect(formatCompactTimeAgoAsProse("зараз")).toBe("щойно");
+    expect(formatCompactTimeAgoAsProse("3 хв")).toBe("3 хв тому");
+    expect(formatCompactTimeAgoAsProse("15 січ.")).toBe("15 січ.");
+  });
+
+  it("words durations in the active language", () => {
+    expect(formatDuration(132_000)).toBe("2 хв 12 с");
+    expect(formatDuration(3_900_000)).toBe("1 год 5 хв");
   });
 });

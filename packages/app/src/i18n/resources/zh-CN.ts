@@ -75,6 +75,18 @@ export const zhCN: TranslationResources = {
       error: "错误",
       idle: "空闲",
     },
+    time: {
+      justNow: "刚刚",
+      now: "现在",
+      ago: "{{time}}前",
+      minutes: "{{count}} 分钟",
+      hours: "{{count}} 小时",
+      days: "{{count}} 天",
+      seconds: "{{count}} 秒",
+      minutesSeconds: "{{minutes}} 分 {{seconds}} 秒",
+      hoursMinutes: "{{hours}} 小时 {{minutes}} 分",
+      milliseconds: "{{count}} 毫秒",
+    },
   },
   shell: {
     menu: {
@@ -1063,8 +1075,8 @@ export const zhCN: TranslationResources = {
       save: "保存",
       delete: "删除",
       deleteTitle: "删除{{name}}？",
-      deleteMessage_one: "这会从此主机的{{count}}个工作区中移除该标签。",
-      deleteMessage_other: "这会从此主机的{{count}}个工作区中移除该标签。",
+      deleteMessageOne: "这会从此主机的{{count}}个工作区中移除该标签。",
+      deleteMessageMany: "这会从此主机的{{count}}个工作区中移除该标签。",
       offline: "此主机离线。",
       updateHost: "请更新此主机以管理标签。",
     },
@@ -1474,6 +1486,12 @@ export const zhCN: TranslationResources = {
         description: "将手机连接到此 daemon",
       },
     },
+  },
+  hostPicker: {
+    addHost: "添加主机",
+    allHosts: "所有主机",
+    enableBuiltInDaemon: "启用内置 daemon",
+    fallback: "主机",
   },
   projectPicker: {
     placeholder: "输入以搜索...",
@@ -2074,6 +2092,7 @@ export const zhCN: TranslationResources = {
           ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
+          uk: "Українська",
           zhCN: "简体中文",
         },
       },
@@ -2404,6 +2423,13 @@ export const zhCN: TranslationResources = {
           delete: "删除 skill",
         },
       },
+      browserTools: {
+        title: "浏览器工具",
+        warning:
+          "允许 Agent 访问并控制 Paseo 浏览器标签页，包括已登录的浏览器状态。仅对你信任的 Agent 启用。",
+        updating: "正在更新浏览器工具…",
+        accessibilityLabel: "启用浏览器工具",
+      },
       orchestration: {
         title: "编排",
         unavailable: "连接到这个 Host 以管理编排",
@@ -2705,6 +2731,15 @@ export const zhCN: TranslationResources = {
         saving: "正在保存...",
         cancel: "取消",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "剩余 {{percent}}",
+      resettingNow: "正在重置",
+      resets: "{{time}}后重置",
+      runsOutNow: "即将用尽",
+      runsOut: "{{time}}后用尽",
     },
   },
 };
