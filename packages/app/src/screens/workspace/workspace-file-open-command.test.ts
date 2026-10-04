@@ -78,4 +78,21 @@ describe("openWorkspaceFileFromExplorer", () => {
       path: "D:/workspace/docs/report%ZZ.md",
     });
   });
+
+  it.each(["%2F%ED%95%9C", "%5C%ED%95%9C", "%00%ED%95%9C"])(
+    "preserves encoded path separators and NUL in %s",
+    (encodedSegment) => {
+      const input = {
+        ...createInput(false),
+        filePath: `D:/workspace/docs/${encodedSegment}.md`,
+      };
+
+      openWorkspaceFileFromExplorer(input);
+
+      expect(input.openWorkspaceTabInFocusedPane.mock.calls[0]?.[1]).toEqual({
+        kind: "file",
+        path: `D:/workspace/docs/${encodedSegment}.md`,
+      });
+    },
+  );
 });
