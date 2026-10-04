@@ -91,6 +91,17 @@ function buildUsage() {
   };
 }
 
+/** Claude opening a turn of its own. Every main-session turn starts with one. */
+function buildTurnInit(sessionId: string) {
+  return {
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    permissionMode: "default",
+    model: "opus",
+  };
+}
+
 function buildSuccessResult(sessionId: string) {
   return {
     type: "result",
@@ -153,13 +164,7 @@ function createScriptedQuery(params: {
     },
   } satisfies ScriptedQuery;
 
-  scriptedQuery.emit({
-    type: "system",
-    subtype: "init",
-    session_id: params.sessionId,
-    permissionMode: "default",
-    model: "opus",
-  });
+  scriptedQuery.emit(buildTurnInit(params.sessionId));
 
   void (async () => {
     for await (const prompt of params.prompt) {
@@ -523,6 +528,7 @@ test("Claude can still wake into an autonomous turn once the interrupted request
 
   query()?.emit(buildStoppedTaskNotification(sessionId));
   query()?.emit(buildAbortedResult(sessionId));
+  query()?.emit(buildTurnInit(sessionId));
   query()?.emit({
     type: "assistant",
     message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
@@ -812,7 +818,7 @@ test("stale abort result after replacement start does not poison the new foregro
   await session.close();
 });
 
-test("creates an autonomous live turn when assistant output arrives without a foreground run", async () => {
+test("creates an autonomous live turn when Claude starts a turn without a foreground run", async () => {
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
 
@@ -848,6 +854,7 @@ test("creates an autonomous live turn when assistant output arrives without a fo
   await collectUntilTerminal(streamSession(session, "seed prompt"));
 
   const subscribedEvents = subscribeToEvents(session);
+  queryRef?.emit(buildTurnInit("autonomous-live-session"));
   queryRef?.emit({
     type: "assistant",
     message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
@@ -916,6 +923,7 @@ test("steers an autonomous turn through its existing query without restarting it
 
   await collectUntilTerminal(streamSession(session, "seed prompt"));
   const autonomousEvents = subscribeToEvents(session);
+  queryRef?.emit(buildTurnInit("autonomous-steer-session"));
   queryRef?.emit({
     type: "assistant",
     message: { content: "AUTONOMOUS_RESPONSE" },
@@ -999,6 +1007,7 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
   await collectUntilTerminal(streamSession(session, "seed prompt"));
 
   const subscribedEvents = subscribeToEvents(session);
+  queryRef?.emit(buildTurnInit("autonomous-handoff-session"));
   queryRef?.emit({
     type: "assistant",
     message: { content: "BACKGROUND_ONLY_RESPONSE" },

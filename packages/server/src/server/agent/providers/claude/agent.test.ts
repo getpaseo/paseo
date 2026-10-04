@@ -3122,10 +3122,15 @@ describe("ClaudeAgentSession context window usage", () => {
   });
 
   test("a compaction abandoned in an autonomous turn does not suppress the next marker", async () => {
-    // Trailing output after the foreground result opens an autonomous turn, which starts
-    // compacting and is then ended by the next foreground turn, never reaching a boundary.
+    // Claude starts a turn of its own after the foreground result, which starts compacting and is
+    // then ended by the next foreground turn, never reaching a boundary.
     const session = await createSessionForTurns([
-      [createSuccessResult(), createMessageStartEvent(), createCompactingStatus()],
+      [
+        createSuccessResult(),
+        createInitMessage(),
+        createMessageStartEvent(),
+        createCompactingStatus(),
+      ],
       [createCompactingStatus(), createSuccessResult()],
     ]);
 
