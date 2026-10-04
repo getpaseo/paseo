@@ -237,10 +237,19 @@ describe("zai usage source", () => {
 
     const zai = findProvider(await service().listUsage(), "zai");
 
+    // The bars stay, and the card says the plan details could not be read instead of
+    // silently showing the quota tier as if nothing had changed.
     expect(zai).toMatchObject({
       status: "available",
       planLabel: "Pro",
-      details: [],
+      details: [
+        {
+          id: "subscription",
+          label: "Plan details",
+          value: "Unexpected response from Z.ai",
+          tone: "warning",
+        },
+      ],
       windows: [expect.objectContaining({ id: "five_hour", usedPct: 30 })],
     });
   });
@@ -262,25 +271,27 @@ describe("zai usage source", () => {
     await expect(service().listUsage()).rejects.toThrow("Z.ai usage API returned 500");
   });
 
-  it("reports a Z.ai HTTP 200 authentication failure envelope as a rejected login", async () => {
-    process.env["ZAI_API_KEY"] = "zai_bad_token";
-    const rejected = () =>
-      jsonResponse({ code: 1000, msg: "Authentication Failed", success: false });
-    fetchApi = mockFetch(
-      new Map([
-        ["https://api.z.ai/api/biz/subscription/list", rejected],
-        ["https://api.z.ai/api/monitor/usage/quota/limit", rejected],
-      ]),
-    );
+  it.each([1000, 1001, 1003, 1005])(
+    "reports a Z.ai HTTP 200 envelope with auth code %i as a rejected login",
+    async (code) => {
+      process.env["ZAI_API_KEY"] = "zai_bad_token";
+      const rejected = () => jsonResponse({ code, msg: "Authentication Failed", success: false });
+      fetchApi = mockFetch(
+        new Map([
+          ["https://api.z.ai/api/biz/subscription/list", rejected],
+          ["https://api.z.ai/api/monitor/usage/quota/limit", rejected],
+        ]),
+      );
 
-    const zai = findProvider(await service().listUsage(), "zai");
+      const zai = findProvider(await service().listUsage(), "zai");
 
-    // HTTP 200 carries no auth status, so the problem reports the 401 the code means.
-    expect(zai).toMatchObject({
-      status: "unavailable",
-      problem: { kind: "rejected", status: 401 },
-    });
-  });
+      // Z.ai documents these codes as HTTP 401; the 200 is only the envelope's transport.
+      expect(zai).toMatchObject({
+        status: "unavailable",
+        problem: { kind: "rejected", status: 401 },
+      });
+    },
+  );
 
   it("surfaces any other Z.ai HTTP 200 failure envelope as an error", async () => {
     process.env["ZAI_API_KEY"] = "zai_test_token";
@@ -289,12 +300,12 @@ describe("zai usage source", () => {
         ["https://api.z.ai/api/biz/subscription/list", () => jsonResponse({ data: [] })],
         [
           "https://api.z.ai/api/monitor/usage/quota/limit",
-          () => jsonResponse({ code: 500, msg: "System busy", success: false }),
+          () => jsonResponse({ code: 1113, msg: "Insufficient balance", success: false }),
         ],
       ]),
     );
 
-    await expect(service().listUsage()).rejects.toThrow("System busy");
+    await expect(service().listUsage()).rejects.toThrow("Insufficient balance");
   });
 
   it("scopes Z.ai request limits and keeps their window ids unique", async () => {

@@ -141,15 +141,16 @@ function zaiPlanLabel(input: {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-// Z.ai's documented authentication failures (1000 = authentication failed, 1001-1004 =
-// missing, invalid, expired or unverifiable token). They arrive on HTTP 200, so they are
-// reported as the 401 they mean rather than as a generic error.
-const ZAI_AUTH_FAILURE_CODES = new Set([1000, 1001, 1002, 1003, 1004]);
+// Z.ai's error-code table (https://docs.z.ai/api-reference/api-code) documents these as
+// HTTP 401: authentication failed, missing credentials, expired token, two-factor
+// authentication required. The usage endpoints deliver them inside an HTTP 200 envelope,
+// so the report carries the documented 401 rather than the transport's 200.
+const ZAI_AUTH_FAILURE_CODES = new Set([1000, 1001, 1003, 1005]);
 
 // undici reports network failures as a TypeError and AbortSignal.timeout as a
 // DOMException named TimeoutError (AbortError on an externally aborted signal). Only
-// these, and an unreadable body, are safe to swallow for enrichment data; anything
-// else — programming errors — must propagate.
+// these are safe to swallow for enrichment data; anything else — programming errors —
+// must propagate.
 function isZaiTransportError(err: unknown): boolean {
   if (err instanceof TypeError) return true;
   return err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError");
@@ -165,24 +166,34 @@ function fetchZai(input: { fetchApi: typeof fetch; url: string; token: string })
   });
 }
 
+interface ZaiSubscriptionLookup {
+  subscription: ZaiSubscription | null;
+  /** The endpoint answered with something this parser does not understand. */
+  unreadable: boolean;
+}
+
+const NO_SUBSCRIPTION: ZaiSubscriptionLookup = { subscription: null, unreadable: false };
+const UNREADABLE_SUBSCRIPTION: ZaiSubscriptionLookup = { subscription: null, unreadable: true };
+
 async function fetchSubscription(input: {
   fetchApi: typeof fetch;
   token: string;
-}): Promise<ZaiSubscription | null> {
+}): Promise<ZaiSubscriptionLookup> {
   const res = await fetchZai({ ...input, url: ZAI_SUBSCRIPTION_URL });
-  if (!res.ok) return null;
-  // Unreadable subscription data only costs the plan label; it must not discard the
-  // quota bars, which come from a separate response.
+  if (!res.ok) return NO_SUBSCRIPTION;
+  // Unreadable subscription data must not discard the quota bars, which come from a
+  // separate response; it is flagged on the report instead of failing it.
   let body: unknown;
   try {
     body = await res.json();
   } catch (err) {
-    if (err instanceof SyntaxError) return null;
+    if (err instanceof SyntaxError) return UNREADABLE_SUBSCRIPTION;
     throw err;
   }
   const resp = ZaiSubscriptionResponseSchema.safeParse(body);
-  if (!resp.success || resp.data.success === false) return null;
-  return resp.data.data?.[0] ?? null;
+  if (!resp.success) return UNREADABLE_SUBSCRIPTION;
+  if (resp.data.success === false) return NO_SUBSCRIPTION;
+  return { subscription: resp.data.data?.[0] ?? null, unreadable: false };
 }
 
 export async function fetchUsage(
@@ -192,12 +203,12 @@ export async function fetchUsage(
   const token = process.env[input.locator];
   if (!token) throw new Error("Z.ai login store no longer exists");
 
-  const [subscription, res] = await Promise.all([
+  const [{ subscription, unreadable }, res] = await Promise.all([
     // Subscription only enriches the plan label; an unreachable endpoint must
     // never take the quota bars down. Anything else rethrows.
     fetchSubscription({ fetchApi, token }).catch((err: unknown) => {
       if (!isZaiTransportError(err)) throw err;
-      return null;
+      return NO_SUBSCRIPTION;
     }),
     fetchZai({ fetchApi, url: ZAI_QUOTA_URL, token }),
   ]);
@@ -227,6 +238,14 @@ export async function fetchUsage(
   const details: UsageDetail[] = [];
   if (subscription?.status) {
     details.push({ id: "status", label: "Status", value: subscription.status });
+  }
+  if (unreadable) {
+    details.push({
+      id: "subscription",
+      label: "Plan details",
+      value: "Unexpected response from Z.ai",
+      tone: "warning",
+    });
   }
 
   return {
