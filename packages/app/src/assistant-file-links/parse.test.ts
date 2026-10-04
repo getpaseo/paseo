@@ -65,6 +65,29 @@ describe("parseInlinePathToken", () => {
 });
 
 describe("parseFileProtocolUrl", () => {
+  it("parses encoded file URLs with colon line suffixes", () => {
+    expect(parseFileProtocolUrl("file:///C:/Downloads/sample%20report.txt:2")).toEqual({
+      raw: "file:///C:/Downloads/sample%20report.txt:2",
+      path: "C:/Downloads/sample report.txt",
+      lineStart: 2,
+      lineEnd: undefined,
+    });
+  });
+
+  it("keeps URL-encoded colons in filenames and gives explicit line fragments precedence", () => {
+    expect(parseFileProtocolUrl("file:///tmp/report%3A2")).toEqual({
+      raw: "file:///tmp/report%3A2",
+      path: "/tmp/report:2",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+    expect(parseFileProtocolUrl("file:///tmp/report.txt:2-4#L8")).toEqual({
+      raw: "file:///tmp/report.txt:2-4#L8",
+      path: "/tmp/report.txt",
+      lineStart: 8,
+      lineEnd: undefined,
+    });
+  });
   it("parses file URLs with line fragments", () => {
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L81")).toEqual({
       raw: "file:///Users/test/project/src/app.tsx#L81",
@@ -108,6 +131,20 @@ describe("parseFileProtocolUrl", () => {
 });
 
 describe("classifyAssistantFileLink", () => {
+  it("decodes Windows link paths without retaining line markers", () => {
+    expect(parseAssistantFileLink("C:/Downloads/sample%20report.txt:2")).toEqual({
+      raw: "C:/Downloads/sample%20report.txt:2",
+      path: "C:/Downloads/sample report.txt",
+      lineStart: 2,
+      lineEnd: undefined,
+    });
+    expect(parseAssistantFileLink("C:/Downloads/sample%20report.txt#L2")).toEqual({
+      raw: "C:/Downloads/sample%20report.txt#L2",
+      path: "C:/Downloads/sample report.txt",
+      lineStart: 2,
+      lineEnd: undefined,
+    });
+  });
   it("keeps explicit external URLs out of file parsing", () => {
     expect(
       classifyAssistantFileLink("http://dumm.md", {

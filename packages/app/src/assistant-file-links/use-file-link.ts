@@ -18,6 +18,8 @@ import {
 
 export interface UseFileLinkResult {
   target: InlinePathTarget | null;
+  isFile: boolean;
+  resolve: () => Promise<InlinePathTarget | null>;
   onHoverIn: () => void;
   onPress: () => void;
   open: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
@@ -127,7 +129,30 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     return query.data ?? null;
   }, [query.data, resolution]);
 
-  return useMemo(() => ({ target, onHoverIn, onPress, open }), [target, onHoverIn, onPress, open]);
+  const isFile = resolution.kind === "needsLookup" || resolution.value.kind === "file";
+  const resolve = useStableEvent(async () => {
+    if (resolution.kind === "resolved") {
+      return resolution.value.kind === "file" ? resolution.value.target : null;
+    }
+    return await queryClient.fetchQuery({
+      queryKey,
+      queryFn: () =>
+        fetchDaemonResolution({
+          ambiguousQuery: resolution.ambiguousQuery,
+          token: resolution.token,
+          target: resolution.target,
+          workspaceRoot,
+          getDirectorySuggestions: context.getDirectorySuggestions,
+        }),
+      retry: 0,
+      staleTime: Infinity,
+    });
+  });
+
+  return useMemo(
+    () => ({ target, isFile, resolve, onHoverIn, onPress, open }),
+    [target, isFile, resolve, onHoverIn, onPress, open],
+  );
 }
 
 export function useAssistantFileLinkActions(): AssistantFileLinkActions {
