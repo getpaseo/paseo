@@ -2,7 +2,7 @@ import { ComposerDockBackground } from "./internal/background";
 export { ComposerDockBackground } from "./internal/background";
 import { ScrollView } from "@/components/ui/scroll-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
 import { KeyboardTranslateView } from "@/keyboard/shift";
 import { createContext, useCallback, useContext, type ReactNode } from "react";
@@ -22,6 +22,7 @@ const ViewportCapacity = createContext<SharedValue<number | undefined> | null>(n
 interface ComposerViewportProps extends ViewProps {
   bottomInset?: number;
   centered?: boolean;
+  compact?: boolean;
 }
 
 /** Measure the stationary space below the header, outside keyboard translation. */
@@ -30,6 +31,7 @@ function ComposerViewport({
   onLayout,
   bottomInset = 0,
   centered = false,
+  compact = false,
   ...props
 }: ComposerViewportProps) {
   const measuredHeight = useSharedValue(0);
@@ -41,12 +43,13 @@ function ComposerViewport({
       bottomInset,
       keyboardShift: layoutShift.value,
       centered,
+      compact,
     }),
     (geometry) => {
       if (geometry.height <= 0) return;
       sizing.value = updateComposerCapacity(sizing.value, geometry);
     },
-    [],
+    [bottomInset, centered, compact],
   );
   const capacity = useDerivedValue(() => sizing.value?.capacity);
   const measureViewport = useCallback(
@@ -91,6 +94,7 @@ export function ComposerDock({
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
   const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
+  const compact = useIsCompactFormFactor();
   // Preserve the existing centered form's visual balance on tablets.
   const bottomInset = centered ? HEADER_INNER_HEIGHT + 24 : 0;
   if (centered) {
@@ -99,6 +103,7 @@ export function ComposerDock({
         style={[dockStyles.centeredViewport, { paddingBottom: bottomInset }]}
         bottomInset={bottomInset}
         centered
+        compact={compact}
       >
         <KeyboardTranslateView style={[dockStyles.centered, { maxWidth: contentMaxWidth }]}>
           <ComposerViewportContent style={dockStyles.composer}>
@@ -115,7 +120,7 @@ export function ComposerDock({
     );
   }
   return (
-    <ComposerViewport style={dockStyles.viewport}>
+    <ComposerViewport style={dockStyles.viewport} compact={compact}>
       <KeyboardTranslateView style={dockStyles.surface}>
         <View
           testID="composer-dock-content"
