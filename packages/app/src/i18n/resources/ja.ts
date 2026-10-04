@@ -1951,6 +1951,8 @@ export const ja: TranslationResources = {
     dismiss: "閉じる",
   },
   contextWindow: {
+    noData: "コンテキストデータがありません",
+    accessibilityNoData: "コンテキストウィンドウ：コンテキストデータがありません",
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",

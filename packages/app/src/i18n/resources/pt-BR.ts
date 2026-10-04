@@ -1964,6 +1964,8 @@ export const ptBR: TranslationResources = {
     dismiss: "Dispensar",
   },
   contextWindow: {
+    noData: "Sem dados de contexto",
+    accessibilityNoData: "Janela de contexto: sem dados de contexto",
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",

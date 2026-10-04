@@ -31,8 +31,8 @@ export async function reloadAgent(page: Page): Promise<void> {
 }
 
 /** Wide screens show the meter's details in a hover card while the pointer is on it. */
-export async function hoverContextWindowMeter(page: Page): Promise<Locator> {
-  await page.getByRole("img", { name: METER_NAME }).hover({ timeout: 30_000 });
+export async function hoverContextWindowMeter(page: Page, name = METER_NAME): Promise<Locator> {
+  await page.getByRole("img", { name, exact: true }).hover({ timeout: 30_000 });
   const card = contextWindowDetails(page);
   await expect(card).toBeVisible();
   return card;
@@ -52,8 +52,8 @@ export async function leaveContextWindowMeter(page: Page): Promise<void> {
 }
 
 /** Compact screens open the meter's details in a sheet. */
-export async function pressContextWindowMeter(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: METER_NAME }).click({ timeout: 30_000 });
+export async function pressContextWindowMeter(page: Page, name = METER_NAME): Promise<Locator> {
+  await page.getByRole("button", { name, exact: true }).click({ timeout: 30_000 });
   const sheet = contextWindowDetails(page);
   await expect(sheet).toBeVisible();
   return sheet;

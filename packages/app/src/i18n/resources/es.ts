@@ -1979,6 +1979,8 @@ export const es: TranslationResources = {
     dismiss: "Despedir",
   },
   contextWindow: {
+    noData: "No hay datos de contexto",
+    accessibilityNoData: "Ventana de contexto: No hay datos de contexto",
     title: "ventana contextual",
     used: "{{percentage}}% utilizado",
     tokens: "Fichas{{used}}/{{max}}",

@@ -7,9 +7,11 @@ import { formatTokenCount } from "./context-window-meter.utils";
 interface ContextWindowDetailsProps {
   serverId: string;
   agentId: string;
-  percentage: number;
-  usedTokens: number;
-  maxTokens: number;
+  context: {
+    percentage: number;
+    usedTokens: number;
+    maxTokens: number;
+  } | null;
   sessionCost: string | null;
   /** The hover card and tooltip title themselves; the sheet's header carries the title instead. */
   showTitle: boolean;
@@ -24,9 +26,7 @@ interface ContextWindowDetailsProps {
 export function ContextWindowDetails({
   serverId,
   agentId,
-  percentage,
-  usedTokens,
-  maxTokens,
+  context,
   sessionCost,
   showTitle,
   refreshable,
@@ -36,13 +36,21 @@ export function ContextWindowDetails({
     <>
       <View style={styles.summary}>
         {showTitle ? <Text style={styles.title}>{t("contextWindow.title")}</Text> : null}
-        <Text style={styles.text}>{t("contextWindow.used", { percentage })}</Text>
-        <Text style={styles.detail}>
-          {t("contextWindow.tokens", {
-            used: formatTokenCount(usedTokens),
-            max: formatTokenCount(maxTokens),
-          })}
-        </Text>
+        {context ? (
+          <>
+            <Text style={styles.text}>
+              {t("contextWindow.used", { percentage: context.percentage })}
+            </Text>
+            <Text style={styles.detail}>
+              {t("contextWindow.tokens", {
+                used: formatTokenCount(context.usedTokens),
+                max: formatTokenCount(context.maxTokens),
+              })}
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.detail}>{t("contextWindow.noData")}</Text>
+        )}
         {sessionCost ? (
           <Text style={styles.detail}>{t("contextWindow.sessionCost", { cost: sessionCost })}</Text>
         ) : null}

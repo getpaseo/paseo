@@ -1984,6 +1984,8 @@ export const fr: TranslationResources = {
     dismiss: "Rejeter",
   },
   contextWindow: {
+    noData: "Aucune donnée de contexte",
+    accessibilityNoData: "Fenêtre de contexte : aucune donnée de contexte",
     title: "Fenêtre contextuelle",
     used: "{{percentage}}% utilisé",
     tokens: "Jetons{{used}}/{{max}}",

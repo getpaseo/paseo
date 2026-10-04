@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test as base } from "../support/fixtures";
-import { expectComposerVisible } from "../support/helpers/composer";
+import { expectComposerVisible, submitMessageWithButton } from "../support/helpers/composer";
 import {
   type AgentUsageScript,
   closeContextWindowSheet,
@@ -25,6 +25,7 @@ import {
 } from "../support/helpers/context-window";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { claudeAndCodexReports, expectUnpinnableRows } from "../support/helpers/usage-sidebar-item";
+import { installLoginUsage } from "../support/helpers/usage-login";
 
 const test = base.extend<{ agent: MockAgentSession }>({
   agent: async ({ page: _page }, provide) => {
@@ -107,6 +108,66 @@ test.describe("context window meter", () => {
 const DESKTOP = { width: 1440, height: 900 };
 const COMPACT = { width: 390, height: 844 };
 const LOGIN_EXPIRED = /^Login expired .*Run claude to refresh it\.$/;
+
+for (const layout of [
+  {
+    name: "desktop",
+    viewport: DESKTOP,
+    open: hoverContextWindowMeter,
+    close: leaveContextWindowMeter,
+  },
+  {
+    name: "compact",
+    viewport: COMPACT,
+    open: pressContextWindowMeter,
+    close: closeContextWindowSheet,
+  },
+]) {
+  test(`shows account usage before the first turn (${layout.name})`, async ({ page }) => {
+    test.setTimeout(180_000);
+    const source = await installLoginUsage({
+      status: "available",
+      windows: [{ id: "session", label: "Session", usedPct: 31 }],
+    });
+    try {
+      const agent = await seedMockAgentWorkspace({
+        repoPrefix: "context-window-empty-",
+        title: "Agent before its first turn",
+      });
+      try {
+        await page.setViewportSize(layout.viewport);
+        await openAgent(page, agent);
+
+        await test.step("the empty meter opens context details and account usage", async () => {
+          const details = await layout.open(page, "Context window: No context data");
+          await expect(details.getByText("No context data", { exact: true })).toBeVisible();
+          await expect(details.getByText("0% used", { exact: true })).toHaveCount(0);
+          await expect(details.getByText(/tokens$/)).toHaveCount(0);
+          const account = usageCard(details, "login-journey:account");
+          await expect(account.getByText("Session", { exact: true })).toBeVisible();
+          await expect(account.getByText("31%", { exact: true })).toBeVisible();
+          await qaScreenshot(page, `context-without-data-${layout.name}`);
+          await layout.close(page);
+        });
+
+        await test.step("the first context reading replaces the empty state", async () => {
+          await submitMessageWithButton(page, "emit 32000 byte file agent stream payload");
+          const details = await layout.open(page);
+          await expect(details.getByText("25% used", { exact: true })).toBeVisible();
+          await expect(details.getByText("32k / 128k tokens", { exact: true })).toBeVisible();
+          await expect(details.getByText("No context data", { exact: true })).toHaveCount(0);
+          await expect(
+            usageCard(details, "login-journey:account").getByText("31%", { exact: true }),
+          ).toBeVisible();
+        });
+      } finally {
+        await agent.cleanup();
+      }
+    } finally {
+      await source.cleanup();
+    }
+  });
+}
 
 type OpenDetails = (page: Page) => Promise<Locator>;
 type Shot = (state: string) => Promise<void>;
