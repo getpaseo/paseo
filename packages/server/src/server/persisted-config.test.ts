@@ -253,6 +253,29 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     });
   });
 
+  test("accepts metadata generation providers for one kind", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        metadataGeneration: {
+          providers: [{ provider: "claude", model: "haiku" }],
+          promptSuggestions: { providers: [{ provider: "opencode", model: "minimax-m3" }] },
+        },
+      },
+    });
+
+    expect(parsed.agents?.metadataGeneration?.promptSuggestions).toEqual({
+      providers: [{ provider: "opencode", model: "minimax-m3" }],
+    });
+  });
+
+  test("rejects an unknown metadata generation kind", () => {
+    const result = PersistedConfigSchema.safeParse({
+      agents: { metadataGeneration: { agentTitle: { providers: [] } } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   test("accepts a custom provider catalog refresh timeout", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: { catalogRefreshTimeoutMs: 180_000 },
