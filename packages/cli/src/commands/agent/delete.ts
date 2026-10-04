@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { connectToDaemon } from "../../utils/client.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
+import type { DaemonClient, FetchAgentHistoryEntry } from "@getpaseo/client/internal/daemon-client";
 
 export function addDeleteOptions(cmd: Command): Command {
   return cmd
@@ -33,6 +34,20 @@ export interface AgentDeleteOptions extends CommandOptions {
 
 export type AgentDeleteResult = SingleResult<DeleteResult>;
 
+// History includes archived agents and agents whose provider is unavailable.
+async function fetchHistoryAgents(client: DaemonClient) {
+  const agents: FetchAgentHistoryEntry["agent"][] = [];
+  let cursor: string | undefined;
+  do {
+    const payload = await client.fetchAgentHistory({
+      page: { limit: 200, ...(cursor ? { cursor } : {}) },
+    });
+    agents.push(...payload.entries.map((entry) => entry.agent));
+    cursor = payload.pageInfo.nextCursor ?? undefined;
+  } while (cursor);
+  return agents;
+}
+
 export async function runDeleteCommand(
   id: string | undefined,
   options: AgentDeleteOptions,
@@ -50,8 +65,7 @@ export async function runDeleteCommand(
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
-    const fetchPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    let agents = await fetchHistoryAgents(client);
     const deletedIds: string[] = [];
 
     if (!options.all && options.cwd) {

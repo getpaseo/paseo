@@ -23,6 +23,16 @@ const archivedOutsideAgent = {
   cwd: "/tmp/elsewhere",
 };
 let daemonAgents: (typeof agent)[] = [agent];
+const toEntry = (entry: typeof agent) => ({ agent: entry });
+// The fake daemon pages history two agents at a time.
+const historyPage = (cursor: string | undefined) => {
+  const start = Number(cursor ?? 0);
+  const end = start + 2;
+  return {
+    entries: daemonAgents.slice(start, end).map(toEntry),
+    pageInfo: { nextCursor: end < daemonAgents.length ? String(end) : null },
+  };
+};
 const cancelAgent = vi.fn(async () => {
   throw new Error("active run cancellation was not acknowledged");
 });
@@ -31,7 +41,10 @@ const close = vi.fn(async () => undefined);
 
 vi.mock("../../utils/client.js", () => ({
   connectToDaemon: vi.fn(async () => ({
-    fetchAgents: vi.fn(async () => ({ entries: daemonAgents.map((entry) => ({ agent: entry })) })),
+    fetchAgents: vi.fn(async () => historyPage(undefined)),
+    fetchAgentHistory: vi.fn(async (options: { page: { cursor?: string } }) =>
+      historyPage(options.page.cursor),
+    ),
     fetchAgent: vi.fn(async () => ({ agent })),
     cancelAgent,
     deleteAgent,
@@ -57,7 +70,7 @@ describe("runDeleteCommand", () => {
     });
   });
 
-  it("deletes archived agents with --all", async () => {
+  it("deletes archived agents on every history page with --all", async () => {
     daemonAgents = [agent, archivedAgent, archivedOutsideAgent];
 
     const result = await runDeleteCommand(undefined, { daemonTarget, all: true }, {} as never);
