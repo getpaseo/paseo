@@ -12,6 +12,8 @@ import {
   readLocalCredentialForTarget,
   type DaemonInstance,
 } from "@getpaseo/server/daemon-control";
+import { DEFAULT_DAEMON_LOG_FILENAME, resolveDaemonLogPath } from "@getpaseo/server";
+import { loadPersistedConfig } from "@getpaseo/server/configuration";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,
@@ -54,7 +56,6 @@ import {
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
-const DAEMON_LOG_FILENAME = "daemon.log";
 let ownedLaunch: { home: string; instance: DaemonInstance } | null = null;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
@@ -128,7 +129,13 @@ function getPaseoHome(): string {
 }
 
 function logFilePath(): string {
-  return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
+  const paseoHome = getPaseoHome();
+  try {
+    return resolveDaemonLogPath(paseoHome, loadPersistedConfig(paseoHome));
+  } catch (err) {
+    log.warn("[desktop daemon]", "Failed to read config for log path; using default", { err });
+    return path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+  }
 }
 
 export function isDesktopManagedDaemonRunningSync(): boolean {
