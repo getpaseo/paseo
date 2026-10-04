@@ -1,10 +1,8 @@
 import type { View } from "react-native";
 
 /**
- * Where a floating menu surface goes relative to the thing that opened it.
- *
- * This was two byte-identical copies, one in `dropdown-menu.tsx` and one in `context-menu.tsx`.
- * Submenus need a third caller, so it lives here now and the menus import it.
+ * Where a floating surface goes relative to the thing that opened it. Menus and hover cards
+ * place themselves with it.
  */
 
 export type Placement = "top" | "bottom" | "left" | "right";

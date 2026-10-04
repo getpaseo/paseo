@@ -6,6 +6,7 @@ import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { pluginRequirements } from "./plugin-fixture";
+import { waitForSettledPosition } from "./sheet-layout";
 
 /** Real usage-source plugin; its long report exercises the sheet's scrolling boundary. */
 export async function installTallUsageSource() {
@@ -192,6 +193,21 @@ export async function togglePin(scope: Locator, source: string, window: string) 
 export async function openUsageScreenFromIcon(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Usage", exact: true }).click({ timeout: 30_000 });
   await expectOnUsageScreen(page);
+}
+
+/** Both footer entry points open Usage over the current screen on a phone. */
+export async function openUsageSheetFromIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Usage", exact: true }).click();
+  await expect(usageSheet(page)).toBeVisible();
+}
+
+export async function closeUsageSheet(page: Page): Promise<void> {
+  const sheet = usageSheet(page);
+  await waitForSettledPosition(sheet);
+  const bounds = await sheet.boundingBox();
+  if (!bounds) throw new Error("Usage sheet must be visible before closing it.");
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y / 2);
+  await expect(sheet).toHaveCount(0);
 }
 
 function summaryInSidebarSwitch(page: Page): Locator {

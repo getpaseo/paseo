@@ -50,10 +50,10 @@ function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
@@ -996,6 +996,35 @@ it.each([
     await expect(fetchUsage(accounts[0]!.input as UsageInput, api, lookup)).rejects.toThrow(error);
   },
 );
+
+it("says when a rate-limited login can retry and does not call the API before then", async () => {
+  let now = Date.parse("2026-10-04T21:00:00Z");
+  const lookup = { ...tokenLookup("rate-limited-token"), now: () => now };
+  const input = credentialInput(lookup.claudeHome);
+  let usageCalls = 0;
+  const api: typeof fetch = async () => {
+    usageCalls += 1;
+    if (usageCalls > 1) return jsonResponse(makeClaudeResponse());
+    return jsonResponse(
+      { error: { type: "rate_limit_error", message: "Rate limited. Please try again later." } },
+      429,
+      { "Retry-After": "2240" },
+    );
+  };
+
+  await expect(fetchUsage(input, api, lookup)).rejects.toThrow(
+    "Rate limited by Claude. Try again in 38m.",
+  );
+  now += 30 * 60_000;
+  await expect(fetchUsage(input, api, lookup)).rejects.toThrow(
+    "Rate limited by Claude. Try again in 8m.",
+  );
+  expect(usageCalls).toBe(1);
+
+  now += 8 * 60_000;
+  expect((await fetchUsage(input, api, lookup)).status).toBe("available");
+  expect(usageCalls).toBe(2);
+});
 
 it("re-reads a refreshed login at the original locator", async () => {
   const lookup = tokenLookup("expiring-token");

@@ -3,8 +3,10 @@ import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import { useHostReportsUsage } from "@/usage";
 import { ContextWindowDetails } from "./context-window-details";
 import { ContextWindowSheet } from "./context-window-sheet";
@@ -23,6 +25,7 @@ interface ContextWindowMeterProps {
 }
 
 const SVG_SIZE = 14;
+const USAGE_POPOVER_WIDTH = 300;
 const COMPACT_SVG_SIZE = 12;
 const COMPACT_CENTER = COMPACT_SVG_SIZE / 2;
 const COMPACT_RADIUS = 5;
@@ -111,7 +114,7 @@ export function ContextWindowMeter({
   const { width } = useWindowDimensions();
   // Usage cards need a wider popover; without them it keeps the plain tooltip shape.
   const showsUsage = useHostReportsUsage(serverId);
-  const popoverWidth = Math.min(360, width - 24);
+  const popoverWidth = Math.min(USAGE_POPOVER_WIDTH, width - 24);
   // Compact screens open the details in a sheet, which can hold a pressable Refresh.
   const isCompact = useIsCompactFormFactor();
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -224,10 +227,53 @@ export function ContextWindowMeter({
     );
   }
 
+  const popoverStyle = showsUsage
+    ? [styles.usagePopover, { width: popoverWidth }]
+    : styles.plainPopover;
+
+  // Native wide screens have no hover, so the details open in a tooltip on press. The tooltip
+  // takes no presses, so its usage cards have no Refresh.
+  if (isNative) {
+    return (
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            style={containerStyle}
+            testID="context-window-meter"
+            accessibilityRole="image"
+            accessibilityLabel={accessibilityLabel}
+          >
+            {ring}
+            {percentageLabel}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          align="center"
+          offset={8}
+          maxWidth={showsUsage ? popoverWidth : undefined}
+          style={popoverStyle}
+          testID="context-window-meter-tooltip"
+        >
+          <ContextWindowDetails
+            serverId={serverId}
+            agentId={agentId}
+            percentage={roundedPercentage}
+            usedTokens={usedTokens}
+            maxTokens={maxTokens}
+            sessionCost={formattedSessionCost}
+            showTitle
+            refreshable={false}
+          />
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
+    <HoverCard>
+      <HoverCardTrigger>
+        <View
           style={containerStyle}
           testID="context-window-meter"
           accessibilityRole="image"
@@ -235,15 +281,15 @@ export function ContextWindowMeter({
         >
           {ring}
           {percentageLabel}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        align="center"
+        </View>
+      </HoverCardTrigger>
+      <HoverCardContent
+        placement="top"
         offset={8}
-        maxWidth={showsUsage ? popoverWidth : undefined}
-        style={showsUsage ? [styles.popover, { width: popoverWidth }] : undefined}
-        testID="context-window-meter-tooltip"
+        role="dialog"
+        accessibilityLabel={t("contextWindow.title")}
+        testID="context-window-details"
+        style={popoverStyle}
       >
         <ContextWindowDetails
           serverId={serverId}
@@ -253,10 +299,10 @@ export function ContextWindowMeter({
           maxTokens={maxTokens}
           sessionCost={formattedSessionCost}
           showTitle
-          refreshable={false}
+          refreshable
         />
-      </TooltipContent>
-    </Tooltip>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
@@ -287,5 +333,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface3,
   },
-  popover: { padding: theme.spacing[4], gap: theme.spacing[4] },
+  // The plain details keep the tooltip's inset; with usage cards they get room to breathe.
+  plainPopover: { paddingVertical: theme.spacing[1], paddingHorizontal: theme.spacing[2] },
+  usagePopover: { padding: theme.spacing[3], gap: theme.spacing[3] },
 }));

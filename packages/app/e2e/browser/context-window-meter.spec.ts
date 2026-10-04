@@ -4,13 +4,14 @@ import { expectComposerVisible } from "../support/helpers/composer";
 import {
   type AgentUsageScript,
   closeContextWindowSheet,
-  contextWindowSheet,
+  contextWindowDetails,
   expectRefreshButtons,
   expiredLogin,
   gate,
   hoverContextWindowMeter,
   leaveContextWindowMeter,
   type MockAgentSession,
+  moveOntoContextWindowDetails,
   onPersonalLogin,
   onWorkLogin,
   openAgent,
@@ -142,7 +143,6 @@ async function expectCardsToStreamIn(
   // Only the agent's login, never the host's default one, and no pins.
   await expect(details.getByText("dev@example.com", { exact: true })).toHaveCount(0);
   await expectUnpinnableRows(details);
-  await expect(details.getByText("Updated just now", { exact: true })).toHaveCount(2);
   return details;
 }
 
@@ -177,21 +177,38 @@ async function expectOnlyContextWindowWithoutUsage(
 }
 
 for (const theme of ["light", "dark"] as const) {
-  test(`the context window tooltip shows the agent's usage (${theme})`, async ({ page, agent }) => {
+  test(`the context window hover card shows the agent's usage (${theme})`, async ({
+    page,
+    agent,
+  }) => {
     test.setTimeout(240_000);
     const [claude] = claudeAndCodexReports();
     const usage = await scriptAgentUsage(page);
     await page.emulateMedia({ colorScheme: theme });
     await page.setViewportSize(DESKTOP);
     await openAgent(page, agent);
-    const shot: Shot = (state) => qaScreenshot(page, `tooltip-desktop-${theme}-${state}`);
+    const shot: Shot = (state) => qaScreenshot(page, `hover-card-desktop-${theme}-${state}`);
 
-    await test.step("reports stream in one card at a time, without Refresh", async () => {
-      const tooltip = await expectCardsToStreamIn(page, usage, hoverContextWindowMeter, shot);
-      // The tooltip cannot be pressed, so its cards have no Refresh.
-      await expectRefreshButtons(tooltip, 0);
+    await test.step("reports stream in one card at a time, each with Refresh", async () => {
+      const card = await expectCardsToStreamIn(page, usage, hoverContextWindowMeter, shot);
+      await expectRefreshButtons(card, 2);
       await shot("ready");
       expect(usage.agentRequests()).toEqual([agent.agentId]);
+    });
+
+    await test.step("the card stays open while the pointer moves onto it", async () => {
+      const card = contextWindowDetails(page);
+      await moveOntoContextWindowDetails(page, card);
+      await page.waitForTimeout(300);
+      await expect(card).toBeVisible();
+    });
+
+    await test.step("Refresh replaces the card with the source's new report", async () => {
+      usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
+      const card = contextWindowDetails(page);
+      await refreshUsageCard(card, "Claude");
+      await expect(card.getByText(LOGIN_EXPIRED)).toBeVisible();
+      expect(usage.refreshedReports()).toEqual([["claude:work"]]);
     });
 
     await test.step("after a resume under another login, only that login shows", async () => {
@@ -208,25 +225,25 @@ for (const theme of ["light", "dark"] as const) {
       usage.answerNext({
         stream: [resumed.promise, onPersonalLogin(claude!), finished.promise],
       });
-      const tooltip = await hoverContextWindowMeter(page);
-      await expect(tooltip.getByText("Loading usage...", { exact: true })).toBeVisible();
-      await expect(tooltip.getByText("work@example.com", { exact: true })).toHaveCount(0);
+      const card = await hoverContextWindowMeter(page);
+      await expect(card.getByText("Loading usage...", { exact: true })).toBeVisible();
+      await expect(card.getByText("work@example.com", { exact: true })).toHaveCount(0);
 
       // The old login's report lands during the new request, before the new login's.
       slowSource.open();
       resumed.open();
       await expect(
-        usageCard(tooltip, "claude:personal").getByText("personal@example.com", { exact: true }),
+        usageCard(card, "claude:personal").getByText("personal@example.com", { exact: true }),
       ).toBeVisible();
-      await expect(tooltip.getByText("work@example.com", { exact: true })).toHaveCount(0);
+      await expect(card.getByText("work@example.com", { exact: true })).toHaveCount(0);
       finished.open();
     });
 
     await test.step("a report with a problem shows it on the card", async () => {
       usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
       await reloadAgent(page);
-      const tooltip = await hoverContextWindowMeter(page);
-      await expect(tooltip.getByText(LOGIN_EXPIRED)).toBeVisible();
+      const card = await hoverContextWindowMeter(page);
+      await expect(card.getByText(LOGIN_EXPIRED)).toBeVisible();
       await shot("problem");
     });
 
@@ -256,13 +273,15 @@ for (const theme of ["light", "dark"] as const) {
     await test.step("reports stream in one card at a time, each with Refresh", async () => {
       const sheet = await expectCardsToStreamIn(page, usage, pressContextWindowMeter, shot);
       await expectRefreshButtons(sheet, 2);
+      // Without hover, each card prints its freshness instead of a Refresh tooltip.
+      await expect(sheet.getByText("Updated just now", { exact: true })).toHaveCount(2);
       await shot("ready");
       expect(usage.agentRequests()).toEqual([agent.agentId]);
     });
 
     await test.step("Refresh replaces the card with the source's new report", async () => {
       usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
-      const sheet = contextWindowSheet(page);
+      const sheet = contextWindowDetails(page);
       await refreshUsageCard(sheet, "Claude");
       await expect(sheet.getByText(LOGIN_EXPIRED)).toBeVisible();
       expect(usage.refreshedReports()).toEqual([["claude:work"]]);

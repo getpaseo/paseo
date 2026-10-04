@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, getTransformOrigin, type Rect } from "./menu-anchor";
+import { computePosition, getTransformOrigin, type Rect } from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };

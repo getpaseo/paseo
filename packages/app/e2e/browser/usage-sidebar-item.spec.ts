@@ -14,6 +14,8 @@ import {
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import {
   claudeAndCodexReports,
+  closeUsageSheet,
+  openUsageSheetFromIcon,
   expectNoUsageItem,
   expectOnUsageScreen,
   expectPinnedUsage,
@@ -62,6 +64,33 @@ async function footerClip(page: Page) {
 }
 
 test.describe("Usage item", () => {
+  test("both compact footer entry points open Usage as a sheet", async ({ page }) => {
+    await page.setViewportSize(COMPACT);
+    await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
+    await seedSidebarFooterPreferences(page, [{ key: "usage", visible: false }]);
+    await gotoAppShell(page);
+    await openCompactSidebar(page);
+    const startingUrl = page.url();
+    await expectNoUsageItem(page);
+
+    await test.step("the icon opens a sheet without leaving the current screen", async () => {
+      await openUsageSheetFromIcon(page);
+      await expect(usageSheet(page).getByText("Claude", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(startingUrl);
+      await qaScreenshot(page, "compact-usage-icon-sheet");
+      await setSummaryInSidebar(page, true);
+      await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+      await closeUsageSheet(page);
+    });
+
+    await test.step("the summary opens the same sheet", async () => {
+      await usageItem(page).click();
+      await expect(usageSheet(page).getByText("Codex", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(startingUrl);
+      await qaScreenshot(page, "compact-usage-summary-sheet");
+      await closeUsageSheet(page);
+    });
+  });
   test("long usage reports stay in an 80% sheet and scroll to the final window", async ({
     page,
   }) => {

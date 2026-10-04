@@ -30,34 +30,43 @@ export async function reloadAgent(page: Page): Promise<void> {
   await expectComposerVisible(page);
 }
 
-/** Wide screens show the meter's details in a tooltip while the pointer is on it. */
+/** Wide screens show the meter's details in a hover card while the pointer is on it. */
 export async function hoverContextWindowMeter(page: Page): Promise<Locator> {
   await page.getByRole("img", { name: METER_NAME }).hover({ timeout: 30_000 });
-  const tooltip = page.getByRole("tooltip").filter({ hasText: "Context window" });
-  await expect(tooltip).toBeVisible();
-  return tooltip;
+  const card = contextWindowDetails(page);
+  await expect(card).toBeVisible();
+  return card;
+}
+
+/** Walks the pointer from the meter up onto its hover card, across the gap between them. */
+export async function moveOntoContextWindowDetails(page: Page, card: Locator): Promise<void> {
+  const meter = await page.getByRole("img", { name: METER_NAME }).boundingBox();
+  const box = await card.boundingBox();
+  if (!meter || !box) throw new Error("The meter and its hover card must be on screen.");
+  await page.mouse.move(meter.x + meter.width / 2, box.y + box.height / 2, { steps: 20 });
 }
 
 export async function leaveContextWindowMeter(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
-  await expect(page.getByRole("tooltip").filter({ hasText: "Context window" })).toHaveCount(0);
+  await expect(contextWindowDetails(page)).toHaveCount(0);
 }
 
 /** Compact screens open the meter's details in a sheet. */
 export async function pressContextWindowMeter(page: Page): Promise<Locator> {
   await page.getByRole("button", { name: METER_NAME }).click({ timeout: 30_000 });
-  const sheet = contextWindowSheet(page);
+  const sheet = contextWindowDetails(page);
   await expect(sheet).toBeVisible();
   return sheet;
 }
 
 export async function closeContextWindowSheet(page: Page): Promise<void> {
-  const sheet = contextWindowSheet(page);
+  const sheet = contextWindowDetails(page);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await expect(sheet).toHaveCount(0);
 }
 
-export function contextWindowSheet(page: Page): Locator {
+/** The hover card on wide screens and the sheet on compact ones are both this dialog. */
+export function contextWindowDetails(page: Page): Locator {
   return page.getByRole("dialog", { name: "Context window" });
 }
 
@@ -159,7 +168,7 @@ export async function scriptAgentUsage(page: Page): Promise<AgentUsageScript> {
 export async function qaScreenshot(page: Page, name: string): Promise<void> {
   const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
   if (!directory) return;
-  // Let the sheet and tooltip animations settle.
+  // Let the sheet and hover card animations settle.
   await page.waitForTimeout(600);
   await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
   await page.screenshot({ path: path.join(directory, `${name}.png`) });

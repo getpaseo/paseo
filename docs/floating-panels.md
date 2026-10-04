@@ -11,7 +11,7 @@ canonical files and are trying to add or change one.
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
 | `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/workspace-hover-card.tsx`    | Desktop-web hover card with measure + computePosition + Portal    |
+| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
 | `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
