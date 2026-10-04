@@ -363,3 +363,34 @@ for (const theme of ["light", "dark"] as const) {
     });
   });
 }
+
+test("context details support keyboard entry and dismiss when the viewport moves", async ({
+  page,
+  agent,
+}) => {
+  const usage = await scriptAgentUsage(page);
+  await page.setViewportSize(DESKTOP);
+  await openAgent(page, agent);
+  const [claude] = claudeAndCodexReports();
+  usage.answerNext([onPersonalLogin(claude!)]);
+  const meter = page.getByTestId("context-window-meter");
+  const trigger = page.getByRole("button", {
+    name: (await meter.getAttribute("aria-label"))!,
+    exact: true,
+  });
+  await expect(trigger).toHaveAttribute("tabindex", "0");
+  await trigger.focus();
+  const details = contextWindowDetails(page);
+  await expect(details).toBeVisible();
+  await expect(details.getByRole("button", { name: "Refresh Claude", exact: true })).toBeVisible();
+  await trigger.press("ArrowDown");
+  await expect(details.getByRole("button", { name: "Refresh Claude", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(details).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  usage.answerNext([onPersonalLogin(claude!)]);
+  await trigger.press("ArrowDown");
+  await expect(details).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 850 });
+  await expect(details).toHaveCount(0);
+});

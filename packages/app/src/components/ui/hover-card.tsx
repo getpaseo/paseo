@@ -82,13 +82,22 @@ function WebHoverCard({
     }
   }, []);
 
+  const focusInside = useCallback(() => {
+    if (!isWeb) return false;
+    const active = document.activeElement;
+    return [triggerRef.current, contentRef.current].some((view) =>
+      (view as unknown as HTMLElement | null)?.contains(active),
+    );
+  }, []);
+
   const scheduleClose = useCallback(() => {
+    if (focusInside()) return;
     if (graceTimerRef.current) return;
     graceTimerRef.current = setTimeout(() => {
       graceTimerRef.current = null;
       setOpen(false);
     }, CLOSE_GRACE_MS);
-  }, []);
+  }, [focusInside]);
 
   const openNow = useCallback(() => {
     clearGraceTimer();
@@ -96,6 +105,64 @@ function WebHoverCard({
       setOpen(true);
     }
   }, [clearGraceTimer, disabled]);
+
+  useEffect(() => {
+    if (!isWeb) return;
+    const trigger = triggerRef.current as unknown as HTMLElement | null;
+    if (!trigger) return;
+    const close = () => {
+      clearGraceTimer();
+      setOpen(false);
+    };
+    const focusEntered = (event: FocusEvent) => {
+      const target = event.target as Node;
+      if (trigger.contains(target)) openNow();
+      else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target))
+        clearGraceTimer();
+    };
+    const focusLeft = (event: FocusEvent) => {
+      const next = event.relatedTarget as Node | null;
+      if (
+        !trigger.contains(next) &&
+        !(contentRef.current as unknown as HTMLElement | null)?.contains(next)
+      )
+        scheduleClose();
+    };
+    const keyPressed = (event: KeyboardEvent) => {
+      if (!focusInside()) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        trigger.focus();
+        close();
+      } else if (event.target === trigger && ["ArrowDown", "Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        openNow();
+        requestAnimationFrame(() => {
+          (contentRef.current as unknown as HTMLElement | null)
+            ?.querySelector<HTMLElement>(
+              'button, [role="button"][tabindex="0"], a[href], input, [tabindex="0"]',
+            )
+            ?.focus();
+        });
+      }
+    };
+    const scrolled = (event: Event) => {
+      if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
+        close();
+    };
+    document.addEventListener("focusin", focusEntered);
+    document.addEventListener("focusout", focusLeft);
+    document.addEventListener("keydown", keyPressed);
+    document.addEventListener("scroll", scrolled, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("focusin", focusEntered);
+      document.removeEventListener("focusout", focusLeft);
+      document.removeEventListener("keydown", keyPressed);
+      document.removeEventListener("scroll", scrolled, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [clearGraceTimer, focusInside, openNow, scheduleClose]);
 
   // While open, the safe zone covers trigger + content + the bridge between
   // them. Close only fires when the pointer leaves the safe zone; re-entering
@@ -125,12 +192,23 @@ function WebHoverCard({
   return <HoverCardContext.Provider value={value}>{children}</HoverCardContext.Provider>;
 }
 
-export function HoverCardTrigger({ children }: { children: ReactNode }): ReactNode {
+export function HoverCardTrigger({
+  children,
+  focusable = false,
+  accessibilityLabel,
+}: {
+  children: ReactNode;
+  focusable?: boolean;
+  accessibilityLabel?: string;
+}): ReactNode {
   const ctx = useContext(HoverCardContext);
   if (!ctx) return children;
   return (
     <View
       ref={ctx.triggerRef}
+      tabIndex={focusable ? 0 : undefined}
+      accessibilityRole={focusable ? "button" : undefined}
+      accessibilityLabel={accessibilityLabel}
       collapsable={false}
       onPointerEnter={ctx.openNow}
       onPointerLeave={ctx.scheduleClose}
@@ -199,6 +277,7 @@ function HoverCardSurface({
       contentSize,
       displayArea: { x: 0, y: 0, width, height },
       placement,
+      flipHorizontal: true,
       alignment,
       offset,
     });

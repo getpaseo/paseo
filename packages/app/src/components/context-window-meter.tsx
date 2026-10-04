@@ -268,7 +268,7 @@ export function ContextWindowMeter({
 
   return (
     <HoverCard>
-      <HoverCardTrigger>
+      <HoverCardTrigger focusable accessibilityLabel={accessibilityLabel}>
         <View
           style={containerStyle}
           testID="context-window-meter"

@@ -522,6 +522,9 @@ export async function fetchUsage(
   }
 
   async function callClaudeApi(token: string, now: number): Promise<ClaudeUsageResponse | number> {
+    for (const [key, until] of rateLimitedUntil) {
+      if (until <= now) rateLimitedUntil.delete(key);
+    }
     const tokenKey = hashAccountKey(token);
     const limitedUntil = rateLimitedUntil.get(tokenKey);
     if (limitedUntil !== undefined && limitedUntil > now)
