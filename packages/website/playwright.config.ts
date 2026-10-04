@@ -14,7 +14,7 @@ export default defineConfig({
     ? undefined
     : [
         {
-          command: "node e2e/registry-server.ts",
+          command: "node e2e/registry-server.mjs",
           url: "http://127.0.0.1:8188/index.json",
         },
         {

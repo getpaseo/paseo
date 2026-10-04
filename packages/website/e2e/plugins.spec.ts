@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "playwright/test";
+import { CATEGORIES } from "../src/plugins/categories";
 
 async function openPlugins(page: Page) {
   // Wait for hydration so typing reaches React rather than the server-rendered input.
@@ -24,12 +25,6 @@ test("browses from the directory into a category, a plugin, and its author", asy
   });
   await openPlugins(page);
 
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText([
-    "Themes",
-    "Orchestration",
-    "Git",
-    "Utils",
-  ]);
   const themes = page.getByRole("region", { name: "Themes" });
   await expect(themes.getByRole("link", { name: /Dracula/ })).toBeVisible();
 
@@ -216,4 +211,29 @@ test("keeps the directory unlinked until the coordinated announcement", async ({
   const response = await page.goto("/plugins");
   expect(response?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: "Plugins" })).toBeVisible();
+});
+
+// External deployments own their registry contents; these assertions use the local fixture.
+test.describe("registry category layout", () => {
+  test.skip(Boolean(process.env.WEBSITE_TEST_URL), "Requires the local registry fixture");
+
+  test("orders populated categories and hides the empty Extras category", async ({ page }) => {
+    await openPlugins(page);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText([
+      "Daemon management",
+      "Themes",
+      "Providers",
+      "Orchestration",
+      "Git",
+      "Workspaces",
+      "Sidebar",
+      "Utils",
+    ]);
+    await expect(page.getByRole("region", { name: "Extras", exact: true })).toHaveCount(0);
+    for (const category of CATEGORIES.filter((entry) => entry.slug !== "extras")) {
+      await expect(page.getByRole("region", { name: category.label, exact: true })).toContainText(
+        category.description,
+      );
+    }
+  });
 });
