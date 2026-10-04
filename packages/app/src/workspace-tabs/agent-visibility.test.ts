@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
-import type { Agent } from "@/stores/session-store";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { afterEach, describe, expect, it } from "vitest";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
   buildWorkspaceTabSnapshot,
+  createWorkspaceAgentVisibilitySelector,
   deriveWorkspaceAgentVisibility,
   shouldPruneWorkspaceAgentTab,
   workspaceAgentVisibilityEqual,
@@ -333,6 +335,139 @@ describe("workspace agent visibility", () => {
       standaloneTerminalIds: ["terminal-1"],
       hasActivePendingTerminalCreate: false,
       hasActivePendingDraftCreate: false,
+    });
+  });
+
+  describe("createWorkspaceAgentVisibilitySelector", () => {
+    const SERVER_ID = "srv";
+
+    class IterationCountingMap<K, V> extends Map<K, V> {
+      iterations = 0;
+      override values() {
+        this.iterations += 1;
+        return super.values();
+      }
+      override entries() {
+        this.iterations += 1;
+        return super.entries();
+      }
+      override [Symbol.iterator]() {
+        this.iterations += 1;
+        return super[Symbol.iterator]();
+      }
+    }
+
+    function seedSession(agents: Map<string, Agent>): void {
+      useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
+      useSessionStore.getState().setAgents(SERVER_ID, agents);
+    }
+
+    function streamTick(text: string): void {
+      useSessionStore.getState().setAgentStreamState(SERVER_ID, "parent-agent", {
+        head: [
+          {
+            kind: "assistant_message",
+            id: "message-1",
+            text,
+            timestamp: new Date("2026-03-04T00:02:00.000Z"),
+          },
+        ],
+      });
+    }
+
+    const parent = makeAgent({ id: "parent-agent", cwd: "/repo", workspaceId: WORKSPACE_ID });
+    const child = makeAgent({
+      id: "child-agent",
+      cwd: "/repo",
+      workspaceId: WORKSPACE_ID,
+      parentAgentId: parent.id,
+    });
+    const otherWorkspace = makeAgent({ id: "other-agent", cwd: "/other", workspaceId: "ws-2" });
+
+    afterEach(() => {
+      useSessionStore.getState().clearSession(SERVER_ID);
+    });
+
+    it("returns the cached result without walking agents when a stream tick leaves them unchanged", () => {
+      const agents = new IterationCountingMap<string, Agent>([
+        [parent.id, parent],
+        [otherWorkspace.id, otherWorkspace],
+      ]);
+      seedSession(agents);
+      const select = createWorkspaceAgentVisibilitySelector({
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+      });
+      const before = select(useSessionStore.getState());
+      const iterationsAfterFirstSelect = agents.iterations;
+
+      for (let tick = 0; tick < 100; tick += 1) {
+        streamTick(`token ${tick}`);
+        expect(select(useSessionStore.getState())).toBe(before);
+      }
+
+      expect(useSessionStore.getState().sessions[SERVER_ID]?.agents).toBe(agents);
+      expect(agents.iterations).toBe(iterationsAfterFirstSelect);
+      expect(before.activeAgentIds).toEqual(new Set([parent.id]));
+    });
+
+    it("recomputes when the agents map changes", () => {
+      const agents = new Map([[parent.id, parent]]);
+      seedSession(agents);
+      const select = createWorkspaceAgentVisibilitySelector({
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+      });
+      const before = select(useSessionStore.getState());
+
+      useSessionStore.getState().setAgents(SERVER_ID, new Map(agents).set(child.id, child));
+      const after = select(useSessionStore.getState());
+
+      expect(after).not.toBe(before);
+      expect(after.activeAgentIds).toEqual(new Set([parent.id, child.id]));
+      expect(after.autoOpenAgentIds).toEqual(new Set([parent.id]));
+    });
+
+    it("keeps the previous result when a changed agents map yields the same sets", () => {
+      const agents = new Map([
+        [parent.id, parent],
+        [otherWorkspace.id, otherWorkspace],
+      ]);
+      seedSession(agents);
+      const select = createWorkspaceAgentVisibilitySelector({
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+      });
+      const before = select(useSessionStore.getState());
+
+      useSessionStore
+        .getState()
+        .setAgents(
+          SERVER_ID,
+          new Map(agents).set(otherWorkspace.id, { ...otherWorkspace, title: "Renamed" }),
+        );
+
+      expect(select(useSessionStore.getState())).toBe(before);
+    });
+
+    it("recomputes when agent details reveal a parent in another workspace", () => {
+      seedSession(new Map([[child.id, child]]));
+      const select = createWorkspaceAgentVisibilitySelector({
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+      });
+      expect(select(useSessionStore.getState()).autoOpenAgentIds).toEqual(new Set<string>());
+
+      useSessionStore
+        .getState()
+        .setAgentDetails(
+          SERVER_ID,
+          new Map([[parent.id, { ...parent, workspaceId: "ws-parent" }]]),
+        );
+      const after = select(useSessionStore.getState());
+
+      expect(after.activeAgentIds).toEqual(new Set([child.id]));
+      expect(after.autoOpenAgentIds).toEqual(new Set([child.id]));
     });
   });
 
