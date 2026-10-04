@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { PersistedConfig } from "../../../persisted-config.js";
+import { resolveConfiguredPath } from "../../../../utils/path.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import {
   DEFAULT_LOCAL_STT_MODEL,
@@ -211,7 +212,11 @@ export function resolveLocalSpeechConfig(params: {
     },
     local: parsed.includeProviderConfig
       ? {
-          modelsDir: parsed.modelsDir,
+          // `modelsDir` is whatever the user typed in config.json or
+          // PASEO_LOCAL_MODELS_DIR. Everything downstream (downloader, worker,
+          // native sherpa bindings) treats it as a real directory, so expand it
+          // here rather than at each use.
+          modelsDir: resolveConfiguredPath(params.paseoHome, parsed.modelsDir),
           models: {
             dictationStt: parsed.dictationLocalSttModel,
             voiceStt: parsed.voiceLocalSttModel,
