@@ -15,9 +15,9 @@ export interface CodexRewindClient {
   request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
 }
 
-export interface CodexUserMessageTurnIndex {
-  resolve(messageId: string): { index: number; turnId: string | null } | null;
-  count(): number;
+export interface CodexUserMessage {
+  messageId: string;
+  turnId: string | null;
 }
 
 type CodexThreadHistoryMode = "legacy" | "paginated";
@@ -60,6 +60,12 @@ async function rollbackCodexThread(
   return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
 }
 
+function countTurns(userMessages: readonly CodexUserMessage[]): number {
+  return userMessages.filter(
+    (message, index) => !message.turnId || message.turnId !== userMessages[index - 1]?.turnId,
+  ).length;
+}
+
 export async function revertCodexConversation(input: {
   client: CodexRewindClient;
   threadId: string | null;
@@ -68,7 +74,7 @@ export async function revertCodexConversation(input: {
   model?: string | null;
   serviceTier?: string | null;
   config?: Record<string, unknown> | null;
-  userMessageTurns: CodexUserMessageTurnIndex;
+  userMessages: readonly CodexUserMessage[];
   threadRollbackAvailable: boolean;
   setThreadId: (threadId: string) => void | Promise<void>;
 }): Promise<void> {
@@ -76,16 +82,21 @@ export async function revertCodexConversation(input: {
     throw new Error("Codex thread is not ready for rewind");
   }
 
-  const targetTurn = input.userMessageTurns.resolve(input.messageId);
-  if (targetTurn === null) {
+  const targetIndex = input.userMessages.findIndex(
+    (message) => message.messageId === input.messageId,
+  );
+  if (targetIndex === -1) {
     throw new Error(`Codex could not find user message ${input.messageId} in the current thread`);
   }
-
-  const currentUserTurnCount = input.userMessageTurns.count();
-  const numTurns = currentUserTurnCount - targetTurn.index;
-  if (numTurns < 0) {
-    throw new Error(`Codex user message ${input.messageId} is outside the current thread`);
+  const targetTurn = input.userMessages[targetIndex];
+  // Codex rewinds whole turns; a steer cannot be removed without the earlier
+  // messages of its turn.
+  if (targetTurn.turnId && input.userMessages[targetIndex - 1]?.turnId === targetTurn.turnId) {
+    throw new Error(
+      "Codex cannot rewind a message sent during a turn without removing earlier messages. Select the first message in the turn instead.",
+    );
   }
+  const numTurns = countTurns(input.userMessages.slice(targetIndex));
 
   // Codex does not carry the parent thread's config into a fork; without it the
   // forked thread falls back to the default model provider.
