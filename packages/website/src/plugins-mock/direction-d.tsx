@@ -5,6 +5,7 @@ import { formatInstalls, getAuthor, installCommand, pluginVersion } from "~/plug
 import { AuthorLink } from "~/plugins/author-link";
 import {
   addedAgo,
+  type Direction,
   inCategory,
   listHref,
   MOCK_CATEGORIES,
@@ -18,6 +19,7 @@ import {
   BuildSubmitLinks,
   type DirectionComponents,
   PluginTile,
+  type DetailPlugin,
   Readme,
   Screenshots,
   SourceLinks,
@@ -155,11 +157,16 @@ function List({
 }
 
 function Detail({ plugin }: Parameters<DirectionComponents["Detail"]>[0]) {
+  return <PluginDetail plugin={plugin} direction="d" />;
+}
+
+/** Single-column detail page, shared with the final combination. */
+export function PluginDetail({ plugin, direction }: { plugin: DetailPlugin; direction: Direction }) {
   const category = mockCategory(plugin.categories[0]);
   const author = getAuthor(plugin);
   return (
     <div className="max-w-3xl">
-      <a href="/plugins-mock/d" className="text-sm text-muted-foreground hover:text-foreground">
+      <a href={`/plugins-mock/${direction}`} className="text-sm text-muted-foreground hover:text-foreground">
         ← Plugins
       </a>
       <h1 className="mt-4 text-3xl font-medium tracking-tight">{plugin.name}</h1>
@@ -172,7 +179,7 @@ function Detail({ plugin }: Parameters<DirectionComponents["Detail"]>[0]) {
           {author.name}
         </AuthorLink>
         {category && (
-          <a href={listHref("d", { category: category.slug })} className={XS_LINK}>
+          <a href={listHref(direction, { category: category.slug })} className={XS_LINK}>
             {category.label}
           </a>
         )}

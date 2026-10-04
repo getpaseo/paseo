@@ -3,16 +3,22 @@ import type { ReactNode } from "react";
 import { DocsMarkdown } from "~/components/docs-markdown";
 import { formatInstalls, npmUrl, type Plugin } from "~/plugins";
 import { PluginTile } from "~/plugins/plugin-tile";
-import { BUILD_URL, type MockPlugin, readmeBody, SUBMIT_URL } from "./data";
+import {
+  BUILD_URL,
+  type MockLayout,
+  type MockPlugin,
+  type MockWindow, readmeBody, SUBMIT_URL } from "./data";
 
 export type DetailPlugin = MockPlugin & { readme: string };
 
 export interface DirectionComponents {
-  Directory: (props: { plugins: MockPlugin[] }) => ReactNode;
+  Directory: (props: { plugins: MockPlugin[]; window?: MockWindow }) => ReactNode;
   List: (props: {
     plugins: MockPlugin[];
     category?: string;
     sort?: "new" | "installs";
+    window?: MockWindow;
+    layout?: MockLayout;
   }) => ReactNode;
   Detail: (props: { plugin: DetailPlugin; plugins: MockPlugin[] }) => ReactNode;
 }
