@@ -105,6 +105,26 @@ describe("zai usage source", () => {
               ],
             }),
         ],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              success: true,
+              data: {
+                level: "max",
+                limits: [
+                  { type: "CREDIT_LIMIT", unit: 3, number: 5, percentage: 12 },
+                  {
+                    type: "CREDIT_LIMIT",
+                    unit: 6,
+                    number: 1,
+                    percentage: 100,
+                    nextResetTime: 1_790_286_270_984,
+                  },
+                ],
+              },
+            }),
+        ],
       ]),
     );
 
@@ -113,8 +133,170 @@ describe("zai usage source", () => {
     expect(zai).toMatchObject({
       status: "available",
       planLabel: "GLM Coding Max",
-      details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
+      // Subscription's raw start/end date range and purchase timestamp are deliberately
+      // not surfaced: they duplicate/conflict with the quota windows' own resetsAt values.
+      details: [{ id: "status", label: "Status", value: "VALID" }],
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour",
+          shortLabel: "5h",
+          summary: true,
+          usedPct: 12,
+          remainingPct: 88,
+          resetsAt: null,
+          tone: "ok",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          shortLabel: "wk",
+          summary: true,
+          usedPct: 100,
+          remainingPct: 0,
+          resetsAt: new Date(1_790_286_270_984).toISOString(),
+          tone: "danger",
+        },
+      ],
     });
+  });
+
+  it("falls back to the quota-limit plan tier when subscription/list has no product name", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.z.ai/api/biz/subscription/list", () => jsonResponse({}, 404)],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () => jsonResponse({ success: true, data: { level: "lite", limits: [] } }),
+        ],
+      ]),
+    );
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(zai).toMatchObject({ status: "available", planLabel: "Lite", windows: [] });
+  });
+
+  it("keeps Z.ai quota windows when the subscription request fails at the network", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.z.ai/api/biz/subscription/list",
+          () => {
+            // undici's shape for a connection-level failure.
+            throw new TypeError("fetch failed");
+          },
+        ],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              success: true,
+              data: {
+                level: "pro",
+                limits: [{ type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 40 }],
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(zai).toMatchObject({
+      status: "available",
+      planLabel: "Pro",
+      error: null,
+      windows: [expect.objectContaining({ id: "five_hour", label: "5-hour", usedPct: 40 })],
+    });
+  });
+
+  it("surfaces a malformed Z.ai subscription response as an error, not a silent fallback", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        // data must be an array; a shape change should be seen, not degrade forever.
+        ["https://api.z.ai/api/biz/subscription/list", () => jsonResponse({ data: "nope" })],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () => jsonResponse({ success: true, data: { level: "pro", limits: [] } }),
+        ],
+      ]),
+    );
+
+    await expect(service().listUsage()).rejects.toThrow();
+  });
+
+  it("surfaces a failed Z.ai quota request even though subscription succeeds", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.z.ai/api/biz/subscription/list",
+          () => jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] }),
+        ],
+        ["https://api.z.ai/api/monitor/usage/quota/limit", () => jsonResponse({}, 500)],
+      ]),
+    );
+
+    // A plan label with no bars is an empty card, so a quota-only failure must not
+    // render as available.
+    await expect(service().listUsage()).rejects.toThrow("Z.ai usage API returned 500");
+  });
+
+  it("surfaces a Z.ai HTTP 200 envelope with success:false as an error", async () => {
+    process.env["ZAI_API_KEY"] = "zai_bad_token";
+    const rejected = () =>
+      jsonResponse({ code: 1000, msg: "Authentication Failed", success: false });
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.z.ai/api/biz/subscription/list", rejected],
+        ["https://api.z.ai/api/monitor/usage/quota/limit", rejected],
+      ]),
+    );
+
+    await expect(service().listUsage()).rejects.toThrow("Authentication Failed");
+  });
+
+  it("scopes Z.ai request limits and keeps their window ids unique", async () => {
+    process.env["ZAI_API_KEY"] = "zai_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.z.ai/api/biz/subscription/list", () => jsonResponse({ data: [] })],
+        [
+          "https://api.z.ai/api/monitor/usage/quota/limit",
+          () =>
+            jsonResponse({
+              success: true,
+              data: {
+                limits: [
+                  { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 20 },
+                  { type: "TIME_LIMIT", unit: 5, number: 1, percentage: 10 },
+                  { type: "TIME_LIMIT", unit: 5, number: 1, percentage: 0, nextResetTime: null },
+                ],
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const zai = findProvider(await service().listUsage(), "zai");
+    if (zai.status !== "available") throw new Error(`Expected available, got ${zai.status}`);
+
+    expect(zai.windows.map((window) => window.id)).toEqual([
+      "five_hour",
+      "requests:monthly",
+      "requests:monthly_2",
+    ]);
+    expect(zai.windows[1]).toMatchObject({
+      label: "Requests · Monthly",
+      shortLabel: "Requests mo",
+    });
+    // A request limit is not the coding quota, so it stays out of the usage summary.
+    expect(zai.windows[1]).not.toHaveProperty("summary");
+    expect(zai.windows[2]).toMatchObject({ usedPct: 0, resetsAt: null });
   });
 });
 

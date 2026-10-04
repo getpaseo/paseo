@@ -1,29 +1,175 @@
 import type { UsageInput } from "../shared/input.js";
 import { z } from "zod";
 import {
+  toneFromUsedPct,
   unavailable,
+  windowFromReportedDuration,
   type UsageAccount,
-  type UsageReport,
   type UsageDetail,
+  type UsageReport,
+  type UsageWindow,
 } from "@getpaseo/plugin/server/usage";
 
+const ApiNumberSchema = z.coerce.number().finite();
 const ApiOptionalStringSchema = z.preprocess(
   (value) => (value == null ? undefined : value),
   z.coerce.string().optional(),
 );
 
-const ZaiUsageResponseSchema = z.object({
-  data: z
-    .array(
-      z.object({
-        productName: ApiOptionalStringSchema,
-        status: ApiOptionalStringSchema,
-        purchaseTime: ApiOptionalStringSchema,
-        valid: ApiOptionalStringSchema,
-      }),
-    )
-    .optional(),
+const ZAI_SUBSCRIPTION_URL = "https://api.z.ai/api/biz/subscription/list";
+const ZAI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit";
+
+// Both endpoints answer HTTP 200 even when they fail (an invalid key is
+// `{"code":1000,"msg":"Authentication Failed","success":false}`), so the envelope
+// carries the real outcome.
+const ZaiEnvelopeSchema = z.object({
+  success: z.boolean().optional(),
+  code: ApiNumberSchema.nullish(),
+  msg: ApiOptionalStringSchema,
 });
+
+const ZaiSubscriptionSchema = z.object({
+  productName: ApiOptionalStringSchema,
+  status: ApiOptionalStringSchema,
+});
+
+const ZaiSubscriptionResponseSchema = ZaiEnvelopeSchema.extend({
+  data: z.array(ZaiSubscriptionSchema).optional(),
+});
+
+const ZaiLimitSchema = z.object({
+  type: ApiOptionalStringSchema,
+  percentage: ApiNumberSchema.nullish(),
+  nextResetTime: ApiNumberSchema.nullish(),
+  unit: ApiNumberSchema.nullish(),
+  number: ApiNumberSchema.nullish(),
+});
+
+const ZaiQuotaSchema = z.object({
+  limits: z.array(ZaiLimitSchema).optional(),
+  level: ApiOptionalStringSchema,
+});
+
+const ZaiQuotaResponseSchema = ZaiEnvelopeSchema.extend({
+  data: ZaiQuotaSchema.optional(),
+});
+
+type ZaiSubscription = z.infer<typeof ZaiSubscriptionSchema>;
+type ZaiLimit = z.infer<typeof ZaiLimitSchema>;
+type ZaiQuota = z.infer<typeof ZaiQuotaSchema>;
+
+// A limit's window is a time unit plus a count (unit 3, number 5 = "every 5 hours").
+// z.ai does not document the enum; these values match what every other client of this
+// endpoint has observed, and anything else is an unknown window rather than a guess.
+const ZAI_WINDOW_UNIT_HOURS = 3;
+const ZAI_WINDOW_UNIT_DAYS = 4;
+const ZAI_WINDOW_UNIT_MONTHS = 5;
+const ZAI_WINDOW_UNIT_WEEK = 6;
+
+// Credits (current plans) and tokens (older plans) are the coding quota itself and use
+// the shared window names. Anything else, such as the per-feature request limits, is a
+// separate quota and is scoped so it never reads as the coding window.
+const ZAI_CODING_LIMIT_TYPES = new Set(["CREDIT_LIMIT", "TOKENS_LIMIT"]);
+const ZAI_LIMIT_SCOPE: Record<string, { id: string; label: string }> = {
+  TIME_LIMIT: { id: "requests", label: "Requests" },
+};
+
+function zaiDurationSeconds(limit: ZaiLimit): number | null {
+  const count = typeof limit.number === "number" && limit.number > 0 ? limit.number : 1;
+  switch (limit.unit) {
+    case ZAI_WINDOW_UNIT_HOURS:
+      return count * 3600;
+    case ZAI_WINDOW_UNIT_DAYS:
+      return count * 86400;
+    case ZAI_WINDOW_UNIT_WEEK:
+      return 604800;
+    default:
+      return null;
+  }
+}
+
+// A month has no fixed length, so it is named here rather than derived from a duration.
+function zaiUnknownWindowName(limit: ZaiLimit): { id: string; label: string; shortLabel: string } {
+  if (limit.unit === ZAI_WINDOW_UNIT_MONTHS) {
+    return { id: "monthly", label: "Monthly", shortLabel: "mo" };
+  }
+  return { id: "quota", label: "Quota", shortLabel: "" };
+}
+
+function zaiLimitScope(limit: ZaiLimit): { id: string; label: string } | undefined {
+  if (!limit.type || ZAI_CODING_LIMIT_TYPES.has(limit.type)) return undefined;
+  return ZAI_LIMIT_SCOPE[limit.type] ?? { id: limit.type.toLowerCase(), label: limit.type };
+}
+
+// The client uses window ids as React keys, so two limits on the same window (z.ai
+// reports separate request limits per feature set) must not collide.
+function uniqueWindowId(input: { baseId: string; seenIds: Set<string> }): string {
+  let id = input.baseId;
+  let suffix = 2;
+  while (input.seenIds.has(id)) {
+    id = `${input.baseId}_${suffix}`;
+    suffix += 1;
+  }
+  input.seenIds.add(id);
+  return id;
+}
+
+function zaiWindowFromLimit(input: { limit: ZaiLimit; seenIds: Set<string> }): UsageWindow | null {
+  const { limit, seenIds } = input;
+  if (typeof limit.percentage !== "number") return null;
+  const scope = zaiLimitScope(limit);
+  const window = windowFromReportedDuration({
+    durationSeconds: zaiDurationSeconds(limit),
+    scope,
+    unknown: zaiUnknownWindowName(limit),
+    utilizationPct: limit.percentage,
+    resetsAt:
+      typeof limit.nextResetTime === "number" ? new Date(limit.nextResetTime).toISOString() : null,
+    summary: !scope,
+    tone: toneFromUsedPct(limit.percentage),
+  });
+  return { ...window, id: uniqueWindowId({ baseId: window.id, seenIds }) };
+}
+
+function zaiPlanLabel(input: {
+  subscription: ZaiSubscription | null;
+  quota: ZaiQuota;
+}): string | undefined {
+  if (input.subscription?.productName) return input.subscription.productName;
+  const level = input.quota.level;
+  if (!level) return undefined;
+  return level.charAt(0).toUpperCase() + level.slice(1);
+}
+
+// undici reports network failures as a TypeError and AbortSignal.timeout as a
+// DOMException named TimeoutError (AbortError on an externally aborted signal). Only
+// these are safe to swallow for enrichment data; anything else — schema drift,
+// programming errors — must propagate.
+function isZaiTransportError(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  return err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError");
+}
+
+function fetchZai(input: { fetchApi: typeof fetch; url: string; token: string }) {
+  return input.fetchApi(input.url, {
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      Accept: "application/json",
+    },
+  });
+}
+
+async function fetchSubscription(input: {
+  fetchApi: typeof fetch;
+  token: string;
+}): Promise<ZaiSubscription | null> {
+  const res = await fetchZai({ ...input, url: ZAI_SUBSCRIPTION_URL });
+  if (!res.ok) return null;
+  const resp = ZaiSubscriptionResponseSchema.parse(await res.json());
+  if (resp.success === false) return null;
+  return resp.data?.[0] ?? null;
+}
 
 export async function fetchUsage(
   input: UsageInput,
@@ -32,33 +178,45 @@ export async function fetchUsage(
   const token = process.env[input.locator];
   if (!token) throw new Error("Z.ai login store no longer exists");
 
-  const res = await fetchApi("https://api.z.ai/api/biz/subscription/list", {
-    signal: AbortSignal.timeout(15_000),
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-    },
-  });
+  const [subscription, res] = await Promise.all([
+    // Subscription only enriches the plan label; an unreachable endpoint must
+    // never take the quota bars down. Everything else rethrows.
+    fetchSubscription({ fetchApi, token }).catch((err: unknown) => {
+      if (!isZaiTransportError(err)) throw err;
+      return null;
+    }),
+    fetchZai({ fetchApi, url: ZAI_QUOTA_URL, token }),
+  ]);
 
   if (res.status === 401 || res.status === 403)
     return unavailable({ kind: "rejected", status: res.status });
   if (!res.ok) throw new Error(`Z.ai usage API returned ${res.status}`);
 
-  const resp = ZaiUsageResponseSchema.parse(await res.json());
-  const sub = resp.data?.[0];
-  if (!sub) return unavailable({ kind: "no_quota", detail: "No active coding plan" });
+  const resp = ZaiQuotaResponseSchema.parse(await res.json());
+  if (resp.success === false) {
+    throw new Error(`Z.ai usage API rejected the request: ${resp.msg ?? `code ${resp.code}`}`);
+  }
+  // The usage bars only ever come from quota — without it, "available" with no
+  // windows would render an empty card.
+  const quota = resp.data;
+  if (!quota) return unavailable({ kind: "no_quota", detail: "No active coding plan" });
+
+  const seenIds = new Set<string>();
+  const windows: UsageWindow[] = [];
+  for (const limit of quota.limits ?? []) {
+    const window = zaiWindowFromLimit({ limit, seenIds });
+    if (window) windows.push(window);
+  }
 
   const details: UsageDetail[] = [];
-  if (sub.status) details.push({ id: "status", label: "Status", value: sub.status });
-  if (sub.valid) details.push({ id: "valid", label: "Valid", value: sub.valid });
-  if (sub.purchaseTime) {
-    details.push({ id: "purchase_time", label: "Purchased", value: sub.purchaseTime });
+  if (subscription?.status) {
+    details.push({ id: "status", label: "Status", value: subscription.status });
   }
 
   return {
     status: "available",
-    planLabel: sub.productName || undefined,
-    windows: [],
+    planLabel: zaiPlanLabel({ subscription, quota }),
+    windows,
     balances: [],
     details,
   };
