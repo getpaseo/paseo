@@ -662,6 +662,46 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("keeps custom context in separate tools while a turn continues", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("Explain the project");
+    omp.runtime().beginTurn();
+    for (const display of [true, false, true]) {
+      omp.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "project-context",
+          content: [{ type: "text", text: "Project instructions" }],
+          details: { project: "example" },
+          display,
+        },
+      });
+    }
+    const items = omp.timeline();
+    expect(items).toEqual(
+      [1, 2].map(() => ({
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: {
+          synthetic: true,
+          customType: "project-context",
+          details: { project: "example" },
+        },
+        error: null,
+      })),
+    );
+    expect(new Set(items.map((item) => item.type === "tool_call" && item.callId)).size).toBe(2);
+    expect(omp.completedTurnCount()).toBe(0);
+    omp.runtime().finishTurn();
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -705,11 +745,19 @@ describe("OMP agent client and session", () => {
         message: "Background job DocsSmokeTwo completed",
       },
     ]);
-    // Non-notice custom messages still fall through as assistant messages with
-    // their own id so the stream coalescer never glues them onto the open reply.
-    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
+    expect(
+      omp.timeline().filter((item) => item.type !== "notification" && item.type !== "user_message"),
+    ).toEqual([
       { type: "assistant_message", text: "done", messageId: "omp-assistant-1" },
-      { type: "assistant_message", text: "plain custom status text", messageId: "omp-custom-1" },
+      {
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "custom-message",
+        status: "completed",
+        detail: { type: "plain_text", text: "plain custom status text" },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
   });
 
