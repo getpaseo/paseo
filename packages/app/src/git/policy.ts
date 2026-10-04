@@ -32,6 +32,8 @@ export interface GitAction {
   status: ActionStatus;
   unavailableMessage?: string;
   icon?: ReactElement;
+  /** When set (>0), rendered after the idle label, e.g. "Pull (3)". */
+  count?: number;
   /** When true, a menu separator should be rendered before this item. */
   startsGroup: boolean;
   handler: () => void;
@@ -216,6 +218,7 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     status: input.runtime.pull.status,
     unavailableMessage: input.runtime.pull.disabled ? undefined : getPullUnavailableMessage(input),
     icon: input.runtime.pull.icon,
+    count: getPullBehindCount(input) || undefined,
     startsGroup: false,
     handler: input.runtime.pull.handler,
   });
@@ -229,6 +232,7 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     status: input.runtime.push.status,
     unavailableMessage: input.runtime.push.disabled ? undefined : getPushUnavailableMessage(input),
     icon: input.runtime.push.icon,
+    count: getPushAheadCount(input) || undefined,
     startsGroup: false,
     handler: input.runtime.push.handler,
   });
@@ -263,6 +267,7 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
       ? undefined
       : getMergeBranchUnavailableMessage(input),
     icon: input.runtime["merge-branch"].icon,
+    count: input.aheadCount || undefined,
     startsGroup: false,
     handler: input.runtime["merge-branch"].handler,
   });
@@ -278,6 +283,7 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
       ? undefined
       : getMergeFromBaseUnavailableMessage(input),
     icon: input.runtime["merge-from-base"].icon,
+    count: input.behindBaseCount || undefined,
     startsGroup: true,
     handler: input.runtime["merge-from-base"].handler,
   });
@@ -510,20 +516,36 @@ function getEnablePullRequestAutoMergeActionLabel(id: PullRequestAutoMergeEnable
 }
 
 function canPull(input: BuildGitActionsInput): boolean {
-  return input.hasRemote && !input.hasUncommittedChanges && (input.behindOfOrigin ?? 0) > 0;
+  return input.hasRemote && !input.hasUncommittedChanges && getPullBehindCount(input) > 0;
 }
 
 function canPush(input: BuildGitActionsInput): boolean {
   return input.hasRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
 }
 
-function hasPushableCommits(input: BuildGitActionsInput): boolean {
+/** Commits the branch is behind its remote — the number shown after the Pull label. */
+export function getPullBehindCount(input: BuildGitActionsInput): number {
+  return input.behindOfOrigin ?? 0;
+}
+
+/**
+ * Commits that would actually be pushed — the number shown after the Push label, and the single
+ * source of truth for push eligibility (see hasPushableCommits).
+ */
+export function getPushAheadCount(input: BuildGitActionsInput): number {
   if ((input.aheadOfOrigin ?? 0) > 0) {
-    return true;
+    return input.aheadOfOrigin ?? 0;
   }
   // No-upstream Paseo worktrees are first-pushable: the daemon push sets upstream with `git push -u`.
   // Do not fold this into aheadOfOrigin; null also covers deleted/pruned upstream branches.
-  return input.isPaseoOwnedWorktree && input.aheadOfOrigin === null && input.aheadCount > 0;
+  if (input.aheadOfOrigin === null && input.isPaseoOwnedWorktree && input.aheadCount > 0) {
+    return input.aheadCount;
+  }
+  return 0;
+}
+
+function hasPushableCommits(input: BuildGitActionsInput): boolean {
+  return getPushAheadCount(input) > 0;
 }
 
 function canMergeFromBase(input: BuildGitActionsInput): boolean {

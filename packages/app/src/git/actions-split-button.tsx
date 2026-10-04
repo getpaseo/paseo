@@ -15,6 +15,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { withCount } from "@/git/action-label";
 import type { GitAction, GitActions } from "@/git/policy";
 import { useGitActionRunner } from "@/git/use-actions";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
@@ -69,7 +70,7 @@ function GitActionMenuItem({
         closeOnSelect={closeOnSelect}
         onSelect={handleSelect}
       >
-        {action.label}
+        {withCount(action.label, action.count)}
       </DropdownMenuItem>
     </View>
   );
@@ -88,7 +89,7 @@ export function GitActionsSplitButton({
   const getActionDisplayLabel = useCallback((action: GitAction): string => {
     if (action.status === "pending") return action.pendingLabel;
     if (action.status === "success") return action.successLabel;
-    return action.label;
+    return withCount(action.label, action.count);
   }, []);
 
   const handlePrimaryPress = useCallback(() => {
@@ -190,7 +191,7 @@ export function GitActionsSplitButton({
             onPress={handlePrimaryPress}
             disabled={gitActions.primary.disabled}
             accessibilityRole="button"
-            accessibilityLabel={gitActions.primary.label}
+            accessibilityLabel={withCount(gitActions.primary.label, gitActions.primary.count)}
           >
             {gitActions.primary.status === "pending" ? (
               <LoadingSpinner
