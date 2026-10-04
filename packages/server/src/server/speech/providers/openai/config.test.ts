@@ -204,7 +204,7 @@ describe("resolveOpenAiSpeechConfig", () => {
     expect(resolved?.tts).toBeUndefined();
   });
 
-  test("accepts a voice and model outside the OpenAI catalog", () => {
+  test("sends the model and voice an OpenAI-compatible server serves, as written", () => {
     const persisted = PersistedConfigSchema.parse({
       providers: {
         openai: { tts: { apiKey: "tts-key", baseUrl: "https://tts.example.com/v1" } },
@@ -220,7 +220,23 @@ describe("resolveOpenAiSpeechConfig", () => {
       providers: ALL_OPENAI,
     });
 
-    expect(resolved?.tts?.voice).toBe("aiden");
     expect(resolved?.tts?.model).toBe("kokoro-v1:Q8_0");
+    expect(resolved?.tts?.voice).toBe("Aiden");
+  });
+
+  test("accepts OpenAI's own gpt-4o-mini-tts model", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: { openai: { tts: { apiKey: "tts-key" } } },
+      features: { voiceMode: { tts: { provider: "openai", model: "gpt-4o-mini-tts" } } },
+    });
+
+    const resolved = resolveOpenAiSpeechConfig({
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+      providers: ALL_OPENAI,
+    });
+
+    expect(resolved?.tts?.model).toBe("gpt-4o-mini-tts");
+    expect(resolved?.tts?.voice).toBe("alloy");
   });
 });
