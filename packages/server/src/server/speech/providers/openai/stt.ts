@@ -205,7 +205,7 @@ export class OpenAISTT implements SpeechToTextProvider {
 
       const response = await this.openaiClient.audio.transcriptions.create({
         file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
-        language,
+        ...(language === "auto" ? {} : { language }),
         model: modelToUse,
         ...(prompt ? { prompt } : {}),
         ...(supportsLogprobs ? { include: includeLogprobs } : {}),
