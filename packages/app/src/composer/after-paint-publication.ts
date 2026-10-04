@@ -2,9 +2,12 @@ export interface AfterPaintScheduler {
   schedule: (callback: () => void) => () => void;
 }
 
-export const browserAfterPaintScheduler: AfterPaintScheduler = {
+// Browsers and React Native both expose requestAnimationFrame globally. A frame callback plus
+// a zero timeout lands after the keystroke has painted, so the publication never competes with
+// the input's own render.
+export const afterPaintScheduler: AfterPaintScheduler = {
   schedule: (callback) => {
-    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    if (typeof globalThis.requestAnimationFrame !== "function") {
       let cancelled = false;
       queueMicrotask(() => {
         if (!cancelled) callback();
@@ -14,13 +17,13 @@ export const browserAfterPaintScheduler: AfterPaintScheduler = {
       };
     }
 
-    let timeoutId: number | null = null;
-    const frameId = window.requestAnimationFrame(() => {
-      timeoutId = window.setTimeout(callback, 0);
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const frameId = globalThis.requestAnimationFrame(() => {
+      timeoutId = setTimeout(callback, 0);
     });
     return () => {
-      window.cancelAnimationFrame(frameId);
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      globalThis.cancelAnimationFrame(frameId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     };
   },
 };
@@ -31,7 +34,7 @@ export class AfterPaintPublication<T> {
 
   constructor(
     private readonly publish: (value: T) => void,
-    private readonly scheduler: AfterPaintScheduler = browserAfterPaintScheduler,
+    private readonly scheduler: AfterPaintScheduler = afterPaintScheduler,
   ) {}
 
   stage(value: T): void {

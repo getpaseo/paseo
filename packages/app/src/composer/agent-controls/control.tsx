@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, type ComponentProps } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
@@ -11,7 +12,8 @@ type AgentControlTriggerProps = Omit<
   "accessibilityLabel" | "block" | "children" | "chevron" | "onPress" | "style"
 > & {
   icon: AgentControlIcon;
-  iconColor?: string;
+  /** Resolved inside the themed icon so the trigger's owner never subscribes to the theme. */
+  iconColor?: (theme: Theme) => string;
   surface: "toolbar" | "sheet";
   label: string;
   value?: string;
@@ -21,6 +23,28 @@ type AgentControlTriggerProps = Omit<
   onPress: () => void;
   accessibilityLabel: string;
 };
+
+function wrapIconWithTheme(Icon: AgentControlIcon) {
+  return withUnistyles(Icon);
+}
+
+type ThemedAgentControlIcon = ReturnType<typeof wrapIconWithTheme>;
+
+const themedIcons = new WeakMap<AgentControlIcon, ThemedAgentControlIcon>();
+
+// withUnistyles creates a new component type, so wrap each icon once or React remounts the
+// glyph on every render.
+function themedIcon(Icon: AgentControlIcon): ThemedAgentControlIcon {
+  const cached = themedIcons.get(Icon);
+  if (cached) return cached;
+  const Themed = wrapIconWithTheme(Icon);
+  themedIcons.set(Icon, Themed);
+  return Themed;
+}
+
+function mutedIconColor(theme: Theme): string {
+  return theme.colors.foregroundMuted;
+}
 
 export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
   function AgentControlTrigger(
@@ -44,7 +68,12 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
     const { glyphSize } = useComposerControlLayout();
     const isSheet = surface === "sheet";
     const resolvedGlyphSize = isSheet ? 16 : glyphSize;
-    const resolvedIconColor = iconColor ?? styles.iconColor.color;
+    const ThemedIcon = themedIcon(Icon);
+    const resolveIconColor = iconColor ?? mutedIconColor;
+    const iconUniProps = useCallback(
+      (theme: Theme) => ({ color: resolveIconColor(theme) }),
+      [resolveIconColor],
+    );
     const showValue = isSheet || showToolbarLabel;
     const triggerStyle = useCallback(
       ({ pressed, hovered }: PressableStateCallbackType) => [
@@ -72,11 +101,11 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       >
         {isSheet ? (
           <View style={styles.sheetGlyph}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
+            <ThemedIcon size={resolvedGlyphSize} uniProps={iconUniProps} />
           </View>
         ) : (
           <ComposerToolbarGlyph size={resolvedGlyphSize}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
+            <ThemedIcon size={resolvedGlyphSize} uniProps={iconUniProps} />
           </ComposerToolbarGlyph>
         )}
         {isSheet ? (
@@ -163,8 +192,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   disabled: {
     opacity: 0.5,
-  },
-  iconColor: {
-    color: theme.colors.foregroundMuted,
   },
 }));
