@@ -59,6 +59,23 @@ describe("ACP provider catalog", () => {
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });
 
+  it("registers DeepSeek Harness through its automation ACP profile", () => {
+    const entry = findProvider("dsh");
+
+    expect(entry.iconSvg).toContain("<svg");
+    expect(buildAcpProviderConfigPatch(entry)).toEqual({
+      providers: {
+        dsh: {
+          extends: "acp",
+          label: "DeepSeek Harness",
+          description: entry.description,
+          command: ["dsh", "--profile", "acp"],
+          env: {},
+        },
+      },
+    });
+  });
+
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({
       providers: {
