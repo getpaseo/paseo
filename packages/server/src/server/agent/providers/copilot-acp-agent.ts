@@ -37,7 +37,7 @@ const COPILOT_CAPABILITIES: AgentCapabilityFlags = {
 
 const COPILOT_AGENT_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#agent";
 const COPILOT_PLAN_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#plan";
-const COPILOT_AUTOPILOT_MODE_ID =
+export const COPILOT_AUTOPILOT_MODE_ID =
   "https://agentclientprotocol.com/protocol/session-modes#autopilot";
 export const COPILOT_ALLOW_ALL_MODE_ID = "allow-all";
 const COPILOT_ALLOW_ALL_CONFIG_ID = "allow_all";
@@ -209,6 +209,10 @@ export async function writeCopilotProviderMode(
   if (!requestsAllowAll) {
     return { handled: false };
   }
+  await context.connection.setSessionMode({
+    sessionId: context.sessionId,
+    modeId: COPILOT_AGENT_MODE_ID,
+  });
   const response = await context.connection.setSessionConfigOption({
     sessionId: context.sessionId,
     configId: COPILOT_ALLOW_ALL_CONFIG_ID,
