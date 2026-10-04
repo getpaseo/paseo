@@ -29,6 +29,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { resolvePluginPageState } from "@/screens/settings/plugins-page-state";
 import { openPluginInstallForm } from "@/screens/settings/plugin-install-form-model";
 import { pluginRegistry, useInstalledPlugins } from "@/plugins/registry";
+import { waitForPluginCatalog } from "@/plugins/catalog-sync";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
@@ -358,8 +359,9 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
         if (installed.status === "failed") {
           throw new Error(installed.error ?? `Plugin failed to start: ${installed.id}`);
         }
+        await waitForPluginCatalog(client);
         const catalog = await client.getPluginCatalog();
-        pluginRegistry.installCatalog(serverId, catalog, { client, replacePluginId: installed.id });
+        pluginRegistry.installCatalog(serverId, catalog, { client });
         const clientError = pluginRegistry.getEvaluationError(serverId, installed.id);
         if (clientError) throw new Error(clientError);
         installForm.reset();
@@ -386,11 +388,9 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
             throw new Error(updated.error ?? `Plugin failed to start: ${plugin.id}`);
           }
           if (name === "reload" || name === "enable") {
+            await waitForPluginCatalog(client);
             const catalog = await client.getPluginCatalog();
-            pluginRegistry.installCatalog(serverId, catalog, {
-              client,
-              replacePluginId: plugin.id,
-            });
+            pluginRegistry.installCatalog(serverId, catalog, { client });
             const clientError = pluginRegistry.getEvaluationError(serverId, plugin.id);
             if (clientError) throw new Error(clientError);
           }

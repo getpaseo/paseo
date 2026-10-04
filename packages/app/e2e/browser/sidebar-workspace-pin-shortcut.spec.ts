@@ -115,17 +115,13 @@ async function installPinRpcGate(
 
       try {
         server.send(message);
-      } catch {
-        // server socket already closed
-      }
+      } catch {}
     });
 
     server.onMessage((message) => {
       try {
         ws.send(message);
-      } catch {
-        // client socket already closed
-      }
+      } catch {}
     });
   });
 
@@ -246,9 +242,12 @@ test.describe("Pin workspace shortcut", () => {
 
       await page.keyboard.press(PIN_SHORTCUT);
 
-      await expect(page.getByTestId("app-toast-message")).toContainText(PIN_REJECTION_MESSAGE, {
-        timeout: 10_000,
-      });
+      await expect(page.getByTestId("app-toast").getByTestId("app-toast-message")).toContainText(
+        PIN_REJECTION_MESSAGE,
+        {
+          timeout: 10_000,
+        },
+      );
       await expect(pinnedSection(page)).toHaveCount(0);
       await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
 

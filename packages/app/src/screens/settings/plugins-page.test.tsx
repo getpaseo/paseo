@@ -7,12 +7,29 @@ import React, { type ReactElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
+import type {
+  PluginListItem,
+  PluginLogEntry,
+  SessionOutboundMessage,
+} from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostPluginsPage } from "./plugins-page";
 import { pluginRegistry } from "@/plugins/registry";
+import { PluginCatalogSync } from "@/plugins/catalog-sync";
 
 void testI18n;
+
+vi.mock("@/plugins/client-runtime", () => ({
+  createPluginClientRuntime: () => ({
+    paseo: { dispose: async () => {} },
+    rpc: async () => undefined,
+    openNewWorkspace: () => undefined,
+    openSurface: () => undefined,
+    openPanel: () => undefined,
+    addComposerPill: () => ({ update() {}, remove() {} }),
+    addHeaderButton: () => ({ update() {}, remove() {} }),
+  }),
+}));
 
 const runtime = vi.hoisted(() => ({
   connected: true,
@@ -117,7 +134,9 @@ function createClient() {
     getDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     patchDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     listPlugins: vi.fn(async (): Promise<PluginListItem[]> => []),
-    getPluginCatalog: vi.fn(async () => []),
+    getPluginCatalog: vi.fn(
+      async (): Promise<Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>> => [],
+    ),
     installPluginSource: vi.fn(async () => plugin()),
     reloadPlugin: vi.fn(async () => plugin()),
     enablePlugin: vi.fn(async () => plugin()),
@@ -129,7 +148,7 @@ function createClient() {
 
 type PluginClient = ReturnType<typeof createClient>;
 
-function renderPage(client: PluginClient | null): void {
+function renderPage(client: PluginClient | null, syncCatalog = false): void {
   runtime.client = client as unknown as DaemonClient | null;
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -139,6 +158,9 @@ function renderPage(client: PluginClient | null): void {
   });
   const element: ReactElement = (
     <QueryClientProvider client={queryClient}>
+      {syncCatalog && client ? (
+        <PluginCatalogSync serverId="host-a" client={client as unknown as DaemonClient} />
+      ) : null}
       <HostPluginsPage serverId="host-a" />
     </QueryClientProvider>
   );
@@ -211,6 +233,52 @@ describe("HostPluginsPage", () => {
     await selectPluginAction("Reload");
     expect(await screen.findByText("server failed")).toBeDefined();
     expect(screen.queryByText("Reloaded example")).toBeNull();
+  });
+
+  it("checks installation after catalog sync without disposing the new client twice", async () => {
+    const client = createClient();
+    const updates: Array<(message: SessionOutboundMessage) => void> = [];
+    client.observeEvents = () =>
+      subscriptionFixture(
+        Promise.resolve({ events: ["status.plugin_catalog_changed"] }),
+        (receive) => {
+          updates.push(receive);
+          return () => {};
+        },
+      );
+    let finishCatalog!: (catalog: Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>) => void;
+    const catalog = new Promise<Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>>(
+      (resolve) => {
+        finishCatalog = resolve;
+      },
+    );
+    client.getPluginCatalog.mockResolvedValueOnce([]).mockImplementation(() => catalog);
+    client.installPluginSource.mockImplementation(async () => {
+      for (const receive of updates)
+        receive({
+          type: "status",
+          payload: { status: "plugin_catalog_changed", pluginId: "example" },
+        });
+      return plugin();
+    });
+    vi.stubGlobal("__catalogCleanupCount", 0);
+    renderPage(client, true);
+    await waitFor(() => expect(client.getPluginCatalog).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole("textbox", { name: "Plugin source" }), {
+      target: { value: "/plugins/example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+    await waitFor(() => expect(client.installPluginSource).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Installed example")).toBeNull();
+    finishCatalog([
+      {
+        id: "example",
+        requirements: { paseo: ">=0.10.0" },
+        clientBundle: `(function() { return { default: function() { return function() { globalThis.__catalogCleanupCount += 1; }; } }; })`,
+      },
+    ]);
+    expect(await screen.findByText("Installed example")).toBeDefined();
+    expect(Reflect.get(globalThis, "__catalogCleanupCount")).toBe(0);
   });
 
   it("reports a failed client reload without success feedback", async () => {

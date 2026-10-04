@@ -93,6 +93,8 @@ never deletes it. The global `pluginsEnabled` switch remains available.
 
 Daemon `running` proves the server contribution started. Client evaluation can still fail and
 remove its navigation entries. Install, enable and reload feedback must wait for client evaluation.
+Wait for the catalog event's queued refresh before checking its result; forcing another replacement
+from the action disposes the newly loaded contribution twice.
 Client bundles execute through Hermes string evaluation on Android, bypassing Metro. Lower async
 functions and classes before delivery; Three.js prototype initialization fails with unlowered
 classes even when the same bundle evaluates successfully in Node or Chromium.

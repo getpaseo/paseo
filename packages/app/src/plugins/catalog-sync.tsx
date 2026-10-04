@@ -5,6 +5,12 @@ import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginRegistry } from "./registry";
 
+const catalogRefreshes = new WeakMap<DaemonClient, () => Promise<void>>();
+
+export async function waitForPluginCatalog(client: DaemonClient): Promise<void> {
+  await catalogRefreshes.get(client)?.();
+}
+
 export function PluginCatalogSync({
   serverId,
   client,
@@ -26,26 +32,26 @@ export function PluginCatalogSync({
       pluginRegistry.removeHost(serverId);
       return;
     }
+    let latestRefresh = refreshQueue;
+    const pendingRefresh = () => latestRefresh;
+    catalogRefreshes.set(client, pendingRefresh);
     const refresh = (replacePluginId?: string) => {
-      refreshQueue = refreshQueue.then(() =>
-        client
-          .getPluginCatalog()
-          .then((catalog) => {
-            if (!cancelled) {
-              pluginRegistry.installCatalog(serverId, catalog, {
-                replacePluginId,
-                client,
-              });
-            }
-            return undefined;
-          })
-          .catch((error) => {
-            if (!cancelled) {
-              console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
-            }
-            return undefined;
-          }),
+      latestRefresh = refreshQueue.then(() =>
+        client.getPluginCatalog().then((catalog) => {
+          if (!cancelled) {
+            pluginRegistry.installCatalog(serverId, catalog, {
+              replacePluginId,
+              client,
+            });
+          }
+          return undefined;
+        }),
       );
+      refreshQueue = latestRefresh.catch((error) => {
+        if (!cancelled) {
+          console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
+        }
+      });
       return refreshQueue;
     };
     const observation = client.observeEvents([
@@ -75,6 +81,7 @@ export function PluginCatalogSync({
     });
     return () => {
       cancelled = true;
+      if (catalogRefreshes.get(client) === pendingRefresh) catalogRefreshes.delete(client);
       void observation
         .release()
         .catch((error) => console.warn("[Plugins] Failed to release catalog", error));
