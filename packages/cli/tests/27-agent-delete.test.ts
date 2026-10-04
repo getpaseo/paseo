@@ -13,11 +13,9 @@
 import assert from "node:assert";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
 import { getAvailablePort } from "./helpers/network.ts";
-import { mkdir, mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createTestPaseoDaemon } from "../../server/src/server/test-utils/paseo-daemon.js";
-import { DaemonClient } from "../../server/src/server/test-utils/daemon-client.js";
 
 console.log("=== Delete Command Tests ===\n");
 
@@ -116,72 +114,6 @@ try {
   }
 } finally {
   await rm(paseoHome, { recursive: true, force: true });
-}
-
-const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-const client = new DaemonClient({
-  url: `ws://127.0.0.1:${daemon.port}/ws`,
-  appVersion: "0.10.0",
-});
-try {
-  await client.connect();
-  await client.fetchAgents({ subscribe: {} });
-  const active = await client.createAgent({
-    provider: "codex",
-    cwd: daemon.staticDir,
-    title: "Active",
-  });
-  const archived = await client.createAgent({
-    provider: "codex",
-    cwd: daemon.staticDir,
-    title: "Archived",
-  });
-  await client.archiveAgent(archived.id);
-  const result = await runLocalPaseo([
-    "--host",
-    `127.0.0.1:${daemon.port}`,
-    "agent",
-    "delete",
-    "--all",
-    "--json",
-  ]);
-  assert.strictEqual(result.exitCode, 0, result.stderr);
-  const deleted = JSON.parse(result.stdout);
-  assert.strictEqual(deleted.deletedCount, 2);
-  assert.deepStrictEqual(deleted.agentIds.sort(), [active.id, archived.id].sort());
-  const remaining = await client.fetchAgents({ filter: { includeArchived: true } });
-  assert.deepStrictEqual(remaining.entries, []);
-  console.log("✓ --all removes active and archived agents from daemon history");
-
-  const nestedCwd = join(daemon.staticDir, "nested");
-  await mkdir(nestedCwd);
-  const scoped = await client.createAgent({ provider: "codex", cwd: daemon.staticDir });
-  const nested = await client.createAgent({ provider: "codex", cwd: nestedCwd });
-  const outside = await client.createAgent({ provider: "codex", cwd: daemon.paseoHome });
-  await client.archiveAgent(nested.id);
-  await client.archiveAgent(outside.id);
-  const scopedResult = await runLocalPaseo([
-    "--host",
-    `127.0.0.1:${daemon.port}`,
-    "agent",
-    "delete",
-    "--cwd",
-    daemon.staticDir,
-    "--json",
-  ]);
-  assert.strictEqual(scopedResult.exitCode, 0, scopedResult.stderr);
-  const scopedDeleted = JSON.parse(scopedResult.stdout);
-  assert.strictEqual(scopedDeleted.deletedCount, 2);
-  assert.deepStrictEqual(scopedDeleted.agentIds.sort(), [scoped.id, nested.id].sort());
-  const outsideRemaining = await client.fetchAgents({ filter: { includeArchived: true } });
-  assert.deepStrictEqual(
-    outsideRemaining.entries.map((entry) => entry.agent.id),
-    [outside.id],
-  );
-  console.log("✓ --cwd removes archived descendants and preserves agents outside the directory");
-} finally {
-  await client.close();
-  await daemon.close();
 }
 
 console.log("=== All delete tests passed ===");

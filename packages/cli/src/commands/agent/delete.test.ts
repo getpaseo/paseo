@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
 
@@ -7,9 +7,22 @@ import { runDeleteCommand } from "./delete.js";
 const agent = {
   id: "11111111-1111-4111-8111-111111111111",
   status: "running",
-  archivedAt: null,
+  archivedAt: null as string | null,
   cwd: "/tmp/project",
 };
+const archivedAgent = {
+  id: "22222222-2222-4222-8222-222222222222",
+  status: "closed",
+  archivedAt: "2026-10-01T00:00:00.000Z",
+  cwd: "/tmp/project/nested",
+};
+const archivedOutsideAgent = {
+  id: "33333333-3333-4333-8333-333333333333",
+  status: "closed",
+  archivedAt: "2026-10-01T00:00:00.000Z",
+  cwd: "/tmp/elsewhere",
+};
+let daemonAgents: (typeof agent)[] = [agent];
 const cancelAgent = vi.fn(async () => {
   throw new Error("active run cancellation was not acknowledged");
 });
@@ -18,7 +31,7 @@ const close = vi.fn(async () => undefined);
 
 vi.mock("../../utils/client.js", () => ({
   connectToDaemon: vi.fn(async () => ({
-    fetchAgents: vi.fn(async () => ({ entries: [{ agent }] })),
+    fetchAgents: vi.fn(async () => ({ entries: daemonAgents.map((entry) => ({ agent: entry })) })),
     fetchAgent: vi.fn(async () => ({ agent })),
     cancelAgent,
     deleteAgent,
@@ -28,6 +41,11 @@ vi.mock("../../utils/client.js", () => ({
 }));
 
 describe("runDeleteCommand", () => {
+  beforeEach(() => {
+    daemonAgents = [agent];
+    deleteAgent.mockClear();
+  });
+
   it("force-deletes a running agent when graceful cancellation is refused", async () => {
     const result = await runDeleteCommand(agent.id, { daemonTarget }, {} as never);
 
@@ -36,6 +54,32 @@ describe("runDeleteCommand", () => {
     expect(result.data).toEqual({
       deletedCount: 1,
       agentIds: [agent.id],
+    });
+  });
+
+  it("deletes archived agents with --all", async () => {
+    daemonAgents = [agent, archivedAgent, archivedOutsideAgent];
+
+    const result = await runDeleteCommand(undefined, { daemonTarget, all: true }, {} as never);
+
+    expect(result.data).toEqual({
+      deletedCount: 3,
+      agentIds: [agent.id, archivedAgent.id, archivedOutsideAgent.id],
+    });
+  });
+
+  it("deletes archived agents inside the directory with --cwd", async () => {
+    daemonAgents = [agent, archivedAgent, archivedOutsideAgent];
+
+    const result = await runDeleteCommand(
+      undefined,
+      { daemonTarget, cwd: "/tmp/project" },
+      {} as never,
+    );
+
+    expect(result.data).toEqual({
+      deletedCount: 2,
+      agentIds: [agent.id, archivedAgent.id],
     });
   });
 });
