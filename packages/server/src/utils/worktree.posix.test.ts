@@ -21,7 +21,11 @@ import {
   type WorktreeConfig,
 } from "./worktree";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { getPaseoWorktreeMetadataPath, readPaseoWorktreeMetadata } from "./worktree-metadata.js";
+import {
+  getPaseoWorktreeMetadataPath,
+  readPaseoWorktreeMetadata,
+  updatePaseoWorktreeBaseRef,
+} from "./worktree-metadata.js";
 import {
   getCheckoutDiff,
   getCheckoutStatus,
@@ -488,6 +492,120 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       ).toMatchObject({ baseRefName: "main" });
     });
 
+    it("reports diff/ahead-behind against origin, not a stale local branch, when branched off a bare base name", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      execFileSync("git", ["init", "--bare", remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir });
+
+      const result = await createLegacyWorktreeForTest({
+        branchName: "bare-base-feature",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "bare-base-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      // Bare-name base refs are not pinned to a commit stream at creation time; only an
+      // explicit ref (refs/heads/..., origin/...) is.
+      expect(
+        JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(result.worktreePath), "utf8")),
+      ).toMatchObject({ baseRefName: "main" });
+      expect(readPaseoWorktreeMetadata(result.worktreePath)?.baseRef).toBeUndefined();
+
+      // Origin advances after the worktree exists.
+      writeFileSync(join(repoDir, "file.txt"), "from-origin\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "advance origin main"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["push", "origin", "main"], { cwd: repoDir });
+      execFileSync("git", ["fetch", "origin"], { cwd: result.worktreePath });
+
+      const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
+      expect(status.isGit).toBe(true);
+      if (!status.isGit) {
+        return;
+      }
+      expect(status.aheadBehind).toEqual({ ahead: 0, behind: 1 });
+    });
+
+    it("keeps unpushed local commits when branching off a bare base name whose local branch is ahead of origin", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      execFileSync("git", ["init", "--bare", remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir });
+
+      // Local main advances with an unpushed commit before the worktree is created.
+      writeFileSync(join(repoDir, "file.txt"), "from-local\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "unpushed local commit"], {
+        cwd: repoDir,
+      });
+
+      const result = await createLegacyWorktreeForTest({
+        branchName: "local-ahead-feature",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "local-ahead-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      // The worktree is cut from local main, so the unpushed commit is present.
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-local\n");
+    });
+
+    it("pins the stored base to a PR's real target", async () => {
+      const result = await createLegacyWorktreeForTest({
+        branchName: "pr-target-feature",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "pr-target-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      updatePaseoWorktreeBaseRef(result.worktreePath, {
+        baseRefName: "release-1.2",
+        baseRef: "refs/remotes/origin/release-1.2",
+      });
+
+      expect(readPaseoWorktreeMetadata(result.worktreePath)).toMatchObject({
+        baseRefName: "release-1.2",
+        baseRef: "refs/remotes/origin/release-1.2",
+      });
+    });
+
+    it("does not change the stored base when the value is already correct", async () => {
+      const result = await createLegacyWorktreeForTest({
+        branchName: "pr-target-unchanged",
+        cwd: repoDir,
+        baseBranch: "refs/heads/main",
+        worktreeSlug: "pr-target-unchanged",
+        runSetup: false,
+        paseoHome,
+      });
+      const before = readPaseoWorktreeMetadata(result.worktreePath);
+
+      updatePaseoWorktreeBaseRef(result.worktreePath, {
+        baseRefName: "main",
+        baseRef: "refs/heads/main",
+      });
+
+      expect(readPaseoWorktreeMetadata(result.worktreePath)).toEqual(before);
+    });
+
+    it("does nothing for a checkout with no Paseo worktree metadata", async () => {
+      updatePaseoWorktreeBaseRef(repoDir, {
+        baseRefName: "release-1.2",
+        baseRef: "refs/remotes/origin/release-1.2",
+      });
+
+      expect(readPaseoWorktreeMetadata(repoDir)).toBeNull();
+    });
+
     it("records the branch name when the base is on a remote other than origin", async () => {
       const forkDir = join(tempDir, "fork.git");
       const forkCloneDir = join(tempDir, "fork-clone");
@@ -582,9 +700,17 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       execFileSync("git", ["update-ref", "-d", "refs/remotes/upstream/main"], {
         cwd: result.worktreePath,
       });
-      await expect(
-        getCheckoutDiff(result.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
-      ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
+      // The diff view degrades to no-diff instead of throwing when the pinned ref vanishes
+      // (getpaseo/paseo#4968) — a mutating operation like merge below still needs to refuse
+      // outright, since silently merging against the wrong base would be a real bug, but a
+      // read-only comparison should never hard-fail the whole view over a stale ref.
+      expect(
+        await getCheckoutDiff(
+          result.worktreePath,
+          { mode: "base", baseRef: "main" },
+          { paseoHome },
+        ),
+      ).toMatchObject({ diff: "" });
       await expect(
         mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome }),
       ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
