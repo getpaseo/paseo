@@ -15,6 +15,7 @@ import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import {
   claudeAndCodexReports,
   closeUsageSheet,
+  closeUsageOptions,
   openUsageSheetFromIcon,
   expectNoUsageItem,
   expectOnUsageScreen,
@@ -218,25 +219,22 @@ test.describe("Usage item", () => {
       await expect(pinRow(sheet, "Claude", "Session")).toHaveAccessibleName(
         /^Pin Claude Session, \d+% left( · .+)?$/,
       );
-      // The sheet carries the same inline Settings row and title-row Refresh all.
-      await expect(sheet.getByTestId("usage-options-toggle")).toHaveAttribute(
-        "aria-expanded",
-        "false",
-      );
+      // Settings opens a second sheet; closing it restores the Usage sheet underneath.
+      await expect(page.locator('[data-testid="usage-options-menu"]:visible')).toBeVisible();
       await expect(page.locator('[data-testid="usage-refresh-all"]:visible')).toBeVisible();
       await openUsageOptions(page);
-      await expect(sheet.getByTestId("usage-display-remaining")).toHaveAttribute(
+      await expect(page.getByTestId("usage-display-remaining")).toHaveAttribute(
         "aria-selected",
         "true",
       );
       await qaScreenshot(page, "compact-settings-expanded");
-      await sheet.getByTestId("usage-options-toggle").click();
+      await closeUsageOptions(page);
       await expect(sheet.getByTestId("usage-display-used")).toHaveCount(0);
       await expect(sheet).toBeVisible();
       await expect(page).not.toHaveURL(/\/usage$/);
       await waitForSettledPosition(sheet);
       const sheetBox = (await sheet.boundingBox())!;
-      // Settings adds a row; the sheet still reserves the top 20% as its backdrop.
+      // The Usage sheet reserves the top 20% as its backdrop.
       expect(sheetBox.y).toBeGreaterThanOrEqual(COMPACT.height * 0.2);
       expect(sheetBox.width).toBeGreaterThan(COMPACT.width * 0.8);
       await qaScreenshot(page, "compact-sheet");
@@ -258,7 +256,7 @@ test.describe("Usage item", () => {
         "true",
       );
       await qaScreenshot(page, "usage-settings-expanded");
-      await page.getByTestId("usage-options-toggle").click();
+      await closeUsageOptions(page);
     });
 
     await test.step("the Settings usage section shares the pins and the toggle", async () => {

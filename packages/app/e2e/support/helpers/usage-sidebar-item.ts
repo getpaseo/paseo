@@ -224,13 +224,37 @@ export async function setSummaryInSidebar(page: Page, on: boolean): Promise<void
 export async function expectSummaryInSidebar(page: Page, on: boolean): Promise<void> {
   await openUsageOptions(page);
   await expect(summaryInSidebarSwitch(page)).toBeChecked({ checked: on });
+  await closeUsageOptions(page);
 }
 
-/** Expand the inline Settings row when its controls are folded. */
+/** Open the cog's settings popover or compact sheet. */
 export async function openUsageOptions(page: Page): Promise<void> {
-  const toggle = visible(page, "usage-options-toggle");
-  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  if (!(await visible(page, "usage-display-used").isVisible())) {
+    await visible(page, "usage-options-menu").click();
+  }
   await expect(visible(page, "usage-display-used")).toBeVisible();
+}
+
+export function usageOptionsSurface(page: Page): Locator {
+  return page
+    .locator(
+      '[data-testid="usage-options-surface"]:visible, [data-testid="usage-options-surface-content"]:visible',
+    )
+    .first();
+}
+
+export async function expectUsageOptionsFitContent(page: Page): Promise<void> {
+  await waitForSettledPosition(usageOptionsSurface(page));
+  const surface = await usageOptionsSurface(page).boundingBox();
+  const fields = await page.getByTestId("usage-options-fields").boundingBox();
+  if (!surface || !fields) throw new Error("Settings must be visible before measuring its fit.");
+  expect(surface.y + surface.height - (fields.y + fields.height)).toBeLessThanOrEqual(10);
+}
+
+export async function closeUsageOptions(page: Page): Promise<void> {
+  await waitForSettledPosition(usageOptionsSurface(page));
+  await page.mouse.click(0, 0);
+  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
 }
 
 export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {
@@ -240,6 +264,7 @@ export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {
     "aria-selected",
     "true",
   );
+  await closeUsageOptions(page);
 }
 
 export async function refreshAllUsage(page: Page): Promise<void> {
