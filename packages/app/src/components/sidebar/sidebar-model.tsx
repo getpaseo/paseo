@@ -14,6 +14,7 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { useDesktopWindowViewStore } from "@/stores/desktop-window-view-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
@@ -112,6 +113,22 @@ export function SidebarModelProvider({
     () => new Set(filteredWorkspaceEntriesByKey.keys()),
     [filteredWorkspaceEntriesByKey],
   );
+  // Report what the sidebar shows only while it is actually active. `active === false`
+  // (or unmounting, e.g. swapping between the desktop and compact chrome branches) must
+  // clear the report rather than leave it stale: `useSidebarWorkspaceEntries` deliberately
+  // keeps its previous map when disabled, so a hidden sidebar's own key set would
+  // otherwise go on claiming workspaces it is not displaying.
+  useEffect(() => {
+    const store = useDesktopWindowViewStore.getState();
+    if (active === false) {
+      store.setVisibleWorkspaceKeys(null);
+      return;
+    }
+    store.setVisibleWorkspaceKeys([...visibleWorkspaceKeys]);
+    return () => {
+      useDesktopWindowViewStore.getState().setVisibleWorkspaceKeys(null);
+    };
+  }, [active, visibleWorkspaceKeys]);
   // The two filters prune differently on purpose. The project filter is a membership test on the
   // project itself, so a project you filtered TO survives even with no workspaces — it still owns
   // a header row you can create your first workspace under. The label filter can only ask about
