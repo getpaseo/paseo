@@ -147,7 +147,9 @@ export class ManagedPluginSources {
     input: InstallInput,
     target?: PluginUpdateTarget,
   ): Promise<ManagedPluginCandidate> {
-    const registry = parsePluginRegistryReference(input.source, this.registryOptions.defaultUrl);
+    const registry = this.registryOptions.enabled
+      ? parsePluginRegistryReference(input.source, this.registryOptions.defaultUrl)
+      : null;
     if (registry) {
       if (input.ref || input.pluginPath)
         throw new Error("Registry sources use their reviewed artifact path and revision");
@@ -173,7 +175,7 @@ export class ManagedPluginSources {
         sourceRoot = path.join(versionRoot, "node_modules", artifact.packageName);
         record = { kind: "npm" };
       } else {
-        const remote = normalizeGitSource(input.source);
+        const remote = normalizeGitSource(input.source, !this.registryOptions.enabled);
         sourceRoot = path.join(versionRoot, "checkout");
         await clone(remote, sourceRoot);
         const commit = await resolveRequestedRef(sourceRoot, input.ref);
@@ -225,7 +227,7 @@ export class ManagedPluginSources {
     const location = this.locate(pluginId, configuredPath);
     let target: PluginUpdateTarget;
     let outcome: PluginUpdatePreview["outcome"];
-    if (current.identity.registry) {
+    if (this.registryOptions.enabled && current.identity.registry) {
       if (selection) throw new Error("Registry updates use only the reviewed registry pin");
       const resolved = await resolveRegistryPlugin(
         current.identity.registry,
@@ -302,7 +304,7 @@ export class ManagedPluginSources {
     await this.assertCurrent(proposal, configuredPath);
     const identity = this.locate(proposal.id, configuredPath).identity;
     const record = this.records[proposal.id];
-    if (identity.kind !== "directory" && identity.registry) {
+    if (this.registryOptions.enabled && identity.kind !== "directory" && identity.registry) {
       const resolved = await resolveRegistryPlugin(identity.registry, this.registryOptions, false);
       assertRegistryArtifactIdentity(identity, resolved.artifact);
       if (!isDeepStrictEqual(resolved.target, proposal.target))
@@ -434,8 +436,10 @@ function reviewLinks(current: PluginInstallation, target: PluginUpdateTarget): s
   }
   return [];
 }
-function normalizeGitSource(source: string): string {
-  const explicit = source.startsWith("github:") || source.startsWith("git:");
+/** Bare owner/repo is GitHub shorthand unless registry references own that syntax. */
+function normalizeGitSource(source: string, bareGitHubShorthand: boolean): string {
+  const expandsShorthand =
+    bareGitHubShorthand || source.startsWith("github:") || source.startsWith("git:");
   if (source.startsWith("github:")) {
     const shorthand = source.slice(7);
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(shorthand)) {
@@ -446,7 +450,7 @@ function normalizeGitSource(source: string): string {
     source = source.slice(4);
   }
   const github = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(source);
-  if (github && explicit) {
+  if (github && expandsShorthand) {
     const repository = github[2].replace(/\.git$/, "");
     return `https://github.com/${github[1]}/${repository}.git`;
   }
