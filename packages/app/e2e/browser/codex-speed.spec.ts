@@ -47,8 +47,19 @@ async function selectSpeed(page: Page, label: string): Promise<void> {
   const toolbarTrigger = page.getByRole("button", { name: `Speed: ${label}`, exact: true });
   const sheetTrigger = page.getByRole("button", { name: "Select speed", exact: true });
   await expect(toolbarTrigger.or(sheetTrigger)).toBeVisible();
-  if (await toolbarTrigger.isVisible()) await expect(toolbarTrigger).toHaveText("");
-  else await expect(sheetTrigger).toContainText(label);
+  if (await toolbarTrigger.isVisible()) {
+    await expect(toolbarTrigger).toHaveText("");
+    await page.screenshot({
+      path: test.info().outputPath(`desktop-${label.toLowerCase()}-selected.png`),
+    });
+    const icon = toolbarTrigger.locator("svg");
+    if (label === "Normal") await expect(icon).toHaveAttribute("fill", "none");
+    else {
+      const color = await icon.getAttribute("stroke");
+      if (!color) throw new Error("Speed icon must have a stroke color");
+      await expect(icon).toHaveAttribute("fill", color);
+    }
+  } else await expect(sheetTrigger).toContainText(label);
 }
 
 async function expectSpeedChoices(page: Page, choices: string[]): Promise<void> {
@@ -102,6 +113,9 @@ for (const viewport of [
       await openSpeedSelector(page);
       await expectSpeedChoices(page, ["Normal", "Fast", "Ultrafast"]);
       await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-speed-options.png`) });
+      await selectSpeed(page, "Fast");
+      await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-fast-selected.png`) });
+      await openSpeedSelector(page);
       await selectSpeed(page, "Ultrafast");
       await openSpeedSelector(page);
       await expectSpeedChoices(page, ["Normal", "Fast", "Ultrafast"]);
