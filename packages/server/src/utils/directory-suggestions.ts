@@ -106,19 +106,32 @@ const NO_MATCH_TIER = 5;
 
 // Each pending fs call holds one of libuv's shared threadpool threads (4 by default), and a read on
 // a hung mount or a protected folder never returns. Searches pile up while the user types, so they
-// share two threads and leave the rest of the pool to the daemon.
+// share two threads and leave the rest of the pool to the daemon. Searches over one tree walk it
+// in the same order and stop at the same stuck folder, so they share its pending call and hold one
+// thread between them instead of both.
 const filesystemCalls = pLimit(2);
+const pendingFilesystemCalls = new Map<string, Promise<unknown>>();
+
+function sharedFilesystemCall<T>(key: string, call: () => Promise<T>): Promise<T> {
+  const pending = pendingFilesystemCalls.get(key);
+  if (pending) return pending as Promise<T>;
+  const started = filesystemCalls(call).finally(() => pendingFilesystemCalls.delete(key));
+  pendingFilesystemCalls.set(key, started);
+  return started;
+}
 
 function readdir(directory: string): Promise<Dirent[]> {
-  return filesystemCalls(() => fs.readdir(directory, { withFileTypes: true }));
+  return sharedFilesystemCall(`readdir:${directory}`, () =>
+    fs.readdir(directory, { withFileTypes: true }),
+  );
 }
 
 function realpath(target: string): Promise<string> {
-  return filesystemCalls(() => fs.realpath(target));
+  return sharedFilesystemCall(`realpath:${target}`, () => fs.realpath(target));
 }
 
 function stat(target: string): Promise<Stats> {
-  return filesystemCalls(() => fs.stat(target));
+  return sharedFilesystemCall(`stat:${target}`, () => fs.stat(target));
 }
 
 export const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
