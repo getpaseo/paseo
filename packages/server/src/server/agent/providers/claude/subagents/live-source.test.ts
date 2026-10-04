@@ -538,6 +538,33 @@ describe("ClaudeTaskProtocolSource", () => {
     ]);
   });
 
+  it("tells a subagent that is part of the main turn from one that outlives it", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ task_id: "foreground", tool_use_id: "toolu_fg", spawn_depth: 1 }));
+    source.observe(
+      taskStarted({
+        task_id: "spawned-in-background",
+        tool_use_id: "toolu_bg",
+        is_backgrounded: true,
+      }),
+    );
+    source.observe(taskStarted({ task_id: "moved-to-background", tool_use_id: "toolu_moved" }));
+    source.observe({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "moved-to-background",
+      patch: { is_backgrounded: true },
+    } as unknown as SDKMessage);
+    source.observe(taskStarted({ task_id: "nested", tool_use_id: "toolu_nested", spawn_depth: 2 }));
+
+    expect(source.isMainTurnSubagent("foreground")).toBe(true);
+    expect(source.isMainTurnSubagent("spawned-in-background")).toBe(false);
+    expect(source.isMainTurnSubagent("moved-to-background")).toBe(false);
+    expect(source.isMainTurnSubagent("nested")).toBe(false);
+    // A workflow's child agent, for one, is never declared as a subagent here.
+    expect(source.isMainTurnSubagent("never-announced")).toBe(false);
+  });
+
   it("still routes a backgrounded subagent that settles after the interrupt", () => {
     // The headline case: interrupt, continue, and the child that was told to outlive the turn
     // reports completion later. Wiping the routing table on cancel drops this on the floor and

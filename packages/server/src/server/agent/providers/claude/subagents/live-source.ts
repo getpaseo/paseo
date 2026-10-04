@@ -45,6 +45,8 @@ interface TaskStartedMessage {
    * registered in the background.
    */
   is_backgrounded?: boolean;
+  /** 1 for a subagent the main session spawned, N+1 for one spawned inside a depth-N agent. */
+  spawn_depth?: number;
 }
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
@@ -181,6 +183,8 @@ export class ClaudeTaskProtocolSource {
    * They outlive the turn that spawned them, so a turn ending is not evidence that they stopped.
    */
   private readonly backgroundedIds = new Set<string>();
+  /** Task ids of declared subagents spawned inside another subagent, not by the main session. */
+  private readonly nestedTaskIds = new Set<string>();
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
   /** Claude facts stay inside the provider boundary; clients receive one compact subtitle. */
@@ -239,6 +243,20 @@ export class ClaudeTaskProtocolSource {
     return subagentId !== undefined && this.declaredIds.has(subagentId);
   }
 
+  /**
+   * Whether a subagent's work is part of the main turn: the main session spawned it itself and
+   * waits on it in the foreground. Every other subagent runs on its own and outlives the turn,
+   * including one this source never declared, such as a workflow's child.
+   */
+  isMainTurnSubagent(taskId: string): boolean {
+    const subagentId = this.subagentIdByTaskId.get(taskId);
+    return (
+      subagentId !== undefined &&
+      !this.backgroundedIds.has(subagentId) &&
+      !this.nestedTaskIds.has(taskId)
+    );
+  }
+
   /** Resolve a non-subagent task (for example local_bash) to its emitting sidechain. */
   resolveTaskOwner(taskId: string, toolUseId?: string): string | undefined {
     return (
@@ -284,6 +302,7 @@ export class ClaudeTaskProtocolSource {
     this.lastWorkflowResultByTaskId.clear();
     this.idsWithExistingParentToolCard.clear();
     this.backgroundedIds.clear();
+    this.nestedTaskIds.clear();
     this.lastStatusById.clear();
     this.presentationById.clear();
     this.lastSubtitleById.clear();
@@ -336,6 +355,7 @@ export class ClaudeTaskProtocolSource {
     if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
+    if ((message.spawn_depth ?? 1) > 1) this.nestedTaskIds.add(message.task_id);
     const existingId = this.subagentIdByTaskId.get(message.task_id);
     this.recordBackgrounded(existingId ?? id, message.is_backgrounded);
     if (existingId) {

@@ -377,6 +377,7 @@ const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const STEER_SUPERSEDED_PERMISSION_MESSAGE =
   "The user answered with a message instead of approving. Their message follows.";
+const CLAUDE_STOPPED_PERMISSION_MESSAGE = "Claude stopped before the request was answered";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface SlashCommandInvocation {
@@ -849,6 +850,8 @@ interface PendingPermission {
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
   cleanup?: () => void;
+  /** The asking subagent's task id (canUseTool's agentID), unset for the main session. */
+  subagentTaskId?: string;
 }
 
 type ToolUseClassification = "generic" | "command" | "file_change";
@@ -2290,7 +2293,7 @@ class ClaudeAgentSession implements AgentSession {
       const claudeStartedTurn =
         this.mainTurnInFlight ||
         (sdkUserMessageId !== null && !this.unstartedMessageUuids.has(sdkUserMessageId));
-      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
+      this.rejectPendingPermissions(new Error("Permission request canceled"), "turn");
       this.finishForegroundTurn({
         type: "turn_canceled",
         provider: "claude",
@@ -2619,6 +2622,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private denyPendingPermissionsSupersededBySteer(): void {
     for (const [requestId, pending] of this.pendingPermissions) {
+      if (this.outlivesMainTurn(pending.subagentTaskId)) continue;
       this.pendingPermissions.delete(requestId);
       pending.cleanup?.();
       pending.resolve(
@@ -2628,6 +2632,18 @@ class ClaudeAgentSession implements AgentSession {
         }),
       );
     }
+  }
+
+  /**
+   * A request from a subagent outside the main turn belongs to that subagent: it keeps running
+   * when the turn is stopped, and a message to the main session is no answer to it. A foreground
+   * subagent the main session spawned is part of the turn waiting on it, so its requests go with
+   * the turn.
+   */
+  private outlivesMainTurn(subagentTaskId: string | undefined): boolean {
+    return (
+      subagentTaskId !== undefined && !this.taskProtocolSource.isMainTurnSubagent(subagentTaskId)
+    );
   }
 
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
@@ -2717,7 +2733,7 @@ class ClaudeAgentSession implements AgentSession {
       "provider.claude.session_close.start",
     );
     this.closed = true;
-    this.rejectAllPendingPermissions(new Error("Claude session closed"));
+    this.rejectPendingPermissions(new Error("Claude session closed"), "all");
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
@@ -3161,6 +3177,8 @@ class ClaudeAgentSession implements AgentSession {
       const retiredChild = this.childProcess;
       this.childProcess = null;
       if (retiredChild) this.failRunningRuntimeTasks();
+      // Nothing the retired process asked can be answered through the new one.
+      this.rejectPendingPermissions(new Error(CLAUDE_STOPPED_PERMISSION_MESSAGE), "all");
       oldInput?.end();
       oldQuery.close?.();
       try {
@@ -3729,6 +3747,8 @@ class ClaudeAgentSession implements AgentSession {
   private failActiveTurns(errorMessage: string): void {
     const failure = this.buildTurnFailedEvent(errorMessage);
     this.flushPendingToolCalls();
+    // The stream is gone, so nothing it raised can be answered any more, a subagent's included.
+    this.rejectPendingPermissions(new Error(CLAUDE_STOPPED_PERMISSION_MESSAGE), "all");
     if (this.activeForegroundTurnId) {
       this.finishForegroundTurn(failure);
       return;
@@ -3767,6 +3787,8 @@ class ClaudeAgentSession implements AgentSession {
     // failing against a dead transport forever.
     this.query = null;
     this.input = null;
+    // A background subagent's request can outlive the turn, but not the process.
+    this.rejectPendingPermissions(new Error(CLAUDE_STOPPED_PERMISSION_MESSAGE), "all");
     this.dispatchEvents([
       this.buildTurnFailedEvent(
         `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
@@ -4800,6 +4822,7 @@ class ClaudeAgentSession implements AgentSession {
       })),
       actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
+      ...(options.agentID ? { fromProviderSubagent: true } : {}),
     };
 
     this.pushEvent({
@@ -4808,7 +4831,7 @@ class ClaudeAgentSession implements AgentSession {
       request,
     });
 
-    if (this.permissionClearingSteerUuids.size > 0) {
+    if (this.permissionClearingSteerUuids.size > 0 && !this.outlivesMainTurn(options.agentID)) {
       return this.resolveDeniedPermission(request, {
         behavior: "deny",
         message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
@@ -4854,6 +4877,7 @@ class ClaudeAgentSession implements AgentSession {
         resolve,
         reject,
         cleanup,
+        subagentTaskId: options.agentID,
       });
     });
   };
@@ -4972,8 +4996,13 @@ class ClaudeAgentSession implements AgentSession {
     return normalized.length > 0 ? normalized : undefined;
   }
 
-  private rejectAllPendingPermissions(error: Error) {
+  /**
+   * "turn" settles what the main turn owned and leaves the requests that outlive it pending
+   * (outlivesMainTurn). "all" is for when nothing is left that could answer them.
+   */
+  private rejectPendingPermissions(error: Error, scope: "turn" | "all") {
     for (const [id, pending] of this.pendingPermissions) {
+      if (scope === "turn" && this.outlivesMainTurn(pending.subagentTaskId)) continue;
       pending.cleanup?.();
       pending.reject(error);
       this.pendingPermissions.delete(id);
