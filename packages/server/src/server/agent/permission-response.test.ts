@@ -44,6 +44,10 @@ class FakePermissionAgentManager {
     return this.hasRunInFlight;
   }
 
+  hasBlockingRun(): boolean {
+    return this.hasRunInFlight;
+  }
+
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,

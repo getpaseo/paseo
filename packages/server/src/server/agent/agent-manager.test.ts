@@ -635,6 +635,89 @@ class UnsupportedSteeringSession extends TestAgentSession {
   }
 }
 
+class BackgroundWorkSession extends TestAgentSession {
+  interruptCount = 0;
+  startCount = 0;
+  startPrompts: AgentPromptInput[] = [];
+  /** Null models a provider that announces its background turn without an identity. */
+  backgroundTurnId: string | null = "background-turn-1";
+  private backgroundWorkRunning = false;
+  private foregroundTurnId: string | null = null;
+
+  override readonly capabilities = {
+    ...TEST_CAPABILITIES,
+    acceptsPromptDuringAutonomousTurn: true,
+  };
+
+  // Claude tags every event with the foreground turn, or the background one when there is none.
+  private emit(event: AgentStreamEvent): void {
+    const turnId = this.foregroundTurnId ?? this.backgroundTurnId;
+    this.pushEvent(turnId ? { ...event, turnId } : event);
+  }
+
+  startBackgroundWork(): void {
+    this.backgroundWorkRunning = true;
+    this.emit({ type: "turn_started", provider: this.provider });
+  }
+
+  override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.startPrompts.push(prompt);
+    if (this.backgroundWorkRunning) {
+      this.emit({ type: "turn_completed", provider: this.provider });
+      this.backgroundWorkRunning = false;
+    }
+    const turnId = `foreground-turn-${++this.startCount}`;
+    this.foregroundTurnId = turnId;
+    setTimeout(() => this.emit({ type: "turn_started", provider: this.provider }), 0);
+    return { turnId };
+  }
+
+  override async interrupt(): Promise<void> {
+    this.interruptCount += 1;
+    this.emit({ type: "turn_canceled", provider: this.provider, reason: "Interrupted" });
+  }
+}
+
+async function followUpBesideBackgroundWork(session: BackgroundWorkSession): Promise<{
+  manager: AgentManager;
+  agentId: string;
+  workdir: string;
+  completedTurnIds: (string | undefined)[];
+}> {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession() {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { claude: client }, logger });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const completedTurnIds: (string | undefined)[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream" && event.event.type === "turn_completed") {
+        completedTurnIds.push((event.event as { turnId?: string }).turnId);
+      }
+    },
+    { agentId: agent.id },
+  );
+
+  session.startBackgroundWork();
+  await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+
+  const result = await startAgentRun(manager, agent.id, "how is it going?", logger, {
+    replaceRunning: true,
+    activeTurnBehavior: "steer",
+    runOptions: { clientMessageId: "background-follow-up-client" },
+  });
+  expect(result).toEqual({ disposition: "turn_started" });
+  await vi.waitFor(() => expect(completedTurnIds).toHaveLength(1));
+
+  return { manager, agentId: agent.id, workdir, completedTurnIds };
+}
+
 async function startAndSteerThroughManager(
   session: AgentSession,
   behavior: "steer" | "interrupt" = "steer",
@@ -1212,6 +1295,37 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
     );
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a follow-up starts a turn beside background work instead of interrupting it", async () => {
+  const session = new BackgroundWorkSession({ provider: "claude", cwd: process.cwd() });
+  const { manager, agentId, workdir, completedTurnIds } =
+    await followUpBesideBackgroundWork(session);
+
+  try {
+    expect(session.interruptCount).toBe(0);
+    expect(session.startPrompts).toEqual(["how is it going?"]);
+    expect(completedTurnIds).toEqual(["background-turn-1"]);
+    expect(manager.getAgent(agentId)?.activeForegroundTurnId).toBe("foreground-turn-1");
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an absorbed completion without a turn id does not close the follow-up turn", async () => {
+  const session = new BackgroundWorkSession({ provider: "claude", cwd: process.cwd() });
+  session.backgroundTurnId = null;
+  const { manager, agentId, workdir, completedTurnIds } =
+    await followUpBesideBackgroundWork(session);
+
+  try {
+    expect(completedTurnIds[0]).not.toBe("foreground-turn-1");
+    expect(manager.getAgent(agentId)?.activeForegroundTurnId).toBe("foreground-turn-1");
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });
