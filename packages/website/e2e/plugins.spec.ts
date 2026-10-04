@@ -104,6 +104,22 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
   );
 });
 
+test("clears the search with the clear button", async ({ page }) => {
+  await page.goto("/plugins/all");
+  const searchbox = page.getByRole("searchbox", { name: "Search plugins" });
+  const clear = page.getByRole("button", { name: "Clear search" });
+  await expect(clear).toHaveCount(0);
+
+  await searchPlugins(page, "graphite");
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite$/);
+  await clear.click();
+  await expect(page).toHaveURL(/\/plugins\/all$/);
+  await expect(searchbox).toHaveValue("");
+  await expect(searchbox).toBeFocused();
+  await expect(clear).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
+});
+
 test("replaces history while typing a search", async ({ page }) => {
   await page.goto("/");
   await page.goto("/plugins/all");
