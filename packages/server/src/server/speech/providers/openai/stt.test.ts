@@ -41,43 +41,11 @@ describe("OpenAISTT", () => {
   });
 
   test("passes transcription prompt to OpenAI REST STT", async () => {
-    transcriptionsCreateMock.mockImplementation(
-      async (request: { file: NodeJS.ReadableStream }) => {
-        await new Promise<void>((resolve, reject) => {
-          request.file.once("error", reject);
-          request.file.once("end", resolve);
-          request.file.resume();
-        });
-        return { text: "hello" };
-      },
-    );
+    mockTranscriptionResponse("hello");
 
-    const provider = new OpenAISTT(
-      { apiKey: "sk-test", model: "gpt-4o-transcribe" },
-      pino({ level: "silent" }),
-    );
-    const session = provider.createSession({
-      logger: pino({ level: "silent" }),
-      language: "en",
-      prompt: "Only transcribe the speaker.",
-    });
-
-    const transcript = new Promise<string>((resolve, reject) => {
-      session.on("transcript", (event) => {
-        if (event.isFinal) {
-          resolve(event.transcript);
-        }
-      });
-      session.on("error", (error) => {
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
-    });
-
-    await session.connect();
-    session.appendPcm16(Buffer.from([0, 0, 0, 0]));
-    session.commit();
-
-    await expect(transcript).resolves.toBe("hello");
+    await expect(
+      transcribe({ language: "en", prompt: "Only transcribe the speaker." }),
+    ).resolves.toBe("hello");
     expect(transcriptionsCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         language: "en",
@@ -87,4 +55,46 @@ describe("OpenAISTT", () => {
       }),
     );
   });
+
+  test("omits the language hint when language is auto", async () => {
+    mockTranscriptionResponse("hello");
+
+    await expect(transcribe({ language: "auto" })).resolves.toBe("hello");
+    expect(transcriptionsCreateMock).toHaveBeenCalledTimes(1);
+    expect(transcriptionsCreateMock.mock.calls[0][0]).not.toHaveProperty("language");
+  });
 });
+
+function mockTranscriptionResponse(text: string) {
+  transcriptionsCreateMock.mockImplementation(async (request: { file: NodeJS.ReadableStream }) => {
+    await new Promise<void>((resolve, reject) => {
+      request.file.once("error", reject);
+      request.file.once("end", resolve);
+      request.file.resume();
+    });
+    return { text };
+  });
+}
+
+async function transcribe(options: { language: string; prompt?: string }): Promise<string> {
+  const provider = new OpenAISTT(
+    { apiKey: "sk-test", model: "gpt-4o-transcribe" },
+    pino({ level: "silent" }),
+  );
+  const session = provider.createSession({ logger: pino({ level: "silent" }), ...options });
+  const transcript = new Promise<string>((resolve, reject) => {
+    session.on("transcript", (event) => {
+      if (event.isFinal) {
+        resolve(event.transcript);
+      }
+    });
+    session.on("error", (error) => {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+
+  await session.connect();
+  session.appendPcm16(Buffer.from([0, 0, 0, 0]));
+  session.commit();
+  return transcript;
+}
