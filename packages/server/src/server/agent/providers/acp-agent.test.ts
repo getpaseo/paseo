@@ -32,6 +32,8 @@ import {
   resolveACPModeSelection,
   resolveACPModelSelection,
   summarizeACPRequestError,
+  isACPTransportRetryableAssistantText,
+  isACPTransportRetryableErrorMessage,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
@@ -92,11 +94,82 @@ describe("buildACPClientCapabilities", () => {
   });
 });
 
+describe("isACPTransportRetryableErrorMessage", () => {
+  test.each([
+    "RetriableError: [aborted] Client network socket disconnected before secure TLS connection was established",
+    "Error: RetriableError: [internal] HTTP/2 keepalive ping timed out after 5000ms",
+    "ConnectError: [unavailable] PING timed out",
+    "read ECONNRESET",
+  ])("retries %s", (message) => {
+    expect(isACPTransportRetryableErrorMessage(message)).toBe(true);
+  });
+
+  test.each([
+    "prompt failed",
+    "Authentication failed: Please authenticate to continue. Run `/login` to log in.",
+    "Please sign in to continue",
+  ])("does not retry %s", (message) => {
+    expect(isACPTransportRetryableErrorMessage(message)).toBe(false);
+  });
+
+  test("retries only a Cursor-style error-only assistant message", () => {
+    expect(
+      isACPTransportRetryableAssistantText(
+        "Error: RetriableError: [internal] HTTP/2 keepalive ping timed out after 5000ms",
+      ),
+    ).toBe(true);
+    expect(
+      isACPTransportRetryableAssistantText(
+        "The previous attempt failed with RetriableError after a TLS reset. I will continue from the last file.",
+      ),
+    ).toBe(false);
+  });
+});
+
+function createTurnCompletionWaiter(session: ACPAgentSession): {
+  promise: Promise<void>;
+  setTurnId: (turnId: string) => void;
+} {
+  let expectedTurnId: string | null = null;
+  let terminalEvent: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" }> | null =
+    null;
+  let settled = false;
+  let resolvePromise!: () => void;
+  let rejectPromise!: (reason?: unknown) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const settle = () => {
+    if (settled || !terminalEvent || terminalEvent.turnId !== expectedTurnId) return;
+    settled = true;
+    unsubscribe();
+    if (terminalEvent.type === "turn_failed") {
+      rejectPromise(new Error(`ACP turn failed: ${terminalEvent.error}`));
+    } else {
+      resolvePromise();
+    }
+  };
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type !== "turn_completed" && event.type !== "turn_failed") return;
+    terminalEvent = event;
+    settle();
+  });
+  return {
+    promise,
+    setTurnId: (turnId) => {
+      expectedTurnId = turnId;
+      settle();
+    },
+  };
+}
+
 interface ACPSessionInternals {
   sessionId: string | null;
   connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
+  transportRetryDelaysMs: number[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
 }
@@ -3271,6 +3344,145 @@ describe("ACPAgentSession", () => {
       error: "prompt failed",
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("retries ACP prompt transport failures then completes the same turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "RetriableError: [aborted] Client network socket disconnected before secure TLS connection was established",
+        ),
+      )
+      .mockResolvedValueOnce({ stopReason: "end_turn" } satisfies PromptResponse);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).transportRetryDelaysMs = [0];
+    session.subscribe((event) => events.push(event));
+
+    const completion = createTurnCompletionWaiter(session);
+    const { turnId } = await session.startTurn("hello");
+    completion.setTurnId(turnId);
+    await completion.promise;
+    expect(prompt).toHaveBeenCalledTimes(2);
+
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toHaveLength(1);
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "error"),
+    ).toEqual([
+      expect.objectContaining({
+        type: "timeline",
+        turnId,
+        item: {
+          type: "error",
+          message: expect.stringContaining("Retrying after a transport error (attempt 1)"),
+        },
+      }),
+    ]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("retries Cursor ACP turns that surface a transport error as assistant text", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let calls = 0;
+    const prompt = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        await session.sessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Error: RetriableError: [internal] HTTP/2 keepalive ping timed out after 5000ms",
+            },
+          } as SessionUpdate,
+        });
+        return { stopReason: "end_turn" } satisfies PromptResponse;
+      }
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "recovered" },
+        } as SessionUpdate,
+      });
+      return { stopReason: "end_turn" } satisfies PromptResponse;
+    });
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).transportRetryDelaysMs = [0];
+    session.subscribe((event) => events.push(event));
+
+    const completion = createTurnCompletionWaiter(session);
+    const { turnId } = await session.startTurn("hello");
+    completion.setTurnId(turnId);
+    await completion.promise;
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+  });
+
+  test("does not retry a completed answer that merely mentions a transport error", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "The previous attempt failed with RetriableError after a TLS reset. I will continue from the last file.",
+          },
+        } as SessionUpdate,
+      });
+      return { stopReason: "end_turn" } satisfies PromptResponse;
+    });
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).transportRetryDelaysMs = [0, 0];
+    session.subscribe((event) => events.push(event));
+
+    const completion = createTurnCompletionWaiter(session);
+    const { turnId } = await session.startTurn("hello");
+    completion.setTurnId(turnId);
+    await completion.promise;
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "error"),
+    ).toEqual([]);
+  });
+
+  test("does not retry non-transport ACP prompt failures", async () => {
+    const session = createSession();
+    const prompt = vi.fn().mockRejectedValue(new Error("prompt failed"));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).transportRetryDelaysMs = [0, 0];
+
+    const turnFailed = new Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_failed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    await session.startTurn("hello");
+    await expect(turnFailed).resolves.toMatchObject({ error: "prompt failed" });
+    expect(prompt).toHaveBeenCalledTimes(1);
   });
 
   test("flushes an image-only provider echo before a rejected turn finishes", async () => {
