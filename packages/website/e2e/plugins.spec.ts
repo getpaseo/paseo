@@ -94,6 +94,16 @@ test("filters by search and clears to all plugins", async ({ page }) => {
   await expect(page.getByRole("searchbox", { name: "Search plugins" })).toHaveValue("");
 });
 
+test("keeps the directory's ranking window when searching", async ({ page }) => {
+  await page.goto("/plugins?window=month");
+  await searchPlugins(page, "graphite");
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite&window=month$/);
+  await expect(page.getByRole("link", { name: "This month" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+});
+
 test("replaces history while typing a search", async ({ page }) => {
   await page.goto("/");
   await page.goto("/plugins/all");
@@ -208,6 +218,8 @@ test.describe("search engine visits without JavaScript", () => {
     const search = await request.get("/plugins?q=graphite", { maxRedirects: 0 });
     expect(search.status()).toBe(301);
     expect(search.headers().location).toMatch(/\/plugins\/all\?q=graphite$/);
+    const windowed = await request.get("/plugins?q=graphite&window=month", { maxRedirects: 0 });
+    expect(windowed.headers().location).toMatch(/\/plugins\/all\?q=graphite&window=month$/);
   });
 
   test("discovers plugin, category, and author URLs through robots and the sitemap index", async ({

@@ -57,8 +57,6 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   utils: Wrench,
 };
 
-const DIRECTORY_SEARCH: BrowseQuery = { sort: "installs", window: DEFAULT_WINDOW };
-
 const SEE_ALL_CLASS =
   "inline-flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
 
@@ -72,10 +70,11 @@ export const Route = createFileRoute("/plugins/")({
     const params = new URLSearchParams(location.searchStr);
     const category = getCategory(params.get("category") ?? "");
     const sort = parseSort(params.get("sort")) ?? "installs";
+    const window = parseWindow(params.get("window")) ?? DEFAULT_WINDOW;
     const q = parseSearchTerm(params.get("q"));
     if (category || sort === "new" || q)
       throw redirect({
-        href: browseHref({ category: category?.slug, sort, window: DEFAULT_WINDOW, q }),
+        href: browseHref({ category: category?.slug, sort, window, q }),
         statusCode: 301,
       });
   },
@@ -102,6 +101,7 @@ function PluginsPage() {
     }),
     [],
   );
+  const searchScope = useMemo<BrowseQuery>(() => ({ sort: "installs", window }), [window]);
 
   return (
     <SiteShell width="default">
@@ -113,7 +113,7 @@ function PluginsPage() {
           </span>
         </h1>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-          <PluginSearch scope={DIRECTORY_SEARCH} className="w-full sm:w-56" />
+          <PluginSearch scope={searchScope} className="w-full sm:w-56" />
           <ContributeLinks />
         </div>
       </div>
