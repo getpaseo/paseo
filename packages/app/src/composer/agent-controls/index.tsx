@@ -59,6 +59,7 @@ import {
   getAgentControlHintKey,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
+import { findPlanModeToggle, PLAN_MODE_FEATURE_ID } from "@/agent-controls/policy";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import { useToast } from "@/contexts/toast-context";
@@ -202,7 +203,9 @@ function toCommandCenterModes(modeControl: AgentModeControlValue | null) {
   return {
     options: modeControl.modeOptions,
     selectedId: modeControl.selectedModeId,
-    select: modeControl.onSelectMode,
+    select: async (modeId: string) => {
+      await modeControl.onSelectMode(modeId);
+    },
   };
 }
 
@@ -508,6 +511,17 @@ function ControlledAgentControls({
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
   const { fontScale } = useWindowDimensions();
+  const planEnabled = findPlanModeToggle(features)?.value ?? null;
+  const planAwareModeControl = useMemo(() => {
+    if (!modeControl || planEnabled === null || !onSetFeature) return modeControl;
+    return {
+      ...modeControl,
+      planMode: {
+        enabled: planEnabled,
+        setEnabled: (enabled: boolean) => onSetFeature(PLAN_MODE_FEATURE_ID, enabled),
+      },
+    };
+  }, [modeControl, onSetFeature, planEnabled]);
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
   const initialDensity: ComposerControlDensity = isCompact ? "tight" : "full";
@@ -779,7 +793,7 @@ function ControlledAgentControls({
             handleOpenChange={handleOpenChange}
             handleNestedOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
-            modeControl={modeControl}
+            modeControl={planAwareModeControl}
             presentation={presentation}
             glyphSize={layoutContextValue.glyphSize}
             activeSheet={activeSheet}
@@ -819,7 +833,7 @@ function ControlledAgentControls({
             handleSelectThinkingAndClose={handleSelectThinkingAndClose}
             handleOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
-            modeControl={modeControl}
+            modeControl={planAwareModeControl}
             glyphSize={layoutContextValue.glyphSize}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}

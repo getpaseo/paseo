@@ -13,7 +13,8 @@ import { getAgentControlHintKey } from "@/composer/agent-controls/utils";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import { resolveNextAgentModeId } from "@/composer/agent-controls/mode";
+import { resolveAgentModeCycleStep } from "@/composer/agent-controls/mode";
+import { resolveAccessModeOptions } from "@/agent-controls/policy";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
@@ -62,12 +63,20 @@ function ModeComboboxOption({
   );
 }
 
+export interface AgentPlanModeControl {
+  enabled: boolean;
+  setEnabled: (enabled: boolean) => void;
+}
+
 export interface AgentModeControlValue {
   provider: string;
   providerDefinitions: AgentProviderDefinition[];
   modeOptions: AgentMode[];
   selectedModeId: string | null | undefined;
-  onSelectMode: (modeId: string) => void;
+  /** Resolves false when the change failed and its error is already on screen. */
+  onSelectMode: (modeId: string) => void | Promise<boolean>;
+  /** The agent's Plan toggle, when Plan sits beside the mode instead of being one. */
+  planMode?: AgentPlanModeControl | null;
   disabled?: boolean;
 }
 
@@ -81,6 +90,7 @@ export function AgentModeControl({
   modeOptions,
   selectedModeId,
   onSelectMode,
+  planMode = null,
   disabled = false,
   surface = "toolbar",
   onClose,
@@ -96,18 +106,23 @@ export function AgentModeControl({
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  const hasPlanToggle = planMode !== null;
+  const accessModes = useMemo(
+    () => resolveAccessModeOptions(modeOptions, hasPlanToggle, selectedModeId),
+    [hasPlanToggle, modeOptions, selectedModeId],
+  );
   const selectedMode = useMemo(() => {
-    if (modeOptions.length === 0) return null;
-    return modeOptions.find((m) => m.id === selectedModeId) ?? modeOptions[0];
-  }, [modeOptions, selectedModeId]);
+    if (accessModes.length === 0) return null;
+    return accessModes.find((m) => m.id === selectedModeId) ?? accessModes[0];
+  }, [accessModes, selectedModeId]);
 
   const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
   const iconColor = theme.colors.foregroundMuted;
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
-    () => modeOptions.map((m) => ({ id: m.id, label: formatAgentModeLabel(m) })),
-    [modeOptions],
+    () => accessModes.map((m) => ({ id: m.id, label: formatAgentModeLabel(m) })),
+    [accessModes],
   );
   const options = useMemo<ComboboxOption[]>(() => {
     const q = normalizeSearchQuery(searchQuery);
@@ -137,16 +152,43 @@ export function AgentModeControl({
     [onSelectMode, handleOpenChange],
   );
 
+  const leavePlanForMode = useCallback(
+    async (modeId: string) => {
+      // Change the access mode first, so the agent keeps planning until the new mode is in place.
+      const changed = await onSelectMode(modeId);
+      if (changed !== false) planMode?.setEnabled(false);
+    },
+    [onSelectMode, planMode],
+  );
+
   const handleKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
       if (action.id !== "message-input.mode-cycle") return false;
       if (disabled || !isActiveComposer) return false;
-      const nextModeId = resolveNextAgentModeId({ modeOptions, selectedMode: selectedModeId });
-      if (!nextModeId) return false;
-      onSelectMode(nextModeId);
+      const step = resolveAgentModeCycleStep({
+        modeOptions,
+        selectedMode: selectedModeId,
+        planEnabled: planMode ? planMode.enabled : null,
+      });
+      if (!step) return false;
+      if (step.kind === "plan-on") {
+        planMode?.setEnabled(true);
+      } else if (step.kind === "plan-off") {
+        void leavePlanForMode(step.modeId);
+      } else {
+        onSelectMode(step.modeId);
+      }
       return true;
     },
-    [disabled, isActiveComposer, modeOptions, onSelectMode, selectedModeId],
+    [
+      disabled,
+      isActiveComposer,
+      leavePlanForMode,
+      modeOptions,
+      onSelectMode,
+      planMode,
+      selectedModeId,
+    ],
   );
 
   useKeyboardActionHandler({
@@ -274,8 +316,8 @@ export function useLiveAgentModeControl(
   }, [slice?.provider, snapshotEntries]);
 
   const handleSelectMode = useCallback(
-    (modeId: string) => {
-      if (!client || !slice?.provider) return;
+    (modeId: string): Promise<boolean> => {
+      if (!client || !slice?.provider) return Promise.resolve(false);
       void updatePreferences((current) =>
         mergeProviderPreferences({
           preferences: current,
@@ -285,13 +327,17 @@ export function useLiveAgentModeControl(
       ).catch((error) => {
         console.warn("[AgentModeControl] persist mode preference failed", error);
       });
-      void client
-        .setAgentMode(agentId, modeId)
-        .then((notice) => showProviderNoticeToast(toast, notice))
-        .catch((error) => {
+      return client.setAgentMode(agentId, modeId).then(
+        (notice) => {
+          showProviderNoticeToast(toast, notice);
+          return true;
+        },
+        (error: unknown) => {
           console.warn("[AgentModeControl] setAgentMode failed", error);
           toast.error(toErrorMessage(error));
-        });
+          return false;
+        },
+      );
     },
     [agentId, client, slice?.provider, toast, updatePreferences],
   );

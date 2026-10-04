@@ -660,6 +660,11 @@ export interface AgentSession {
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  /**
+   * Feature values the provider changes on its own, such as leaving Plan when a plan is approved.
+   * The manager stores them with the agent config so a resumed session starts in the same state.
+   */
+  readonly featureValues?: Readonly<Record<string, unknown>>;
   /** New provider-owned rows to commit on registration. streamHistory must also
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];

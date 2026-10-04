@@ -9214,6 +9214,74 @@ test("permission request notifies once without forcing unread attention state", 
   expect(attentionReasons).toContain("permission");
 });
 
+test("persists a Plan flag the provider turned off itself after plan approval", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let planMode = true;
+
+  class PlanFlagSession extends TestAgentSession {
+    get featureValues(): Record<string, unknown> {
+      return { plan_mode: planMode };
+    }
+
+    override async getCurrentMode() {
+      return "full-access";
+    }
+
+    override async respondToPermission(
+      _requestId: string,
+      response: { behavior: string },
+    ): Promise<void> {
+      // Approving a plan leaves Plan inside the provider, without a setFeature call.
+      if (response.behavior === "allow") {
+        planMode = false;
+      }
+    }
+  }
+
+  class PlanFlagClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createdConfigs.push(config);
+      return new PlanFlagSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeOverrides.push(config);
+      return new PlanFlagSession({ provider: this.provider, cwd: config?.cwd ?? workdir });
+    }
+  }
+
+  const client = new PlanFlagClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000113",
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, modeId: "full-access", featureValues: { plan_mode: true } },
+    undefined,
+    { workspaceId: undefined },
+  );
+  manager.getAgent(snapshot.id)!.pendingPermissions.set("perm-plan", {
+    id: "perm-plan",
+    provider: "codex",
+    name: "ExitPlanMode",
+    kind: "plan",
+    input: { plan: "Edit README.md" },
+  });
+
+  await manager.respondToPermission(snapshot.id, "perm-plan", { behavior: "allow" });
+  await manager.flush();
+
+  expect((await storage.get(snapshot.id))?.config?.featureValues).toEqual({ plan_mode: false });
+  await manager.reloadAgentSession(snapshot.id);
+  expect(client.resumeOverrides.at(-1)?.featureValues).toEqual({ plan_mode: false });
+});
+
 test("respondToPermission updates currentModeId after plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

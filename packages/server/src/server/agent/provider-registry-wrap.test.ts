@@ -67,6 +67,7 @@ class FakeSession implements AgentSession {
   ];
   readonly steers: Array<{ prompt: AgentPromptInput; options: SteerActiveTurnOptions }> = [];
   readonly features = [];
+  featureValues: Record<string, unknown> = { plan_mode: false };
   readonly recordedCalls: string[] = [];
 
   async run() {
@@ -221,9 +222,11 @@ describe("wrapSessionProvider", () => {
     const wrapped = wrapSessionProvider("custom-claude", session);
     session.id = "session-2";
     session.capabilities = { ...CAPABILITIES, supportsMcpServers: false };
+    session.featureValues = { plan_mode: true };
     expect(wrapped.id).toBe("session-2");
     expect(wrapped.capabilities).toEqual(session.capabilities);
     expect(wrapped.initialTimeline).toEqual(session.initialTimeline);
+    expect(wrapped.featureValues).toEqual({ plan_mode: true });
   });
 
   test("propagates steering failure without interrupting or replacing the turn", async () => {

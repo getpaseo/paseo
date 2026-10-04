@@ -449,6 +449,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get features() {
       return inner.features;
     },
+    get featureValues() {
+      return inner.featureValues;
+    },
     usageSession: inner.usageSession?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
