@@ -48,6 +48,74 @@ describe("findActiveFileMention", () => {
     });
     expect(mention).toBeNull();
   });
+
+  it("returns null for the issue #1364 angle-bracket email example", () => {
+    const text = "user <12345+user@noreply.example.com>";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null for email addresses (word char before @)", () => {
+    const text = "send to alice@example.com please";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null for email addresses (+ immediately before @)", () => {
+    // Local part ends with + so the character at index-1 is '+', not a word char.
+    const text = "send to noreply+@example.com please";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null for plus-tagged email local parts", () => {
+    const text = "noreply+tag@example.com";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null when query contains angle brackets", () => {
+    const text = "check @foo<bar> end";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.indexOf(" end"),
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null when query ends with a closing angle bracket", () => {
+    const text = "check @foo>";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("still detects a file mention after an email in the same input", () => {
+    const text = "user <12345+user@noreply.example.com> and also @file";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toEqual({
+      start: text.lastIndexOf("@"),
+      end: text.length,
+      query: "file",
+    });
+  });
 });
 
 describe("formatQuotedFileMentionPath", () => {
