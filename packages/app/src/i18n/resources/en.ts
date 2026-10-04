@@ -2415,6 +2415,8 @@ export const en = {
         cycleTheme: "Cycle theme",
         focusMessageInput: "Focus message input",
         cycleAgentMode: "Cycle agent mode",
+        decreaseThinkingEffort: "Decrease thinking effort",
+        increaseThinkingEffort: "Increase thinking effort",
         toggleVoiceMode: "Toggle voice mode",
         startStopDictation: "Start/stop dictation",
         interruptAgent: "Interrupt agent",

@@ -1262,3 +1262,56 @@ describe("direct new-tab target shortcuts", () => {
     ).toEqual([["ctrl", "shift", "H"]]);
   });
 });
+
+describe("thinking effort shortcuts", () => {
+  for (const isMac of [false, true]) {
+    it.each([
+      [",", "Comma", "thinking-decrease"],
+      [".", "Period", "thinking-increase"],
+      ["≤", "Comma", "thinking-decrease"],
+      ["≥", "Period", "thinking-increase"],
+    ])(`routes Alt+%s in the composer (mac=${isMac})`, (key, code, kind) => {
+      expectShortcutResolution({
+        event: { key, code, altKey: true },
+        context: { isMac, focusScope: "message-input" },
+        action: "message-input.action",
+        payload: { kind },
+      });
+    });
+  }
+  it("does not intercept other surfaces or repeated keydown", () => {
+    for (const code of ["Comma", "Period"]) {
+      for (const focusScope of [
+        "terminal",
+        "editable",
+        "other",
+        "command-center",
+        "browser",
+      ] as const) {
+        expectNoShortcutResolution({ event: { code, altKey: true }, context: { focusScope } });
+      }
+      expectNoShortcutResolution({
+        event: { code, altKey: true, repeat: true },
+        context: { focusScope: "message-input" },
+      });
+      expectNoShortcutResolution({
+        event: { code, altKey: true },
+        context: { focusScope: "message-input", commandCenterOpen: true },
+      });
+    }
+  });
+  it("exposes rebindable help entries", () => {
+    const platform = { isMac: true, isDesktop: true };
+    expect(getDefaultKeysForAction("decrease-thinking-effort", platform)).toEqual([["alt", ","]]);
+    expect(getDefaultKeysForAction("increase-thinking-effort", platform)).toEqual([["alt", "."]]);
+    const bindings = buildEffectiveBindings({
+      "message-input-thinking-increase": "Ctrl+Shift+ArrowUp",
+    });
+    const result = resolveShortcut({
+      event: { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, shiftKey: true },
+      context: { ...platform, focusScope: "message-input" },
+      bindings,
+    });
+    expect(result.match?.payload).toEqual({ kind: "thinking-increase" });
+  });
+});

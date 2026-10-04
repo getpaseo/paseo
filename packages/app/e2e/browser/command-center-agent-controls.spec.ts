@@ -79,6 +79,60 @@ test.describe("Command Center agent controls", () => {
     }
   });
 
+  test("adjusts thinking with Codex shortcuts in live and draft composers", async ({ page }) => {
+    await seedMockDraftPreferences(page);
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "thinking-shortcuts-",
+      title: "Thinking shortcuts",
+      model: "five-minute-stream",
+      thinkingOptionId: "low",
+    });
+    const thinking = page.getByTestId("agent-thinking-selector").filter({ visible: true });
+    const composer = page
+      .getByRole("textbox", { name: "Message agent..." })
+      .filter({ visible: true });
+    try {
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+      await expect(thinking).toHaveAccessibleName("Select thinking option (Low)");
+      await composer.fill("Keep this draft");
+      for (const [key, label] of [
+        ["Alt+Period", "Medium"],
+        ["Alt+Period", "High"],
+        ["Alt+Period", "High"],
+        ["Alt+Comma", "Medium"],
+        ["Alt+Comma", "Low"],
+        ["Alt+Comma", "Low"],
+      ] as const) {
+        await composer.press(key);
+        await expect(thinking).toHaveAccessibleName(`Select thinking option (${label})`);
+      }
+      await expect(composer).toHaveValue("Keep this draft");
+      await composer.press("Alt+Period");
+      await expect(thinking).toHaveAccessibleName("Select thinking option (Medium)");
+      await workspace.client.fetchAgents();
+
+      await clickNewChat(page);
+      await waitForDraftComposer(page);
+      await expect(thinking).toHaveAccessibleName("Select thinking option (Medium)");
+      await composer.press("Alt+Period");
+      await expect(thinking).toHaveAccessibleName("Select thinking option (High)");
+      await composer.press("Alt+Comma");
+      await expect(thinking).toHaveAccessibleName("Select thinking option (Medium)");
+      await composer.press("Alt+Comma");
+      await expect(thinking).toHaveAccessibleName("Select thinking option (Low)");
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+      await expect(thinking).toHaveAccessibleName("Select thinking option (Medium)");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("shows an existing agent's only supported thinking level", async ({ page }) => {
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "agent-controls-single-thinking-",

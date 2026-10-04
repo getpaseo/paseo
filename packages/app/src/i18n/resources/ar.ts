@@ -2292,6 +2292,8 @@ export const ar: TranslationResources = {
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
         cycleAgentMode: "تبديل وضع الوكيل",
+        decreaseThinkingEffort: "تقليل مستوى التفكير",
+        increaseThinkingEffort: "زيادة مستوى التفكير",
         toggleVoiceMode: "تبديل الوضع الصوتي",
         startStopDictation: "بدء إملاء /stop",
         interruptAgent: "عامل المقاطعة",
