@@ -51,9 +51,12 @@ import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type {
   AgentCapabilityFlags,
+  AgentClient,
   AgentPersistenceHandle,
+  AgentSession,
   ProviderRefreshContext,
 } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
@@ -4179,4 +4182,178 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       mcpServers: [],
     });
   });
+});
+
+describe("ACPAgentSession permission requests still pending when the turn ends", () => {
+  const executePermission = (): RequestPermissionRequest => ({
+    sessionId: "session-1",
+    toolCall: { toolCallId: "tool-1", title: "echo hello", kind: "execute", status: "pending" },
+    options: [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ],
+  });
+
+  // Resolves to "pending" when the agent would still be waiting for an answer.
+  const answerOrPending = <T>(promise: Promise<T>): Promise<T | "pending"> =>
+    Promise.race([promise, new Promise<"pending">((resolve) => setTimeout(resolve, 0, "pending"))]);
+
+  function startTurnWithControlledPrompt(session: ACPAgentSession) {
+    const controls: {
+      resolve?: (response: PromptResponse) => void;
+      reject?: (error: Error) => void;
+    } = {};
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve, reject) => {
+          controls.resolve = resolve;
+          controls.reject = reject;
+        }),
+    );
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    return controls;
+  }
+
+  test("answers them as cancelled when the prompt fails", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const prompt = startTurnWithControlledPrompt(session);
+    await session.startTurn("hello");
+    const permission = session.requestPermission(executePermission());
+    const [request] = session.getPendingPermissions();
+
+    prompt.reject?.(new Error("prompt failed"));
+
+    await expect(answerOrPending(permission)).resolves.toEqual({
+      outcome: { outcome: "cancelled" },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.type === "permission_resolved" || event.type === "turn_failed")
+        .map((event) => event.type),
+    ).toEqual(["permission_resolved", "turn_failed"]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: request?.id,
+        resolution: { behavior: "deny", message: "Turn failed" },
+      }),
+    );
+  });
+
+  test("answers them as cancelled when the agent ends the turn as cancelled", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const prompt = startTurnWithControlledPrompt(session);
+    await session.startTurn("hello");
+    const permission = session.requestPermission(executePermission());
+    const [request] = session.getPendingPermissions();
+
+    prompt.resolve?.({ stopReason: "cancelled" });
+
+    await expect(answerOrPending(permission)).resolves.toEqual({
+      outcome: { outcome: "cancelled" },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: request?.id,
+        resolution: { behavior: "deny", message: "Interrupted" },
+      }),
+    );
+  });
+
+  test("keeps them answerable when the turn completes", async () => {
+    const session = createSession();
+    const prompt = startTurnWithControlledPrompt(session);
+    await session.startTurn("hello");
+    const permission = session.requestPermission(executePermission());
+
+    prompt.resolve?.({ stopReason: "end_turn" });
+
+    await expect(answerOrPending(permission)).resolves.toBe("pending");
+    const [request] = session.getPendingPermissions();
+    await session.respondToPermission(request!.id, { behavior: "allow" });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+  });
+
+  class SingleSessionClient implements AgentClient {
+    readonly provider = "claude-acp";
+    readonly capabilities: AgentCapabilityFlags = {
+      supportsStreaming: true,
+      supportsSessionPersistence: false,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: true,
+    };
+    constructor(private readonly session: AgentSession) {}
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+    async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+    async resumeSession(): Promise<AgentSession> {
+      throw new Error("resume is not used in this test");
+    }
+    async fetchCatalog() {
+      return { models: [], modes: [] };
+    }
+  }
+
+  for (const lateEnding of ["cancelled", "failed"] as const) {
+    test(`stay in step with the agent manager when Stop is honoured late and the turn ends ${lateEnding}`, async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), "paseo-acp-late-stop-"));
+      const session = createSession();
+      const prompt = startTurnWithControlledPrompt(session);
+      asInternals<{ connection: object }>(session).connection = {
+        ...asInternals<{ connection: object }>(session).connection,
+        cancel: vi.fn(async () => undefined),
+      };
+      const manager = new AgentManager({
+        clients: { "claude-acp": new SingleSessionClient(session) },
+        logger: createTestLogger(),
+      });
+      const agent = await manager.createAgent({ provider: "claude-acp", cwd }, undefined, {
+        workspaceId: undefined,
+      });
+      try {
+        void (async () => {
+          for await (const _event of manager.streamAgent(agent.id, "hello")) {
+            // Drain the run.
+          }
+        })();
+        await manager.waitForAgentRunStart(agent.id);
+
+        // Stop: the agent acknowledges the cancel but keeps working past the manager's
+        // grace period, so the manager settles the turn itself.
+        await manager.cancelAgentRun(agent.id);
+        // Still inside that prompt, the agent asks for permission, then ends the prompt.
+        const permission = session.requestPermission(executePermission());
+        await vi.waitFor(() => expect(manager.getPendingPermissions(agent.id)).toHaveLength(1));
+        if (lateEnding === "cancelled") {
+          prompt.resolve?.({ stopReason: "cancelled" });
+        } else {
+          prompt.reject?.(new Error("prompt failed"));
+        }
+
+        await expect(answerOrPending(permission)).resolves.toEqual({
+          outcome: { outcome: "cancelled" },
+        });
+        await vi.waitFor(() => expect(manager.getPendingPermissions(agent.id)).toEqual([]));
+        expect(session.getPendingPermissions()).toEqual([]);
+      } finally {
+        await manager.closeAgent(agent.id).catch(() => undefined);
+        await rm(cwd, { recursive: true, force: true });
+      }
+    }, 15_000);
+  }
 });
