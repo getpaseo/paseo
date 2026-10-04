@@ -121,6 +121,10 @@ export const es: TranslationResources = {
       fallback: "Mensaje...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Sugerencia de mensaje, pulsa Tab para aceptar",
+      chipAccessibilityLabel: "Usar sugerencia: {{text}}",
+    },
     input: {
       accessibilityLabel: "Agente de mensajes...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2070,7 +2074,7 @@ export const es: TranslationResources = {
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
-        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
+        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit, borradores de pull requests y sugerencias de prompts",
       selection: "Selección de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2080,6 +2084,9 @@ export const es: TranslationResources = {
       fallbackHint: "Si no está disponible, Paseo usa otro modelo disponible",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
+      suggestionSection: "Sugerencias de mensajes",
+      suggestionSharedHint: "Las sugerencias usan el modelo de generación de metadatos",
+      suggestionCustomHint: "Las sugerencias de mensajes usan este modelo",
     },
     general: {
       title: "General",
@@ -2495,6 +2502,11 @@ export const es: TranslationResources = {
           title: "Habilitar herramientasPaseo",
           hint: "Los agentes podrán gestionar árboles de trabajo, agentes y horarios.",
           accessibilityLabel: "Inyectar herramientasPaseo",
+        },
+        promptSuggestions: {
+          title: "Sugerir próximos mensajes",
+          hint: "Cuando un agente termina, sugerir qué pedir a continuación",
+          accessibilityLabel: "Sugerir próximos mensajes",
         },
         systemPrompt: {
           title: "Aviso del sistema",
