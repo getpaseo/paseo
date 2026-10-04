@@ -248,7 +248,9 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
           // Host modules have separately enforced SDK boundaries and need no local installation.
           if (
             (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||
-            /^(zod|react|react-native|@tanstack\/react-query)(\/|$)/.test(specifier) ||
+            /^(zod|react|react-native|react-native-gesture-handler|@tanstack\/react-query)(\/|$)/.test(
+              specifier,
+            ) ||
             isBuiltin(specifier) ||
             packageSpecifier === "@types/node"
           )
@@ -330,11 +332,14 @@ function runtimeSpecifierError(
   else if (
     target !== "client" &&
     (isPluginClientOnlySdkSpecifier(specifier) ||
-      /^((?:@types\/)?react(?:-dom|-native)?|use-sync-external-store|@tanstack\/react-query)(\/|$)/.test(
+      /^((?:@types\/)?react(?:-dom|-native|-native-gesture-handler)?|use-sync-external-store|@tanstack\/react-query)(\/|$)/.test(
         specifier,
       ))
   )
     kind = "client-only";
+  // The app provides only the package root, so a subpath would compile but fail to load.
+  else if (target === "client" && specifier.startsWith("react-native-gesture-handler/"))
+    kind = "Unsupported host";
   return kind
     ? {
         errors: [
@@ -406,6 +411,7 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
             "react",
             "react/jsx-runtime",
             "react-native",
+            "react-native-gesture-handler",
             "zod",
           ]
         : SERVER_HOST_MODULES,

@@ -170,6 +170,7 @@ export async function scaffoldPluginDirectory(
       "@types/react": "~19.2.0",
       react: "19.1.0",
       "react-native": "0.81.5",
+      "react-native-gesture-handler": "~2.28.0",
       typescript: "^5.9.3",
       zod: "^4.4.3",
     },

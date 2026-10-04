@@ -142,6 +142,7 @@ describe("plugin runtime entries", () => {
     "react",
     "react/jsx-runtime",
     "react-native",
+    "react-native-gesture-handler",
     "@getpaseo/plugin/client",
     "@getpaseo/plugin/client/ui",
   ])("rejects %s from server code", async (specifier) => {
@@ -487,6 +488,29 @@ export type Value = string;`,
     const { clientBundle } = await compilePlugin(entries);
     expect(clientBundle).toContain("react/jsx-runtime");
     expect(clientBundle).not.toContain("React.createElement");
+  });
+
+  it("leaves react-native-gesture-handler to the host's instance", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "client", "surface.tsx"),
+      `import { Text } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+export function Surface() {
+  return <GestureDetector gesture={Gesture.Pinch()}><Text>Zoom</Text></GestureDetector>;
+}`,
+    );
+    const { clientBundle } = await compilePlugin(entries);
+    expect(clientBundle).toContain('require("react-native-gesture-handler")');
+  });
+
+  it("rejects react-native-gesture-handler subpaths, which the host does not provide", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `import Swipeable from "react-native-gesture-handler/Swipeable"; export default function contribute() { return Swipeable; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("react-native-gesture-handler/Swipeable");
   });
 
   it("lowers async callbacks before Hermes evaluates the client bundle", async () => {

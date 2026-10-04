@@ -140,6 +140,7 @@ Paseo provides these modules to client code:
 | `react`                                | Components and hooks                                                                              |
 | `react/jsx-runtime`                    | Compiled JSX                                                                                      |
 | `react-native`                         | Cross-platform UI                                                                                 |
+| `react-native-gesture-handler`         | Touch gestures such as pinch, pan, swipe, and long press; see [Gestures](#gestures)               |
 | `zod`                                  | Shared schemas                                                                                    |
 
 The host owns its paired React and renderer versions. The SDK's React peer range permits patch
@@ -1218,6 +1219,46 @@ contains a padded form, full-width rows, a virtualized list, horizontal tabs, an
 | `durationMs` | `number`                                                   | `2200`      |
 
 Showing another toast replaces the currently visible toast. An empty message is ignored.
+
+### Gestures
+
+Import gestures from `react-native-gesture-handler`. Paseo supplies the app's instance, so plugin
+gestures coordinate with the app's own taps, scrolling, and sheets. Only the package root is
+supplied: the compiler rejects subpaths such as `react-native-gesture-handler/Swipeable`.
+
+- Call `.runOnJS(true)` on each gesture. Paseo does not supply `react-native-reanimated`, and plugin
+  bundles are not compiled with its worklet transform, so callbacks run on the JavaScript thread.
+  Drive motion with React Native's `Animated`.
+- Screens and panels render inside the app's `GestureHandlerRootView`. A React Native `Modal` you
+  open yourself does not: wrap its content in `GestureHandlerRootView`, because Android renders a
+  modal in a separate window.
+
+```tsx
+import { useMemo, useRef } from "react";
+import { Animated } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+
+export function ZoomableImage({ uri }: { uri: string }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pinch = useMemo(
+    () =>
+      Gesture.Pinch()
+        .runOnJS(true)
+        .onUpdate((event) => scale.setValue(event.scale))
+        .onEnd(() => Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start()),
+    [scale],
+  );
+  return (
+    <GestureDetector gesture={pinch}>
+      <Animated.Image
+        source={{ uri }}
+        resizeMode="contain"
+        style={{ flex: 1, transform: [{ scale }] }}
+      />
+    </GestureDetector>
+  );
+}
+```
 
 ### Icons
 

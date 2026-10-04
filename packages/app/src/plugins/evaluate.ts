@@ -8,6 +8,7 @@ import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 // eslint-disable-next-line no-restricted-imports -- plugin client runtime injects host ReactNative.
 import * as ReactNative from "react-native";
+import * as ReactNativeGestureHandler from "react-native-gesture-handler";
 // eslint-disable-next-line no-restricted-imports -- plugin bundles receive TanStack's real runtime, not Paseo's query wrappers.
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
@@ -441,6 +442,7 @@ export function runPluginClientBundle(
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
+    if (name === "react-native-gesture-handler") return ReactNativeGestureHandler;
     if (name === "@getpaseo/plugin") return pluginSharedRuntime;
     if (name === "@getpaseo/plugin/client")
       return {

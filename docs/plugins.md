@@ -258,7 +258,10 @@ server entry. Node and platform-specific code must never be reachable from the s
 The SDK boundary checks and real plugin-subprocess tests enforce these rules. Every SDK change
 must preserve them and update the public reference, migration guide, scaffold, and examples when
 an author-facing import changes. The plugin compiler enforces the same runtime entry rules for
-plugin-authored code. Keep the package export map and host-provided module maps consistent.
+plugin-authored code. Keep the package export map and host-provided module maps consistent. A
+third-party host module is listed three times: the compiler's host patterns and client externals
+(`packages/server/src/server/plugins/compiler.ts`), the app's `runtimeRequire`
+(`packages/app/src/plugins/evaluate.ts`), and the scaffold's development dependencies.
 
 The compiler rejects imports across runtime directories or SDK entries, React dependencies in
 server code, and Node imports in client code (including bare names such as `fs`). Shared modules
