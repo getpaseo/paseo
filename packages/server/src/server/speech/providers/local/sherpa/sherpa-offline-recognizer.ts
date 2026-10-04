@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs";
+import path from "node:path";
 import type pino from "pino";
 
 import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
+import { SHERPA_ONNX_MODEL_CATALOG, type LocalSttModelId } from "./model-catalog.js";
+import { getSherpaOnnxModelDir } from "./model-downloader.js";
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {
@@ -9,12 +12,58 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
-export interface SherpaOfflineRecognizerModel {
+interface SherpaTransducerModel {
   kind: "nemo_transducer";
   encoder: string;
   decoder: string;
   joiner: string;
   tokens: string;
+}
+
+interface SherpaSenseVoiceModel {
+  kind: "sense_voice";
+  model: string;
+  tokens: string;
+}
+
+export type SherpaOfflineRecognizerModel = SherpaTransducerModel | SherpaSenseVoiceModel;
+
+export function getSherpaOfflineRecognizerModel(
+  modelsDir: string,
+  modelId: LocalSttModelId,
+): SherpaOfflineRecognizerModel {
+  const modelDir = getSherpaOnnxModelDir(modelsDir, modelId);
+  const tokens = path.join(modelDir, "tokens.txt");
+  if (SHERPA_ONNX_MODEL_CATALOG[modelId].recognizer === "sense_voice") {
+    return { kind: "sense_voice", model: path.join(modelDir, "model.int8.onnx"), tokens };
+  }
+  return {
+    kind: "nemo_transducer",
+    encoder: path.join(modelDir, "encoder.int8.onnx"),
+    decoder: path.join(modelDir, "decoder.int8.onnx"),
+    joiner: path.join(modelDir, "joiner.int8.onnx"),
+    tokens,
+  };
+}
+
+function recognizerModelConfig(model: SherpaOfflineRecognizerModel) {
+  assertFileExists(model.tokens, "tokens");
+  if (model.kind === "sense_voice") {
+    assertFileExists(model.model, "SenseVoice model");
+    return {
+      senseVoice: { model: model.model, language: "auto", useInverseTextNormalization: 1 },
+      tokens: model.tokens,
+      modelType: "sense_voice",
+    };
+  }
+  assertFileExists(model.encoder, "offline encoder");
+  assertFileExists(model.decoder, "offline decoder");
+  assertFileExists(model.joiner, "offline joiner");
+  return {
+    transducer: { encoder: model.encoder, decoder: model.decoder, joiner: model.joiner },
+    tokens: model.tokens,
+    modelType: "nemo_transducer",
+  };
 }
 
 export interface SherpaOfflineRecognizerConfig {
@@ -54,10 +103,7 @@ export class SherpaOfflineRecognizerEngine {
       component: "offline-recognizer",
     });
 
-    assertFileExists(config.model.encoder, "offline encoder");
-    assertFileExists(config.model.decoder, "offline decoder");
-    assertFileExists(config.model.joiner, "offline joiner");
-    assertFileExists(config.model.tokens, "tokens");
+    const modelConfig = recognizerModelConfig(config.model);
 
     const sherpa = loadSherpaOnnxNode();
 
@@ -67,13 +113,7 @@ export class SherpaOfflineRecognizerEngine {
         featureDim: config.featureDim ?? 80,
       },
       modelConfig: {
-        transducer: {
-          encoder: config.model.encoder,
-          decoder: config.model.decoder,
-          joiner: config.model.joiner,
-        },
-        tokens: config.model.tokens,
-        modelType: "nemo_transducer",
+        ...modelConfig,
         numThreads: config.numThreads ?? 1,
         provider: config.provider ?? "cpu",
         debug: config.debug ?? 0,
