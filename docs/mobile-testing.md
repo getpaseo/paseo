@@ -68,14 +68,16 @@ the headless input helper cannot verify the
 The Android sidebar scroll-retention flow requires a connected host with enough
 workspaces to overflow the compact sidebar. Pass `TOP_WORKSPACE` and
 `SCROLLED_WORKSPACE` as the `serverId:workspaceId` suffixes of their sidebar row
-IDs. Choose one row near the top and one initially below the viewport. Keep the
-list stable during the run. The same flow checks reopening by swipe and button:
+IDs. Choose one row near the top and one initially below the viewport. Replace
+the quoted example values below with those IDs. Start in a workspace with the
+sidebar closed and keep the list stable during the run. The same flow checks
+reopening by swipe and button:
 
 ```bash
 agent-device replay packages/app/e2e/mobile/agent-device/native-sidebar-scroll-retention.android.yaml \
   --maestro --platform android --serial emulator-5556 --metro-port 8099 \
-  --env TOP_WORKSPACE=<serverId:workspaceId> \
-  --env SCROLLED_WORKSPACE=<serverId:workspaceId>
+  --env TOP_WORKSPACE='server-id:top-workspace-id' \
+  --env SCROLLED_WORKSPACE='server-id:scrolled-workspace-id'
 ```
 
 Pass this checkout's Metro port so the debug app uses the intended bundle.
