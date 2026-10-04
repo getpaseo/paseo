@@ -878,6 +878,7 @@ describe.skipIf(process.platform === "win32")(
           daemon: { relay: { enabled: false } },
         });
         expect(modeOf(dotfiles)).toBe(0o755);
+        expect(modeOf(linkedConfigPath)).toBe(PRIVATE_FILE_MODE);
       } finally {
         rmSync(parent, { recursive: true, force: true });
       }
