@@ -6,13 +6,14 @@ interface SiteFooterProps {
   width?: "default" | "prose" | "wide";
 }
 
+const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
+  prose: "max-w-prose p-6 md:p-12 md:pt-0",
+  default: "max-w-5xl p-6 md:p-20 md:pt-0",
+  wide: "max-w-7xl p-6 md:p-20 md:pt-0",
+};
+
 export function SiteFooter({ width = "default" }: SiteFooterProps) {
-  const widthClasses =
-    width === "prose"
-      ? "max-w-prose p-6 md:p-12 md:pt-0"
-      : width === "wide"
-        ? "max-w-7xl p-6 md:p-20 md:pt-0"
-        : "max-w-5xl p-6 md:p-20 md:pt-0";
+  const widthClasses = WIDTH_CLASSES[width];
   const alternatives = getAlternativePages();
   return (
     <footer className={`${widthClasses} mx-auto`}>

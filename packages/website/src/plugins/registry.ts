@@ -1,7 +1,9 @@
 import type { z } from "zod";
 import type { PublishedPluginSchema } from "@getpaseo/protocol/plugin-registry";
 import { CATEGORIES, type Category, type CategorySlug } from "./categories";
+import type { InstallCounts, InstallWindow } from "./installs";
 export { CATEGORIES, type Category, type CategorySlug };
+export type { InstallCounts, InstallWindow };
 export type Plugin = z.infer<typeof PublishedPluginSchema>;
 export interface Author {
   username: string;
@@ -9,7 +11,7 @@ export interface Author {
   github: string;
   npm?: string;
 }
-export type PluginSort = "popular" | "new";
+const DAY_MS = 24 * 60 * 60 * 1000;
 export function getCategory(slug: string): Category | null {
   return CATEGORIES.find((category) => category.slug === slug) ?? null;
 }
@@ -35,16 +37,6 @@ export function getPluginsByAuthor(plugins: Plugin[], owner: string): Plugin[] {
 export function installCommand(plugin: Plugin): string {
   return `paseo plugin install ${plugin.id}`;
 }
-export function pinnedInstallCommand(plugin: Plugin): string {
-  const artifact = plugin.artifact;
-  if (artifact.kind === "npm")
-    return `paseo plugin install npm:${artifact.package}@${artifact.version}`;
-  const source = artifact.remote
-    .replace(/^https:\/\/github.com\//, "github:")
-    .replace(/\.git$/, "");
-  const location = artifact.pluginPath ? `${source}:${artifact.pluginPath}` : source;
-  return `paseo plugin install ${location} --ref ${artifact.commit}`;
-}
 export function pluginVersion(plugin: Plugin): string {
   return plugin.artifact.kind === "npm"
     ? plugin.artifact.version
@@ -69,26 +61,31 @@ export function formatInstalls(count: number): string {
   const k = count / 1000;
   return `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
 }
-export interface PluginQuery {
-  category?: CategorySlug;
-  q?: string;
-  sort: PluginSort;
+/** Newest submissions first; equal dates keep index order. */
+export function newestFirst(plugins: Plugin[]): Plugin[] {
+  return [...plugins].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
 }
-export function queryPlugins(plugins: Plugin[], query: PluginQuery): Plugin[] {
-  const needle = query.q?.trim().toLowerCase() ?? "";
-  const matches = plugins.filter(
-    (plugin) =>
-      (!query.category || plugin.categories.includes(query.category)) &&
-      (!needle ||
-        `${plugin.name} ${plugin.description} ${plugin.id}`.toLowerCase().includes(needle)),
-  );
-  return sortPlugins(matches, query.sort);
+/** Most installs in the window first; equal counts keep index order. */
+export function mostInstalled(
+  plugins: Plugin[],
+  installs: Record<string, InstallCounts>,
+  window: InstallWindow,
+): Plugin[] {
+  const count = (plugin: Plugin) => installs[plugin.id]?.[window] ?? 0;
+  return [...plugins].sort((a, b) => count(b) - count(a));
 }
-export function sortPlugins(list: Plugin[], sort: PluginSort): Plugin[] {
-  return [...list].sort(
-    (a, b) =>
-      (sort === "new"
-        ? b.updatedAt.localeCompare(a.updatedAt)
-        : (b.installs ?? 0) - (a.installs ?? 0)) || a.name.localeCompare(b.name),
-  );
+/** How long ago the registry accepted the plugin, relative to the loader's clock. */
+export function addedAgo(plugin: Plugin, now: string): string {
+  const days = Math.floor((Date.parse(now) - Date.parse(plugin.submittedAt)) / DAY_MS);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 14) return `${days}d ago`;
+  return `${Math.round(days / 7)}w ago`;
+}
+/** A README usually opens with the plugin's name and quoted description; the page shows both. */
+export function readmeBody(readme: string): string {
+  return readme
+    .replace(/^\s*#\s[^\n]*\n+/, "")
+    .replace(/^(>[^\n]*\n)+\n*/, "")
+    .trimStart();
 }

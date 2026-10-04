@@ -629,7 +629,9 @@ export function resolveConfigFromPersisted(
     pluginRegistries: persisted.pluginRegistries,
     pluginRegistryUrl: env.PASEO_PLUGIN_REGISTRY,
     pluginRegistryEnabled:
-      parseBooleanEnv(env.PASEO_PLUGIN_REGISTRY_ENABLED) ?? persisted.pluginRegistryEnabled ?? false,
+      parseBooleanEnv(env.PASEO_PLUGIN_REGISTRY_ENABLED) ??
+      persisted.pluginRegistryEnabled ??
+      false,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),
