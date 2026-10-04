@@ -18,6 +18,8 @@ interface FakeClaudeQuery {
   /** Makes the next setPermissionMode call fail the way a dead Claude process does. */
   failNextPermissionMode(message: string): void;
   emit(message: SDKMessage): void;
+  /** Ends the stream before a result, the way it ends when the Claude Code process dies. */
+  end(): void;
 }
 
 function createFakeClaudeQuery(): FakeClaudeQuery {
@@ -77,6 +79,7 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
       if (waiter) waiter({ value: message, done: false });
       else pending.push(message);
     },
+    end: finish,
   };
 }
 
@@ -94,14 +97,21 @@ afterEach(async () => {
   await Promise.all(sessions.splice(0).map((session) => session.close()));
 });
 
+/** Claude Code talking to the Anthropic API, where it offers Auto mode. */
+const ANTHROPIC_API_ENV = { CLAUDE_CODE_USE_BEDROCK: "0", CLAUDE_CODE_USE_VERTEX: "0" };
+/** Claude Code on Bedrock, where Auto mode does not exist. */
+const BEDROCK_ENV = { CLAUDE_CODE_USE_BEDROCK: "1" };
+
 async function createPlanSession(
   config: Partial<AgentSessionConfig> = {},
+  options: { env?: Record<string, string> } = {},
 ): Promise<PlanSessionHarness> {
   const launches: ClaudeQueryInput[] = [];
   const queries: FakeClaudeQuery[] = [];
   const client = new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveBinary: async () => "/test/claude/bin",
+    runtimeSettings: options.env ? { env: options.env } : undefined,
     queryFactory: (input) => {
       launches.push(input);
       const fake = createFakeClaudeQuery();
@@ -138,6 +148,12 @@ type CallbackOutcome =
   | { settled: true; result: PermissionResult | null }
   | { settled: false }
   | { rejected: string };
+
+async function letThePumpRun(): Promise<void> {
+  for (let tick = 0; tick < 10; tick += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
 
 /** A callback that waits for a person never settles on its own; one Paseo answers settles at once. */
 async function settledOutcome(
@@ -479,12 +495,21 @@ describe("Claude Plan state from stored and legacy configs", () => {
     };
   }
 
-  test("an agent stored with the old plan mode id resumes planning in Always Ask", async () => {
-    const { session, launches } = await createPlanSession({ modeId: "plan" });
+  test("an agent stored with the old plan mode id resumes planning in Claude's default mode", async () => {
+    const { session, launches } = await createPlanSession(
+      { modeId: "plan" },
+      { env: ANTHROPIC_API_ENV },
+    );
     await session.startTurn("continue planning");
 
-    await expect(planState(session)).resolves.toEqual({ mode: "default", plan: true });
+    await expect(planState(session)).resolves.toEqual({ mode: "auto", plan: true });
     expect(launches[0]?.options.permissionMode).toBe("plan");
+  });
+
+  test("an old plan mode id resumes in Always Ask where Claude Code has no Auto mode", async () => {
+    const { session } = await createPlanSession({ modeId: "plan" }, { env: BEDROCK_ENV });
+
+    await expect(planState(session)).resolves.toEqual({ mode: "default", plan: true });
   });
 
   test("a stored Plan flag beside Bypass resumes Bypass plus Plan", async () => {
@@ -507,12 +532,12 @@ describe("Claude Plan state from stored and legacy configs", () => {
   });
 
   test("an explicit Plan off outranks the old plan mode id", async () => {
-    const { session } = await createPlanSession({
-      modeId: "plan",
-      featureValues: { plan_mode: false },
-    });
+    const { session } = await createPlanSession(
+      { modeId: "plan", featureValues: { plan_mode: false } },
+      { env: ANTHROPIC_API_ENV },
+    );
 
-    await expect(planState(session)).resolves.toEqual({ mode: "default", plan: false });
+    await expect(planState(session)).resolves.toEqual({ mode: "auto", plan: false });
   });
 
   test("resuming a session applies the stored access mode and Plan flag", async () => {
@@ -594,12 +619,6 @@ describe("Claude Plan follows what Claude Code reports", () => {
       skills: [],
       plugins: [],
     } as unknown as SDKMessage;
-  }
-
-  async function letThePumpRun(): Promise<void> {
-    for (let tick = 0; tick < 10; tick += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
   }
 
   function modeChanges(events: AgentStreamEvent[]) {
@@ -777,6 +796,35 @@ describe("Claude permission cards on the Plan path settle exactly once", () => {
     ).resolves.toBeUndefined();
 
     expect(resolutions(harness.events)).toHaveLength(1);
+  });
+
+  test("a card from a turn whose Claude Code process died settles once", async () => {
+    const harness = await createPlanSession({ modeId: "default" });
+    await harness.session.setFeature?.("plan_mode", true);
+    await harness.session.startTurn("plan");
+    const callback = settledOutcome(
+      harness.canUseTool()("mcp__qa__search_docs", { query: "x" }, toolCallOptions("tool-mcp")),
+    );
+    const [request] = harness.session.getPendingPermissions();
+    if (!request) throw new Error("Expected a pending tool permission");
+
+    harness.queries[0]?.end();
+    await letThePumpRun();
+
+    await expect(callback).resolves.toEqual({
+      rejected: "Claude stream ended before terminal result",
+    });
+    // The manager rebuilds its cards from this list, so a dead request must not stay in it.
+    expect(harness.session.getPendingPermissions()).toEqual([]);
+    await expect(
+      harness.session.respondToPermission(request.id, { behavior: "allow" }),
+    ).resolves.toBeUndefined();
+    expect(resolutions(harness.events)).toEqual([
+      expect.objectContaining({
+        requestId: request.id,
+        resolution: expect.objectContaining({ behavior: "deny" }),
+      }),
+    ]);
   });
 
   test("a late answer after the user interrupted the turn is accepted once", async () => {

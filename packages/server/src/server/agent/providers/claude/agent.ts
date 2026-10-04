@@ -73,6 +73,7 @@ import {
   resolveClaudeExecutionMode,
   selectClaudeMode,
   toClaudeSdkPermissionMode,
+  type ClaudeAccessMode,
   type ClaudeExecutionMode,
 } from "./execution-mode.js";
 import {
@@ -968,7 +969,7 @@ function assertClaudeModeCanRun(mode: PermissionMode, env: NodeJS.ProcessEnv): v
 
 function claudeModeCatalog(env: NodeJS.ProcessEnv): {
   modes: AgentMode[];
-  defaultModeId: PermissionMode;
+  defaultModeId: ClaudeAccessMode;
 } {
   if (claudeAutoModeUnavailableOn(env)) {
     return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
@@ -1633,7 +1634,10 @@ export class ClaudeAgentClient implements AgentClient {
     return buildClaudeFeatures({
       modelId: claudeConfig.model,
       fastModeEnabled: claudeConfig.featureValues?.fast_mode === true,
-      planModeEnabled: resolveClaudeExecutionMode(claudeConfig).isPlanMode,
+      planModeEnabled: resolveClaudeExecutionMode(
+        claudeConfig,
+        claudeModeCatalog(this.buildProviderEnv()).defaultModeId,
+      ).isPlanMode,
     });
   }
 
@@ -2179,7 +2183,10 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    this.executionMode = resolveClaudeExecutionMode(config);
+    this.executionMode = resolveClaudeExecutionMode(
+      config,
+      claudeModeCatalog(this.harnessEnvironment).defaultModeId,
+    );
   }
 
   private get sdkPermissionMode(): PermissionMode {
@@ -3760,6 +3767,9 @@ class ClaudeAgentSession implements AgentSession {
   private failActiveTurns(errorMessage: string): void {
     const failure = this.buildTurnFailedEvent(errorMessage);
     this.flushPendingToolCalls();
+    // The failed query can no longer take an answer, and the manager rebuilds its cards from
+    // this list, so a request left in it would come back as a card nobody can answer.
+    this.rejectAllPendingPermissions(new Error(errorMessage));
     if (this.activeForegroundTurnId) {
       this.finishForegroundTurn(failure);
       return;

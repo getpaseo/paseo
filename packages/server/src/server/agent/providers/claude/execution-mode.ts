@@ -19,20 +19,25 @@ export function isClaudeAccessMode(value: unknown): value is ClaudeAccessMode {
   );
 }
 
-export function resolveClaudeExecutionMode(config: {
-  modeId?: string;
-  featureValues?: Record<string, unknown>;
-}): ClaudeExecutionMode {
+/** `defaultAccessMode` is Claude's default mode where this session runs, such as Auto. */
+export function resolveClaudeExecutionMode(
+  config: { modeId?: string; featureValues?: Record<string, unknown> },
+  defaultAccessMode: ClaudeAccessMode,
+): ClaudeExecutionMode {
   const planModeValue = config.featureValues?.plan_mode;
+  // COMPAT(claudePlanMode): added in v0.11.0, remove after 2027-04-05 once stored agents and
+  // clients send plan_mode. Agents saved before the split only kept modeId "plan" and lost the
+  // access mode, so they resume planning in Claude's default access mode.
+  const isLegacyPlan = config.modeId === CLAUDE_PLAN_MODE_ID;
+  let accessMode: ClaudeAccessMode = "default";
+  if (isClaudeAccessMode(config.modeId)) {
+    accessMode = config.modeId;
+  } else if (isLegacyPlan) {
+    accessMode = defaultAccessMode;
+  }
   return {
-    accessMode: isClaudeAccessMode(config.modeId) ? config.modeId : "default",
-    isPlanMode:
-      typeof planModeValue === "boolean"
-        ? planModeValue
-        : // COMPAT(claudePlanMode): added in v0.11.0, remove after 2027-04-05 once stored agents
-          // and clients send plan_mode. Agents saved before the split only kept modeId "plan" and
-          // lost the access mode, so they resume planning in the default access mode.
-          config.modeId === CLAUDE_PLAN_MODE_ID,
+    accessMode,
+    isPlanMode: typeof planModeValue === "boolean" ? planModeValue : isLegacyPlan,
   };
 }
 
