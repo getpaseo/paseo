@@ -303,6 +303,10 @@ const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
+// session/cancel is a notification; the turn only ends when the in-flight
+// session/prompt settles. Providers may take seconds to tear down tool calls
+// or park native subagents, so the interrupt ack window is generous.
+const ACP_INTERRUPT_TIMEOUT_MS = 15_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -497,6 +501,7 @@ interface ACPAgentSessionOptions {
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  interruptTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
 }
 
@@ -1658,6 +1663,7 @@ export class ACPAgentClient implements AgentClient {
 export class ACPAgentSession implements AgentSession, ACPClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
+  readonly interruptTimeoutMs: number;
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -1719,6 +1725,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private readonly foregroundTurnIdleWaiters = new Set<() => void>();
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1756,6 +1763,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentTitle = config.title ?? null;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.interruptTimeoutMs = options.interruptTimeoutMs ?? ACP_INTERRUPT_TIMEOUT_MS;
     this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
@@ -2460,8 +2468,36 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    if (!this.activeForegroundTurnId) {
+      return;
+    }
+
+    // ACP session/cancel is a notification: this promise resolves once the
+    // cancel is written, not once the agent stops. The turn only ends when the
+    // in-flight session/prompt settles, so wait for that boundary — callers
+    // treat a resolved interrupt() as proof the run stopped and may start a
+    // replacement turn immediately after.
+    await this.connection.cancel({ sessionId: this.sessionId });
+    await this.waitForForegroundTurnIdle();
+  }
+
+  private waitForForegroundTurnIdle(): Promise<void> {
+    if (!this.activeForegroundTurnId) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.foregroundTurnIdleWaiters.add(resolve);
+    });
+  }
+
+  private settleForegroundTurnIdleWaiters(): void {
+    if (this.foregroundTurnIdleWaiters.size === 0) {
+      return;
+    }
+    const waiters = [...this.foregroundTurnIdleWaiters];
+    this.foregroundTurnIdleWaiters.clear();
+    for (const resolve of waiters) {
+      resolve();
     }
   }
 
@@ -2512,6 +2548,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
+    this.settleForegroundTurnIdleWaiters();
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -3278,6 +3315,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.activeForegroundTurnId = null;
+    this.settleForegroundTurnIdleWaiters();
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
