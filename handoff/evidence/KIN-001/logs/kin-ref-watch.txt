@@ -1,0 +1,2 @@
+PASS: 18 watch policy cases; no real watch transport tested.
+watch-exit=0

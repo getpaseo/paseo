@@ -1,0 +1,2 @@
+PASS: 9 release-manifest gate unit checks. Synthetic inputs, not signing/upload proof.
+gate-exit=0
