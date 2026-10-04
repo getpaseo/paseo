@@ -610,12 +610,15 @@ test("ordinary subagent tool calls render sub_agent details without inventing ch
     }),
   );
 });
-for (const [variants, reasoningEffortVariants, expected] of [
-  [["low", "high"], ["medium"], ["medium"]],
-  [["low", "high"], "unknown", ["low", "high"]],
-  [[], [], ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]],
+for (const [variants, expected] of [
+  [
+    ["low", "high"],
+    ["low", "high"],
+  ],
+  ["unknown", ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]],
+  [[], ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]],
 ] as const) {
-  test(`catalogue effort discovery ${JSON.stringify(reasoningEffortVariants)} with variants ${JSON.stringify(variants)}`, async () => {
+  test(`catalogue effort discovery with variants ${JSON.stringify(variants)}`, async () => {
     const model = {
       modelId: "test-model",
       providerId: "meta",
@@ -623,7 +626,6 @@ for (const [variants, reasoningEffortVariants, expected] of [
       contextLimit: 123456,
       isDefault: true,
       variants,
-      reasoningEffortVariants,
       defaultReasoningEffort: "high",
     };
     const h = await harness("catalog-controls", { MUSE_TEST_MODELS: JSON.stringify([model]) });
@@ -639,6 +641,50 @@ for (const [variants, reasoningEffortVariants, expected] of [
     });
   });
 }
+test("catalogue loads models whose effort tiers carry descriptions", async () => {
+  const deepest = "Use this for deepest analysis and complex fixes.";
+  const row = (modelId: string, isDefault: boolean) => ({
+    modelId,
+    providerId: "meta",
+    displayLabel: modelId,
+    contextLimit: 1000000,
+    isDefault,
+    defaultReasoningEffort: "max",
+    variants: ["minimal", "low", "medium", "high", "xhigh", "max"],
+    reasoningEffortVariants: isDefault ? [] : [{ tier: "xhigh", description: deepest }],
+  });
+  const models = [
+    row("muse-spark-1.3", true),
+    row("muse-spark-1.3-contributor", false),
+    row("muse-spark-1.2", false),
+    row("muse-spark-1.2-contributor", false),
+  ];
+  const h = await harness("catalog-controls", { MUSE_TEST_MODELS: JSON.stringify(models) });
+  await h.send({ type: "catalog", requestId: "models" });
+  const result = await h.wait(
+    (event) => event.type === "catalog" || event.type === "request.failed",
+  );
+  const offered = [
+    { id: "minimal" },
+    { id: "low" },
+    { id: "medium" },
+    { id: "high" },
+    { id: "xhigh" },
+    { id: "max", isDefault: true },
+  ];
+  expect(result).toMatchObject({
+    type: "catalog",
+    catalog: {
+      defaultModel: "muse-spark-1.3",
+      models: [
+        { id: "muse-spark-1.3", defaultThinkingOptionId: "max" },
+        { id: "muse-spark-1.3-contributor", thinkingOptions: offered },
+        { id: "muse-spark-1.2", thinkingOptions: offered },
+        { id: "muse-spark-1.2-contributor", thinkingOptions: offered },
+      ],
+    },
+  });
+});
 test("status accepts future credential states and drains its maintenance host", async () => {
   const h = await harness("catalog-controls", { MUSE_TEST_ACCOUNT: "futureCredential" });
   expect(await h.provider.status!({ launch: h.launch })).toEqual({ available: true });

@@ -115,8 +115,10 @@ export const catalogSchema = z.object({
       contextLimit: z.number().nullable(),
       isDefault: z.boolean(),
       defaultReasoningEffort: effortSchema.nullable().optional(),
-      reasoningEffortVariants: z.union([z.array(effortSchema), z.literal("unknown")]).default([]),
-      variants: z.array(effortSchema).default([]),
+      reasoningEffortVariants: z
+        .array(z.object({ tier: effortSchema, description: z.string().optional() }))
+        .default([]),
+      variants: z.union([z.array(effortSchema), z.literal("unknown")]).default([]),
     }),
   ),
 });
