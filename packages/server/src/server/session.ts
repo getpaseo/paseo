@@ -5061,6 +5061,14 @@ export class Session {
         query,
         pathFormat: searchesWorkspace ? "relative" : "absolute",
         pathQueryPolicy: searchesWorkspace ? "slashes" : "rooted",
+        absolutePathPolicy: searchesWorkspace ? "within-root" : "browse",
+        searchRoots: searchesWorkspace
+          ? undefined
+          : this.daemonConfigStore
+              .get()
+              .projects?.searchRoots?.map((root) =>
+                expandTilde(process.platform === "win32" ? root.replace(/\\/g, "/") : root),
+              ),
         blankQueryBehavior: searchesWorkspace ? "children" : "none",
         rootAliases: searchesWorkspace ? [] : ["~"],
         traversableHiddenDirectoryNames: searchesWorkspace

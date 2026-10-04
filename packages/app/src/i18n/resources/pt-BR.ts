@@ -1998,6 +1998,7 @@ export const ptBR: TranslationResources = {
     addHost: "Adicionar host",
     enableBuiltInDaemon: "Ativar o daemon integrado",
     projects: "Projetos",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "Não foi possível carregar projetos do host {{hostName}}: {{message}}",
       editProject: "Editar {{projectName}}",

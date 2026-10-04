@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -89,7 +90,9 @@ async function dismissStackedModelPickerWithBackdrop(page: Page) {
     .getByTestId("agent-controls-settings-list")
     .getByRole("button", { name: /Select model/ })
     .click();
-  await expect(page.getByTestId("agent-controls-model-browser-sheet")).toBeVisible();
+  const modelBrowser = page.getByTestId("agent-controls-model-browser-sheet");
+  await expect(modelBrowser).toBeInViewport();
+  await waitForSettledPosition(modelBrowser);
   await page.mouse.click(MOBILE_VIEWPORT.width / 2, 24);
   await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeVisible();
   await expect(page.getByTestId("agent-controls-model-sheet")).toBeVisible();
