@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { ProviderSessionMissingError } from "../provider-session-missing-error.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
@@ -1632,6 +1633,20 @@ describe("Codex app-server provider", () => {
     );
 
     expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+    appServer.assertNoErrors();
+  });
+
+  test("classifies only the missing native rollout for session recovery", async () => {
+    const threadId = "archived-thread-id";
+    const appServer = createFakeCodexAppServer({
+      "thread/resume": () =>
+        Promise.reject(new Error(`no rollout found for thread id ${threadId}`)),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    await expect(provider.resumeSession(archivedThreadHandle())).rejects.toBeInstanceOf(
+      ProviderSessionMissingError,
+    );
     appServer.assertNoErrors();
   });
 

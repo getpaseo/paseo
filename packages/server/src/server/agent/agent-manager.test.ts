@@ -31,6 +31,7 @@ import {
 } from "../system-one/profile-routing.js";
 import { buildResourcePolicyPrompt } from "../resource-policy.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
+import { ProviderSessionMissingError } from "./provider-session-missing-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
@@ -752,6 +753,183 @@ test("plugin timeline annotations survive disk reopen and retries without duplic
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test.each(["resume", "reload"])(
+  "recovers a missing provider session on %s with its saved handoff",
+  async (action) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-missing-session-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new RecordingTimelineStore();
+    const prompts: AgentPromptInput[] = [];
+    let failStart = true;
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+        throw new ProviderSessionMissingError(handle.sessionId, new Error("no rollout found"));
+      }
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new (class extends TestAgentSession {
+          override async startTurn(prompt: AgentPromptInput) {
+            prompts.push(prompt);
+            if (failStart) throw new Error("temporary start failure");
+            return super.startTurn();
+          }
+        })(config);
+      }
+    })();
+    const managers: AgentManager[] = [];
+    const makeManager = () => {
+      const manager = new AgentManager({
+        clients: { codex: client },
+        registry: storage,
+        durableTimelineStore: store,
+        logger,
+      });
+      managers.push(manager);
+      return manager;
+    };
+    let manager = makeManager();
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "gpt-5.4" },
+      undefined,
+      { workspaceId: "saved-workspace", labels: { task: "keep" } },
+    );
+    const history: AgentTimelineItem = {
+      type: "user_message",
+      text: "Keep the additions in chat. Do not edit Confluence.",
+    };
+    try {
+      await manager.appendTimelineItem(agent.id, history);
+      await manager.flush();
+      if (action === "resume") {
+        await manager.closeAgent(agent.id);
+        manager = makeManager();
+        await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+      } else {
+        await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      }
+      const recovered = manager.getAgent(agent.id)!;
+      expect(recovered.persistence?.sessionId).not.toBe(agent.persistence?.sessionId);
+      expect(recovered).toMatchObject({
+        workspaceId: "saved-workspace",
+        labels: { task: "keep" },
+        createdAt: agent.createdAt,
+      });
+      expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toContainEqual(
+        history,
+      );
+      expect((await storage.get(agent.id))?.pendingHandoff).toContain(history.text);
+      await expect(manager.runAgent(agent.id, "continue")).rejects.toThrow(
+        "temporary start failure",
+      );
+      expect(manager.getAgent(agent.id)?.pendingHandoff).toContain(history.text);
+      await manager.closeAgent(agent.id);
+      manager = makeManager();
+      await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+      failStart = false;
+      await manager.runAgent(agent.id, "continue");
+      await manager.flush();
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain(history.text);
+      expect((await storage.get(agent.id))?.pendingHandoff).toBeUndefined();
+    } finally {
+      for (const entry of managers) await entry.closeAgent(agent.id).catch(() => undefined);
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["resume", "reload"])(
+  "closes the replacement when recovery handoff loading fails on %s",
+  async (action) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-recovery-cleanup-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new RecordingTimelineStore();
+    const sessions: TestAgentSession[] = [];
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+        throw new ProviderSessionMissingError(handle.sessionId, new Error("no rollout found"));
+      }
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const session = new TestAgentSession(config);
+        vi.spyOn(session, "close");
+        sessions.push(session);
+        return session;
+      }
+    })();
+    const makeManager = () =>
+      new AgentManager({
+        clients: { codex: client },
+        registry: storage,
+        durableTimelineStore: store,
+        logger,
+      });
+    let manager = makeManager();
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.flush();
+      if (action === "resume") {
+        await manager.closeAgent(agent.id);
+        manager = makeManager();
+      }
+      vi.spyOn(store, "getCommittedRows").mockRejectedValue(new Error("handoff read failed"));
+      const before = await storage.get(agent.id);
+      await expect(
+        action === "resume"
+          ? ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger })
+          : manager.reloadAgentSession(agent.id),
+      ).rejects.toThrow("handoff read failed");
+      expect(sessions[1].close).toHaveBeenCalledOnce();
+      expect((await storage.get(agent.id))?.persistence).toEqual(before?.persistence);
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["auth", "archived", "replacement"])(
+  "keeps the original record when missing-session recovery is unavailable: %s",
+  async (failure) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-missing-failure-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    let failed = false;
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+        if (failure === "auth") throw new Error("auth failed");
+        throw new ProviderSessionMissingError(handle.sessionId, new Error("no rollout found"));
+      }
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        if (failed) throw new Error("replacement failed");
+        return super.createSession(config);
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.closeAgent(agent.id);
+      if (failure === "archived") {
+        const record = (await storage.get(agent.id))!;
+        await storage.upsert({ ...record, archivedAt: "2026-10-02T00:00:00.000Z" });
+      }
+      const before = await storage.get(agent.id);
+      failed = true;
+      await expect(
+        ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger }),
+      ).rejects.toThrow(
+        { auth: "auth failed", archived: "no rollout found", replacement: "replacement failed" }[
+          failure
+        ],
+      );
+      expect(await storage.get(agent.id)).toEqual(before);
+      expect(manager.getAgent(agent.id)).toBeNull();
+    } finally {
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));

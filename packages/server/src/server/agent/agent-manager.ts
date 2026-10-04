@@ -99,6 +99,7 @@ import { buildAgentHandoffNote } from "./handoff.js";
 import { buildResourcePolicyPrompt, resolveResourcePolicy } from "../resource-policy.js";
 import type { ResourcePolicy } from "@getpaseo/protocol/messages";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
+import { ProviderSessionMissingError } from "./provider-session-missing-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -446,6 +447,7 @@ interface HandleStreamEventOptions {
 
 interface ManagedAgentBase {
   id: string;
+  pendingHandoff?: string;
   provider: AgentProvider;
   cwd: string;
   /**
@@ -774,10 +776,6 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
-  // A switched-to provider session starts empty. Its briefing waits here until
-  // the next prompt, so the switch itself costs no tokens and the note arrives
-  // attached to the thing it explains.
-  private readonly pendingHandoffs = new Map<string, string>();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
@@ -1640,10 +1638,6 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    // Decide residency from durable state inside the lifecycle lane. A loader may
-    // have read the record before a queued archive or restore completed. Residency is
-    // settled before the config is prepared, because a history load reads an archived
-    // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
     const currentResumeOptions = record
       ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
@@ -1677,18 +1671,103 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const session = await client.resumeSession(
+    const { session, recovered } = await this.resumeProviderSession(
+      client,
       handle,
       providerLaunchConfig,
       launchContext,
       currentResumeOptions,
+      record != null && purpose === "interactive",
     );
-    await this.requireExternalMcpSupport(session, storedConfig);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
-      ...options,
-      persistence: handle,
-      restoring: true,
-    });
+    let handedToRegistration = false;
+    try {
+      await this.requireExternalMcpSupport(session, storedConfig);
+      const pendingHandoff = recovered
+        ? await this.buildRecoveryHandoff(resolvedAgentId, storedConfig, record)
+        : record?.pendingHandoff;
+      handedToRegistration = true;
+      const restored = await this.registerSession(session, storedConfig, resolvedAgentId, {
+        ...options,
+        persistence: recovered ? undefined : handle,
+        pendingHandoff,
+        restoring: true,
+      });
+      if (recovered) {
+        await this.appendTimelineItem(resolvedAgentId, {
+          type: "notification",
+          level: "warning",
+          message:
+            "The previous provider session is missing. Started a new session with the saved conversation context.",
+        });
+      }
+      return restored;
+    } finally {
+      if (!handedToRegistration) await this.closeUnregisteredSession(session);
+    }
+  }
+
+  private async resumeProviderSession(
+    client: AgentClient,
+    handle: AgentPersistenceHandle,
+    config: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+    options: AgentResumeSessionOptions | undefined,
+    recoverMissing: boolean,
+  ): Promise<{ session: AgentSession; recovered: boolean }> {
+    try {
+      return {
+        session: await client.resumeSession(handle, config, launchContext, options),
+        recovered: false,
+      };
+    } catch (error) {
+      if (
+        !recoverMissing ||
+        !(error instanceof ProviderSessionMissingError) ||
+        error.sessionId !== handle.sessionId
+      ) {
+        throw error;
+      }
+      const session = await client.createSession(config, launchContext);
+      try {
+        await session.getRuntimeInfo();
+        if (!session.describePersistence()) {
+          throw new Error("Replacement provider session has no persistence handle", {
+            cause: error,
+          });
+        }
+        return { session, recovered: true };
+      } catch (createError) {
+        await this.closeUnregisteredSession(session);
+        throw createError;
+      }
+    }
+  }
+
+  private async getSavedHandoffTimeline(agentId: string): Promise<AgentTimelineItem[]> {
+    if (this.durableTimelineStore) {
+      return projectTimelineRows({
+        rows: await this.durableTimelineStore.getCommittedRows(agentId),
+        mode: "projected",
+      }).map((row) => row.item);
+    }
+    return this.timelineStore.has(agentId) ? this.timelineStore.getItems(agentId) : [];
+  }
+
+  private async buildRecoveryHandoff(
+    agentId: string,
+    config: AgentSessionConfig,
+    record: Pick<StoredAgentRecord, "pendingHandoff" | "title"> | null,
+  ): Promise<string> {
+    return (
+      record?.pendingHandoff ??
+      buildAgentHandoffNote({
+        title: record?.title ?? null,
+        cwd: config.cwd,
+        previous: { provider: config.provider, model: config.model ?? null },
+        next: { provider: config.provider, model: config.model ?? null },
+        timeline: await this.getSavedHandoffTimeline(agentId),
+      })
+    );
   }
 
   importProviderSession(input: {
@@ -1793,7 +1872,7 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options: { rehydrateFromDisk?: boolean } = {},
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
@@ -1801,13 +1880,13 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
-    const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
+    const rehydrateFromDisk = options.rehydrateFromDisk === true;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
-    const provider = handle?.provider ?? existing.provider;
+    const provider = handle ? handle.provider : existing.provider;
     const client = this.requireClient(provider);
     const refreshConfig = {
       ...existing.config,
@@ -1840,7 +1919,6 @@ export class AgentManager {
     let closedExisting: ManagedAgentClosed | undefined;
     let handedToRegistration = false;
     try {
-      // A persisted thread can have only one writer, even when its turn is idle.
       await this.closeReloadedSession(existing.session, agentId);
       await this.drainSessionEvents(agentId);
       this.cancelRunningProviderSubagents(agentId);
@@ -1849,23 +1927,37 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
-      session = handle
-        ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-        : await client.createSession(providerLaunchConfig, launchContext);
+      const resumed = handle
+        ? await this.resumeProviderSession(
+            client,
+            handle,
+            providerLaunchConfig,
+            launchContext,
+            undefined,
+            true,
+          )
+        : {
+            session: await client.createSession(providerLaunchConfig, launchContext),
+            recovered: false,
+          };
+      session = resumed.session;
       await this.requireExternalMcpSupport(session, storedConfig);
       this.assertAcceptingAgentRegistrations();
 
-      if (rehydrateFromDisk) {
-        // Wipe the in-memory timeline so registerSession mints a new epoch and
-        // hydrateTimelineFromProvider re-streams the freshly read provider history.
+      const pendingHandoff = resumed.recovered
+        ? await this.buildRecoveryHandoff(agentId, storedConfig, {
+            title: existing.config.title,
+            pendingHandoff: existing.pendingHandoff,
+          })
+        : existing.pendingHandoff;
+      const resetTimeline = rehydrateFromDisk && !resumed.recovered;
+      if (resetTimeline) {
         this.timelineStore.delete(agentId);
-        this.pendingHandoffs.delete(agentId);
         for (const event of this.providerSubagents.deleteParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
         }
       }
 
-      // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
       return this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
@@ -1874,7 +1966,8 @@ export class AgentManager {
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+        historyPrimed: resetTimeline ? false : preservedHistoryPrimed,
+        pendingHandoff,
         lastUsage: preservedLastUsage,
         usageTotals: existing.usageTotals,
         lastError: preservedLastError,
@@ -1904,24 +1997,6 @@ export class AgentManager {
     }
   }
 
-  /**
-   * Move a live agent to another provider. The Paseo agent id, workspace,
-   * labels, timestamps, and timeline survive the switch; the provider session
-   * does not.
-   *
-   * The new runtime is created, never resumed: a persisted session belongs to
-   * the provider that minted it. `registerSession` re-derives `persistence` and
-   * `runtimeInfo` from the session it installs, so the previous provider's
-   * handle leaves the record with it. A surviving handle would point the next
-   * `ensureAgentLoaded()` at a foreign session.
-   *
-   * Mode, thinking option, features, and provider options are dropped for the
-   * same reason: each names something only the old provider offers.
-   *
-   * A failed switch leaves the agent closed on its old provider, as reload
-   * does. The record still resumes its original session, so the switch is
-   * retryable and nothing is lost by declining it.
-   */
   setAgentProvider(
     agentId: string,
     provider: AgentProvider,
@@ -2049,17 +2124,13 @@ export class AgentManager {
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
-        // The canonical timeline is already primed and the new provider has no
-        // history of its own to replay into it.
         historyPrimed: true,
+        pendingHandoff: handoffNote,
         lastUsage: preservedLastUsage,
         usageTotals: existing.usageTotals,
         lastError: preservedLastError,
         attention: preservedAttention,
       });
-      this.pendingHandoffs.set(agentId, handoffNote);
-      // One timeline stretches across two provider sessions, so mark where the
-      // cut is: everything above it was said by a different brain.
       await this.appendTimelineItem(agentId, {
         type: "notification",
         level: "info",
@@ -3002,6 +3073,7 @@ export class AgentManager {
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
+      agent.pendingHandoff = undefined;
       return result.turnId;
     } catch (error) {
       if (pendingRun.settled) {
@@ -3042,17 +3114,11 @@ export class AgentManager {
     }
   }
 
-  /**
-   * Hands the waiting briefing to the provider in front of the prompt it belongs
-   * to, once. It rides as a system envelope so the person never sees it as a
-   * message they supposedly sent.
-   */
   private applyPendingHandoff(agentId: string, prompt: AgentPromptInput): AgentPromptInput {
-    const note = this.pendingHandoffs.get(agentId);
+    const note = this.requireSessionAgent(agentId).pendingHandoff;
     if (!note) {
       return prompt;
     }
-    this.pendingHandoffs.delete(agentId);
     const envelope = formatSystemNotificationPrompt(note);
     if (typeof prompt === "string") {
       return `${envelope}\n\n${prompt}`;
@@ -4195,6 +4261,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      pendingHandoff?: string;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -4372,23 +4439,26 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          pendingHandoff?: string;
         }
       | undefined;
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const registration = options ?? {};
     return {
       id: resolvedAgentId,
+      pendingHandoff: registration.pendingHandoff,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      owner: options?.owner,
+      workspaceId: registration.workspaceId,
+      owner: registration.owner,
       session,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: options?.createdAt ?? now,
-      updatedAt: options?.updatedAt ?? now,
+      createdAt: registration.createdAt ?? now,
+      updatedAt: registration.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
@@ -4402,17 +4472,17 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
       persistence: attachPersistenceCwd(
-        options?.persistence ?? session.describePersistence(),
+        registration.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
-      lastUserMessageAt: options?.lastUserMessageAt ?? null,
-      lastUsage: options?.lastUsage,
-      usageTotals: options?.usageTotals,
-      lastError: options?.lastError,
-      attention: resolveInitialAttention(options?.attention),
-      internal: config.internal ?? false,
-      labels: options?.labels ?? {},
+      historyPrimed: registration.historyPrimed ?? durableTimelineHasRows,
+      lastUserMessageAt: registration.lastUserMessageAt ?? null,
+      lastUsage: registration.lastUsage,
+      usageTotals: registration.usageTotals,
+      lastError: registration.lastError,
+      attention: resolveInitialAttention(registration.attention),
+      internal: Boolean(config.internal),
+      labels: registration.labels ?? {},
     } as ActiveManagedAgent;
   }
 
@@ -5617,6 +5687,7 @@ export class AgentManager {
         this.applyPendingHandoff(agent.id, prompt),
         options,
       );
+      agent.pendingHandoff = undefined;
       const turnIds = this.fallbackTurnIds.get(agent.id) ?? new Map<string, string>();
       turnIds.set(result.turnId, logicalTurnId);
       this.fallbackTurnIds.set(agent.id, turnIds);
@@ -5796,7 +5867,7 @@ export class AgentManager {
         );
       }
 
-      this.pendingHandoffs.set(agent.id, handoffNote);
+      agent.pendingHandoff = handoffNote;
 
       this.paseoToolPolicies.set(agent.id, paseoToolPolicy);
       agent.provider = profile.provider;

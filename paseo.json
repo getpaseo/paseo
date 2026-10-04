@@ -644,6 +644,24 @@
             "name": "withdrawn-question-after-reload"
           }
         ]
+      },
+      "codex-original-thread-restored": {
+        "params": ["sessionUrl", "lastReply"],
+        "steps": [
+          {
+            "url": "{{sessionUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{lastReply}}",
+            "timeoutMs": 20000
+          },
+          {
+            "action": "screenshot",
+            "name": "codex-original-thread-restored"
+          }
+        ]
       }
     }
   }

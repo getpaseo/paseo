@@ -105,6 +105,7 @@ import {
   THINKING_APPLIES_NEXT_TURN_NOTICE,
 } from "../provider-notices.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import { ProviderSessionMissingError } from "../provider-session-missing-error.js";
 import {
   applyCodexToolPolicy,
   CodexProviderOptionsSchema,
@@ -3996,6 +3997,12 @@ export class CodexAppServerAgentSession implements AgentSession {
         return;
       }
       this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
+      if (
+        error instanceof Error &&
+        error.message === `no rollout found for thread id ${threadId}`
+      ) {
+        throw new ProviderSessionMissingError(threadId, error);
+      }
       throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
     }
   }

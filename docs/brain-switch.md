@@ -38,7 +38,7 @@ the transcript survives. `setAgentProvider` therefore mirrors
 labels, workspace, owner, and timestamps — and differs from it only in calling
 `createSession` on a different provider's client instead of `resumeSession`.
 
-## What does not survive
+## Conversation context
 
 `config.model` moves to the requested model of the new provider. `modeId`,
 `thinkingOptionId`, `featureValues`, and `providerOptions` are dropped: each names
@@ -46,9 +46,25 @@ something only the previous provider offers.
 
 The native provider history does not move either. An OpenCode session is not a
 Claude session. The Paseo timeline remains and carries a `Switched provider: X → Y`
-marker at the cut; the substantive handover is the Second Brain's job.
+marker at the cut. A compact handoff note carries the available conversation
+context into the new provider's first turn. The agent record stores that note,
+so a daemon restart or a rejected first turn does not discard it. The note is
+consumed after the provider accepts the turn. The Second Brain supplies durable
+project context separately.
 
-## Failure
+## Missing native sessions
+
+An interactive resume or reload can encounter a deleted Codex rollout. In that
+case a replacement provider session keeps the same Paseo agent identity,
+metadata, and available timeline. A saved handoff takes precedence over a note
+rebuilt from the available conversation context. Cold recovery can only use
+context that was persisted; it cannot reconstruct a deleted native transcript.
+
+This recovery requires the specific missing-rollout error. Authentication,
+transport, and archived-history failures retain their original error and handle.
+A replacement that fails to initialize also leaves the stored record intact.
+
+## Failed switches
 
 A failed switch leaves the agent `closed` on its old provider, as reload does. The
 record still resumes its original session, so nothing is lost by declining and the
