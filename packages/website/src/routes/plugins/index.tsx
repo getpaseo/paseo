@@ -28,14 +28,17 @@ import {
 } from "~/plugins";
 import { ContributeLinks } from "~/plugins/contribute-links";
 import {
+  type BrowseQuery,
   browseHref,
   categoryHref,
   DEFAULT_WINDOW,
   mostInstalledHref,
+  parseSearchTerm,
   parseSort,
   parseWindow,
 } from "~/plugins/links";
 import { NewPluginCard, PluginRankRow } from "~/plugins/plugin-card";
+import { PluginSearch } from "~/plugins/plugin-search";
 import { WindowSwitch } from "~/plugins/window-switch";
 import "~/styles.css";
 
@@ -54,6 +57,8 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   utils: Wrench,
 };
 
+const DIRECTORY_SEARCH: BrowseQuery = { sort: "installs", window: DEFAULT_WINDOW };
+
 const SEE_ALL_CLASS =
   "inline-flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
 
@@ -63,13 +68,14 @@ export const Route = createFileRoute("/plugins/")({
     return window ? { window } : {};
   },
   beforeLoad: ({ location }) => {
-    // Keep links from before browse pages existed: /plugins?category=<slug>&sort=new.
+    // Keep links from before browse pages existed: /plugins?q=<term>&category=<slug>&sort=new.
     const params = new URLSearchParams(location.searchStr);
     const category = getCategory(params.get("category") ?? "");
     const sort = parseSort(params.get("sort")) ?? "installs";
-    if (category || sort === "new")
+    const q = parseSearchTerm(params.get("q"));
+    if (category || sort === "new" || q)
       throw redirect({
-        href: browseHref({ category: category?.slug, sort, window: DEFAULT_WINDOW }),
+        href: browseHref({ category: category?.slug, sort, window: DEFAULT_WINDOW, q }),
         statusCode: 301,
       });
   },
@@ -99,14 +105,15 @@ function PluginsPage() {
 
   return (
     <SiteShell width="default">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-medium tracking-tight">
           Plugins
           <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
             {plugins.length}
           </span>
         </h1>
-        <div className="flex gap-5">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+          <PluginSearch scope={DIRECTORY_SEARCH} className="w-full sm:w-56" />
           <ContributeLinks />
         </div>
       </div>

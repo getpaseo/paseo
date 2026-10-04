@@ -7,6 +7,7 @@ import {
   newestFirst,
   type Plugin,
   readmeBody,
+  searchPlugins,
 } from "./registry";
 import { readInstallCounts, recordInstall } from "./installs";
 import { loadRegistryIndex, loadRegistryPlugin } from "./published";
@@ -93,6 +94,23 @@ describe("plugin registry", () => {
       Object.keys(JSON.parse((await cache.get("plugin-installs-daily:acme/example")) ?? "{}")),
     ).toEqual(["2026-09-10", "2026-09-30", "2026-10-04"]);
   });
+  it("searches name, description, ID, and author, ignoring case", () => {
+    const other = {
+      ...plugin,
+      id: "zed/other",
+      name: "Other",
+      description: "Unrelated",
+      author: { github: "zed" },
+    };
+    const plugins = [plugin, other];
+    expect(searchPlugins(plugins, "EXAMPLE").map((p) => p.id)).toEqual(["acme/example"]);
+    expect(searchPlugins(plugins, "unrelated").map((p) => p.id)).toEqual(["zed/other"]);
+    expect(searchPlugins(plugins, "zed/").map((p) => p.id)).toEqual(["zed/other"]);
+    expect(searchPlugins(plugins, "acme").map((p) => p.id)).toEqual(["acme/example"]);
+    expect(searchPlugins(plugins, "  ")).toEqual(plugins);
+    expect(searchPlugins(plugins, "nothing")).toEqual([]);
+  });
+
   it("strips the README title and quoted description that the page already shows", () => {
     expect(readmeBody("# Example\n\n> An example\n> plugin\n\n## Usage\n")).toBe("## Usage\n");
     expect(readmeBody("## Usage\n\n> Note\n")).toBe("## Usage\n\n> Note\n");

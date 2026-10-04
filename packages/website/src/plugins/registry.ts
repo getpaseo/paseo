@@ -61,6 +61,17 @@ export function formatInstalls(count: number): string {
   const k = count / 1000;
   return `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
 }
+/** Plugins whose name, description, ID, or author contains the term, case-insensitively. */
+export function searchPlugins(plugins: Plugin[], term: string): Plugin[] {
+  const needle = term.trim().toLowerCase();
+  if (!needle) return plugins;
+  return plugins.filter((plugin) =>
+    [plugin.name, plugin.description, plugin.id, getAuthor(plugin).name]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle),
+  );
+}
 /** Newest submissions first; equal dates keep index order. */
 export function newestFirst(plugins: Plugin[]): Plugin[] {
   return [...plugins].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));

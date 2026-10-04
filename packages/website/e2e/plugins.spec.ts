@@ -74,6 +74,35 @@ test("ranks plugins on browse pages by installs in a window or by newest", async
   );
 });
 
+test("filters by search and clears to all plugins", async ({ page }) => {
+  await page.goto("/");
+  await openPlugins(page);
+
+  await searchPlugins(page, "graphite");
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: /^Results for “graphite”/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("main").getByRole("link", { name: /Graphite/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
+
+  await searchPlugins(page, "zzzz-nothing");
+  await expect(page.getByText("No plugins match.")).toBeVisible();
+  await page.getByRole("link", { name: "Clear filters" }).click();
+  await expect(page).toHaveURL(/\/plugins\/all$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search plugins" })).toHaveValue("");
+});
+
+test("replaces history while typing a search", async ({ page }) => {
+  await page.goto("/");
+  await page.goto("/plugins/all");
+  await searchPlugins(page, "graphite");
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test("keeps old category links working", async ({ page }) => {
   await page.goto("/plugins?category=git&sort=new");
   await expect(page).toHaveURL(/\/plugins\/category\/git\?sort=new$/);
@@ -137,6 +166,26 @@ test.describe("search engine visits without JavaScript", () => {
     );
   });
 
+  test("renders search results and submits the search form", async ({ page }) => {
+    await page.goto("/plugins/all?q=graphite");
+    await expect(
+      page.getByRole("heading", { level: 1, name: /^Results for “graphite”/ }),
+    ).toBeVisible();
+    await expect(page.getByRole("main").getByRole("link", { name: /Graphite/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
+
+    await page.goto("/plugins/category/git");
+    await searchPlugins(page, "fresh");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/plugins\/category\/git\?q=fresh$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: /^Results for “fresh” in Git/ }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: /Fresh Worktrees/ })).toBeVisible();
+    await page.getByRole("link", { name: "Clear", exact: true }).click();
+    await expect(page).toHaveURL(/\/plugins\/category\/git$/);
+  });
+
   test("returns real 404 pages for unknown plugins, authors, and categories", async ({ page }) => {
     const plugin = await page.goto("/plugins/acme/does-not-exist");
     expect(plugin?.status()).toBe(404);
@@ -156,6 +205,9 @@ test.describe("search engine visits without JavaScript", () => {
     const response = await request.get("/plugins?category=git", { maxRedirects: 0 });
     expect(response.status()).toBe(301);
     expect(response.headers().location).toMatch(/\/plugins\/category\/git$/);
+    const search = await request.get("/plugins?q=graphite", { maxRedirects: 0 });
+    expect(search.status()).toBe(301);
+    expect(search.headers().location).toMatch(/\/plugins\/all\?q=graphite$/);
   });
 
   test("discovers plugin, category, and author URLs through robots and the sitemap index", async ({
@@ -175,6 +227,10 @@ test.describe("search engine visits without JavaScript", () => {
     expect(sitemap).toContain("<loc>https://paseo.sh/plugins/omercnet/fresh-worktrees</loc>");
   });
 });
+
+async function searchPlugins(page: Page, term: string) {
+  await page.getByRole("searchbox", { name: "Search plugins" }).fill(term);
+}
 
 async function expectPageMetadata(page: Page, title: string, path: string) {
   await expect(page).toHaveTitle(title);

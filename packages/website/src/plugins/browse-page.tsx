@@ -4,6 +4,7 @@ import { ContributeLinks } from "./contribute-links";
 import type { InstallCounts } from "./installs";
 import { type BrowseQuery, browseHref } from "./links";
 import { PLUGIN_GRID_CLASS, PluginCard } from "./plugin-card";
+import { PluginSearch } from "./plugin-search";
 import {
   addedAgo,
   CATEGORIES,
@@ -13,6 +14,7 @@ import {
   mostInstalled,
   newestFirst,
   type Plugin,
+  searchPlugins,
 } from "./registry";
 import { WindowSwitch } from "./window-switch";
 
@@ -27,6 +29,8 @@ const CHIP_OFF = `${CHIP_BASE} border-white/10 text-muted-foreground`;
 const TAB_BASE = "-mb-px border-b pb-2 text-sm transition-colors";
 const TAB_ON = `${TAB_BASE} border-white text-white`;
 const TAB_OFF = `${TAB_BASE} border-transparent text-muted-foreground hover:text-foreground`;
+const CLEAR_CLASS =
+  "text-sm text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 const CONTRIBUTE_CLASS =
   "text-sm text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
@@ -43,24 +47,49 @@ export function BrowsePage({
   query: BrowseQuery;
 }) {
   const category = query.category ? getCategory(query.category) : null;
-  const scoped = category ? getPluginsInCategory(plugins, category.slug) : plugins;
+  const matches = query.q ? searchPlugins(plugins, query.q) : plugins;
+  const scoped = category ? getPluginsInCategory(matches, category.slug) : matches;
   const results =
     query.sort === "new" ? newestFirst(scoped) : mostInstalled(scoped, installs, query.window);
+  const title = category?.label ?? "All plugins";
+  const clearHref = browseHref({ ...query, q: undefined });
   return (
     <SiteShell width="wide">
       <div className="lg:flex lg:gap-12">
-        <CategoryNav plugins={plugins} query={query} />
+        <aside className="mb-8 lg:mb-0 lg:w-48 lg:flex-shrink-0">
+          <PluginSearch scope={query} className="mb-4 lg:mb-6" />
+          <CategoryNav plugins={matches} query={query} />
+        </aside>
         <div className="min-w-0 flex-1">
-          <h1 className="mb-6 text-3xl font-medium tracking-tight">
-            {category?.label ?? "All plugins"}
-            <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
-              {scoped.length}
-            </span>
-          </h1>
+          <div className="mb-6 flex items-baseline justify-between gap-4">
+            <h1 className="text-3xl font-medium tracking-tight">
+              {query.q ? `Results for “${query.q}”${category ? ` in ${title}` : ""}` : title}
+              <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
+                {scoped.length}
+              </span>
+            </h1>
+            {query.q && (
+              <a href={clearHref} className={CLEAR_CLASS}>
+                Clear
+              </a>
+            )}
+          </div>
           <SortTabs query={query} />
-          {results.length === 0 ? (
+          {results.length === 0 && query.q && (
+            <div className="mt-8 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-10 text-center">
+              <p className="text-sm text-muted-foreground">No plugins match.</p>
+              <a
+                href={clearHref}
+                className="mt-2 inline-block text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground"
+              >
+                Clear filters
+              </a>
+            </div>
+          )}
+          {results.length === 0 && !query.q && (
             <p className="mt-8 text-sm text-muted-foreground">No plugins in this category yet.</p>
-          ) : (
+          )}
+          {results.length > 0 && (
             <div className={`mt-8 ${PLUGIN_GRID_CLASS}`}>
               {results.map((plugin) =>
                 query.sort === "new" ? (
@@ -90,7 +119,7 @@ interface NavEntry {
   count: number;
 }
 
-/** Category sidebar on wide screens, a row of chips on narrow ones. */
+/** Category sidebar on wide screens, a row of chips on narrow ones. Counts follow the search. */
 function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery }) {
   const entries: NavEntry[] = [
     {
@@ -109,7 +138,7 @@ function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery
   ];
   return (
     <>
-      <nav aria-label="Categories" className="-ml-2.5 hidden w-48 flex-shrink-0 lg:block">
+      <nav aria-label="Categories" className="-ml-2.5 hidden lg:block">
         {entries.map((entry, index) => (
           <div key={entry.label}>
             <a
@@ -130,10 +159,7 @@ function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery
           <ContributeLinks className={CONTRIBUTE_CLASS} />
         </div>
       </nav>
-      <nav
-        aria-label="Categories"
-        className="-mx-6 mb-8 flex gap-2 overflow-x-auto px-6 pb-1 lg:hidden"
-      >
+      <nav aria-label="Categories" className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-1 lg:hidden">
         {entries.map((entry) => (
           <a
             key={entry.label}
