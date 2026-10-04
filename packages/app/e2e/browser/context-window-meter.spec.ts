@@ -1,6 +1,10 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test as base } from "../support/fixtures";
-import { expectComposerVisible, submitMessageWithButton } from "../support/helpers/composer";
+import {
+  composerLocator,
+  expectComposerVisible,
+  submitMessageWithButton,
+} from "../support/helpers/composer";
 import {
   type AgentUsageScript,
   closeContextWindowSheet,
@@ -371,6 +375,9 @@ test("context details support keyboard entry and dismiss when the viewport moves
   const usage = await scriptAgentUsage(page);
   await page.setViewportSize(DESKTOP);
   await openAgent(page, agent);
+  await submitMessageWithButton(page, "withhold synthetic user message until interrupted");
+  const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
+  await expect(stop).toBeVisible();
   const [claude] = claudeAndCodexReports();
   usage.answerNext([onPersonalLogin(claude!)]);
   const meter = page.getByTestId("context-window-meter");
@@ -387,10 +394,25 @@ test("context details support keyboard entry and dismiss when the viewport moves
   await expect(details.getByRole("button", { name: "Refresh Claude", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(details).toHaveCount(0);
+  await expect(stop).toBeVisible();
   await expect(trigger).toBeFocused();
   usage.answerNext([onPersonalLogin(claude!)]);
   await trigger.press("ArrowDown");
   await expect(details).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 850 });
   await expect(details).toHaveCount(0);
+});
+
+test("pointer hovering context details preserves composer focus", async ({ page, agent }) => {
+  const usage = await scriptAgentUsage(page);
+  await page.setViewportSize(DESKTOP);
+  await openAgent(page, agent);
+  const [claude] = claudeAndCodexReports();
+  usage.answerNext([onPersonalLogin(claude!)]);
+  const input = composerLocator(page);
+  await input.focus();
+  await hoverContextWindowMeter(page);
+  await expect(input).toBeFocused();
+  await leaveContextWindowMeter(page);
+  await expect(input).toBeFocused();
 });

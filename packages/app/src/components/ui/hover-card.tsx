@@ -15,6 +15,11 @@ import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { Portal } from "@gorhom/portal";
 import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
+import {
+  OverlayLayerProvider,
+  useOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
@@ -31,6 +36,8 @@ const CLOSE_GRACE_MS = 100;
 
 interface HoverCardContextValue {
   open: boolean;
+  layer: number;
+  setTriggerRef: (node: View | null) => void;
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
   openNow: () => void;
@@ -70,6 +77,7 @@ function WebHoverCard({
   disabled: boolean;
   children: ReactNode;
 }): ReactElement {
+  const layer = useOverlayLayer("floating");
   const triggerRef = useRef<View>(null);
   const contentRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
@@ -106,6 +114,52 @@ function WebHoverCard({
     }
   }, [clearGraceTimer, disabled]);
 
+  const keyPressed = useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (!isWeb) return false;
+      const trigger = triggerRef.current as unknown as HTMLElement | null;
+      if (!trigger) return false;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (focusInside()) trigger.focus();
+        clearGraceTimer();
+        setOpen(false);
+        return true;
+      } else if (
+        focusInside() &&
+        event.target === trigger &&
+        ["ArrowDown", "Enter", " "].includes(event.key)
+      ) {
+        event.preventDefault();
+        openNow();
+        requestAnimationFrame(() => {
+          (contentRef.current as unknown as HTMLElement | null)
+            ?.querySelector<HTMLElement>(
+              'button, [role="button"][tabindex="0"], a[href], input, [tabindex="0"]',
+            )
+            ?.focus();
+        });
+        return true;
+      }
+      return false;
+    },
+    [clearGraceTimer, focusInside, openNow],
+  );
+
+  const setOverlayScope = useWebOverlayRegistration({
+    active: open,
+    layer,
+    onKeyDown: keyPressed,
+    manageFocus: false,
+  });
+  const setTriggerRef = useCallback(
+    (node: View | null) => {
+      triggerRef.current = node;
+      setOverlayScope(node);
+    },
+    [setOverlayScope],
+  );
+
   useEffect(() => {
     if (!isWeb) return;
     const trigger = triggerRef.current as unknown as HTMLElement | null;
@@ -128,23 +182,8 @@ function WebHoverCard({
       )
         scheduleClose();
     };
-    const keyPressed = (event: KeyboardEvent) => {
-      if (!focusInside()) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        trigger.focus();
-        close();
-      } else if (event.target === trigger && ["ArrowDown", "Enter", " "].includes(event.key)) {
-        event.preventDefault();
-        openNow();
-        requestAnimationFrame(() => {
-          (contentRef.current as unknown as HTMLElement | null)
-            ?.querySelector<HTMLElement>(
-              'button, [role="button"][tabindex="0"], a[href], input, [tabindex="0"]',
-            )
-            ?.focus();
-        });
-      }
+    const openFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "ArrowDown") keyPressed(event);
     };
     const scrolled = (event: Event) => {
       if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
@@ -152,17 +191,17 @@ function WebHoverCard({
     };
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
-    document.addEventListener("keydown", keyPressed);
+    trigger.addEventListener("keydown", openFromKeyboard);
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     return () => {
       document.removeEventListener("focusin", focusEntered);
       document.removeEventListener("focusout", focusLeft);
-      document.removeEventListener("keydown", keyPressed);
+      trigger.removeEventListener("keydown", openFromKeyboard);
       document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", close);
     };
-  }, [clearGraceTimer, focusInside, openNow, scheduleClose]);
+  }, [clearGraceTimer, keyPressed, openNow, scheduleClose]);
 
   // While open, the safe zone covers trigger + content + the bridge between
   // them. Close only fires when the pointer leaves the safe zone; re-entering
@@ -185,11 +224,15 @@ function WebHoverCard({
   useEffect(() => clearGraceTimer, [clearGraceTimer]);
 
   const value = useMemo<HoverCardContextValue>(
-    () => ({ open, triggerRef, contentRef, openNow, scheduleClose }),
-    [open, openNow, scheduleClose],
+    () => ({ open, layer, setTriggerRef, triggerRef, contentRef, openNow, scheduleClose }),
+    [open, layer, setTriggerRef, openNow, scheduleClose],
   );
 
-  return <HoverCardContext.Provider value={value}>{children}</HoverCardContext.Provider>;
+  return (
+    <OverlayLayerProvider layer={layer}>
+      <HoverCardContext.Provider value={value}>{children}</HoverCardContext.Provider>
+    </OverlayLayerProvider>
+  );
 }
 
 export function HoverCardTrigger({
@@ -205,7 +248,7 @@ export function HoverCardTrigger({
   if (!ctx) return children;
   return (
     <View
-      ref={ctx.triggerRef}
+      ref={ctx.setTriggerRef}
       tabIndex={focusable ? 0 : undefined}
       accessibilityRole={focusable ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
@@ -234,10 +277,18 @@ interface HoverCardContentProps {
 export function HoverCardContent(props: HoverCardContentProps): ReactElement | null {
   const ctx = useContext(HoverCardContext);
   if (!ctx?.open) return null;
-  return <HoverCardSurface {...props} triggerRef={ctx.triggerRef} contentRef={ctx.contentRef} />;
+  return (
+    <HoverCardSurface
+      {...props}
+      layer={ctx.layer}
+      triggerRef={ctx.triggerRef}
+      contentRef={ctx.contentRef}
+    />
+  );
 }
 
 function HoverCardSurface({
+  layer,
   triggerRef,
   contentRef,
   placement,
@@ -249,6 +300,7 @@ function HoverCardSurface({
   testID,
   children,
 }: HoverCardContentProps & {
+  layer: number;
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
 }): ReactElement {
@@ -304,7 +356,7 @@ function HoverCardSurface({
 
   return (
     <Portal hostName={bottomSheetInternal?.hostName}>
-      <View pointerEvents="box-none" style={styles.portalOverlay}>
+      <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
         <FloatingSurface
           ref={contentRef}
           entering={FadeIn.duration(80)}

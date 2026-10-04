@@ -92,7 +92,7 @@ portal can cover them.
 Painting and keyboard ownership use the same relative layer model. Register
 desktop modal, combobox, and dropdown focus scopes with `useWebOverlayRegistration`; the
 highest painted scope alone receives overlay keys, traps focus, and restores
-focus when it closes. Do not add component-local global Escape listeners: two
+focus when it closes. Hover cards register with `manageFocus={false}`: they claim overlay keys without moving or trapping focus on pointer hover. Do not add component-local global Escape listeners: two
 stacked overlays would both close on one keypress.
 
 If an overlay is rendered by a global host rather than beneath its opener in
