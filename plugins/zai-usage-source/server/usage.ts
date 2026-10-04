@@ -141,10 +141,15 @@ function zaiPlanLabel(input: {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
+// Z.ai's documented authentication failures (1000 = authentication failed, 1001-1004 =
+// missing, invalid, expired or unverifiable token). They arrive on HTTP 200, so they are
+// reported as the 401 they mean rather than as a generic error.
+const ZAI_AUTH_FAILURE_CODES = new Set([1000, 1001, 1002, 1003, 1004]);
+
 // undici reports network failures as a TypeError and AbortSignal.timeout as a
 // DOMException named TimeoutError (AbortError on an externally aborted signal). Only
-// these are safe to swallow for enrichment data; anything else — schema drift,
-// programming errors — must propagate.
+// these, and an unreadable body, are safe to swallow for enrichment data; anything
+// else — programming errors — must propagate.
 function isZaiTransportError(err: unknown): boolean {
   if (err instanceof TypeError) return true;
   return err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError");
@@ -166,9 +171,18 @@ async function fetchSubscription(input: {
 }): Promise<ZaiSubscription | null> {
   const res = await fetchZai({ ...input, url: ZAI_SUBSCRIPTION_URL });
   if (!res.ok) return null;
-  const resp = ZaiSubscriptionResponseSchema.parse(await res.json());
-  if (resp.success === false) return null;
-  return resp.data?.[0] ?? null;
+  // Unreadable subscription data only costs the plan label; it must not discard the
+  // quota bars, which come from a separate response.
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+  const resp = ZaiSubscriptionResponseSchema.safeParse(body);
+  if (!resp.success || resp.data.success === false) return null;
+  return resp.data.data?.[0] ?? null;
 }
 
 export async function fetchUsage(
@@ -180,7 +194,7 @@ export async function fetchUsage(
 
   const [subscription, res] = await Promise.all([
     // Subscription only enriches the plan label; an unreachable endpoint must
-    // never take the quota bars down. Everything else rethrows.
+    // never take the quota bars down. Anything else rethrows.
     fetchSubscription({ fetchApi, token }).catch((err: unknown) => {
       if (!isZaiTransportError(err)) throw err;
       return null;
@@ -194,6 +208,8 @@ export async function fetchUsage(
 
   const resp = ZaiQuotaResponseSchema.parse(await res.json());
   if (resp.success === false) {
+    if (typeof resp.code === "number" && ZAI_AUTH_FAILURE_CODES.has(resp.code))
+      return unavailable({ kind: "rejected", status: 401 });
     throw new Error(`Z.ai usage API rejected the request: ${resp.msg ?? `code ${resp.code}`}`);
   }
   // The usage bars only ever come from quota — without it, "available" with no
