@@ -643,6 +643,7 @@ export const fr: TranslationResources = {
         closeLeft: "Près de la gauche",
         closeRight: "Près de la droite",
         closeOthers: "Fermer les autres onglets",
+        moveToWorkspace: "Déplacer vers un workspace…",
         moveToMain: "Déplacer vers le panneau principal",
         reloadAgent: "Agent de rechargement",
         reloadAgentTooltip:
@@ -721,6 +722,11 @@ export const fr: TranslationResources = {
             "Cela fermera le(s) terminal(s){{terminals}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           tabs: "Cela fermera les onglets{{tabs}}.",
           agents: "Cela archivera les agents{{agents}}.",
+        },
+        moveSheet: {
+          title: "Déplacer l’onglet vers un workspace",
+          hint: "L’agent continue de s’exécuter dans son répertoire d’origine.",
+          empty: "Aucun autre workspace disponible",
         },
       },
     },
