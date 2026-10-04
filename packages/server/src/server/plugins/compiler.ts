@@ -12,11 +12,6 @@ import {
 const nodeRequire = createRequire(import.meta.url);
 const ESBUILD_BINARY_PATH = "ESBUILD_BINARY_PATH";
 
-// esbuild resolves its own platform binary via require.resolve() the first time its
-// module is evaluated. Inside the packaged desktop app that resolves to a path under
-// app.asar even though electron-builder unpacks the real binary to app.asar.unpacked.
-// child_process.spawn bypasses Electron's asar fs shim, so the OS rejects that path
-// with ENOTDIR. Point esbuild at the real unpacked binary before its module loads.
 export function unpackedEsbuildBinaryFromPackageDir(
   esbuildPackageDir: string,
   platform: NodeJS.Platform,
@@ -60,8 +55,6 @@ function loadEsbuild(): typeof import("esbuild") {
   if (unpackedBinary) process.env[ESBUILD_BINARY_PATH] = unpackedBinary;
 
   try {
-    // esbuild reads this variable while its CommonJS module is evaluated. Keep
-    // the compatibility bridge local so it cannot become an agent's environment.
     return nodeRequire("esbuild") as typeof import("esbuild");
   } finally {
     if (previousBinaryPath === undefined) delete process.env[ESBUILD_BINARY_PATH];
@@ -154,8 +147,6 @@ function lexicalBoundaryError(
   if (containsPath(pluginDirectory, lexicalPath)) {
     return moduleBoundaryError(directoryTarget(lexicalPath, pluginDirectory), target, lexicalPath);
   }
-  // Normalize only a containing root alias. Resolving the whole import would erase
-  // an authored server/ or client/ location when the final file is a symlink.
   for (let ancestor = path.dirname(lexicalPath); ; ancestor = path.dirname(ancestor)) {
     if (existsSync(ancestor) && realpathSync.native(ancestor) === pluginDirectory) {
       const ownedPath = path.join(pluginDirectory, path.relative(ancestor, lexicalPath));
@@ -217,8 +208,6 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
             resolveDir: path.dirname(file),
             kind,
           });
-          // esbuild owns missing-runtime errors: erased imports and guarded optional
-          // requires are legal. Inspect every dependency that actually resolves.
           if (!resolution.errors.length && !resolution.external && resolution.namespace === "file")
             dependencyFiles.add(realpathSync.native(resolution.path));
         }
@@ -244,7 +233,6 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
             runtimeSpecifierError(packageSpecifier, owner, file) ??
             lexicalBoundaryError(specifier, path.dirname(file), pluginDirectory, owner);
           if (error) return error;
-          // Host modules have separately enforced SDK boundaries and need no local installation.
           if (
             (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||
             /^(zod|react|react-native|@tanstack\/react-query)(\/|$)/.test(specifier) ||
@@ -302,9 +290,6 @@ function wrapCommonJsBundle(code: string): string {
 }
 
 function makeHermesInteropEager(code: string): string {
-  // Hermes evaluates esbuild's lazy CommonJS interop getters from a string with
-  // the final loop binding, so every named import can resolve to the last export.
-  // Plugin bundles execute once and do not need live bindings from host modules.
   return code.replaceAll("get: () => from[key]", "value: from[key]");
 }
 
@@ -348,8 +333,6 @@ function runtimeSpecifierError(
 function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: string): void {
   function inputLocation(file: string): PluginModuleLocation | null {
     const absolutePath = path.resolve(file);
-    // Metafile keys must stay unchanged for graph traversal. Only filesystem
-    // inputs have canonical paths; data URLs and external specifiers do not.
     return directoryTarget(
       existsSync(absolutePath) ? realpathSync.native(absolutePath) : absolutePath,
       pluginDirectory,
@@ -380,8 +363,6 @@ function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: st
 
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
   const { build } = loadEsbuild();
-  // Use native canonical paths throughout: TypeScript expands Windows short names
-  // when resolving type references, while the JS realpath implementation retains them.
   const pluginDirectory = realpathSync.native(path.dirname(entryPath));
   const result = await build({
     entryPoints: [realpathSync.native(entryPath)],
@@ -390,8 +371,6 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     jsx: "automatic",
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
-    // Metro lowers async syntax before Hermes sees app code. Plugin client bundles bypass Metro,
-    // so apply the same compatibility transform before the app evaluates them from source.
     supported: target === "client" ? { "async-await": false } : undefined,
     external:
       target === "client"
@@ -413,7 +392,21 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   checkSharedDependencies(result.metafile.inputs, pluginDirectory);
   const output = result.outputFiles[0]?.text;
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
-  return wrapCommonJsBundle(makeHermesInteropEager(output));
+  let executable = output;
+  if (target === "client") {
+    const { transformSync } = nodeRequire("@babel/core") as typeof import("@babel/core");
+    const transformed = transformSync(output, {
+      filename: entryPath,
+      babelrc: false,
+      configFile: false,
+      compact: false,
+      plugins: [nodeRequire.resolve("@babel/plugin-transform-classes")],
+    });
+    if (!transformed?.code)
+      throw new Error("Plugin client class transformation produced no output");
+    executable = transformed.code;
+  }
+  return wrapCommonJsBundle(makeHermesInteropEager(executable));
 }
 
 export async function compilePlugin(entryPaths: {

@@ -10,6 +10,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostPluginsPage } from "./plugins-page";
+import { pluginRegistry } from "@/plugins/registry";
 
 void testI18n;
 
@@ -116,6 +117,7 @@ function createClient() {
     getDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     patchDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     listPlugins: vi.fn(async (): Promise<PluginListItem[]> => []),
+    getPluginCatalog: vi.fn(async () => []),
     installPluginSource: vi.fn(async () => plugin()),
     reloadPlugin: vi.fn(async () => plugin()),
     enablePlugin: vi.fn(async () => plugin()),
@@ -157,6 +159,8 @@ describe("HostPluginsPage", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    pluginRegistry.removeHost("host-a");
     cleanup();
     vi.unstubAllGlobals();
   });
@@ -193,6 +197,38 @@ describe("HostPluginsPage", () => {
     await selectPluginAction(action);
 
     await waitFor(() => expect(client[method]).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports a failed daemon reload without success feedback", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([plugin()]);
+    client.reloadPlugin.mockResolvedValue({
+      ...plugin(),
+      status: "failed",
+      error: "server failed",
+    });
+    renderPage(client);
+    await selectPluginAction("Reload");
+    expect(await screen.findByText("server failed")).toBeDefined();
+    expect(screen.queryByText("Reloaded example")).toBeNull();
+  });
+
+  it("reports a failed client reload without success feedback", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([plugin()]);
+    let evaluated = false;
+    vi.spyOn(pluginRegistry, "installCatalog").mockImplementationOnce(() => {
+      evaluated = true;
+      return false;
+    });
+    vi.spyOn(pluginRegistry, "getEvaluationError").mockImplementation(() =>
+      evaluated ? "prototype undefined" : undefined,
+    );
+    renderPage(client);
+    await selectPluginAction("Reload");
+    expect(await screen.findAllByText("prototype undefined")).toHaveLength(2);
+    expect(client.getPluginCatalog).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Reloaded example")).toBeNull();
   });
 
   it("hides the logs action when the host does not advertise support", async () => {

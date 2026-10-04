@@ -355,11 +355,18 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
       action: "install",
       run: async () => {
         const installed = await client.installPluginSource(input);
+        if (installed.status === "failed") {
+          throw new Error(installed.error ?? `Plugin failed to start: ${installed.id}`);
+        }
+        const catalog = await client.getPluginCatalog();
+        pluginRegistry.installCatalog(serverId, catalog, { client, replacePluginId: installed.id });
+        const clientError = pluginRegistry.getEvaluationError(serverId, installed.id);
+        if (clientError) throw new Error(clientError);
         installForm.reset();
         return t("settings.plugins.feedback.installed", { id: installed.id });
       },
     });
-  }, [client, installForm, installState.canSubmit, mutation, sourceInstallSupported, t]);
+  }, [client, installForm, installState.canSubmit, mutation, serverId, sourceInstallSupported, t]);
   const action = useCallback(
     (name: PluginRowAction, plugin: PluginListItem) => {
       if (!client) return;
@@ -374,14 +381,26 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
           if (!confirmed) return t("settings.plugins.feedback.kept", { id: plugin.id });
           await client.removePlugin(plugin.id);
         } else {
-          await client[`${name}Plugin`](plugin.id);
+          const updated = await client[`${name}Plugin`](plugin.id);
+          if (updated.status === "failed") {
+            throw new Error(updated.error ?? `Plugin failed to start: ${plugin.id}`);
+          }
+          if (name === "reload" || name === "enable") {
+            const catalog = await client.getPluginCatalog();
+            pluginRegistry.installCatalog(serverId, catalog, {
+              client,
+              replacePluginId: plugin.id,
+            });
+            const clientError = pluginRegistry.getEvaluationError(serverId, plugin.id);
+            if (clientError) throw new Error(clientError);
+          }
         }
         return t(`settings.plugins.feedback.${name}`, { id: plugin.id });
       };
       setFeedback(null);
       mutation.mutate({ action: name, pluginId: plugin.id, run });
     },
-    [client, mutation, t],
+    [client, mutation, serverId, t],
   );
   const toggleGlobal = useCallback(
     (enabled: boolean) => {

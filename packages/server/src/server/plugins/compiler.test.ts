@@ -81,8 +81,6 @@ async function createSplitPlugin(): Promise<{
   client: string;
   server: string;
 }> {
-  // Keep the platform's original spelling (including Windows short names) in symlink
-  // targets. Only diagnostic expectations use canonical paths.
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
   temporaryDirectories.push(directory);
   await Promise.all([
@@ -474,6 +472,30 @@ export type Value = string;`,
     const { clientBundle } = await compilePlugin(entries);
     expect(clientBundle).not.toContain("async function contribute");
     expect(clientBundle).toContain("__async");
+  });
+
+  it("lowers classes while preserving inheritance and prototype registrations", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `class Vector { value = 4; read() { return this.value; } }
+Vector.prototype.registered = true;
+class Position extends Vector { read() { return super.read() + 3; } }
+class Failure extends Error {}
+export default function contribute(client) {
+  const position = new Position();
+  const failure = new Failure("failed");
+  client.record([position.read(), position.registered, position instanceof Vector,
+    failure.message, failure instanceof Error, failure instanceof Failure]);
+  return () => undefined;
+}`,
+    );
+    const { clientBundle } = await compilePlugin(entries);
+    expect(clientBundle).not.toMatch(/\bclass\s+(?:[\w$]+\s*)?(?:extends\b|\{)/);
+    const factory = (0, eval)(clientBundle!);
+    let recorded: unknown;
+    factory(() => undefined).default({ record: (value: unknown) => (recorded = value) });
+    expect(recorded).toEqual([7, true, true, "failed", true, true]);
   });
 
   it("rejects node imports from the client entry", async () => {

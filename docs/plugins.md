@@ -91,6 +91,12 @@ plugin before compiling and starting from disk. A failed reload stays failed; Pa
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
 
+Daemon `running` proves the server contribution started. Client evaluation can still fail and
+remove its navigation entries. Install, enable and reload feedback must wait for client evaluation.
+Client bundles execute through Hermes string evaluation on Android, bypassing Metro. Lower async
+functions and classes before delivery; Three.js prototype initialization fails with unlowered
+classes even when the same bundle evaluates successfully in Node or Chromium.
+
 ## Install a Git source
 
 GitHub repositories use an `owner/repository` shorthand. Other hosts use a Git URL. An existing
