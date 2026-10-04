@@ -1,3 +1,4 @@
+import { validateProviderOptions } from "../provider-options.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -12,9 +13,7 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import pLimit from "p-limit";
@@ -58,7 +57,6 @@ import {
   type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
-  type UsageReference,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
@@ -1494,6 +1492,7 @@ export class OpenCodeAgentClient implements AgentClient {
         client,
         session.id,
         this.logger,
+        connection.environment,
         new Map(this.modelContextWindows),
         connection.events,
         connection.release,
@@ -1503,7 +1502,6 @@ export class OpenCodeAgentClient implements AgentClient {
         false,
         unbindBridge,
         connectServer,
-        { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       );
     } catch (error) {
       await connection.release();
@@ -1549,6 +1547,7 @@ export class OpenCodeAgentClient implements AgentClient {
         client,
         handle.sessionId,
         this.logger,
+        connection.environment,
         new Map(this.modelContextWindows),
         connection.events,
         connection.release,
@@ -1558,7 +1557,6 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
         unbindBridge,
         connectServer,
-        { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       );
     } catch (error) {
       await connection.release();
@@ -1598,6 +1596,7 @@ export class OpenCodeAgentClient implements AgentClient {
     return {
       client: this.createOpenCodeClient({ baseUrl: acquisition.server.url, directory }),
       events: acquisition.events,
+      environment: acquisition.environment,
       url: acquisition.server.url,
       release: acquisition.release,
     };
@@ -1935,7 +1934,9 @@ export class OpenCodeAgentClient implements AgentClient {
     if (config.provider !== "opencode") {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);
     }
-    const providerOptions = OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const providerOptions =
+      validateProviderOptions("opencode", OpenCodeProviderOptionsSchema, config.providerOptions) ??
+      {};
     return normalizeOpenCodeConfig({ ...config, provider: "opencode", providerOptions });
   }
 
@@ -3359,71 +3360,11 @@ async function listOpenCodeChildSessions(
 
 /** One OpenCode server generation a session talks to. */
 interface OpenCodeServerConnection {
+  environment: Record<string, string>;
   client: OpencodeClient;
   events: OpenCodeEventSource;
   url: string;
   release: () => Promise<void>;
-}
-
-const openCodeOAuthAuthSchema = z
-  .object({
-    openai: z
-      .object({
-        type: z.literal("oauth"),
-        access: z.string().min(1),
-        accountId: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-const openCodeGoAuthSchema = z
-  .object({
-    "opencode-go": z
-      .object({ type: z.literal("api"), key: z.string().min(1) })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-async function readOpenCodeUsageAuth(env: NodeJS.ProcessEnv): Promise<unknown> {
-  try {
-    const content =
-      env.OPENCODE_AUTH_CONTENT ??
-      (await fs.readFile(
-        path.join(
-          env.XDG_DATA_HOME || path.join(env.HOME || os.homedir(), ".local", "share"),
-          "opencode",
-          "auth.json",
-        ),
-        "utf8",
-      ));
-    return JSON.parse(content);
-  } catch {
-    return null;
-  }
-}
-
-function resolveOpenCodeUsageReference(model: string, auth: unknown): UsageReference | null {
-  if (!auth) return null;
-  if (model.startsWith("openai/")) {
-    const parsed = openCodeOAuthAuthSchema.safeParse(auth);
-    if (!parsed.success) return null;
-    const credential = parsed.data.openai;
-    if (!credential) return null;
-    return {
-      source: "codex",
-      input: {
-        accessToken: credential.access,
-        ...(credential.accountId ? { accountId: credential.accountId } : {}),
-      },
-    };
-  }
-  const parsed = openCodeGoAuthSchema.safeParse(auth);
-  if (!parsed.success) return null;
-  const credential = parsed.data["opencode-go"];
-  if (!credential) return null;
-  return { source: "opencode-go", input: { apiKey: credential.key } };
 }
 
 class OpenCodeAgentSession implements AgentSession {
@@ -3500,11 +3441,13 @@ class OpenCodeAgentSession implements AgentSession {
   private closed = false;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
+  private readonly usageSessionKey = randomUUID();
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
+    private readonly harnessEnvironment: Record<string, string>,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
     events: OpenCodeEventSource = EMPTY_OPENCODE_EVENT_SOURCE,
     releaseServer: () => Promise<void> = async () => undefined,
@@ -3514,10 +3457,15 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly externallyDriven = false,
     releaseBridge?: () => void,
     connectServer?: () => Promise<OpenCodeServerConnection>,
-    private readonly usageEnv: NodeJS.ProcessEnv = process.env,
   ) {
     this.config = config;
-    this.server = { client, events, url: serverUrl ?? "", release: releaseServer };
+    this.server = {
+      client,
+      events,
+      url: serverUrl ?? "",
+      release: releaseServer,
+      environment: this.harnessEnvironment,
+    };
     this.connectServer = connectServer ?? null;
     this.sessionId = sessionId;
     this.logger = logger.child({ agentId: this.agentId });
@@ -3530,6 +3478,16 @@ class OpenCodeAgentSession implements AgentSession {
       config.model,
     );
     this.subscribeServerEvents();
+  }
+
+  usageSession() {
+    if (this.closed) return null;
+    return {
+      provider: "opencode",
+      model: this.config.model,
+      env: this.harnessEnvironment,
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   private get client(): OpencodeClient {
@@ -3618,13 +3576,6 @@ class OpenCodeAgentSession implements AgentSession {
       modeId: this.currentMode,
       thinkingOptionId: this.config.thinkingOptionId ?? null,
     };
-  }
-
-  async getUsageReference(): Promise<UsageReference | null> {
-    const model = this.config.model;
-    if (!model?.startsWith("openai/") && !model?.startsWith("opencode-go/")) return null;
-    const auth = await readOpenCodeUsageAuth(this.usageEnv);
-    return resolveOpenCodeUsageReference(model, auth);
   }
 
   async setModel(modelId: string | null): Promise<void> {

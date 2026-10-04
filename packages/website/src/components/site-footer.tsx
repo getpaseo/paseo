@@ -1,3 +1,4 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
 
@@ -27,6 +28,14 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
             >
               Docs
             </a>
+            {PLUGINS_LINKED && (
+              <a
+                href="/plugins"
+                className="block text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Plugins
+              </a>
+            )}
             <a
               href="/changelog"
               className="block text-muted-foreground hover:text-foreground transition-colors"
@@ -85,6 +94,18 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               OpenCode
+            </a>
+            <a
+              href="/antigravity"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Antigravity
+            </a>
+            <a
+              href="/muse-code"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Muse Code
             </a>
             <a
               href="/agents"

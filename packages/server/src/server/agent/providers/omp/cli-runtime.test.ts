@@ -127,7 +127,13 @@ describe("OMP CLI runtime", () => {
     onOmpCommand(child, (command) => {
       if (command.type === "steer") pending = command;
     });
-    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const launches: OmpRuntimeLaunch[] = [];
+    const session = await createRuntime(child, launches).startSession({
+      cwd: "/workspace/project",
+      env: { HOME: "/fixture/omp-home" },
+    });
+    expect(session.environment).toBe(launches[0]?.env);
+    expect(session.environment?.HOME).toBe("/fixture/omp-home");
     const result = session.steer("change direction");
     await new Promise((resolve) => setImmediate(resolve));
     expect(pending).toMatchObject({ type: "steer", message: "change direction" });
@@ -485,7 +491,10 @@ describe("OMP CLI runtime", () => {
     const child = createOmpChild();
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
+    const environment = session.environment;
     child.emit("exit", 1, null);
+    expect(session.environment).toBe(environment);
+    expect(environment).toBeDefined();
 
     await expect(session.abort()).resolves.toBeUndefined();
   });

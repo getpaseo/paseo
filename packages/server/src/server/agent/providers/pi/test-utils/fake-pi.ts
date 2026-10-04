@@ -93,6 +93,7 @@ export class FakePi implements PiRuntime {
 }
 
 export class FakePiSession implements PiRuntimeSession {
+  readonly environment: Record<string, string>;
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly steerCalls: Array<{ message: string; imageCount: number }> = [];
   steerError: Error | null = null;
@@ -145,6 +146,7 @@ export class FakePiSession implements PiRuntimeSession {
     null;
 
   constructor(launch: PiRuntimeLaunch) {
+    this.environment = launch.env ?? {};
     this.state = {
       model: null,
       thinkingLevel: "medium",

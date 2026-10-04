@@ -48,7 +48,6 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
-import { UsageComposerPill } from "@/usage";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -280,6 +279,8 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
 }
 
 function renderContextWindowMeter(
+  serverId: string,
+  agentId: string,
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
@@ -293,6 +294,8 @@ function renderContextWindowMeter(
   }
   return (
     <ContextWindowMeter
+      serverId={serverId}
+      agentId={agentId}
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
@@ -2077,6 +2080,8 @@ function ComposerContentImpl({
   const contextWindowMeter = useMemo(
     () =>
       renderContextWindowMeter(
+        serverId,
+        agentId,
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
@@ -2085,6 +2090,8 @@ function ComposerContentImpl({
         contextWindowMeterGlyphSize,
       ),
     [
+      serverId,
+      agentId,
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
@@ -2093,13 +2100,8 @@ function ComposerContentImpl({
     ],
   );
   const beforeVoiceContent = useMemo(
-    () => (
-      <>
-        {resolveContextWindowPlacement(contextWindowMeter, hasAgent)}
-        {hasAgent ? <UsageComposerPill serverId={serverId} agentId={agentId} /> : null}
-      </>
-    ),
-    [agentId, contextWindowMeter, hasAgent, serverId],
+    () => <>{resolveContextWindowPlacement(contextWindowMeter, hasAgent)}</>,
+    [contextWindowMeter, hasAgent],
   );
 
   const hasGithubAttachment = useMemo(

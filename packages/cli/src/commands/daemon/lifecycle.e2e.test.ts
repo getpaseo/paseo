@@ -429,6 +429,37 @@ test("empty explicit selectors never select the ambient daemon or create local s
   }
 }, 60_000);
 
+test.skipIf(process.platform === "win32")(
+  "restart confirms the replacement worker when a provider probe is slow",
+  async () => {
+    const f = await fixture();
+    const home = f.homes[0]!;
+    try {
+      await f.configure(home, `127.0.0.1:${await port()}`);
+      const provider = path.join(f.root, "slow-provider");
+      await writeFile(
+        provider,
+        `#!${process.execPath}\nsetTimeout(() => console.log("provider 1.0.0"), 1800);\n`,
+        { mode: 0o700 },
+      );
+      const configPath = path.join(home, "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8"));
+      config.agents = {
+        ...config.agents,
+        providers: { claude: { command: { mode: "replace", argv: [provider] } } },
+      };
+      await writeFile(configPath, JSON.stringify(config));
+      const launch = await f.ok(["start", "--home", home, "--timeout", "30"]);
+      const restarted = await f.ok(["restart", "--home", home, "--timeout", "30"]);
+      expect(restarted.supervisorPid).toBe(launch.pid);
+      expect(restarted.workerPid).not.toBe(restarted.previousWorkerPid);
+    } finally {
+      await f.close();
+    }
+  },
+  60_000,
+);
+
 test("IPv6 publication supports home-selected query and worker restart", async () => {
   const f = await fixture();
   const home = f.homes[0]!;

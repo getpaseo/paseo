@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -66,7 +65,11 @@ import {
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
-import { createPiExtensionHost, type PiExtensionEventOutput } from "./extensions/index.js";
+import {
+  createPiExtensionHost,
+  piExtensionRuntimeBridge,
+  type PiExtensionEventOutput,
+} from "./extensions/index.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
@@ -102,15 +105,13 @@ const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 
-export const PiProviderParamsSchema = z
+export const PiProviderOptionsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
     rpcTimeoutMs: z.number().int().positive().default(DEFAULT_PI_RPC_TIMEOUT_MS),
     extensionTimeoutMs: z.number().int().positive().default(DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS),
   })
   .strict();
-
-type PiProviderParams = z.infer<typeof PiProviderParamsSchema>;
 
 const PI_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
   {
@@ -183,7 +184,6 @@ const PI_THINKING_OPTIONS: ReadonlyArray<{
 export interface PiRpcAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
-  providerParams?: unknown;
   runtime?: PiRuntime;
   usagePollScheduler?: PiUsagePollScheduler;
 }
@@ -243,7 +243,6 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
-  usageEnv?: Record<string, string>;
 }
 
 interface PiResumeConfig {
@@ -260,13 +259,17 @@ interface PiMcpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
-  auth?: false;
-  oauth?: false;
 }
 
-interface PiMcpConfigFile {
-  path: string;
-  cleanup: () => void;
+// Pi's built-in MCP extension takes servers from Paseo's extension; pi-mcp-adapter replaces it
+// and takes them from a --mcp-config file.
+type PiMcpInjection =
+  | { kind: "builtin"; servers: Record<string, PiMcpServerConfig> }
+  | { kind: "adapter"; configFile: PiTempFile };
+
+interface PiPaseoExtensionOptions {
+  systemPrompt?: string;
+  mcpServers?: Record<string, PiMcpServerConfig>;
 }
 
 interface PiTempFile {
@@ -485,7 +488,7 @@ function buildResumeStartInput(input: {
   resumeConfig: PiResumeConfig;
   sessionFile: string;
   launchContext: AgentLaunchContext | undefined;
-  mcpConfig: PiMcpConfigFile | null;
+  mcpConfigFile: PiTempFile | null;
   paseoExtension: PiTempFile | null;
 }): PiStartSessionInput {
   return {
@@ -494,7 +497,7 @@ function buildResumeStartInput(input: {
     session: input.sessionFile,
     model: input.resumeConfig.model,
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
-    mcpConfigPath: input.mcpConfig?.path,
+    mcpConfigPath: input.mcpConfigFile?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
   };
 }
@@ -511,9 +514,34 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
   return {
     url: config.url,
     ...(config.headers ? { headers: config.headers } : {}),
-    auth: false,
-    oauth: false,
   };
+}
+
+function toPiMcpAdapterConfig(
+  config: McpServerConfig,
+): PiMcpServerConfig & { auth?: false; oauth?: false } {
+  const piConfig = toPiMcpConfig(config);
+  return config.type === "stdio" ? piConfig : { ...piConfig, auth: false, oauth: false };
+}
+
+function toPiBuiltinMcpServers(
+  servers: Record<string, McpServerConfig>,
+): Record<string, PiMcpServerConfig> {
+  const piServers: Record<string, PiMcpServerConfig> = {};
+  for (const [name, config] of Object.entries(servers)) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+      throw new Error(
+        `Pi's built-in MCP cannot register server "${name}": names may only contain letters, digits, "_", and "-".`,
+      );
+    }
+    if (config.type === "sse") {
+      throw new Error(
+        `Pi's built-in MCP cannot register SSE server "${name}": use streamable HTTP or load pi-mcp-adapter.`,
+      );
+    }
+    piServers[name] = toPiMcpConfig(config);
+  }
+  return piServers;
 }
 
 function resolvePiAgentDir(env: Record<string, string> | undefined): string {
@@ -529,27 +557,6 @@ function resolvePiAgentDir(env: Record<string, string> | undefined): string {
   }
   return resolvePath(configured);
 }
-
-const piCodexUsageAuthSchema = z
-  .object({
-    "openai-codex": z
-      .object({
-        type: z.literal("oauth"),
-        access: z.string().min(1),
-        accountId: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-const piClaudeUsageAuthSchema = z
-  .object({
-    anthropic: z
-      .object({ type: z.literal("oauth"), access: z.string().min(1) })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
 
 function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
   const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
@@ -577,7 +584,7 @@ function createPiMcpConfigFile(
   options?: {
     piGlobalConfigEnv?: Record<string, string>;
   },
-): PiMcpConfigFile {
+): PiTempFile {
   const globalConfig = options?.piGlobalConfigEnv
     ? readPiGlobalMcpConfig(options.piGlobalConfigEnv)
     : {};
@@ -589,7 +596,7 @@ function createPiMcpConfigFile(
   }
   const mcpServers: Record<string, unknown> = { ...configuredServers };
   for (const [name, serverConfig] of Object.entries(servers)) {
-    mcpServers[name] = toPiMcpConfig(serverConfig);
+    mcpServers[name] = toPiMcpAdapterConfig(serverConfig);
   }
 
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-mcp-"));
@@ -606,7 +613,10 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
+function createPiPaseoExtensionFile({
+  systemPrompt,
+  mcpServers = {},
+}: PiPaseoExtensionOptions): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -666,7 +676,11 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	}
 
 	export default function paseoIntegration(pi) {
+	  for (const [name, config] of Object.entries(${JSON.stringify(mcpServers)})) {
+	    pi.registerMcpServer(name, config);
+	  }
 	  const submittedUserMessages = [];
+	  ${piExtensionRuntimeBridge}
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -746,7 +760,8 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  });
 	}
 `.trimStart(),
-    "utf8",
+    // MCP server headers and env can carry credentials.
+    { encoding: "utf8", mode: 0o600 },
   );
   return {
     path: filePath,
@@ -774,6 +789,14 @@ function isPiMcpAdapterCommand(command: PiRpcSlashCommand): boolean {
     return true;
   }
   return JSON.stringify(command.sourceInfo).includes("pi-mcp-adapter");
+}
+
+function isPiBuiltinMcpCommand(command: PiRpcSlashCommand): boolean {
+  return (
+    command.source === "extension" &&
+    command.name === "mcp" &&
+    command.sourceInfo?.path === "builtin:mcp"
+  );
 }
 
 function withPiCapabilities(supportsMcpServers: boolean): AgentCapabilityFlags {
@@ -1145,35 +1168,6 @@ export class PiRpcAgentSession implements AgentSession {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
 
-  async getUsageReference() {
-    await this.refreshState();
-    const provider = this.state.model?.provider;
-    let source: string | null = null;
-    if (provider === "openai-codex") source = "codex";
-    if (provider === "anthropic") source = "claude";
-    if (!source || !provider) return null;
-    try {
-      const auth: unknown = JSON.parse(
-        await readFile(join(resolvePiAgentDir(this.usageEnv), "auth.json"), "utf8"),
-      );
-      if (provider === "openai-codex") {
-        const credential = piCodexUsageAuthSchema.parse(auth)["openai-codex"];
-        if (!credential) return null;
-        return {
-          source,
-          input: {
-            accessToken: credential.access,
-            ...(credential.accountId ? { accountId: credential.accountId } : {}),
-          },
-        };
-      }
-      const credential = piClaudeUsageAuthSchema.parse(auth).anthropic;
-      return credential ? { source, input: { accessToken: credential.access } } : null;
-    } catch {
-      return null;
-    }
-  }
-
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
@@ -1201,13 +1195,25 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly currentModeId: string | null;
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
-  private readonly usageEnv?: Record<string, string>;
   private closed = false;
   private readonly closeController = new AbortController();
   private readonly pendingExtensionHydrations = new Set<Promise<void>>();
   // Pi publishes the terminal before acknowledging abort. Autonomous runs have no
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
+
+  private readonly usageSessionKey = randomUUID();
+
+  usageSession() {
+    const env = this.runtimeSession.environment;
+    if (this.closed) return null;
+    return {
+      provider: "pi",
+      model: modelToId(this.state.model) ?? undefined,
+      env,
+      sessionKey: this.usageSessionKey,
+    };
+  }
 
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -1221,7 +1227,9 @@ export class PiRpcAgentSession implements AgentSession {
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
     this.extensionHost = createPiExtensionHost(this.logger);
-    this.usageEnv = options.usageEnv;
+    this.extensionHost.follow((event) => {
+      if (!this.closeController.signal.aborted) this.emit(event);
+    });
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
@@ -1577,6 +1585,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     this.closed = true;
     this.closeController.abort();
+    this.extensionHost.close();
     this.usagePoller.close();
     try {
       await this.runtimeSession.close();
@@ -1990,6 +1999,11 @@ export class PiRpcAgentSession implements AgentSession {
   ): void {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
+      const extensionMapping = this.extensionHost.mapRuntimeNotification(message);
+      if (extensionMapping) {
+        this.emitExtensionOutput(extensionMapping, this.currentTurnIdForEvent());
+        return;
+      }
       if (
         this.handleSubmittedUserEntryMarker(message) ||
         this.handleEntryCaptureMarker(message) ||
@@ -2461,8 +2475,7 @@ export class PiRpcAgentClient implements AgentClient {
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly providerParams: PiProviderParams;
-  private readonly runtime: PiRuntime;
+  private readonly runtime?: PiRuntime;
   private readonly usagePollScheduler?: PiUsagePollScheduler;
 
   constructor(options: PiRpcAgentClientOptions) {
@@ -2470,10 +2483,7 @@ export class PiRpcAgentClient implements AgentClient {
     this.capabilities = capabilitiesForClient();
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
-    this.providerParams = PiProviderParamsSchema.parse(options.providerParams ?? {});
-    this.runtime =
-      options.runtime ??
-      createRuntime(options.logger, options.runtimeSettings, this.providerParams.rpcTimeoutMs);
+    this.runtime = options.runtime;
     this.usagePollScheduler = options.usagePollScheduler;
   }
 
@@ -2481,27 +2491,31 @@ export class PiRpcAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    const providerOptions = PiProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
     const mcpEnv = {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
     };
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
-    const paseoExtension = createPiPaseoExtensionFile(
-      composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
-    );
+    const mcp = await this.prepareMcpInjection(config.cwd, config.mcpServers, mcpEnv, runtime);
+    const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
+    const paseoExtension = createPiPaseoExtensionFile({
+      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      mcpServers: mcp?.kind === "builtin" ? mcp.servers : undefined,
+    });
     let runtimeSession: PiRuntimeSession;
     try {
-      runtimeSession = await this.runtime.startSession({
+      runtimeSession = await runtime.startSession({
         cwd: config.cwd,
         model: config.model,
         thinkingOptionId: normalizePiThinkingOption(config.thinkingOptionId) ?? undefined,
         noSession: config.internal === true,
         env: launchContext?.env,
-        mcpConfigPath: mcpConfig?.path,
+        mcpConfigPath: mcpConfigFile?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
       });
     } catch (error) {
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2510,16 +2524,15 @@ export class PiRpcAgentClient implements AgentClient {
         runtimeSession,
         config,
         initialState: await runtimeSession.getState(),
-        capabilities: capabilitiesForSession(mcpConfig !== null),
-        cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
-        extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
+        capabilities: capabilitiesForSession(mcp !== null),
+        cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension?.cleanup]),
+        extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
-        usageEnv: mcpEnv,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2538,34 +2551,41 @@ export class PiRpcAgentClient implements AgentClient {
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
 
+    const providerOptions = PiProviderOptionsSchema.parse(
+      resumeConfig.config.providerOptions ?? {},
+    );
+    const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
     const mcpEnv = {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
     };
-    const mcpConfig = await this.prepareMcpConfig(
+    const mcp = await this.prepareMcpInjection(
       resumeConfig.cwd,
       resumeConfig.config.mcpServers,
       mcpEnv,
+      runtime,
     );
-    const paseoExtension = createPiPaseoExtensionFile(
-      composeSystemPromptParts(
+    const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
+    const paseoExtension = createPiPaseoExtensionFile({
+      systemPrompt: composeSystemPromptParts(
         resumeConfig.config.systemPrompt,
         resumeConfig.config.daemonAppendSystemPrompt,
       ),
-    );
+      mcpServers: mcp?.kind === "builtin" ? mcp.servers : undefined,
+    });
     let runtimeSession: PiRuntimeSession;
     try {
-      runtimeSession = await this.runtime.startSession(
+      runtimeSession = await runtime.startSession(
         buildResumeStartInput({
           resumeConfig,
           sessionFile,
           launchContext,
-          mcpConfig,
+          mcpConfigFile,
           paseoExtension,
         }),
       );
     } catch (error) {
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2574,16 +2594,15 @@ export class PiRpcAgentClient implements AgentClient {
         runtimeSession,
         config: resumeConfig.config,
         initialState: await runtimeSession.getState(),
-        capabilities: capabilitiesForSession(mcpConfig !== null),
-        cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
-        extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
+        capabilities: capabilitiesForSession(mcp !== null),
+        cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension?.cleanup]),
+        extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
-        usageEnv: mcpEnv,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
-      mcpConfig?.cleanup();
+      mcpConfigFile?.cleanup();
       paseoExtension?.cleanup();
       throw error;
     }
@@ -2593,6 +2612,8 @@ export class PiRpcAgentClient implements AgentClient {
     options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
+    const providerOptions = PiProviderOptionsSchema.parse(options.providerOptions ?? {});
+    const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
     let runtimeSession: PiRuntimeSession | undefined;
     let closePromise: Promise<void> | undefined;
     const closeSession = () => {
@@ -2604,7 +2625,7 @@ export class PiRpcAgentClient implements AgentClient {
     context?.signal.addEventListener("abort", handleAbort, { once: true });
     try {
       await runProviderRefreshActivity(context, "runtime.start", async () => {
-        runtimeSession = await this.runtime.startSession({
+        runtimeSession = await runtime.startSession({
           cwd: options.scope === "global" ? homedir() : options.cwd,
           signal: context?.signal,
         });
@@ -2646,7 +2667,7 @@ export class PiRpcAgentClient implements AgentClient {
   ): Promise<ImportableProviderSession[]> {
     return await listPiImportableSessions({
       ...options,
-      sessionDir: this.providerParams.sessionDir,
+      sessionDir: PiProviderOptionsSchema.parse(options?.providerOptions ?? {}).sessionDir,
       runtimeSettings: this.runtimeSettings,
     });
   }
@@ -2698,33 +2719,53 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  private async prepareMcpConfig(
+  private resolveRuntime(rpcTimeoutMs: number): PiRuntime {
+    return this.runtime ?? createRuntime(this.logger, this.runtimeSettings, rpcTimeoutMs);
+  }
+
+  private async prepareMcpInjection(
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
     env: Record<string, string> | undefined,
-  ): Promise<PiMcpConfigFile | null> {
+    runtime: PiRuntime,
+  ): Promise<PiMcpInjection | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
-    if (!(await this.detectMcpAdapter(cwd, env))) {
-      return null;
+    const mcpSupport = await this.detectMcpSupport(cwd, env, runtime);
+    if (mcpSupport === "builtin") {
+      return { kind: "builtin", servers: toPiBuiltinMcpServers(servers) };
     }
-    return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env });
+    if (mcpSupport === "adapter") {
+      return {
+        kind: "adapter",
+        configFile: createPiMcpConfigFile(servers, { piGlobalConfigEnv: env }),
+      };
+    }
+    return null;
   }
 
-  private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
-    const runtimeSession = await this.runtime.startSession({ cwd, env }).catch((error) => {
-      this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed to start");
+  private async detectMcpSupport(
+    cwd: string,
+    env: Record<string, string> | undefined,
+    runtime: PiRuntime,
+  ): Promise<PiMcpInjection["kind"] | null> {
+    const runtimeSession = await runtime.startSession({ cwd, env }).catch((error) => {
+      this.logger.debug({ err: error, cwd }, "Pi MCP probe failed to start");
       return null;
     });
     if (!runtimeSession) {
-      return false;
+      return null;
     }
     try {
-      return (await runtimeSession.getCommands()).some(isPiMcpAdapterCommand);
+      const commands = await runtimeSession.getCommands();
+      if (commands.some(isPiMcpAdapterCommand)) {
+        return "adapter";
+      }
+      return commands.some(isPiBuiltinMcpCommand) ? "builtin" : null;
     } catch (error) {
-      this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed");
-      return false;
+      this.logger.debug({ err: error, cwd }, "Pi MCP probe failed");
+      return null;
     } finally {
       await runtimeSession.close().catch(() => undefined);
     }

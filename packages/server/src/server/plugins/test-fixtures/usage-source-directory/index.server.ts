@@ -1,5 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { z } from "zod";
+import { windowFromReportedDuration } from "@getpaseo/plugin/server/usage";
 
 let fetches = 0;
 export default function contribute(server: PluginServerContext) {
@@ -13,17 +14,32 @@ export default function contribute(server: PluginServerContext) {
         { account: "one" },
         { account: "bad", extra: true },
         { account: "throws" },
+        { account: "expired" },
       ];
-      return inputs;
+      return inputs.map((input) => ({ key: String(input.account), input }));
     },
-    identify: async (input) => ({ key: (input as { account: string }).account }),
     fetch: async (input) => {
       const account = (input as { account: string }).account;
+      if (account === "expired")
+        return {
+          status: "unavailable",
+          problem: {
+            kind: "expired",
+            expiresAt: new Date(Date.now() - 3_600_000).toISOString(),
+            refreshedBy: "claude",
+          },
+        };
       if (account === "throws") throw new Error("fixture failure");
       fetches++;
       return {
         status: "available",
-        windows: [{ id: "count", label: "Count", usedPct: fetches, headline: true }],
+        windows: [
+          windowFromReportedDuration({
+            durationSeconds: 604800,
+            unknown: { id: "unknown", label: "Limit", shortLabel: "" },
+            utilizationPct: fetches,
+          }),
+        ],
       };
     },
   });

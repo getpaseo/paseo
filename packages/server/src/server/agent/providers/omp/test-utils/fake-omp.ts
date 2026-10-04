@@ -115,6 +115,7 @@ export class FakeOmp implements OmpRuntime {
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
+  readonly environment: Record<string, string>;
   fastModeResult = { enabled: false, active: false };
   readonly setFastModeRequests: boolean[] = [];
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
@@ -174,6 +175,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     null;
 
   constructor(launch: OmpRuntimeLaunch, sessionId = "omp-session-1") {
+    this.environment = launch.env ?? {};
     this.state = {
       model: null,
       thinkingLevel: "medium",

@@ -540,10 +540,6 @@ export class OmpHarness {
     return this.omp.latestSession();
   }
 
-  async getUsageReference() {
-    return this.requireSession().getUsageReference();
-  }
-
   runningToolCallIds(): string[] {
     const statusByCall = new Map<string, string>();
     for (const item of this.timeline()) {
@@ -568,6 +564,10 @@ export class OmpHarness {
 
   canceledTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_canceled").length;
+  }
+
+  usageSession() {
+    return this.requireSession().usageSession();
   }
 
   async close(): Promise<void> {

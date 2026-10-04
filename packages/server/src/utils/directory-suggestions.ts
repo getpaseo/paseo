@@ -1,6 +1,7 @@
 import type { Dirent, Stats } from "node:fs";
-import { readdir, realpath, stat } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import path from "node:path";
+import pLimit from "p-limit";
 import { scorePathMatch, type MatchScore } from "@getpaseo/protocol/search/text-match";
 import { isPathInsideRoot } from "./path.js";
 import { runGitCommand } from "./run-git-command.js";
@@ -102,6 +103,24 @@ const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_TIER = 5;
+
+// Each pending fs call holds one of libuv's shared threadpool threads (4 by default), and a read on
+// a hung mount or a protected folder never returns. Searches pile up while the user types, so they
+// share two threads and leave the rest of the pool to the daemon.
+const filesystemCalls = pLimit(2);
+
+function readdir(directory: string): Promise<Dirent[]> {
+  return filesystemCalls(() => fs.readdir(directory, { withFileTypes: true }));
+}
+
+function realpath(target: string): Promise<string> {
+  return filesystemCalls(() => fs.realpath(target));
+}
+
+function stat(target: string): Promise<Stats> {
+  return filesystemCalls(() => fs.stat(target));
+}
+
 export const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
   ".agents",
   ".claude",
@@ -655,7 +674,7 @@ async function readChildren(directory: string): Promise<ChildEntry[]> {
   ) {
     rawEntries = cached.entries;
   } else {
-    const dirents = await readdir(directory, { withFileTypes: true }).catch(() => [] as Dirent[]);
+    const dirents = await readdir(directory).catch(() => [] as Dirent[]);
     rawEntries = dirents
       .map(toRawChildEntry)
       .filter((entry): entry is RawChildEntry => entry !== null)

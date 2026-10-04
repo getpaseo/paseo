@@ -1,17 +1,15 @@
 import { describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import path, { join } from "node:path";
+import path from "node:path";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
-import { resolveOmpProviderParams } from "./provider-config.js";
+import { resolveOmpProviderOptions } from "./provider-config.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
@@ -42,11 +40,11 @@ const ABORTED_TERMINAL_RESPONSE: OmpAgentMessage = {
 };
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
-  expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
+  expect(resolveOmpProviderOptions({}).runtimeOptions).toMatchObject({
     readyTimeoutMs: 20_000,
     rpcTimeoutMs: 60_000,
   });
-  expect(resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams).toMatchObject({
+  expect(resolveOmpProviderOptions({ rpcTimeoutMs: 90_000 }).runtimeOptions).toMatchObject({
     readyTimeoutMs: 90_000,
     rpcTimeoutMs: 90_000,
   });
@@ -172,79 +170,6 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
-  test("usage reference reads current get_state provider and account on each call", async () => {
-    const home = mkdtempSync(join(tmpdir(), "paseo-omp-reference-"));
-    const agentDir = join(home, "agent");
-    mkdirSync(agentDir);
-    // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:576-581,711-724.
-    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
-      DatabaseSync: new (path: string) => {
-        exec(sql: string): void;
-        prepare(sql: string): { run(...args: unknown[]): void };
-        close(): void;
-      };
-    };
-    const db = new DatabaseSync(join(agentDir, "agent.db"));
-    db.exec(`
-      CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE INDEX idx_cache_expires ON cache(expires_at);
-      CREATE TABLE auth_credentials (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        provider TEXT NOT NULL,
-        credential_type TEXT NOT NULL,
-        data TEXT NOT NULL,
-        disabled_cause TEXT DEFAULT NULL,
-        identity_key TEXT DEFAULT NULL,
-        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-      );
-    `);
-    const insert = db.prepare(
-      "INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, 'oauth', ?)",
-    );
-    insert.run(
-      "openai-codex",
-      JSON.stringify({
-        access: "codex-fixture",
-        accountId: "codex-account",
-        expires: Date.now() + 60_000,
-      }),
-    );
-    insert.run(
-      "anthropic",
-      JSON.stringify({
-        access: "claude-fixture",
-        accountId: "claude-account",
-        expires: Date.now() + 60_000,
-      }),
-    );
-    db.close();
-    try {
-      const omp = new OmpHarness();
-      await omp.start({}, undefined, {
-        OMP_PROFILE: "",
-        PI_CODING_AGENT_DIR: agentDir,
-        XDG_DATA_HOME: "",
-      });
-      const runtime = omp.runtime();
-      runtime.state = { ...runtime.state, model: { provider: "openai-codex", id: "codex-model" } };
-      const requestsBefore = runtime.getStateRequestCount;
-      expect(await omp.getUsageReference()).toEqual({
-        source: "codex",
-        input: { accessToken: "codex-fixture", accountId: "codex-account" },
-      });
-      expect(runtime.getStateRequestCount).toBe(requestsBefore + 1);
-      runtime.state = { ...runtime.state, model: { provider: "anthropic", id: "claude-model" } };
-      expect(await omp.getUsageReference()).toEqual({
-        source: "claude",
-        input: { accessToken: "claude-fixture" },
-      });
-      expect(runtime.getStateRequestCount).toBe(requestsBefore + 2);
-      await omp.close();
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" }, createToolCatalog());
@@ -1033,6 +958,9 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
+    await omp.close();
+    expect(omp.usageSession()).toBeNull();
   });
 
   test("maps permissions and sends the selected OMP response", async () => {

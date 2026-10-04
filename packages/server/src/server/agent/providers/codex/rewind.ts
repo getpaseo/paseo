@@ -69,6 +69,7 @@ export async function revertCodexConversation(input: {
   serviceTier?: string | null;
   config?: Record<string, unknown> | null;
   userMessageTurns: CodexUserMessageTurnIndex;
+  threadRollbackAvailable: boolean;
   setThreadId: (threadId: string) => void | Promise<void>;
 }): Promise<void> {
   if (!input.threadId) {
@@ -98,8 +99,10 @@ export async function revertCodexConversation(input: {
     persistExtendedHistory: true,
   };
 
-  const historyMode = await readCodexThreadHistoryMode(input.client, input.threadId);
-  if (historyMode === "paginated") {
+  if (
+    !input.threadRollbackAvailable ||
+    (await readCodexThreadHistoryMode(input.client, input.threadId)) === "paginated"
+  ) {
     if (!targetTurn.turnId) {
       throw new Error(`Codex could not find the turn containing user message ${input.messageId}`);
     }
@@ -111,7 +114,8 @@ export async function revertCodexConversation(input: {
     return;
   }
 
-  // Fork is non-destructive: the old thread file stays on disk and remains
+  // Legacy threads on Codex before 0.156 fork and then roll back. Fork is
+  // non-destructive: the old thread file stays on disk and remains
   // recoverable with `codex resume <old-uuid>` if the rewind target was wrong.
   const forked = await forkCodexThread(input.client, forkParams);
   const forkedThreadId = forked.thread.id;

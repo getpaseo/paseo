@@ -279,7 +279,12 @@ test.describe("CodeMirror workspace file editing", () => {
       await openAgentRoute(page, session);
 
       await openWorkspaceFile(page, "target.ts");
-      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+      await expect(
+        page
+          .locator('[data-testid^="workspace-pane-"]')
+          .getByTestId("workspace-tabs-row")
+          .filter({ visible: true }),
+      ).toHaveCount(2);
 
       await page
         .getByTestId(`workspace-tab-agent_${session.agentId}`)
