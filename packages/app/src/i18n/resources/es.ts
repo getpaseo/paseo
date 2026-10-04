@@ -1172,6 +1172,9 @@ export const es: TranslationResources = {
     pinned: {
       title: "Anclados",
     },
+    nav: {
+      title: "Navegación",
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",
