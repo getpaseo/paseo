@@ -435,6 +435,7 @@ test("interruptActiveTurn only interrupts the active query without info logs", a
     } | null;
     input: { end: () => void } | null;
     queryRestartNeeded: boolean;
+    mainTurnInFlight: boolean;
     interruptActiveTurn: () => Promise<void>;
   } = asInternals(session);
   const interrupt = vi.fn(async () => undefined);
@@ -447,6 +448,7 @@ test("interruptActiveTurn only interrupts the active query without info logs", a
   };
   internal.input = { end };
   internal.queryRestartNeeded = false;
+  internal.mainTurnInFlight = true;
 
   try {
     await internal.interruptActiveTurn();
@@ -1463,6 +1465,141 @@ test("session state never opens or closes a foreground turn", async () => {
   );
   expect(internal.activeForegroundTurnId).toBeNull();
   expect(internal.turnState).toBe("idle");
+
+  await session.close();
+});
+
+interface InterruptInternals extends SessionStateInternals {
+  pendingInterruptAbort: boolean;
+}
+
+type InterruptibleQueryMock = QueryMock & { cancelAsyncMessage: ReturnType<typeof vi.fn> };
+
+function createInterruptibleQueryMock(): InterruptibleQueryMock {
+  return Object.assign(createPendingQueryMock(), {
+    cancelAsyncMessage: vi.fn(async () => true),
+  });
+}
+
+/** The uuid Paseo stamped on the first message it pushed into the SDK input. */
+async function readFirstPromptUuid(): Promise<string | null> {
+  const input = sdkQueryFactory.mock.calls[0]?.[0] as { prompt: AsyncIterable<unknown> };
+  return await createPromptUuidReader(input.prompt)();
+}
+
+function abortedResult() {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    errors: [],
+    usage: buildUsage(),
+    total_cost_usd: 0,
+  };
+}
+
+test("an interrupt before Claude starts the message withdraws it instead of interrupting", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  await session.startTurn("hello");
+  // Claude has not acknowledged the message yet: no init, no command_lifecycle "started".
+  await session.interrupt();
+
+  await vi.waitFor(() => expect(queryMock.cancelAsyncMessage).toHaveBeenCalledTimes(1));
+  expect(queryMock.cancelAsyncMessage).toHaveBeenCalledWith(await readFirstPromptUuid());
+  expect(queryMock.interrupt).not.toHaveBeenCalled();
+  // No result follows an interrupt that never happened, so no flag may wait for one.
+  expect(internal.pendingInterruptAbort).toBe(false);
+  expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+
+  await session.close();
+});
+
+test("an interrupt while only background subagents run never reaches Claude", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+
+  await session.startTurn("delegate to a helper");
+  const promptUuid = await readFirstPromptUuid();
+  await internal.routeSdkMessageFromPump(commandLifecycle(promptUuid ?? "", "started"), queryMock);
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(helperTaskStarted, queryMock);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  // The main session is done; its helper keeps working.
+  await internal.routeSdkMessageFromPump(sessionState("running"), queryMock);
+  await internal.routeSdkMessageFromPump(helperTaskProgress, queryMock);
+
+  // Without perTaskStopAffordance, an interrupt here kills every running helper.
+  await session.interrupt();
+
+  expect(queryMock.interrupt).not.toHaveBeenCalled();
+  expect(queryMock.cancelAsyncMessage).not.toHaveBeenCalled();
+  expect(internal.pendingInterruptAbort).toBe(false);
+
+  await session.close();
+});
+
+test("an interrupt during a main turn interrupts Claude once and drops the aborted result", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  await session.startTurn("long task");
+  const promptUuid = await readFirstPromptUuid();
+  await internal.routeSdkMessageFromPump(commandLifecycle(promptUuid ?? "", "started"), queryMock);
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+
+  await session.interrupt();
+  await vi.waitFor(() => expect(queryMock.interrupt).toHaveBeenCalledTimes(1));
+  // Claude already started the message, so there is nothing to withdraw.
+  expect(queryMock.cancelAsyncMessage).not.toHaveBeenCalled();
+  expect(internal.pendingInterruptAbort).toBe(true);
+
+  // A replacement starts before the aborted turn reports its result.
+  const { turnId } = await session.startTurn("replacement");
+  await internal.routeSdkMessageFromPump(abortedResult(), queryMock);
+  expect(internal.activeForegroundTurnId).toBe(turnId);
+  expect(internal.pendingInterruptAbort).toBe(false);
+  expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(0);
+
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  expect(internal.activeForegroundTurnId).toBeNull();
+  expect(queryMock.interrupt).toHaveBeenCalledTimes(1);
+
+  await session.close();
+});
+
+test("a new turn clears an interrupt flag no result will consume", async () => {
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+  const queryMock = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  // An interrupt that landed just after its turn had ended: Claude emits no result for it.
+  internal.pendingInterruptAbort = true;
+
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  expect(internal.pendingInterruptAbort).toBe(false);
+  expect(internal.autonomousTurn?.id).toBe("autonomous-turn-1");
+
+  // This turn's own failure is reported, not swallowed as the interrupted turn's leftover.
+  await internal.routeSdkMessageFromPump(
+    { ...abortedResult(), errors: ["API Error: 500 upstream failure"] },
+    queryMock,
+  );
+  expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+  expect(internal.autonomousTurn).toBeNull();
 
   await session.close();
 });
