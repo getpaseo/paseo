@@ -19,7 +19,9 @@ The invariants are:
 Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
 to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
-tool payload.
+tool payload. Search results follow the same shared limiter: search detail `content` is sliced to a
+64 KiB JS string-length ceiling, items at or below the bound pass through unchanged, and every other
+search field (query, result metadata) is preserved.
 
 ## Presence is not delivery
 
