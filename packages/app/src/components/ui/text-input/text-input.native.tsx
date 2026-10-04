@@ -34,6 +34,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       onChangeText,
       onPasteImages,
       onPasteError,
+      remeasureOnChange = true,
       variant = isInsideBottomSheet ? "bottom-sheet" : "default",
       value: _,
       defaultValue: __,
@@ -57,7 +58,9 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     // refreshes a cached spannable, and batched IME deletes (Gboard hold-to-delete) leave the
     // measured height at the previous content, so an emptied draft keeps several lines. Render
     // again after every edit so `defaultValue` carries the current text and the input is
-    // re-measured. Only this leaf renders; the composer stays isolated from typing.
+    // re-measured. Only this leaf renders; the composer stays isolated from typing. An input
+    // with a fixed box opts out: republishing the text makes Android replace the whole editable
+    // and restart the IME mid-word.
     const [, bumpTextRevision] = useReducer((revision: number) => revision + 1, 0);
 
     const assignInputRef = useCallback((input: NativeInput | null) => {
@@ -120,9 +123,11 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       (nextText: string) => {
         textRef.current = nextText;
         onChangeText?.(nextText);
-        bumpTextRevision();
+        if (remeasureOnChange) {
+          bumpTextRevision();
+        }
       },
-      [onChangeText],
+      [onChangeText, remeasureOnChange],
     );
     const handlePaste = useCallback(
       (error: string | null | undefined, files: PastedFile[]) => {

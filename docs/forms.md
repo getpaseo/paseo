@@ -67,6 +67,13 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
   `replaceText` command. Its props omit `value` and `defaultValue`, web IME
   candidates stay unpublished until composition commits, and lint rejects raw
   React Native `TextInput` imports outside the primitive.
+- `EditingTextInput` re-renders itself after every edit so Fabric re-measures a
+  multiline field that grows with its content. That re-render republishes the
+  text to native, and Android answers by replacing the whole editable, which
+  restarts the IME mid-word: composing text is dropped, suggestions stop
+  applying, and the buffer stops matching what the keyboard thinks it holds.
+  A field with a fixed box gains nothing from the re-measure, so pass
+  `remeasureOnChange={false}` — the terminal's hidden 1x1 input does.
 - The form declares one size for all fields: `sm` on desktop, `md` compact
   (`useIsCompactFormFactor`).
 - Availability hierarchy: a field whose capability doesn't apply is **hidden**
