@@ -10,6 +10,7 @@ export interface QuestionFormQuestion {
   multiSelect: boolean;
   allowOther: boolean;
   allowEmpty: boolean;
+  isSecret: boolean;
   placeholder?: string;
   dismissLabel?: string;
 }
@@ -55,6 +56,7 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
       multiSelect: q.multiSelect === true,
       allowOther: q.allowOther === true || q.isOther === true,
       allowEmpty: q.allowEmpty === true,
+      isSecret: q.isSecret === true,
       placeholder: readOptionalString(q, "placeholder"),
       dismissLabel: readOptionalString(q, "dismissLabel"),
     });
