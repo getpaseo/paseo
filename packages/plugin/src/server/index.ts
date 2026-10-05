@@ -25,6 +25,7 @@ export type {
 
 export {
   spawnProcess,
+  terminateProcess,
   execCommand,
   isWindowsCommandScript,
   quoteWindowsArgument,

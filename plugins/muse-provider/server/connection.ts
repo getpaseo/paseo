@@ -1,5 +1,5 @@
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
-import { spawnProcess } from "@getpaseo/plugin/server";
+import { spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
@@ -35,6 +35,7 @@ export class MspConnection {
   private stderr = "";
   private failure: MuseError | null = null;
   private closing = false;
+  private closeResult: Promise<void> | null = null;
   private readonly exited: Promise<void>;
 
   constructor(
@@ -67,7 +68,7 @@ export class MspConnection {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.fail(new MuseError("invalidFrame", `Invalid MSP frame: ${message}`));
-        this.child.kill();
+        void this.close().catch(() => {});
       }
     });
     this.child.stdin.on("error", () => {
@@ -148,16 +149,25 @@ export class MspConnection {
     });
     return schema.parse(response);
   }
-  async close(): Promise<void> {
-    if (this.closing) return this.exited;
+  close(): Promise<void> {
+    if (this.closeResult) return this.closeResult;
     this.closing = true;
+    this.closeResult = this.finishClose();
+    return this.closeResult;
+  }
+  private async finishClose(): Promise<void> {
     this.child.stdin.end();
     const drained = await Promise.race([
       this.exited.then(() => true),
-      delay(1000).then(() => false),
+      delay(1000, undefined, { ref: false }).then(() => false),
     ]);
-    if (!drained) this.child.kill("SIGKILL");
-    await this.exited;
+    if (drained) return;
+    await terminateProcess(this.child);
+    const stopped = await Promise.race([
+      this.exited.then(() => true),
+      delay(5000, undefined, { ref: false }).then(() => false),
+    ]);
+    if (!stopped) throw new MuseError("timeout", "Muse host did not close after termination");
   }
   private write(frame: object): void {
     this.child.stdin.write(JSON.stringify(frame) + "\n");

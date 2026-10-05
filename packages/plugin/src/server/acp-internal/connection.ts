@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { spawnProcess } from "../process.js";
+import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -735,9 +735,9 @@ class AcpRuntime {
     if (!child || this.processFailed) return;
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-    child.kill("SIGTERM");
+    await terminateProcess(child, "SIGTERM");
     if (await settlesWithin(closed, 1_000)) return;
-    child.kill("SIGKILL");
+    await terminateProcess(child);
     if (!(await settlesWithin(closed, 1_000))) {
       throw new Error(`ACP provider ${this.options.options.id} did not terminate after SIGKILL`);
     }

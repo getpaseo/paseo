@@ -81,7 +81,9 @@ Raw Node `spawn` and `execFile` reject those launchers on Windows.
 
 The daemon supplies `request.launch` with the resolved command, argument prefix, and complete
 environment. Pass that environment explicitly; the helpers do not apply daemon environment policy.
-Keep the process lifecycle and protocol deadlines inside your provider.
+Keep the process lifecycle and protocol deadlines inside your provider. End stdin for graceful
+shutdown; use `terminateProcess(child)` for a forced stop. It kills the process tree on Windows,
+including the CLI behind a command-script launcher. Bound your final wait for closed streams.
 
 ```ts
 import { spawnProcess, execCommand } from "@getpaseo/plugin/server";

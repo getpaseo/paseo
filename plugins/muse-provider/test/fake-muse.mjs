@@ -9,6 +9,13 @@ if (process.argv.includes("--version")) {
   process.stdout.write(`Muse Code ${process.env.MUSE_TEST_VERSION || "1.4.1"}\n`);
   process.exit(0);
 }
+if (process.env.MUSE_TEST_STUBBORN) {
+  setInterval(() => {}, 1000);
+  appendFileSync(
+    process.env.MUSE_TEST_REQUESTS,
+    JSON.stringify({ event: "stubbornHost", pid: process.pid }) + "\n",
+  );
+}
 const rows = readFixture(scenario);
 if (process.env.MUSE_TEST_REQUESTS)
   appendFileSync(

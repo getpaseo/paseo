@@ -101,3 +101,24 @@ export async function execCommand(
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
 }
+
+/** Force-stop a CLI, including descendants behind Windows command-script launchers. */
+export async function terminateProcess(
+  child: ChildProcess,
+  signal: NodeJS.Signals = "SIGKILL",
+): Promise<void> {
+  if (process.platform !== "win32") {
+    child.kill(signal);
+    return;
+  }
+  if (child.pid === undefined) return;
+  try {
+    await execCommand("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+      shell: false,
+      timeout: 5000,
+    });
+  } catch (error) {
+    // The process can finish between its close check and taskkill.
+    if (!(error instanceof Error && "code" in error && error.code === 128)) throw error;
+  }
+}

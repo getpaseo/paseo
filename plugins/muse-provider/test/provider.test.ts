@@ -14,6 +14,7 @@ import {
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
+import { execCommand } from "@getpaseo/plugin/server";
 import contribute from "../index.server.js";
 
 const connections: ProviderConnection[] = [];
@@ -1559,3 +1560,38 @@ for (const extension of ["cmd", "bat"]) {
     20000,
   );
 }
+
+test("force-stops a Muse host that ignores stdin EOF", async () => {
+  const h = await harness("catalog-controls", { MUSE_TEST_STUBBORN: "1" });
+  if (process.platform === "win32") {
+    const shim = path.join(h.root, "stubborn muse.cmd");
+    await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
+    h.launch.command = shim;
+    h.launch.args = [];
+  }
+  try {
+    const result = await Promise.race([
+      h.provider.status!({ launch: h.launch }),
+      delay(10000).then(() => {
+        throw new Error("Muse status did not finish closing its host");
+      }),
+    ]);
+    expect(result).toEqual({ available: true });
+    const hosts = (await h.recorded()).filter((row) => row.event === "stubbornHost");
+    expect(hosts).toHaveLength(1);
+    expect(() => process.kill(hosts[0].pid, 0)).toThrow();
+  } finally {
+    // Keep a failing Windows regression from leaving its deliberately stubborn child alive.
+    for (const host of (await h.recorded()).filter((row) => row.event === "stubbornHost")) {
+      if (process.platform === "win32") {
+        await execCommand("taskkill.exe", ["/PID", String(host.pid), "/T", "/F"], {
+          shell: false,
+        }).catch(() => {});
+      } else {
+        try {
+          process.kill(host.pid, "SIGKILL");
+        } catch {}
+      }
+    }
+  }
+}, 15000);
