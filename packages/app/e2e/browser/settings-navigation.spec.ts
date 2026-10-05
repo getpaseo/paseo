@@ -11,6 +11,10 @@ import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
   closeCompactSettings,
   openSettingsSection,
+  scrollSettingsSidebarToEnd,
+  expectSettingsSidebarScrollOffset,
+  scrollSettingsDetailDown,
+  expectSettingsDetailScrollOffset,
   expectSettingsHeader,
   openAddHostFlow,
   selectHostConnectionType,
@@ -51,6 +55,84 @@ async function openWorkspace(
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
   await expect(page.getByTestId("menu-button")).toBeVisible();
 }
+
+test.describe("Settings sidebar scroll position", () => {
+  test.use({ viewport: { width: 1000, height: 500 } });
+
+  test("scrolls the sidebar and detail pane independently", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    const sidebarOffset = await scrollSettingsSidebarToEnd(page);
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
+    const detailOffset = await scrollSettingsDetailDown(page);
+    await expectSettingsSidebarScrollOffset(page, sidebarOffset);
+
+    await page.getByTestId("settings-sidebar-scroll-body").hover();
+    await page.mouse.wheel(0, -60);
+    await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
+    await expectSettingsDetailScrollOffset(page, detailOffset);
+  });
+
+  test("keeps the sidebar position after rapid consecutive selections", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    const scrollTop = await scrollSettingsSidebarToEnd(page);
+
+    for (let selection = 0; selection < 5; selection += 1) {
+      await page.getByTestId("settings-host-section-providers").click({ force: true });
+      await page.getByTestId("settings-host-section-terminals").click({ force: true });
+      await expect(page.getByTestId("page-title")).toHaveText("Terminals");
+      await expectSettingsSidebarScrollOffset(page, scrollTop);
+    }
+
+    // React Native Web emits a final scroll event 100 ms after the last scroll.
+    await page.waitForTimeout(200);
+    await expectSettingsSidebarScrollOffset(page, scrollTop);
+  });
+
+  test("keeps the sidebar position when switching between app and host sections", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    const sidebarScroll = page.getByTestId("settings-sidebar-scroll-body");
+    const hostScrollTop = await scrollSettingsSidebarToEnd(page);
+    await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
+
+    for (const section of [
+      "providers",
+      "terminals",
+      "providers",
+      "terminals",
+      "providers",
+    ] as const) {
+      await openSettingsHostSection(page, getServerId(), section);
+      await expect(page.getByTestId("page-title")).toHaveText(
+        section === "providers" ? "Providers" : "Terminals",
+      );
+      await expectSettingsSidebarScrollOffset(page, hostScrollTop);
+    }
+
+    const sidebar = page.getByTestId("settings-sidebar");
+    await sidebar
+      .getByRole("button", { name: "Diagnostics", exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
+    const appScrollTop = await sidebarScroll.evaluate((node) => node.scrollTop);
+    expect(appScrollTop).toBeGreaterThan(0);
+
+    await openSettingsSection(page, "about");
+    await expectAboutContent(page);
+    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+
+    await openSettingsSection(page, "diagnostics");
+    await expectDiagnosticsContent(page);
+    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+  });
+});
 
 test.describe("Settings sidebar navigation", () => {
   test("clicking a sidebar section updates the URL and renders the section", async ({ page }) => {

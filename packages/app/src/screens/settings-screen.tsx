@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
@@ -6,6 +6,8 @@ import {
   ScrollView,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type PressableStateCallbackType,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -923,6 +925,9 @@ interface SettingsSidebarProps {
   layout: "desktop" | "mobile";
 }
 
+// Settings routes replace the screen, so the sidebar's offset must outlive its mount.
+let settingsSidebarScrollOffset = 0;
+
 function SettingsSidebar({
   view,
   onSelectSection,
@@ -944,6 +949,18 @@ function SettingsSidebar({
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => isSectionAvailable(item, isDesktopApp));
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const scrollRef = useRef<ScrollView>(null);
+  const rememberSidebarScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    // React Native Web can deliver a final scroll event after this sidebar unmounts.
+    if (scrollRef.current !== null) {
+      settingsSidebarScrollOffset = event.nativeEvent.contentOffset.y;
+    }
+  }, []);
+  useLayoutEffect(() => {
+    if (isDesktop) {
+      scrollRef.current?.scrollTo({ y: settingsSidebarScrollOffset, animated: false });
+    }
+  }, [isDesktop]);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -1058,6 +1075,9 @@ function SettingsSidebar({
             style={sidebarStyles.scrollBody}
             showsVerticalScrollIndicator={false}
             testID="settings-sidebar-scroll-body"
+            ref={scrollRef}
+            onScroll={rememberSidebarScroll}
+            scrollEventThrottle={16}
           >
             {sidebarBody}
           </ScrollView>
@@ -1480,7 +1500,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
           <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            <PageLayout title={detailTitle} titleTestID="settings-detail-header-title">
+            <PageLayout
+              title={detailTitle}
+              titleTestID="settings-detail-header-title"
+              testID="settings-detail-scroll-body"
+            >
               {content}
             </PageLayout>
           </View>

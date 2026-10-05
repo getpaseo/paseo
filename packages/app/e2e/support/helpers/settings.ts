@@ -56,6 +56,48 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
   await expectAppRoute(page, buildSettingsSectionRoute(section));
 }
 
+export async function scrollSettingsSidebarToEnd(page: Page): Promise<number> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  await scrollBody.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect
+    .poll(() =>
+      scrollBody.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+    )
+    .toBe(0);
+  const offset = await scrollBody.evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollOffset(page: Page, offset: number): Promise<void> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
+}
+
+export async function scrollSettingsDetailDown(page: Page): Promise<number> {
+  const scrollBody = page.getByTestId("settings-detail-scroll-body");
+  await expect
+    .poll(() => scrollBody.evaluate((node) => node.scrollHeight - node.clientHeight))
+    .toBeGreaterThan(0);
+  await scrollBody.hover();
+  const scrollingEnded = scrollBody.evaluate(
+    (node) =>
+      new Promise<number>((resolve) => {
+        node.addEventListener("scrollend", () => resolve(node.scrollTop), { once: true });
+      }),
+  );
+  await page.mouse.wheel(0, 1000);
+  const offset = await scrollingEnded;
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsDetailScrollOffset(page: Page, offset: number): Promise<void> {
+  const scrollBody = page.getByTestId("settings-detail-scroll-body");
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
+}
+
 export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
   // Host sections are now flat top-level rows under the Host group. Navigate by
   // clicking the Connections section row; the picker only matters when >1 host.
