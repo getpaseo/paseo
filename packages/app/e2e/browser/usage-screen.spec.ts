@@ -27,6 +27,8 @@ import {
   expectPinnedUsage,
   pinRow,
   openUsageOptions,
+  closeUsageOptions,
+  expectUsageOptionsFitContent,
   showUsageAs,
   refreshAllUsage,
   togglePin,
@@ -243,7 +245,7 @@ test.describe("usage screen", () => {
       page.getByTestId(`usage-host-${serverId}`).getByText(/^Update .+ to see usage$/),
     ).toBeVisible({ timeout: 10_000 });
     await qaScreenshot(page, "phase7-usage-update-host");
-    await expect(page.getByTestId("usage-options-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("usage-options-menu")).toHaveCount(0);
     await expect(page.getByTestId("usage-refresh-all")).toHaveCount(0);
     expect(usage.listRequests()).toHaveLength(0);
   });
@@ -320,14 +322,14 @@ test("expired login refreshes to windows with visible pin toggles", async ({ pag
     await gotoAppShell(page);
     await openUsage(page);
     await expect(
-      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+      page.getByText("Claude: Login expired 1h ago. Run claude to refresh it.", { exact: true }),
     ).toBeVisible();
     await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
     await qaScreenshot(page, "usage-expired-login");
     await fixture.setReport(loginWindows);
     await refreshLoginUsage(page);
     await expect(
-      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+      page.getByText("Claude: Login expired 1h ago. Run claude to refresh it.", { exact: true }),
     ).toHaveCount(0);
     await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
     const row = page.getByRole("checkbox", { name: /^Pin Claude Weekly, / });
@@ -426,7 +428,7 @@ for (const theme of ["light", "dark"] as const) {
     desktop: { width: 1440, height: 900 },
     compact: { width: 390, height: 844 },
   })) {
-    test(`inline Usage Settings ${size} ${theme}`, async ({ page }, testInfo) => {
+    test(`Usage Settings cog ${size} ${theme}`, async ({ page }, testInfo) => {
       test.setTimeout(120_000);
       await page.addInitScript((value) => {
         const key = "@paseo:app-settings";
@@ -440,42 +442,24 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto("/usage");
       const screen = page.getByTestId(`usage-host-${getServerId()}`);
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 30_000 });
-      const settings = screen.getByRole("button", { name: "Settings", exact: true });
-      const chevron = settings.locator("svg").locator("../..");
+      const settings = page.getByTestId("usage-options-menu");
       await expect(settings).toHaveAccessibleName("Settings");
-      await expect(settings).toHaveAttribute("aria-expanded", "false");
-      await expect(chevron).toHaveCSS("transform", "none");
-      await expect(screen.getByTestId("usage-display-used")).toHaveCount(0);
-      await expect(
-        pinRow(screen, "Claude", "Weekly").getByTestId("usage-pin-glyph-pinned"),
-      ).toHaveCSS("opacity", "1");
-      await captureSettingsState(page, testInfo, `${size}-${theme}-collapsed`);
+      await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+      await captureSettingsState(page, testInfo, `${size}-${theme}-cog`);
 
-      await togglePin(screen, "Claude", "Weekly");
-      await page.mouse.move(0, viewport.height - 1);
-      await expect(
-        pinRow(screen, "Claude", "Weekly").getByTestId("usage-pin-glyph-unpinned"),
-      ).toHaveCSS("opacity", "1");
       await openUsageOptions(page);
-      await expect(settings).toHaveAttribute("aria-expanded", "true");
-      await expect(chevron).toHaveCSS("transform", "matrix(0, 1, -1, 0, 0, 0)");
-      await expect(screen.getByText("Pinned windows show in the sidebar footer")).toBeVisible();
-      await expect(screen.getByTestId("usage-display-used")).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      await settings.blur();
-      await page.mouse.move(0, viewport.height - 1);
-      await captureSettingsState(page, testInfo, `${size}-${theme}-expanded`);
+      await expectUsageOptionsFitContent(page);
+      await expect(page.getByText("Pinned windows show in the sidebar footer")).toBeVisible();
+      await expect(page.getByTestId("usage-display-used")).toHaveAttribute("aria-selected", "true");
+      await captureSettingsState(page, testInfo, `${size}-${theme}-settings`);
       await showUsageAs(page, "remaining");
       await expect(screen.getByText("69% left")).toBeVisible();
       await showUsageAs(page, "used");
       await expect(pinRow(screen, "Claude", "Session")).toHaveAccessibleName(
         /^Pin Claude Session, 31% · resets /,
       );
-      await settings.click();
-      await expect(settings).toHaveAttribute("aria-expanded", "false");
-      await expect(screen.getByTestId("usage-display-used")).toHaveCount(0);
+      await openUsageOptions(page);
+      await closeUsageOptions(page);
       await refreshAllUsage(page);
       await expect.poll(() => forcedRefreshes(usage)).toEqual([{ forceRefresh: true }]);
     });
@@ -489,4 +473,65 @@ async function captureSettingsState(
 ) {
   await qaScreenshot(page, name);
   await testInfo.attach(name, { body: await page.screenshot(), contentType: "image/png" });
+}
+
+test("an account with all logins failing shows each harness and remedy, then only usage when one succeeds", async ({
+  page,
+}) => {
+  const fixture = await installLoginUsage([
+    { harness: "Codex", report: { status: "error", error: "Usage API returned 500. Try again." } },
+    {
+      harness: "OpenCode",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 401, refreshedBy: "opencode" },
+      },
+    },
+    {
+      harness: "Pi",
+      report: { status: "unavailable", problem: { kind: "no_quota", detail: "No active plan" } },
+    },
+    {
+      harness: "OMP",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 403, refreshedBy: "omp" },
+      },
+    },
+  ]);
+  try {
+    await gotoAppShell(page);
+    await openUsage(page);
+    await expectLoginErrors(page, [
+      "Codex: Usage API returned 500. Try again.",
+      "OpenCode: Login rejected (HTTP 401). Run opencode to refresh it.",
+      "Pi: No active plan",
+      "OMP: Login rejected (HTTP 403). Run omp to refresh it.",
+    ]);
+    await fixture.setReport([
+      {
+        harness: "Codex",
+        report: { status: "error", error: "Usage API returned 500. Try again." },
+      },
+      {
+        harness: "OpenCode",
+        report: { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] },
+      },
+    ]);
+    await refreshLoginUsage(page);
+    await expectLoginUsageOnly(page, "42%");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+async function expectLoginErrors(page: Page, lines: string[]) {
+  const card = page.getByTestId("usage-report-login-journey:account");
+  await expect(card.getByTestId("usage-login-error")).toHaveText(lines.join("\n"));
+}
+
+async function expectLoginUsageOnly(page: Page, percentage: string) {
+  const card = page.getByTestId("usage-report-login-journey:account");
+  await expect(card.getByText(percentage, { exact: true })).toBeVisible();
+  await expect(card.getByTestId("usage-login-error")).toHaveCount(0);
 }

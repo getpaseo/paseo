@@ -1,47 +1,51 @@
 export const CATEGORIES = [
-  { slug: "themes", label: "Themes", description: "Change how Paseo looks." },
   {
-    slug: "agents-and-providers",
-    label: "Agents & providers",
-    description: "Run more coding agents through Paseo.",
+    slug: "daemon-management",
+    label: "Daemon management",
+    description: "Manage hosts, daemon jobs, resources, approvals, and MCP servers.",
   },
   {
-    slug: "monitoring",
-    label: "Monitoring & orchestration",
-    description: "See every agent at once and steer work across workspaces.",
+    slug: "themes",
+    label: "Themes",
+    description: "Change the app color scheme.",
   },
   {
-    slug: "timeline-and-composer",
-    label: "Timeline & composer",
-    description: "Change what a conversation shows and how you write to agents.",
+    slug: "providers",
+    label: "Providers",
+    description:
+      "Connect coding agents, ACP servers, and model routers, with account and quota fallback.",
   },
   {
-    slug: "workspace-panels",
-    label: "Workspace panels",
-    description: "Tools that open as tabs next to your agents.",
+    slug: "orchestration",
+    label: "Orchestration",
+    description: "Coordinate agents, delegate work, and send messages across hosts.",
   },
   {
-    slug: "git-and-code-review",
-    label: "Git & code review",
-    description: "Branches, worktrees, and pull requests.",
+    slug: "git",
+    label: "Git",
+    description: "Work with branches, worktrees, pull requests, stacks, diffs, and reviews.",
   },
   {
-    slug: "automation",
-    label: "Automation & scheduling",
-    description: "Run things later, on a schedule, or when an agent goes idle.",
-  },
-  { slug: "notifications", label: "Notifications", description: "Know when an agent needs you." },
-  {
-    slug: "usage-and-pricing",
-    label: "Usage & pricing",
-    description: "What models cost and how much you have used.",
+    slug: "workspaces",
+    label: "Workspaces",
+    description: "Add workspace panels and tabs for boards, browsers, documents, and terminals.",
   },
   {
-    slug: "integrations",
-    label: "Integrations",
-    description: "Issues, tasks, and tools from other services inside Paseo.",
+    slug: "sidebar",
+    label: "Sidebar",
+    description: "Add sidebar items and panels for usage, notifications, pricing, and links.",
   },
-  { slug: "utilities", label: "Utilities", description: "Small helpers for everyday work." },
+  {
+    slug: "extras",
+    label: "Extras",
+    description: "Add presence, pets, puzzles, wellbeing reminders, and demos.",
+  },
+  {
+    slug: "utils",
+    label: "Utils",
+    description:
+      "Extend the composer and timeline with commands, prompts, skills, and small helpers.",
+  },
 ] as const;
 
 export type CategorySlug = (typeof CATEGORIES)[number]["slug"];

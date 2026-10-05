@@ -320,6 +320,32 @@ describe("assistant selection copy ranges", () => {
     ).toBe("6. Second bullet text");
   });
 
+  it("keeps the next number when a drag crosses a code block nested in an item", () => {
+    const message = mountFixture();
+    const list = fixtureElement(message, '[data-paseo-markdown-tag="ul"]');
+    list.outerHTML = [
+      '<div data-paseo-markdown-tag="ol" data-paseo-markdown-list-start="1">',
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">1.</div>',
+      "<div><div><span>Install it:</span></div>",
+      '<div data-paseo-markdown-tag="pre" data-paseo-markdown-language="sh">',
+      '<div data-paseo-markdown-tag="code"><span>brew install foo</span></div>',
+      '<button data-paseo-markdown-ignore="true">Copy</button>',
+      "</div></div>",
+      "</div>",
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">2.</div>',
+      "<div><div><span>Done.</span></div></div>",
+      "</div>",
+      "</div>",
+    ].join("");
+
+    const content = copyAcross(message, "Install it:", "Done.");
+
+    expect(content?.plainText).toBe("Install it:\n\n```sh\nbrew install foo\n```\n\n2. Done.");
+    expect(content?.html).toContain("<div>2. Done.</div>");
+  });
+
   it("retains nested markers when a drag includes the complete outer item", () => {
     const message = mountFixture();
     const firstItem = fixtureElement(message, '[data-paseo-markdown-tag="li"]');
@@ -405,10 +431,19 @@ describe("assistant selection copy ranges", () => {
  * Turndown, so those cases need a fixture shaped like the real thing.
  */
 function highlightedFixture(language: string | null): string {
+  return [
+    '<div data-testid="assistant-message">',
+    '<div data-paseo-markdown-tag="p"><span>Before the block.</span></div>',
+    highlightedCodeBlock(language),
+    '<div data-paseo-markdown-tag="p"><span>After the block.</span></div>',
+    "</div>",
+  ].join("");
+}
+
+function highlightedCodeBlock(language: string | null): string {
   const languageAttribute =
     language === null ? "" : ` data-paseo-markdown-language="${escapeAttribute(language)}"`;
   return [
-    '<div data-testid="assistant-message">',
     `<div data-paseo-markdown-tag="pre"${languageAttribute}>`,
     '<span data-paseo-markdown-tag="code">',
     "<span>const</span><span> answer</span><span> = 1;</span>",
@@ -418,8 +453,6 @@ function highlightedFixture(language: string | null): string {
     "<span>    doThing();</span>",
     "</span>",
     '<div data-paseo-markdown-ignore="true"><span>Copy</span></div>',
-    "</div>",
-    '<div data-paseo-markdown-tag="p"><span>After the block.</span></div>',
     "</div>",
   ].join("");
 }
@@ -595,6 +628,63 @@ describe("assistant selection copy inside highlighted code", () => {
 
     expect(copiedMarkdown(selectNodeContents(blockCode))).toBe(
       "const answer = 1;\n  if (answer) {\n    doThing();",
+    );
+  });
+
+  // A drag that starts or ends in the gap beside a block anchors the selection at the
+  // edge of the neighbouring block. Nothing outside the code is highlighted or selected.
+  it("copies code without a fence when the selection only touches the end of the block before it", () => {
+    const message = mountHighlighted();
+    const before = tokenText(message, "Before the block.");
+
+    const content = copyBetween(
+      [before, before.length],
+      [tokenText(message, "    doThing();"), 14],
+    );
+
+    expect(content?.plainText).toBe("const answer = 1;\n  if (answer) {\n    doThing();");
+  });
+
+  it("copies code without a fence when the selection only touches the start of the block after it", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween(
+      [tokenText(message, "const"), 0],
+      [tokenText(message, "After the block."), 0],
+    );
+
+    expect(content?.plainText).toBe("const answer = 1;\n  if (answer) {\n    doThing();");
+  });
+
+  it("copies code without a fence when the selection only touches the row before the block", () => {
+    const transcript = mountTranscript([{ messageId: "message-1", blocks: ["Run this:", "code"] }]);
+    const codeRow = transcript.querySelectorAll('[data-testid="assistant-message"]')[1]!;
+    codeRow.innerHTML = highlightedCodeBlock("typescript");
+    const before = tokenText(transcript, "Run this:");
+
+    const content = copyBetween(
+      [before, before.length],
+      [tokenText(transcript, "    doThing();"), 14],
+    );
+
+    expect(content?.plainText).toBe("const answer = 1;\n  if (answer) {\n    doThing();");
+  });
+
+  it("keeps an image selected beside the code in the copy", () => {
+    const message = mountHighlighted();
+    const image = document.createElement("div");
+    image.setAttribute("data-paseo-markdown-tag", "p");
+    image.innerHTML = '<div><img src="https://example.test/chart.png" alt="chart"></div>';
+    message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(image);
+    const before = tokenText(message, "Before the block.");
+
+    const content = copyBetween(
+      [before, before.length],
+      [tokenText(message, "    doThing();"), 14],
+    );
+
+    expect(content?.plainText).toBe(
+      "![chart](https://example.test/chart.png)\n\n```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```",
     );
   });
 

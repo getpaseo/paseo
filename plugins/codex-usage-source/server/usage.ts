@@ -72,7 +72,8 @@ export async function discover(
   const present: UsageAccount[] = [];
   for (const input of candidates) {
     const auth = await readAuth(input, lookup);
-    if (auth) present.push({ ...accountIdentity(auth, input), input });
+    if (auth)
+      present.push({ ...accountIdentity(auth, input), harness: harnessLabel(input), input });
   }
   return present;
 }
@@ -293,4 +294,9 @@ function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; lab
     claimString(claimObject(id, "https://api.openai.com/profile")?.["email"]) ??
     claimString(id?.["email"]);
   return { key: key ?? hashAccountKey(JSON.stringify(input.route)), ...(label ? { label } : {}) };
+}
+
+function harnessLabel(input: CodexUsageInput): string {
+  const labels = { codex: "Codex", opencode: "OpenCode", pi: "Pi", omp: "OMP" };
+  return labels[input.route.store];
 }

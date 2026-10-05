@@ -12,9 +12,18 @@ export default defineConfig({
   ],
   webServer: process.env.WEBSITE_TEST_URL
     ? undefined
-    : {
-        command: "npm run build && npm run preview -- --host 127.0.0.1 --port 8187 --strictPort",
-        url: baseURL,
-        reuseExistingServer: !process.env.CI,
-      },
+    : [
+        {
+          command: "node e2e/registry-server.mjs",
+          url: "http://127.0.0.1:8188/index.json",
+        },
+        {
+          command: "npm run build && npm run preview -- --host 127.0.0.1 --port 8187 --strictPort",
+          url: baseURL,
+          env: {
+            CLOUDFLARE_INCLUDE_PROCESS_ENV: "true",
+            PLUGINS_REGISTRY_URL: "http://127.0.0.1:8188",
+          },
+        },
+      ],
 });

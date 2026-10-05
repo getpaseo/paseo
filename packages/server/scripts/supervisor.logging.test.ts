@@ -27,6 +27,8 @@ async function runSupervisorFixture(options: {
   fileSizeLimitBlocks?: number;
   /** Occupy the log path with a directory so the supervisor cannot open daemon.log. */
   blockLogPath?: boolean;
+  /** Close the reading end of the supervisor's stdout and stderr as soon as it starts. */
+  closeOutput?: boolean;
 }): Promise<{
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -86,6 +88,11 @@ async function runSupervisorFixture(options: {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  if (options.closeOutput) {
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
+
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8");
@@ -116,8 +123,17 @@ async function runSupervisorFixture(options: {
     });
   });
 
-  const log = await readFile(logPath, "utf8");
+  const log = await readLogIfWritten(logPath);
   return { code, signal, elapsedMs: Date.now() - startedAt, log, stdout, stderr };
+}
+
+async function readLogIfWritten(logPath: string): Promise<string> {
+  try {
+    return await readFile(logPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
 }
 
 describe("supervisor durable logging", () => {
@@ -187,6 +203,30 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain('"worker-json-stderr"');
     expect(result.stdout).toContain('"worker-json-stdout"');
     expect(result.stderr).toContain('"worker-json-stderr"');
+  });
+
+  test("keeps supervising the worker when nobody reads its stdout or stderr", async () => {
+    const result = await runSupervisorFixture({
+      closeOutput: true,
+      workerSource: `
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
+        process.stdout.write("first stdout line\\n");
+        process.stderr.write("first stderr line\\n");
+        setTimeout(() => {
+          process.stdout.write("later stdout line\\n");
+          process.send?.({ type: "paseo:shutdown", reason: "closed_output_probe" });
+        }, 500);
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain("first stderr line\n");
+    expect(result.log).toContain("later stdout line\n");
+    expect(result.log).toContain('"reason":"closed_output_probe"');
   });
 
   test("preserves raw non-JSON stdout and stderr lines", async () => {

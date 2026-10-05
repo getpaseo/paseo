@@ -5,7 +5,7 @@ import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 
 describe("agent timeline content", () => {
-  test("limits terminal input to the tool-call content budget", () => {
+  test("marks truncated plain-text tool content within the content budget", () => {
     const oversizedInput = "x".repeat(64 * 1024 + 1);
 
     const item = limitAgentTimelineItemContent({
@@ -21,6 +21,7 @@ describe("agent timeline content", () => {
       },
     });
 
+    expect(limitAgentTimelineItemContent(item)).toEqual(item);
     expect(item).toEqual({
       type: "tool_call",
       callId: "terminal-session-4242",
@@ -29,7 +30,7 @@ describe("agent timeline content", () => {
       error: null,
       detail: {
         type: "plain_text",
-        text: "x".repeat(64 * 1024),
+        text: "x".repeat(64 * 1024 - "\n\n[Content truncated]".length) + "\n\n[Content truncated]",
         icon: "square_terminal",
       },
     });

@@ -117,7 +117,12 @@ the bundled integration; an entry with `extends` shadows it with a custom provid
 
 ## Install from a registry
 
-`paseo plugin install owner/slug` installs the registry's reviewed artifact. Registry installs
+Registry installs are off by default. Set `pluginRegistryEnabled: true` in daemon config or
+`PASEO_PLUGIN_REGISTRY_ENABLED=1`, then restart the daemon. While they are off, bare
+`owner/repo` is GitHub shorthand and the daemon never contacts a registry.
+
+With registry installs on, `paseo plugin install owner/slug` installs the registry's reviewed
+artifact, and GitHub shorthand requires `github:`. Registry installs
 keep the registry URL and ID, so update checks use its approved pin. Explicit version/ref
 selection is unavailable for registry installs; install an explicit source to select your own.
 
@@ -133,13 +138,13 @@ owns static hosting, record shapes, pins, and advisory install counts.
 
 ## Install a Git source
 
-GitHub shorthand requires `github:`. Other hosts use a Git URL. An existing directory
-still wins over source resolution.
+GitHub repositories use `owner/repository` or `github:owner/repository`. Other hosts use a Git
+URL. An existing directory still wins over source resolution.
 
 ```bash
-paseo plugin install github:owner/repository
+paseo plugin install owner/repository
 paseo plugin install https://gitlab.com/group/repository.git
-paseo plugin install github:owner/monorepo:plugins/review
+paseo plugin install owner/monorepo:plugins/review
 paseo plugin install github:owner/repository --ref main
 ```
 
@@ -243,7 +248,7 @@ dependency; shared types must not refer to React components, hooks, Node APIs, o
 | Entry                                                | Owns                                                                       | May depend on          |
 | ---------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
 | `@getpaseo/plugin`                                   | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
-| `@getpaseo/plugin/server`                            | Server contribution/handler contexts and lifecycle contracts               | Shared and server code |
+| `@getpaseo/plugin/server`                            | Server contexts, lifecycle contracts, and CLI process launch               | Shared and server code |
 | `@getpaseo/plugin/server/provider`, `/server/acp`    | Server provider contracts and adapters                                     | Shared and server code |
 | `@getpaseo/plugin/client`                            | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
 | `@getpaseo/plugin/client/react-native`, `/client/ui` | Host-provided UI components                                                | Shared and client code |
@@ -483,9 +488,9 @@ SVG or URL.
 
 ## Usage sources
 
-Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery and credential-store reads; the daemon owns account grouping, ordered login fallback, and the fetch cache. Scope discovery explicitly: global queries inspect machine stores; session queries inspect only the live harness's selected stores. The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same sanitized SVG file rules as provider icons.
+Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage screen falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same sanitized SVG file rules as provider icons.
 
-The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients. See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the author contract and minimum version.
+The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
 
 ## Contribute sidebar items
 

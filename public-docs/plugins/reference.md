@@ -342,6 +342,7 @@ A source implements two calls:
 interface UsageAccount {
   key: string;
   label?: string;
+  harness?: string;
   input: JsonValue;
 }
 
@@ -375,25 +376,29 @@ type UsageProblem =
   | { kind: "no_quota"; detail: string };
 ```
 
-`discover({ kind: "global" })` queries machine login stores, including expired logins. Session
-scope queries only the login stores selected by that harness's resolved launch environment.
-Return `[]` when no login exists or the session does not use your source. Never scan default stores
-from session discovery or scan agents from global discovery. Discovery is a query, with no agent
+Session discovery returns only the login that agent runs on. The agent popover uses only those
+inputs; it never tries logins from global discovery or other agents. For any other provider,
+return `[]`. Global discovery lists every account, including expired logins.
+
+Resolve the session account from that session's launch environment. Return `[]` when no login exists.
+Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
 lifecycle hooks. Closed agents have no session scope until resumed.
 
 Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
 input against your schema before calling `fetch()`. The same key in any scope is the same report;
-agents sharing an account share the fetch cache. Fetches have a 20-second deadline.
+fetches share a five-minute cache only when their ordered login inputs match. Each login fetch
+has a 20-second deadline.
 
 Built-in session routes:
 
-| Source        | Session                                       | Login store                                                                                    |
-| ------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Claude        | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
-| Claude        | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
-| Codex         | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
-| Codex         | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
-| Other sources | Any                                           | No session discovery                                                                           |
+| Source                 | Session                                       | Login store                                                                                    |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claude                 | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
+| Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
+| Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
+| Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
+| Other built-in sources | Any                                           | No session discovery                                                                           |
 
 Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
 with `OPENAI_BASE_URL` set.
@@ -403,9 +408,13 @@ organization whose quota is metered and survives token rotation. Never use a cre
 email as the key. Use `hashAccountKey()` for sensitive stable identities or a store locator when
 account metadata is unavailable. Labels can name accounts without becoming their identity.
 
-Return logins in preference order. Several entries with the same key become one card, with their
-inputs tried in order until a report is `available`. An unavailable report, error report, or thrown
-fetch falls through to the next input. If none succeeds, the card carries the last report.
+Return logins in preference order and set `harness` to the owning harness's display name, such as
+Codex, OpenCode, Pi, or OMP. The daemon treats inputs as opaque and never derives labels from them.
+
+The host-wide Usage screen groups logins with the same key into one account card and tries them
+concurrently, preferring the discovery order when selecting a result. If any login returns
+`available`, it shows usage with no errors. If all fail, it shows
+every login's error on a separate line with its harness label and its own remedy.
 Discovery failures are logged by the daemon and produce no card.
 
 Window names must come from provider data: an explicit duration, a named API field such as
@@ -485,7 +494,8 @@ metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP 
 `usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
 accounts without rediscovering identity. If a store switches accounts, the existing card shows the
 new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Clients gate the feature
+bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+`loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
 
@@ -2253,12 +2263,11 @@ directory. The app does not expand `~`; your shell may expand it before the CLI 
 
 | Source                     | Accepted form                                                              | Example                                       |
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
-| Registry plugin            | `owner/slug` or `host/owner/slug`                                          | `omercnet/dracula`                            |
 | Host directory             | Absolute or relative path on the daemon host                               | `/srv/paseo/plugins/review`                   |
-| GitHub repository          | `github:owner/repository`                                                  | `github:acme/paseo-review`                    |
+| GitHub repository          | `github:owner/repository` or `owner/repository`                            | `github:acme/paseo-review`                    |
 | Git repository             | `git:<URL or SCP source>`; the prefix is optional for URLs and SCP sources | `git:https://git.example.com/acme/review.git` |
 | npm package                | `npm:<name>[@<version, tag, or range>]`; `npm:` is optional                | `npm:@acme/paseo-review@^1.2.0`               |
-| Plugin below a source root | Append `:relative/plugin/path` to an explicit npm/Git source               | `github:acme/monorepo:plugins/review`         |
+| Plugin below a source root | Append `:relative/plugin/path` to any source                               | `github:acme/monorepo:plugins/review`         |
 
 Git URLs use `https://`, `http://`, `ssh://`, `git://`, or `file://`. SCP sources use
 `user@host:path`. `file://` selects Git acquisition, not directory installation.
@@ -2283,11 +2292,15 @@ Paseo resolves an identifier in this order:
    across hosts. URL ports and the separator in an SCP source stay part of the source. A suffix
    that does not satisfy these rules stays part of the identifier.
 4. Without an explicit prefix, an existing directory matching the remaining source wins.
-5. Resolve bare `owner/slug` and `host/owner/slug` through the plugin registry. Registry records
-   own the artifact revision and plugin path. GitHub shorthand requires `github:`; `git:` also
-   accepts shorthand, URLs, and SCP sources.
+5. Resolve Git URLs and SCP sources as Git; expand exact `owner/repository` shorthand to GitHub
+   HTTPS. `github:` requires that shorthand; `git:` accepts it as well as URLs and SCP sources.
 6. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
+
+Plugin registry installs are off by default. When the daemon enables them with
+`pluginRegistryEnabled: true` or `PASEO_PLUGIN_REGISTRY_ENABLED=1`, bare `owner/slug` and
+`host/owner/slug` resolve through the plugin registry instead of GitHub, the registry record owns
+the revision and plugin path, and GitHub shorthand requires `github:`.
 
 Directory lookup happens on the daemon host. The app uses the `paseo-plugin.json` ID; the CLI
 accepts `--id <runtime-id>` to override it. An existing installation ID is rejected without changing
@@ -2334,9 +2347,9 @@ deletes its managed files; removing a directory plugin keeps your source directo
 paseo plugin init /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
-paseo plugin add github:owner/repository
+paseo plugin add owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
-paseo plugin add github:owner/monorepo:plugins/review
+paseo plugin add owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update <id>
 paseo plugin update --all --check

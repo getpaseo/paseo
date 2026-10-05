@@ -54,6 +54,8 @@ export class FakeOmp implements OmpRuntime {
   private readonly sessions: FakeOmpSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: OmpRpcSlashCommand[][] = [];
+  private readonly queuedSessionSetups: Array<(session: FakeOmpSession) => void> = [];
+  private readonly removedModels = new Set<string>();
   private nextStartError: Error | null = null;
   private nextSessionId = 0;
   private readonly sessionIdsByFile = new Map<string, string>();
@@ -75,22 +77,35 @@ export class FakeOmp implements OmpRuntime {
       session: input,
     });
     this.recordedLaunches.push(launch);
+    if (launch.model && this.removedModels.has(launch.model)) {
+      throw new Error(`Model "${launch.model}" not found`);
+    }
     const sessionId =
       (launch.session ? this.sessionIdsByFile.get(launch.session) : undefined) ??
       `omp-session-${++this.nextSessionId}`;
-    const session = new FakeOmpSession(launch, sessionId);
+    const session = new FakeOmpSession(launch, sessionId, this.removedModels);
     if (!launch.noSession) this.sessionIdsByFile.set(session.state.sessionFile, sessionId);
     session.commands = this.queuedCommands.shift() ?? [];
     for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
       session.subagentSubscriptionErrors.set(level, error);
     }
     this.queuedSubagentSubscriptionErrors.clear();
+    this.queuedSessionSetups.shift()?.(session);
     this.sessions.push(session);
     return session;
   }
 
   queueCommands(commands: OmpRpcSlashCommand[]): void {
     this.queuedCommands.push(commands);
+  }
+
+  queueSessionSetup(setup: (session: FakeOmpSession) => void): void {
+    this.queuedSessionSetups.push(setup);
+  }
+
+  // OMP refuses to launch with, or switch to, a model it no longer knows.
+  removeModel(modelId: string): void {
+    this.removedModels.add(modelId);
   }
 
   failNextStart(error: Error): void {
@@ -174,7 +189,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
 
-  constructor(launch: OmpRuntimeLaunch, sessionId = "omp-session-1") {
+  constructor(
+    launch: OmpRuntimeLaunch,
+    sessionId = "omp-session-1",
+    private readonly removedModels: ReadonlySet<string> = new Set(),
+  ) {
     this.environment = launch.env ?? {};
     this.state = {
       model: null,
@@ -333,9 +352,13 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   async setModel(provider: string, modelId: string): Promise<OmpModel> {
     this.setModelRequests.push({ provider, modelId });
+    if (this.removedModels.has(`${provider}/${modelId}`)) {
+      throw new Error(`Model not found: ${provider}/${modelId}`);
+    }
     if (!this.setModelResult) {
       throw new Error("FakeOmp setModel requires setModelResult to be scripted");
     }
+    this.state = { ...this.state, model: this.setModelResult };
     return this.setModelResult;
   }
 

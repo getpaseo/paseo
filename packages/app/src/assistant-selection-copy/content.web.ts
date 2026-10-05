@@ -53,9 +53,7 @@ turndown.addRule("compactListItem", {
     if (parent?.nodeName !== "OL") {
       return `${options.bulletListMarker} ${item}\n`;
     }
-    const start = Number(parent.getAttribute("start") ?? 1);
-    const index = Array.from(parent.children).indexOf(node);
-    return `${start + index}. ${item}\n`;
+    return `${node.getAttribute("value")}. ${item}\n`;
   },
 });
 
@@ -67,8 +65,8 @@ export function createAssistantSelectionClipboardContent(
   }
 
   const range = selection.getRangeAt(0);
-  const parts = selectedMessageParts(range);
-  if (!parts) {
+  const parts = selectedMessageParts(range)?.filter((part) => selectsContent(part.range));
+  if (!parts?.length) {
     return null;
   }
 
@@ -103,10 +101,12 @@ export function createAssistantSelectionClipboardContent(
  *
  * A selection contained inside code always copies as code, even when it contains every
  * character. A selection that crosses the code boundary stays on the Markdown path so
- * a complete block retains its fence.
+ * a complete block retains its fence. Crossing means selecting content outside the code:
+ * a drag that starts or ends in the gap beside a block anchors at the edge of the
+ * neighbouring block, which selects nothing there.
  */
 function createPartialCodeContent(range: Range, message: Element): MarkdownClipboardContent | null {
-  const region = closestCodeRegion(range.commonAncestorContainer, message);
+  const region = selectedCodeRegion(range, message);
   if (!region) {
     return null;
   }
@@ -128,6 +128,18 @@ function createPartialCodeContent(range: Range, message: Element): MarkdownClipb
     language: fence?.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE),
     block,
   });
+}
+
+function selectedCodeRegion(range: Range, message: Element): Element | null {
+  const edgeRegions = [range.startContainer, range.endContainer].map((node) =>
+    closestCodeRegion(node, message),
+  );
+  return (
+    edgeRegions.find(
+      // Measure against the whole block, so its own hover Copy button is not outside it.
+      (edge) => edge && selectsNothingOutside(range, edge.closest(CODE_BLOCK_SELECTOR) ?? edge),
+    ) ?? null
+  );
 }
 
 function closestCodeRegion(node: Node, message: Element): Element | null {
@@ -384,6 +396,31 @@ function hasSelectedAllContents(range: Range, element: Element, includeIgnored =
   return true;
 }
 
+function selectsContent(range: Range): boolean {
+  return hasMarkdownContent(range.cloneContents(), true);
+}
+
+function selectsNothingOutside(range: Range, element: Element): boolean {
+  const contents = document.createRange();
+  contents.selectNodeContents(element);
+
+  if (range.compareBoundaryPoints(Range.START_TO_START, contents) < 0) {
+    const before = range.cloneRange();
+    before.setEnd(contents.startContainer, contents.startOffset);
+    if (selectsContent(before)) {
+      return false;
+    }
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, contents) > 0) {
+    const after = range.cloneRange();
+    after.setStart(contents.endContainer, contents.endOffset);
+    if (selectsContent(after)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean): boolean {
   if (!includeIgnored) {
     for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
@@ -395,6 +432,7 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   }
   const visibleVoidSelector = ["br", "hr"]
     .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
+    .concat("img")
     .join(",");
   return Boolean(fragment.querySelector(visibleVoidSelector));
 }
@@ -496,6 +534,7 @@ function restoreMarkdownElements(container: HTMLElement): void {
       if (start) {
         semanticElement.setAttribute("start", start);
       }
+      numberOrderedListItems(semanticElement, Number(start ?? 1));
     }
     if (tagName === "pre") {
       const language = element.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
@@ -526,6 +565,20 @@ function restoreMarkdownElements(container: HTMLElement): void {
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
+}
+
+/**
+ * Each item carries its number before Turndown re-parses the HTML. Until then every
+ * child of the list is one item, including a partly selected item demoted to a `p`.
+ * The parser splits a `p` that holds a code block into several siblings, so counting
+ * siblings afterwards numbers the next item too high.
+ */
+function numberOrderedListItems(list: Element, start: number): void {
+  Array.from(list.children).forEach((child, index) => {
+    if (child.tagName === "LI") {
+      child.setAttribute("value", String(start + index));
+    }
+  });
 }
 
 function unwrapIncompleteTables(container: HTMLElement): void {
