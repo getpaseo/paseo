@@ -32,7 +32,12 @@ export function AgentUsage({
   let content: ReactNode;
   if (view.kind === "ready") {
     const cards = (
-      <AgentUsageCards serverId={serverId} reports={view.reports} refreshable={refreshable} />
+      <AgentUsageCards
+        serverId={serverId}
+        agentId={agentId}
+        reports={view.reports}
+        refreshable={refreshable}
+      />
     );
     content = scrollable ? (
       <FloatingScrollView
@@ -65,10 +70,12 @@ export function AgentUsage({
 
 function AgentUsageCards({
   serverId,
+  agentId,
   reports,
   refreshable,
 }: {
   serverId: string;
+  agentId: string;
   reports: readonly UsageReportEntry[];
   refreshable: boolean;
 }) {
@@ -77,6 +84,7 @@ function AgentUsageCards({
     <UsageCard
       key={entry.id}
       serverId={serverId}
+      agentId={agentId}
       entry={entry}
       display={display}
       compact

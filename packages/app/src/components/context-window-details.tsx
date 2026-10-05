@@ -7,13 +7,15 @@ import { formatTokenCount } from "./context-window-meter.utils";
 interface ContextWindowDetailsProps {
   serverId: string;
   agentId: string;
-  percentage: number;
-  usedTokens: number;
-  maxTokens: number;
+  context: {
+    percentage: number;
+    usedTokens: number;
+    maxTokens: number;
+  } | null;
   sessionCost: string | null;
-  /** The tooltip titles itself; the sheet's header carries the title instead. */
+  /** The hover card and tooltip title themselves; the sheet's header carries the title instead. */
   showTitle: boolean;
-  /** Whether the usage cards include a Refresh button. */
+  /** Whether the usage cards have a Refresh button; without one they show their freshness. */
   refreshable: boolean;
   /** Keep a long report list inside the floating tooltip's viewport. */
   scrollable?: boolean;
@@ -21,14 +23,12 @@ interface ContextWindowDetailsProps {
 
 /**
  * What the context window meter opens: how full the window is, then the usage of the agent's
- * account. The wide tooltip and the compact sheet both render it.
+ * account. The desktop hover card, the native wide tooltip, and the compact sheet all render it.
  */
 export function ContextWindowDetails({
   serverId,
   agentId,
-  percentage,
-  usedTokens,
-  maxTokens,
+  context,
   sessionCost,
   showTitle,
   refreshable,
@@ -39,13 +39,21 @@ export function ContextWindowDetails({
     <>
       <View style={styles.summary}>
         {showTitle ? <Text style={styles.title}>{t("contextWindow.title")}</Text> : null}
-        <Text style={styles.text}>{t("contextWindow.used", { percentage })}</Text>
-        <Text style={styles.detail}>
-          {t("contextWindow.tokens", {
-            used: formatTokenCount(usedTokens),
-            max: formatTokenCount(maxTokens),
-          })}
-        </Text>
+        {context ? (
+          <>
+            <Text style={styles.text}>
+              {t("contextWindow.used", { percentage: context.percentage })}
+            </Text>
+            <Text style={styles.detail}>
+              {t("contextWindow.tokens", {
+                used: formatTokenCount(context.usedTokens),
+                max: formatTokenCount(context.maxTokens),
+              })}
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.detail}>{t("contextWindow.noData")}</Text>
+        )}
         {sessionCost ? (
           <Text style={styles.detail}>{t("contextWindow.sessionCost", { cost: sessionCost })}</Text>
         ) : null}

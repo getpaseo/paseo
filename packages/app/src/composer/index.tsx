@@ -279,49 +279,48 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
   };
 }
 
-function renderContextWindowMeter(
-  serverId: string,
-  agentId: string,
-  contextWindowMaxTokens: number | null,
-  contextWindowUsedTokens: number | null,
-  totalCostUsd: number | null,
-  showPercentage: boolean,
-  serverId: string,
-  pending: boolean,
-  glyphSize: number,
-): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending) {
-    return null;
-  }
+interface RenderContextWindowMeterArgs {
+  serverId: string;
+  agentId: string;
+  contextWindowMaxTokens: number | null;
+  contextWindowUsedTokens: number | null;
+  totalCostUsd: number | null;
+  showPercentage: boolean;
+  glyphSize: number;
+}
+
+function renderContextWindowMeter(args: RenderContextWindowMeterArgs): ReactElement {
   return (
     <ContextWindowMeter
-      serverId={serverId}
-      agentId={agentId}
-      maxTokens={contextWindowMaxTokens}
-      usedTokens={contextWindowUsedTokens}
-      totalCostUsd={totalCostUsd}
-      showPercentage={showPercentage}
-      serverId={serverId}
-      pending={pending}
-      glyphSize={glyphSize}
+      serverId={args.serverId}
+      agentId={args.agentId}
+      maxTokens={args.contextWindowMaxTokens}
+      usedTokens={args.contextWindowUsedTokens}
+      totalCostUsd={args.totalCostUsd}
+      showPercentage={args.showPercentage}
+      glyphSize={args.glyphSize}
     />
   );
 }
 
-function resolveContextWindowPlacement(
-  meter: ReactElement | null,
-  reserveSlot: boolean,
-  isCompactLayout: boolean,
-): { beforeVoiceContent: ReactNode; compactContextWindowContent: ReactNode } {
-  if (!reserveSlot) {
+interface ResolveContextWindowPlacementArgs {
+  meter: ReactElement;
+  reserveSlot: boolean;
+  isCompactLayout: boolean;
+}
+
+function resolveContextWindowPlacement(args: ResolveContextWindowPlacementArgs): {
+  beforeVoiceContent: ReactNode;
+  compactContextWindowContent: ReactNode;
+} {
+  if (!args.reserveSlot) {
     return { beforeVoiceContent: null, compactContextWindowContent: null };
   }
-  if (isCompactLayout) {
-    return { beforeVoiceContent: null, compactContextWindowContent: meter };
+  if (args.isCompactLayout) {
+    return { beforeVoiceContent: null, compactContextWindowContent: args.meter };
   }
   return {
-    beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{meter}</View>,
+    beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{args.meter}</View>,
     compactContextWindowContent: null,
   };
 }
@@ -1018,16 +1017,6 @@ interface ComposerProps {
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const StableMessageInput = memo(MessageInput);
-
-function resolveContextWindowValues(
-  rawMax: number | null,
-  rawUsed: number | null,
-): { contextWindowMaxTokens: number | null; contextWindowUsedTokens: number | null } {
-  if (typeof rawMax === "number" && typeof rawUsed === "number") {
-    return { contextWindowMaxTokens: rawMax, contextWindowUsedTokens: rawUsed };
-  }
-  return { contextWindowMaxTokens: null, contextWindowUsedTokens: null };
-}
 
 interface ComposerAutocompleteHandle {
   onKeyPress: (event: ComposerKeyPressEvent) => boolean;
@@ -2083,41 +2072,35 @@ function ComposerContentImpl({
     ],
   );
 
-  const { contextWindowMaxTokens, contextWindowUsedTokens } = resolveContextWindowValues(
-    agentState.contextWindowMaxTokens,
-    agentState.contextWindowUsedTokens,
-  );
-
-  const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
-
   const contextWindowMeter = useMemo(
     () =>
-      renderContextWindowMeter(
+      renderContextWindowMeter({
         serverId,
         agentId,
-        contextWindowMaxTokens,
-        contextWindowUsedTokens,
-        agentState.totalCostUsd,
-        isCompactLayout,
-        serverId,
-        contextWindowPending,
-        contextWindowMeterGlyphSize,
-      ),
+        contextWindowMaxTokens: agentState.contextWindowMaxTokens,
+        contextWindowUsedTokens: agentState.contextWindowUsedTokens,
+        totalCostUsd: agentState.totalCostUsd,
+        showPercentage: isCompactLayout,
+        glyphSize: contextWindowMeterGlyphSize,
+      }),
     [
       serverId,
       agentId,
-      contextWindowMaxTokens,
-      contextWindowUsedTokens,
+      agentState.contextWindowMaxTokens,
+      agentState.contextWindowUsedTokens,
       agentState.totalCostUsd,
       isCompactLayout,
-      serverId,
-      contextWindowPending,
       contextWindowMeterGlyphSize,
     ],
   );
   const { beforeVoiceContent, compactContextWindowContent } = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
+    () =>
+      resolveContextWindowPlacement({
+        meter: contextWindowMeter,
+        reserveSlot: hasAgent,
+        isCompactLayout,
+      }),
     [contextWindowMeter, hasAgent, isCompactLayout],
   );
 

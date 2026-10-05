@@ -2455,10 +2455,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
-    }
-    this.pendingPermissions.clear();
+    this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
@@ -2474,10 +2471,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
-    for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
-    }
-    this.pendingPermissions.clear();
+    this.cancelPendingPermissions();
 
     if (this.connection && this.sessionId) {
       try {
@@ -3298,12 +3292,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // A turn that ends without completing leaves no way to answer its open
+    // permission requests, so tell the agent they were cancelled.
+    if (event.type !== "turn_completed") {
+      this.cancelPendingPermissions();
+    }
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
     }
     this.pushEvent(event);
+  }
+
+  private cancelPendingPermissions(): void {
+    for (const pending of this.pendingPermissions.values()) {
+      pending.resolve({ outcome: { outcome: "cancelled" } });
+    }
+    this.pendingPermissions.clear();
   }
 
   private emitBootstrapThreadEvent(): void {

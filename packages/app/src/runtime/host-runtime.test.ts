@@ -3919,6 +3919,53 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("authenticates Remote SSH probes with the entered daemon password and stores it verbatim", async () => {
+    const store = createPairingStore({
+      password: " s3cret ",
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    answerHostConfirmations(store, false);
+
+    await store.boot();
+    await store.probeAndUpsertRemoteSshConnection({
+      host: "deploy@example.com",
+      password: " s3cret ",
+    });
+
+    const host = store.getHosts().find((entry) => entry.serverId === "srv_ssh");
+    expect(host?.password).toBe(" s3cret ");
+    expect(host?.connections[0]).toMatchObject({
+      type: "remoteSsh",
+      host: "deploy@example.com",
+    });
+
+    // The fix promises the saved password is sent on every connection: a later
+    // cycle must authenticate from the stored profile alone.
+    await store.runProbeCycleNow("srv_ssh");
+    await waitForHostOnline(store, "srv_ssh");
+    store.syncHosts([]);
+  });
+
+  it("rejects Remote SSH probes without the daemon password, the way the daemon does", async () => {
+    const store = createPairingStore({
+      password: "s3cret",
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    answerHostConfirmations(store, false);
+
+    await store.boot();
+    const failure = await store
+      .probeAndUpsertRemoteSshConnection({ host: "deploy@example.com" })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(DaemonAuthenticationError);
+    expect((failure as DaemonAuthenticationError).reason).toBe("password_required");
+    expect(store.getHosts().find((entry) => entry.serverId === "srv_ssh")).toBeUndefined();
+    store.syncHosts([]);
+  });
+
   it("preserves the existing host label when re-pairing an existing relay host", async () => {
     const store = createPairingStore({ hostname: "mbp" });
     answerHostConfirmations(store, true);

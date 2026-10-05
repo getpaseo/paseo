@@ -190,6 +190,9 @@ async function expectFingerSizedFooterTargets(page: Page): Promise<void> {
     const bounds = await button.boundingBox();
     expect(bounds?.width).toBeGreaterThanOrEqual(44);
     expect(bounds?.height).toBeGreaterThanOrEqual(44);
+    // Glyphs stay at the composer toolbar size (some optically smaller); only the target grows.
+    const glyphWidth = await button.locator("svg").first().getAttribute("width");
+    expect(Number(glyphWidth)).toBeLessThanOrEqual(20);
   }
 }
 

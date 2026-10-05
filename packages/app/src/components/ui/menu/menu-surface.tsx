@@ -26,7 +26,7 @@ import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
 import { AnchoredSurface, MenuOverlay } from "./menu-overlay";
 import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
-import type { Alignment, Placement } from "./menu-anchor";
+import type { Alignment, Placement } from "../anchor";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);

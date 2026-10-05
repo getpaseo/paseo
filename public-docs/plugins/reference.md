@@ -342,6 +342,7 @@ A source implements two calls:
 interface UsageAccount {
   key: string;
   label?: string;
+  harness?: string;
   input: JsonValue;
 }
 
@@ -375,25 +376,29 @@ type UsageProblem =
   | { kind: "no_quota"; detail: string };
 ```
 
-`discover({ kind: "global" })` queries machine login stores, including expired logins. Session
-scope queries only the login stores selected by that harness's resolved launch environment.
-Return `[]` when no login exists or the session does not use your source. Never scan default stores
-from session discovery or scan agents from global discovery. Discovery is a query, with no agent
+Session discovery returns only the login that agent runs on. The agent popover uses only those
+inputs; it never tries logins from global discovery or other agents. For any other provider,
+return `[]`. Global discovery lists every account, including expired logins.
+
+Resolve the session account from that session's launch environment. Return `[]` when no login exists.
+Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
 lifecycle hooks. Closed agents have no session scope until resumed.
 
 Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
 input against your schema before calling `fetch()`. The same key in any scope is the same report;
-agents sharing an account share the fetch cache. Fetches have a 20-second deadline.
+fetches share a five-minute cache only when their ordered login inputs match. Each login fetch
+has a 20-second deadline.
 
 Built-in session routes:
 
-| Source        | Session                                       | Login store                                                                                    |
-| ------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Claude        | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
-| Claude        | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
-| Codex         | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
-| Codex         | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
-| Other sources | Any                                           | No session discovery                                                                           |
+| Source                 | Session                                       | Login store                                                                                    |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claude                 | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
+| Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
+| Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
+| Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
+| Other built-in sources | Any                                           | No session discovery                                                                           |
 
 Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
 with `OPENAI_BASE_URL` set.
@@ -403,9 +408,13 @@ organization whose quota is metered and survives token rotation. Never use a cre
 email as the key. Use `hashAccountKey()` for sensitive stable identities or a store locator when
 account metadata is unavailable. Labels can name accounts without becoming their identity.
 
-Return logins in preference order. Several entries with the same key become one card, with their
-inputs tried in order until a report is `available`. An unavailable report, error report, or thrown
-fetch falls through to the next input. If none succeeds, the card carries the last report.
+Return logins in preference order and set `harness` to the owning harness's display name, such as
+Codex, OpenCode, Pi, or OMP. The daemon treats inputs as opaque and never derives labels from them.
+
+The host-wide Usage screen groups logins with the same key into one account card and tries them
+concurrently, preferring the discovery order when selecting a result. If any login returns
+`available`, it shows usage with no errors. If all fail, it shows
+every login's error on a separate line with its harness label and its own remedy.
 Discovery failures are logged by the daemon and produce no card.
 
 Window names must come from provider data: an explicit duration, a named API field such as
@@ -485,7 +494,8 @@ metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP 
 `usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
 accounts without rediscovering identity. If a store switches accounts, the existing card shows the
 new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Clients gate the feature
+bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+`loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
 
