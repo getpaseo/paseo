@@ -375,10 +375,11 @@ type UsageProblem =
   | { kind: "no_quota"; detail: string };
 ```
 
-`discover({ kind: "global" })` queries machine login stores, including expired logins. Session
-scope queries only the login stores selected by that harness's resolved launch environment.
-Return `[]` when no login exists or the session does not use your source. Never scan default stores
-from session discovery or scan agents from global discovery. Discovery is a query, with no agent
+Session discovery returns only the account that agent runs on. For any other provider, return `[]`.
+Global discovery lists every account, including expired logins.
+
+Resolve the session account from that session's launch environment. Return `[]` when no login exists.
+Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
 lifecycle hooks. Closed agents have no session scope until resumed.
 
 Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
@@ -387,13 +388,14 @@ agents sharing an account share the fetch cache. Fetches have a 20-second deadli
 
 Built-in session routes:
 
-| Source        | Session                                       | Login store                                                                                    |
-| ------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Claude        | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
-| Claude        | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
-| Codex         | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
-| Codex         | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
-| Other sources | Any                                           | No session discovery                                                                           |
+| Source                 | Session                                       | Login store                                                                                    |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claude                 | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
+| Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
+| Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
+| Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
+| Other built-in sources | Any                                           | No session discovery                                                                           |
 
 Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
 with `OPENAI_BASE_URL` set.

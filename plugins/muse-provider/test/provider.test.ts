@@ -1366,7 +1366,7 @@ for (const usage of [
   test(`usage source presents ${"usage" in usage ? "subscription windows" : "real route absence"} from discovered accounts`, async () => {
     const h = await harness("catalog-controls", { MUSE_TEST_USAGE: JSON.stringify(usage) });
     await h.open();
-    const inputs = await h.usageSource.discover();
+    const inputs = await h.usageSource.discover({ kind: "global" });
     expect(inputs).toHaveLength(1);
     const account = inputs[0]!;
     expect(account).toEqual({
@@ -1517,7 +1517,7 @@ test("usage identity follows the resolved config directory across credential and
       META_BASE_URL: route!,
     });
     await h.open();
-    const inputs = await h.usageSource.discover();
+    const inputs = await h.usageSource.discover({ kind: "global" });
     expect(inputs).toHaveLength(1);
     identities.push(inputs[0]!.key);
   }
@@ -1527,7 +1527,7 @@ test("usage identity follows the resolved config directory across credential and
 
 test.each(["no sessions", "unrelated environment"])("Muse discovery is empty with %s", async () => {
   const { Usage } = await import("../server/usage.js");
-  expect(await new Usage().registration().discover()).toEqual([]);
+  expect(await new Usage().registration().discover({ kind: "global" })).toEqual([]);
 });
 
 test("Muse window identity follows the reported duration instead of assuming five hours", async () => {
@@ -1542,7 +1542,7 @@ test("Muse window identity follows the reported duration instead of assuming fiv
     }),
   });
   await h.open();
-  const [account] = await h.usageSource.discover();
+  const [account] = await h.usageSource.discover({ kind: "global" });
   expect(await h.usageSource.fetch(account!.input)).toMatchObject({
     status: "available",
     windows: [
