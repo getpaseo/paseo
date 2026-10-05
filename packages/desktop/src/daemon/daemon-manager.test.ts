@@ -3,6 +3,8 @@ import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createAppUpdateService } from "../features/app-update-service";
+import { FakeAppUpdateRuntime } from "../features/fake-app-update-runtime";
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
 import { createDaemonCommandHandlers } from "./daemon-manager";
 
@@ -76,23 +78,6 @@ vi.mock("./runtime-paths.js", () => ({
 vi.mock("./cli/external.js", () => ({
   runExternalCliJsonCommand: mocks.runExternalCliJsonCommand,
   runExternalCliTextCommand: mocks.runExternalCliTextCommand,
-}));
-
-vi.mock("../features/auto-updater.js", () => ({
-  checkForAppUpdate: vi.fn(),
-  downloadAndInstallUpdate: vi.fn(
-    async (_input: unknown, onBeforeQuit?: () => Promise<boolean>) => {
-      const proceed = onBeforeQuit ? await onBeforeQuit() : true;
-      return {
-        installed: proceed,
-        ...(proceed ? {} : { cancelled: true }),
-        version: "1.2.4",
-        message: proceed
-          ? "Update downloaded. The app will restart shortly."
-          : "Installation cancelled.",
-      };
-    },
-  ),
 }));
 
 describe("daemon-manager commands", () => {
@@ -249,7 +234,24 @@ describe("daemon-manager commands", () => {
       throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
     });
 
-    const handlers = createDaemonCommandHandlers();
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: {
+        version: "1.2.4",
+        releaseDate: "2026-04-28T00:00:00.000Z",
+        rolloutHours: 24,
+      },
+    });
+    const service = createAppUpdateService({
+      runtime,
+      isPackaged: () => true,
+      now: () => Date.parse("2026-04-28T12:00:00.000Z"),
+      bucket: async () => 0,
+    });
+    const handlers = createDaemonCommandHandlers({
+      installAppUpdate: service.downloadAndInstallUpdate,
+    });
     let supervisorPid: number | null = null;
     try {
       await handlers.start_desktop_daemon();
@@ -264,6 +266,7 @@ describe("daemon-manager commands", () => {
         // The supervisor can already be gone.
       }
       await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
+      expect(runtime.installedVersions).toEqual([]);
     } finally {
       if (supervisorPid !== null) {
         try {

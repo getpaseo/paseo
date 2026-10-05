@@ -22,6 +22,7 @@ import {
   writeAttachmentBase64,
   writeAttachmentBytes,
 } from "../features/attachments.js";
+import type { AppUpdateService } from "../features/app-update-service.js";
 import {
   checkForAppUpdate,
   downloadAndInstallUpdate,
@@ -437,7 +438,10 @@ async function waitForAgentsToStop(signal: AbortSignal): Promise<boolean> {
   return false;
 }
 
-export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
+export function createDaemonCommandHandlers(deps?: {
+  installAppUpdate?: AppUpdateService["downloadAndInstallUpdate"];
+}): Record<string, DesktopCommandHandler> {
+  const installAppUpdate = deps?.installAppUpdate ?? downloadAndInstallUpdate;
   return {
     ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
     desktop_get_runtime_info: () => ({
@@ -502,7 +506,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       const controller = new AbortController();
       pendingUpdate = controller;
       try {
-        return await downloadAndInstallUpdate(
+        return await installAppUpdate(
           {
             currentVersion,
             releaseChannel: await resolveRequestedReleaseChannel(args),
