@@ -62,13 +62,40 @@ function isInsideSafeZone(
   if (isInsideRect(trigger, x, y)) return true;
   if (isInsideRect(content, x, y)) return true;
   if (!trigger || !content) return false;
+  return (
+    isInsideHorizontalBridge(trigger, content, x, y) ||
+    isInsideVerticalBridge(trigger, content, x, y)
+  );
+}
 
-  // Bridge: the horizontal strip connecting trigger and content, stretched
-  // vertically to span both. If they overlap horizontally there's no bridge.
+// A card beside its trigger: the strip between them, stretched vertically to
+// span both. If they overlap horizontally there's no horizontal bridge.
+function isInsideHorizontalBridge(
+  trigger: RectLike,
+  content: RectLike,
+  x: number,
+  y: number,
+): boolean {
   const bridgeLeft = Math.min(trigger.right, content.right);
   const bridgeRight = Math.max(trigger.left, content.left);
   if (bridgeLeft >= bridgeRight) return false;
   const bridgeTop = Math.min(trigger.top, content.top);
   const bridgeBottom = Math.max(trigger.bottom, content.bottom);
+  return x >= bridgeLeft && x <= bridgeRight && y >= bridgeTop && y <= bridgeBottom;
+}
+
+// A card above or below its trigger: the strip between them, stretched
+// horizontally to span both. If they overlap vertically there's no vertical bridge.
+function isInsideVerticalBridge(
+  trigger: RectLike,
+  content: RectLike,
+  x: number,
+  y: number,
+): boolean {
+  const bridgeTop = Math.min(trigger.bottom, content.bottom);
+  const bridgeBottom = Math.max(trigger.top, content.top);
+  if (bridgeTop >= bridgeBottom) return false;
+  const bridgeLeft = Math.min(trigger.left, content.left);
+  const bridgeRight = Math.max(trigger.right, content.right);
   return x >= bridgeLeft && x <= bridgeRight && y >= bridgeTop && y <= bridgeBottom;
 }

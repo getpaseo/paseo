@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, getTransformOrigin, type Rect } from "./menu-anchor";
+import { computePosition, getTransformOrigin, type Rect } from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
@@ -53,6 +53,18 @@ describe("computePosition", () => {
 
     const right = position({ placement: "right", alignment: "end" });
     expect(right).toEqual({ x: 144, y: 100, actualPlacement: "right" });
+  });
+
+  it("lets hover cards flip horizontally when the opposite side has room", () => {
+    const result = position({
+      triggerRect: { ...TRIGGER, x: 850 },
+      placement: "right",
+      flipHorizontal: true,
+    });
+    expect(result).toEqual({ x: 646, y: 100, actualPlacement: "left" });
+    expect(
+      position({ triggerRect: { ...TRIGGER, x: 850 }, placement: "right" }).actualPlacement,
+    ).toBe("right");
   });
 
   it("keeps the surface inside a display area that does not start at the origin", () => {

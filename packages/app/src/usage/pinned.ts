@@ -1,8 +1,8 @@
 import { formatPct } from "./format";
 import { displayPercent } from "./model";
-import type { UsagePreferences } from "./preferences";
+import { effectiveUsagePins, type UsagePreferences } from "./preferences";
 import { windowTone } from "./tone";
-import type { UsageReportEntry, UsageTone, UsageWindow } from "./types";
+import type { UsageReportEntry, UsageTone } from "./types";
 
 /** One summary window of one account, as the sidebar Usage item shows it. */
 export interface PinnedUsageWindow {
@@ -62,23 +62,6 @@ function groupBySource(reports: readonly UsageReportEntry[]): UsageReportEntry[]
 }
 
 /**
- * Pins replace defaults. Without pins, an account shows the windows its source marks as summary,
- * or its first window with a percent when the source marks none.
- */
-function summaryWindows(entry: UsageReportEntry, preferences: UsagePreferences): UsageWindow[] {
-  const withPercent = entry.report.windows.filter(
-    (window) => displayPercent(window, preferences.displayAs) !== null,
-  );
-  if (preferences.pinned.length === 0) {
-    const marked = withPercent.filter((window) => window.summary);
-    return marked.length > 0 ? marked : withPercent.slice(0, 1);
-  }
-  return withPercent.filter((window) =>
-    preferences.pinned.some((pin) => pin.sourceId === entry.sourceId && pin.windowId === window.id),
-  );
-}
-
-/**
  * The sidebar Usage item's summary: one group per account, grouped by source, each with its
  * windows in its report's order. Accounts with nothing to show are left out.
  */
@@ -86,20 +69,28 @@ export function resolvePinnedUsage(
   reports: readonly UsageReportEntry[],
   preferences: UsagePreferences,
 ): PinnedUsageSource[] {
+  const pins = effectiveUsagePins(preferences, reports);
   const meaning = preferences.displayAs === "remaining" ? "left" : "used";
   return groupBySource(reports).flatMap((entry) => {
-    const windows = summaryWindows(entry, preferences).map((window) => {
-      const percent = displayPercent(window, preferences.displayAs) ?? 0;
-      const percentText = formatPct(percent);
-      return {
-        key: `${entry.id}/${window.id}`,
-        label: `${describe(entry, window.label)} ${percentText} ${meaning}`,
-        shortLabel: window.shortLabel ?? window.label,
-        percent,
-        percentText,
-        tone: windowTone(window),
-      };
-    });
+    if (entry.report.status !== "available") return [];
+    const windows = entry.report.windows
+      .filter(
+        (window) =>
+          displayPercent(window, preferences.displayAs) !== null &&
+          pins.some((pin) => pin.sourceId === entry.sourceId && pin.windowId === window.id),
+      )
+      .map((window) => {
+        const percent = displayPercent(window, preferences.displayAs) ?? 0;
+        const percentText = formatPct(percent);
+        return {
+          key: `${entry.id}/${window.id}`,
+          label: `${describe(entry, window.label)} ${percentText} ${meaning}`,
+          shortLabel: window.shortLabel ?? window.label,
+          percent,
+          percentText,
+          tone: windowTone(window),
+        };
+      });
     if (windows.length === 0) return [];
     return [{ key: entry.id, icon: entry.icon ?? null, windows }];
   });

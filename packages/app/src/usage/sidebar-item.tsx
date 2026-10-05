@@ -1,6 +1,13 @@
 import { router } from "expo-router";
-import { CircleGauge } from "lucide-react-native";
-import { Fragment, useCallback, useMemo, useState } from "react";
+import {
+  createContext,
+  Fragment,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   Pressable,
@@ -10,17 +17,14 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarPopoverRoot, SidebarPopoverSurface } from "@/components/sidebar/sidebar-popover";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
-import { usePanelStore } from "@/stores/panel-store";
 import { buildUsageRoute } from "@/utils/host-routes";
 import { useHostUsageWithControls } from "./controls";
 import { useUsagePreferences, type UsageDisplay } from "./display";
 import { useUsageHostId, useUsageHostSelection } from "./hosts";
-import type { UsagePreferences } from "./preferences";
-import { useHostUsage } from "./queries";
+import { useUsageHostReports } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
 import { UsageMeter } from "./meter";
 import {
@@ -31,105 +35,70 @@ import {
   type PinnedUsageLayout,
   type PinnedUsageSource,
 } from "./pinned";
-import type { UsageReportEntry } from "./types";
 import type { UsageHost } from "./model";
 import { UsageBody } from "./usage-section";
 
-const NO_REPORTS: UsageReportEntry[] = [];
-const NO_SOURCES: PinnedUsageSource[] = [];
+/** Each summary window with data on the usage host, under its source; empty while none has. */
+function useUsageSummary(): readonly PinnedUsageSource[] {
+  const { preferences } = useUsagePreferences();
+  const reports = useUsageHostReports(useUsageHostId());
+  return useMemo(() => resolvePinnedUsage(reports, preferences), [preferences, reports]);
+}
+
+/** Whether the sidebar Usage item has anything to show. */
+export function useHasUsageSummary(): boolean {
+  return useUsageSummary().length > 0;
+}
 
 /**
- * The sidebar footer's usage entry: each summary window's source icon and percent, or a plain
- * "Usage" row while no summary window has data. Pressing it opens the Usage screen; on compact
- * layouts it opens the usage sheet instead.
+ * The sidebar footer's usage entry: each summary window's source icon and percent, and nothing
+ * while no summary window has data, since the footer's Usage icon already opens the screen.
+ * Pressing it opens the Usage screen; on compact layouts it opens the usage sheet instead.
  */
 export function UsageSidebarItem() {
-  const { preferences, display } = useUsagePreferences();
-  const serverId = useUsageHostId();
-  if (!serverId) {
-    return <UsageEntry serverId={serverId} sources={NO_SOURCES} display={display} />;
-  }
-  return (
-    <PinnedUsageItem
-      key={serverId}
-      serverId={serverId}
-      preferences={preferences}
-      display={display}
-    />
-  );
-}
-
-function PinnedUsageItem({
-  serverId,
-  preferences,
-  display,
-}: {
-  serverId: string;
-  preferences: UsagePreferences;
-  display: UsageDisplay;
-}) {
-  const { view } = useHostUsage(serverId);
-  const reports = view.kind === "ready" ? view.reports : NO_REPORTS;
-  const sources = useMemo(() => resolvePinnedUsage(reports, preferences), [preferences, reports]);
-  return <UsageEntry serverId={serverId} sources={sources} display={display} />;
-}
-
-/** Opens the Usage screen, over the sidebar on compact layouts. */
-export function useOpenUsageScreen(): () => void {
-  const isCompact = useIsCompactFormFactor();
-  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  return useCallback(() => {
-    if (isCompact) showMobileAgent();
-    router.push(buildUsageRoute());
-  }, [isCompact, showMobileAgent]);
-}
-
-function UsageEntry({
-  serverId,
-  sources,
-  display,
-}: {
-  serverId: string | null;
-  sources: readonly PinnedUsageSource[];
-  display: UsageDisplay;
-}) {
   const { t } = useTranslation();
   const label = t(builtinSidebarNavLabelKey("usage"));
+  const openUsage = useOpenSidebarUsage();
+  const sources = useUsageSummary();
+  if (sources.length === 0) return null;
+  return <PinnedUsageTrigger label={label} sources={sources} onPress={openUsage} />;
+}
+
+const OpenSidebarUsageContext = createContext<(() => void) | null>(null);
+
+/** One owner for the footer icon and summary: a compact sheet or the wide Usage screen. */
+export function UsageSidebarRoot({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
+  const { display } = useUsagePreferences();
   const isCompact = useIsCompactFormFactor();
-  const openUsageScreen = useOpenUsageScreen();
   const [open, setOpen] = useState(false);
-  // The sheet mounts on first open; the summary already owns the report query.
   const [sheetMounted, setSheetMounted] = useState(false);
-  // Without a host there are no reports to show, so compact goes to the screen, which says so.
-  const usesSheet = isCompact && serverId !== null;
-  const handlePress = useCallback(() => {
-    if (!usesSheet) {
-      openUsageScreen();
+  const openUsage = useCallback(() => {
+    if (isCompact) {
+      setSheetMounted(true);
+      setOpen(true);
       return;
     }
-    setSheetMounted(true);
-    setOpen(true);
-  }, [openUsageScreen, usesSheet]);
+    router.push(buildUsageRoute());
+  }, [isCompact]);
 
-  const trigger =
-    sources.length > 0 ? (
-      <PinnedUsageTrigger label={label} sources={sources} onPress={handlePress} />
-    ) : (
-      <SidebarHeaderRow
-        variant="inline"
-        icon={CircleGauge}
-        label={label}
-        onPress={handlePress}
-        testID="sidebar-usage"
-      />
-    );
-  if (!usesSheet) return trigger;
   return (
-    <SidebarPopoverRoot open={open} onOpenChange={setOpen}>
-      {trigger}
-      {sheetMounted ? <UsageSheet title={label} display={display} /> : null}
-    </SidebarPopoverRoot>
+    <OpenSidebarUsageContext.Provider value={openUsage}>
+      <SidebarPopoverRoot open={isCompact && open} onOpenChange={setOpen}>
+        {children}
+        {isCompact && sheetMounted ? (
+          <UsageSheet title={t(builtinSidebarNavLabelKey("usage"))} display={display} />
+        ) : null}
+      </SidebarPopoverRoot>
+    </OpenSidebarUsageContext.Provider>
   );
+}
+
+/** Both sidebar entry points send the same open command. */
+export function useOpenSidebarUsage(): () => void {
+  const openUsage = useContext(OpenSidebarUsageContext);
+  if (!openUsage) throw new Error("Sidebar Usage must be inside UsageSidebarRoot.");
+  return openUsage;
 }
 
 /**
@@ -168,7 +137,7 @@ function HostUsageSheet({
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
-  const { view, refresh, controls } = useHostUsageWithControls(hostSelection, display);
+  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
   return (
     <SidebarPopoverSurface
       section="footer"

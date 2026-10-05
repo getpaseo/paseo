@@ -7,7 +7,8 @@ import { z } from "zod";
 import {
   toneFromUsedPct,
   usedPctOf,
-  unavailableUsage,
+  unavailable,
+  type UsageAccount,
   type UsageReport,
   type UsageBalance,
 } from "@getpaseo/plugin/server/usage";
@@ -114,24 +115,7 @@ function cursorTokenFromDb(db: CursorStateDatabase): string | null {
   return null;
 }
 
-async function readCursorTokenFromSqlite(homeDir: string): Promise<string | null> {
-  const dbPaths: string[] = [];
-  if (process.env["APPDATA"]) {
-    dbPaths.push(join(process.env["APPDATA"], "Cursor", "User", "globalStorage", "state.vscdb"));
-  }
-  dbPaths.push(
-    join(
-      homeDir,
-      "Library",
-      "Application Support",
-      "Cursor",
-      "User",
-      "globalStorage",
-      "state.vscdb",
-    ),
-  );
-  dbPaths.push(join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb"));
-
+async function readCursorTokenFromSqlite(path: string): Promise<string | null> {
   // Held in a variable so TypeScript skips module resolution: @types/node@20 has no
   // node:sqlite typings yet, while the runtime (Node 22+ / Electron) provides it.
   const sqliteSpecifier: string = "node:sqlite";
@@ -142,24 +126,19 @@ async function readCursorTokenFromSqlite(homeDir: string): Promise<string | null
     return null; // runtime without node:sqlite
   }
 
-  for (const path of dbPaths) {
-    if (!existsSync(path)) continue;
-    let db: CursorStateDatabase | undefined;
-    try {
-      db = new sqlite.DatabaseSync(path, { readOnly: true });
-      const token = cursorTokenFromDb(db);
-      if (token) return token;
-    } catch {
-      // Locked, permission, corrupt, or schema failures try the next candidate.
-    } finally {
-      db?.close();
-    }
+  if (!existsSync(path)) return null;
+  let db: CursorStateDatabase | undefined;
+  try {
+    db = new sqlite.DatabaseSync(path, { readOnly: true });
+    return cursorTokenFromDb(db);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
   }
-  return null;
 }
 
-async function readCursorTokenFromAuthJson(homeDir: string): Promise<string | null> {
-  const path = join(homeDir, ".config", "cursor", "auth.json");
+async function readCursorTokenFromAuthJson(path: string): Promise<string | null> {
   if (!existsSync(path)) return null;
   try {
     const parsed = CursorAuthStatusSchema.parse(JSON.parse(await readFile(path, "utf8")));
@@ -173,16 +152,8 @@ export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  void input;
-  const homeDir = homedir();
-
-  const token =
-    process.env["CURSOR_ACCESS_TOKEN"] ||
-    process.env["CURSOR_TOKEN"] ||
-    (await readCursorTokenFromSqlite(homeDir)) ||
-    (await readCursorTokenFromAuthJson(homeDir));
-
-  if (!token) return unavailableUsage();
+  const token = await readToken(input);
+  if (!token) throw new Error("Cursor login store no longer exists");
 
   const res = await fetchApi(
     "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
@@ -198,9 +169,9 @@ export async function fetchUsage(
     },
   );
 
-  if (!res.ok) {
-    return unavailableUsage();
-  }
+  if (res.status === 401 || res.status === 403)
+    return unavailable({ kind: "rejected", status: res.status });
+  if (!res.ok) throw new Error(`Cursor usage API returned ${res.status}`);
 
   const resp = CursorUsageResponseSchema.parse(await res.json());
   const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
@@ -230,12 +201,40 @@ export async function fetchUsage(
   };
 }
 
-export async function identify() {
-  const home = homedir();
+async function readToken(input: UsageInput): Promise<string | undefined> {
+  if (input.store === "env") return process.env[input.locator];
   const token =
-    process.env["CURSOR_ACCESS_TOKEN"] ||
-    process.env["CURSOR_TOKEN"] ||
-    (await readCursorTokenFromSqlite(home)) ||
-    (await readCursorTokenFromAuthJson(home));
-  return token ? { key: "default" } : null;
+    input.store === "sqlite"
+      ? await readCursorTokenFromSqlite(input.locator)
+      : await readCursorTokenFromAuthJson(input.locator);
+  return token ?? undefined;
+}
+export async function discover(): Promise<UsageAccount[]> {
+  const home = homedir();
+  const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
+    store: "env",
+    locator,
+  }));
+  if (process.env.APPDATA)
+    candidates.push({
+      store: "sqlite",
+      locator: join(process.env.APPDATA, "Cursor", "User", "globalStorage", "state.vscdb"),
+    });
+  candidates.push(
+    ...[
+      join(
+        home,
+        "Library",
+        "Application Support",
+        "Cursor",
+        "User",
+        "globalStorage",
+        "state.vscdb",
+      ),
+      join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
+    ].map((locator) => ({ store: "sqlite" as const, locator })),
+    { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
+  );
+  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  return [];
 }

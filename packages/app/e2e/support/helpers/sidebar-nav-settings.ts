@@ -163,7 +163,6 @@ async function expectVerticalOrder<Key extends string>(
 
 /** Persisted footer row key -> the testID the app shell renders that row with. */
 function shellFooterTestID(key: string): string {
-  // With nothing pinned the Usage item is the plain Usage row.
   if (key === "usage") return "sidebar-usage";
   const [, pluginId, itemId] = key.split(":");
   return `plugin-sidebar-footer-${pluginId}-${itemId}`;
@@ -198,16 +197,27 @@ export async function moveFooterItemUp(page: Page, key: string): Promise<void> {
     .click();
 }
 
+function footerItemSwitch(page: Page, key: string): Locator {
+  return page.getByTestId("sidebar-nav-section-footer").getByTestId(`sidebar-nav-toggle-${key}`);
+}
+
 export async function setFooterItemVisible(
   page: Page,
   key: string,
   visible: boolean,
 ): Promise<void> {
-  const toggle = page
-    .getByTestId("sidebar-nav-section-footer")
-    .getByTestId(`sidebar-nav-toggle-${key}`);
+  const toggle = footerItemSwitch(page, key);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", String(visible));
+}
+
+/** Whether Settings > Sidebar shows a footer item as on. */
+export async function expectFooterItemSetting(
+  page: Page,
+  key: string,
+  visible: boolean,
+): Promise<void> {
+  await expect(footerItemSwitch(page, key)).toHaveAttribute("aria-checked", String(visible));
 }
 
 export async function expectFooterOrder(page: Page, keys: string[]): Promise<void> {
@@ -226,6 +236,9 @@ const FOOTER_ICON_TEST_IDS = [
   "sidebar-settings",
 ];
 
+// Browser layout boxes include floating-point rounding, even for whole-pixel styles.
+const FOOTER_GEOMETRY_TOLERANCE = 0.01;
+
 /**
  * One line of same-size icons: Add project, Usage and Hosts together on the left, Help and
  * Settings together at the end.
@@ -241,10 +254,12 @@ export async function expectFooterIconRow(page: Page): Promise<void> {
   const [first] = boxes;
   for (const box of boxes) {
     expect(Math.abs(box.y + box.height / 2 - first!.y - first!.height / 2)).toBeLessThan(2);
-    expect(box.width).toBe(first!.width);
+    expect(Math.abs(box.width - first!.width)).toBeLessThan(FOOTER_GEOMETRY_TOLERANCE);
   }
   const gaps = boxes.slice(1).map((box, index) => box.x - (boxes[index]!.x + boxes[index]!.width));
-  expect(gaps).toEqual([0, 0, expect.any(Number), 0]);
+  for (const index of [0, 1, 3]) {
+    expect(Math.abs(gaps[index]!)).toBeLessThan(FOOTER_GEOMETRY_TOLERANCE);
+  }
   expect(gaps[2]).toBeGreaterThan(first!.width);
 }
 

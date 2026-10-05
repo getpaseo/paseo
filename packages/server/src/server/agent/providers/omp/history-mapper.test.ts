@@ -27,6 +27,40 @@ async function collectHistory(
 }
 
 describe("OMP history mapper", () => {
+  test("renders visible custom messages as completed tools with their type and content", async () => {
+    const events = await collectHistory([
+      {
+        role: "custom",
+        customType: "project-context",
+        content: "Project instructions",
+        display: true,
+      },
+      {
+        role: "custom",
+        customType: "private-context",
+        content: "Hidden instructions",
+        display: false,
+      },
+      {
+        role: "custom",
+        customType: "project-context",
+        content: "Project instructions",
+        display: true,
+      },
+    ]);
+    expect(events.map((event) => event.item)).toEqual(
+      [1, 2].map((index) => ({
+        type: "tool_call",
+        callId: `omp-custom-${index}`,
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: { synthetic: true, customType: "project-context" },
+        error: null,
+      })),
+    );
+  });
+
   test("replays a web search details error as failed when OMP sets isError false", async () => {
     const events = await collectHistory([
       {
@@ -51,6 +85,79 @@ describe("OMP history mapper", () => {
       type: "tool_call",
       status: "failed",
       error: "All web search providers failed",
+    });
+  });
+
+  test("replays a Paseo browser tool result whose details error is an object", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "shot-1", name: "browser_screenshot", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "shot-1",
+        toolName: "browser_screenshot",
+        content: [{ type: "text", text: "The tab has not painted yet. Retry the screenshot." }],
+        details: {
+          ok: false,
+          error: {
+            code: "screenshot_no_frame",
+            message: "The tab has not painted yet. Retry the screenshot.",
+            retryable: true,
+          },
+        },
+        isError: false,
+      },
+      { role: "assistant", content: [{ type: "text", text: "Retrying later." }] },
+    ]);
+
+    expect(events.map((event) => event.item)).toEqual([
+      expect.objectContaining({ type: "tool_call", callId: "shot-1", status: "running" }),
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "shot-1",
+        name: "browser_screenshot",
+        detail: expect.objectContaining({
+          type: "unknown",
+          output: expect.objectContaining({
+            details: expect.objectContaining({
+              error: expect.objectContaining({ code: "screenshot_no_frame", retryable: true }),
+            }),
+          }),
+        }),
+      }),
+      expect.objectContaining({ type: "assistant_message", text: "Retrying later." }),
+    ]);
+  });
+
+  test("reports a failed tool's structured details error by its message", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tabs-1", name: "browser_list_tabs", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tabs-1",
+        toolName: "browser_list_tabs",
+        content: [],
+        details: {
+          ok: false,
+          error: {
+            code: "browser_no_host",
+            message: "No browser automation host is connected.",
+            retryable: true,
+          },
+        },
+        isError: true,
+      },
+    ]);
+
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "No browser automation host is connected.",
     });
   });
 
@@ -131,9 +238,16 @@ describe("OMP history mapper", () => {
       events.push(event);
     expect(events.map((event) => event.item)).toEqual([
       {
-        type: "assistant_message",
-        text: "[developer] External instruction",
-        messageId: "omp-custom-1",
+        type: "tool_call",
+        callId: "omp-custom-1",
+        name: "custom-message",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          text: "[developer] External instruction",
+        },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
       },
     ]);
   });
@@ -335,18 +449,26 @@ describe("OMP history mapper", () => {
         type: "timeline",
         provider: "omp",
         item: {
-          type: "assistant_message",
-          text: "visible explicit custom",
-          messageId: "omp-custom-1",
+          type: "tool_call",
+          callId: "omp-custom-1",
+          name: "custom-message",
+          status: "completed",
+          detail: { type: "plain_text", text: "visible explicit custom" },
+          metadata: { synthetic: true, customType: "custom-message" },
+          error: null,
         },
       },
       {
         type: "timeline",
         provider: "omp",
         item: {
-          type: "assistant_message",
-          text: "visible legacy custom",
-          messageId: "omp-custom-2",
+          type: "tool_call",
+          callId: "omp-custom-2",
+          name: "custom-message",
+          status: "completed",
+          detail: { type: "plain_text", text: "visible legacy custom" },
+          metadata: { synthetic: true, customType: "custom-message" },
+          error: null,
         },
       },
       {
@@ -578,11 +700,26 @@ describe("OMP history mapper", () => {
     expect(events.map((event) => event.item)).toEqual([
       { type: "user_message", text: "active branch", messageId: "user-active" },
       {
-        type: "assistant_message",
-        text: "[future_control] Unsupported history record",
-        messageId: "omp-custom-1",
+        type: "tool_call",
+        callId: "omp-custom-1",
+        name: "custom-message",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          text: "[future_control] Unsupported history record",
+        },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
       },
-      { type: "assistant_message", text: "[developer] developer note", messageId: "omp-custom-2" },
+      {
+        type: "tool_call",
+        callId: "omp-custom-2",
+        name: "custom-message",
+        status: "completed",
+        detail: { type: "plain_text", text: "[developer] developer note" },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
 
     const omp = new FakeOmp();
@@ -685,11 +822,30 @@ describe("OMP history mapper", () => {
     expect(events.map((event) => event.item)).toEqual([
       { type: "assistant_message", text: "Done.", messageId: "resp-1" },
       { type: "user_message", text: "/skill:commit", messageId: "omp-custom-skill-1-user" },
-      { type: "assistant_message", text: ircMessage, messageId: "omp-custom-irc-1" },
       {
-        type: "assistant_message",
-        text: "visible without display flag",
-        messageId: "omp-custom-legacy-1",
+        type: "tool_call",
+        callId: "omp-custom-irc-1",
+        name: "irc:incoming",
+        status: "completed",
+        detail: { type: "plain_text", text: ircMessage },
+        metadata: {
+          synthetic: true,
+          customType: "irc:incoming",
+          details: { from: "worker-1", message: "ready for review" },
+        },
+        error: null,
+      },
+      {
+        type: "tool_call",
+        callId: "omp-custom-legacy-1",
+        name: "legacy-no-display",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          text: "visible without display flag",
+        },
+        metadata: { synthetic: true, customType: "legacy-no-display" },
+        error: null,
       },
     ]);
   });
@@ -748,18 +904,44 @@ describe("OMP history mapper", () => {
         type: "timeline",
         provider: "omp",
         item: {
-          type: "assistant_message",
-          text: '[IMPORTANT: Agent invoked the "improve" skill.]',
-          messageId: "omp-custom-skill-agent",
+          type: "tool_call",
+          callId: "omp-custom-skill-agent",
+          name: "skill-prompt",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            text: '[IMPORTANT: Agent invoked the "improve" skill.]',
+          },
+          metadata: {
+            synthetic: true,
+            customType: "skill-prompt",
+            details: {
+              name: "improve",
+              path: "/home/me/.agents/skills/improve/SKILL.md",
+              lineCount: 9,
+            },
+          },
+          error: null,
         },
       },
       {
         type: "timeline",
         provider: "omp",
         item: {
-          type: "assistant_message",
-          text: "<irc>\n<from>worker-1</from>\n<message>hi</message>\n</irc>",
-          messageId: "omp-custom-irc-user",
+          type: "tool_call",
+          callId: "omp-custom-irc-user",
+          name: "irc:incoming",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            text: "<irc>\n<from>worker-1</from>\n<message>hi</message>\n</irc>",
+          },
+          metadata: {
+            synthetic: true,
+            customType: "irc:incoming",
+            details: { from: "worker-1", message: "hi" },
+          },
+          error: null,
         },
       },
     ]);

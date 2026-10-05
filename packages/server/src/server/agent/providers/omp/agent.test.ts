@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,6 +69,51 @@ test("OMP import uses the runtime's custom agent directory without a configured 
     expect.objectContaining({ providerHandleId: sessionFile }),
   ]);
 });
+test("OMP resumes a session whose model was removed on the model OMP falls back to", async () => {
+  const runtime = new FakeOmp();
+  runtime.removeModel("9router/deepseek-v4-flash");
+  runtime.queueSessionSetup((session) => {
+    session.state = { ...session.state, model: { provider: "openrouter", id: "fallback" } };
+  });
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+
+  const session = await client.resumeSession({
+    provider: "omp",
+    sessionId: "omp-session-1",
+    nativeHandle: "/tmp/omp-session.jsonl",
+    metadata: { cwd: "/workspace/project", model: "9router/deepseek-v4-flash" },
+  });
+  onTestFinished(() => session.close());
+
+  await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "openrouter/fallback" });
+  expect(session.describePersistence()?.metadata?.model).toBe("openrouter/fallback");
+});
+
+test("OMP resumes a session on the requested model when it differs from the session's", async () => {
+  const runtime = new FakeOmp();
+  const requestedModel = { provider: "openrouter", id: "requested" };
+  runtime.queueSessionSetup((session) => {
+    session.state = { ...session.state, model: { provider: "openrouter", id: "recorded" } };
+    session.models = [requestedModel];
+    session.setModelResult = requestedModel;
+  });
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+
+  const session = await client.resumeSession({
+    provider: "omp",
+    sessionId: "omp-session-1",
+    nativeHandle: "/tmp/omp-session.jsonl",
+    metadata: { cwd: "/workspace/project", model: "openrouter/requested" },
+  });
+  onTestFinished(() => session.close());
+
+  expect(runtime.latestSession().setModelRequests).toEqual([
+    { provider: "openrouter", modelId: "requested" },
+  ]);
+  await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "openrouter/requested" });
+  expect(session.describePersistence()?.metadata?.model).toBe("openrouter/requested");
+});
+
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -617,6 +662,46 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("keeps custom context in separate tools while a turn continues", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("Explain the project");
+    omp.runtime().beginTurn();
+    for (const display of [true, false, true]) {
+      omp.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "project-context",
+          content: [{ type: "text", text: "Project instructions" }],
+          details: { project: "example" },
+          display,
+        },
+      });
+    }
+    const items = omp.timeline();
+    expect(items).toEqual(
+      [1, 2].map(() => ({
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: {
+          synthetic: true,
+          customType: "project-context",
+          details: { project: "example" },
+        },
+        error: null,
+      })),
+    );
+    expect(new Set(items.map((item) => item.type === "tool_call" && item.callId)).size).toBe(2);
+    expect(omp.completedTurnCount()).toBe(0);
+    omp.runtime().finishTurn();
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -660,11 +745,19 @@ describe("OMP agent client and session", () => {
         message: "Background job DocsSmokeTwo completed",
       },
     ]);
-    // Non-notice custom messages still fall through as assistant messages with
-    // their own id so the stream coalescer never glues them onto the open reply.
-    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
+    expect(
+      omp.timeline().filter((item) => item.type !== "notification" && item.type !== "user_message"),
+    ).toEqual([
       { type: "assistant_message", text: "done", messageId: "omp-assistant-1" },
-      { type: "assistant_message", text: "plain custom status text", messageId: "omp-custom-1" },
+      {
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "custom-message",
+        status: "completed",
+        detail: { type: "plain_text", text: "plain custom status text" },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
   });
 
@@ -958,6 +1051,9 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
+    await omp.close();
+    expect(omp.usageSession()).toBeNull();
   });
 
   test("maps permissions and sends the selected OMP response", async () => {

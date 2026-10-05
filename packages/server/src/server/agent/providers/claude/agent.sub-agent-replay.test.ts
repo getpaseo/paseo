@@ -634,6 +634,72 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(events[0]).toMatchObject({ id: TOOL_USE_ID });
   });
 
+  test.each(["Agent", "Task"] as const)(
+    "labels a background %s call's card with its type and task after a restart",
+    async (toolName) => {
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: {
+                subagent_type: "general-purpose",
+                description: "Count files here",
+                prompt: "Run ls and reply with the number of entries.",
+              },
+            },
+          ]),
+          JSON.stringify({
+            type: "user",
+            sessionId: "replay-session",
+            timestamp: "2026-07-26T06:27:48.000Z",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: TOOL_USE_ID,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                    },
+                  ],
+                },
+              ],
+            },
+            toolUseResult: { isAsync: true, status: "async_launched", agentId: AGENT_ID },
+          }),
+        ],
+        meta: JSON.stringify({
+          agentType: "general-purpose",
+          description: "Count files here",
+          toolUseId: TOOL_USE_ID,
+          spawnDepth: 1,
+          requestShape: "background",
+        }),
+      });
+
+      const cards = (await replayEvents()).flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === TOOL_USE_ID
+          ? [event.item]
+          : [],
+      );
+      expect(cards.at(-1)).toMatchObject({
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "general-purpose",
+          description: "Count files here",
+        },
+      });
+    },
+  );
+
   test("replays the subagent's own transcript onto its timeline", async () => {
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
