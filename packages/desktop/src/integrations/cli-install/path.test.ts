@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { resolveCliInstallSourcePath, resolveCliShimPath } from "./path";
 
 describe("cli-install-path", () => {
@@ -81,7 +82,7 @@ describe("CLI executable selection", () => {
         executablePath: "/opt/Paseo/paseo",
         resolveWorkspaceCli,
       }),
-    ).toBe("/opt/Paseo/resources/bin/paseo");
+    ).toBe(path.join("/opt/Paseo", "resources", "bin", "paseo"));
     expect(
       resolveCliShimPath({
         platform: "darwin",
@@ -89,6 +90,6 @@ describe("CLI executable selection", () => {
         executablePath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
         resolveWorkspaceCli,
       }),
-    ).toBe("/Applications/Paseo.app/Contents/Resources/bin/paseo");
+    ).toBe(path.join("/Applications/Paseo.app", "Contents", "Resources", "bin", "paseo"));
   });
 });
