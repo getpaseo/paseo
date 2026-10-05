@@ -649,3 +649,45 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await agent.cleanup();
   }
 });
+
+test("copying a selection across an assistant image keeps its Markdown source and alt text", async ({
+  context,
+  page,
+}) => {
+  const image =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-selection-copy-image-",
+    title: "Assistant selection copy image",
+    initialPrompt: "Render the image fixture.",
+    featureValues: {
+      mockAssistantResponse: [
+        "Before the image.",
+        "",
+        `![chart](${image})`,
+        "",
+        "After the image.",
+      ].join("\n"),
+    },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+    await expect(assistantMessageBlocks(page).locator("img")).toHaveCount(1);
+
+    await selectAssistantTextRange(page, "Before the image.", "After the image.");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      `Before the image.\n\n![chart](${image})\n\nAfter the image.`,
+    );
+  } finally {
+    await agent.cleanup();
+  }
+});

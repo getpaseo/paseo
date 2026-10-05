@@ -674,7 +674,9 @@ describe("assistant selection copy inside highlighted code", () => {
     const message = mountHighlighted();
     const image = document.createElement("div");
     image.setAttribute("data-paseo-markdown-tag", "p");
-    image.innerHTML = '<div><img src="https://example.test/chart.png" alt="chart"></div>';
+    // The rendered `img` shows a preview URL with no alt text; the frame carries the Markdown.
+    image.innerHTML =
+      '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><img src="blob:https://example.test/preview" alt=""></div>';
     message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(image);
     const before = tokenText(message, "Before the block.");
 
