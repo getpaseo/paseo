@@ -927,6 +927,24 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test.each(["result after ack", "result before ack"] as const)(
+    "fails a prompt OMP rejects before its agent runs (%s)",
+    async (order) => {
+      const omp = new OmpHarness();
+      await omp.start();
+
+      await expect(
+        omp.runPromptRejectedBeforeAgentRuns(
+          "Reply with ok.",
+          "No API key found for anthropic.",
+          order,
+        ),
+      ).rejects.toThrow("No API key found for anthropic.");
+      expect(omp.turnFailures()).toEqual(["No API key found for anthropic."]);
+      expect(omp.completedTurnCount()).toBe(0);
+    },
+  );
+
   test("completes a no-turn notify with one notification and no assistant text", async () => {
     const scheduler = new ManualNoTurnScheduler();
     const omp = new OmpHarness({ noTurnScheduler: scheduler });
@@ -1216,6 +1234,25 @@ describe("OMP agent client and session", () => {
     await omp.startTurn("continue");
     expect(omp.runtimeLaunches()).toHaveLength(2);
     expect(omp.runtime().prompts).toEqual([{ message: "continue", imageCount: 0 }]);
+  });
+
+  test("ignores a prompt rejection a previous OMP process left for a reused request id", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "prompt_result",
+      id: "req_1",
+      agentInvoked: false,
+      status: "error",
+      error: { message: "No API key found for anthropic." },
+    });
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+
+    await omp.runPromptWithoutTurnOnNextRuntime("/session", "req_1");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.turnFailures()).toEqual(["OMP RPC process exited with code 1 and signal null"]);
+    expect(omp.completedTurnCount()).toBe(1);
   });
 
   test("reports an immediate relaunch failure without retrying in a loop", async () => {

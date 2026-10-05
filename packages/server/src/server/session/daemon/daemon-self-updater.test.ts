@@ -1,5 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { describe, expect, onTestFinished, test } from "vitest";
 import {
   DaemonSelfUpdateInProgressError,
   DaemonSelfUpdater,
@@ -106,9 +108,11 @@ async function runUpdate(input: {
 
 describe("DaemonSelfUpdater", () => {
   test("probes and updates the running install's prefix when npm defaults elsewhere", async () => {
-    const prefix = path.resolve("custom npm prefix");
+    const prefix = mkdtempSync(path.join(tmpdir(), "custom npm prefix "));
+    onTestFinished(() => rmSync(prefix, { recursive: true, force: true }));
     const root = process.platform === "win32" ? prefix : path.join(prefix, "lib");
     const packagePath = path.join(root, "node_modules", "@getpaseo", "cli");
+    mkdirSync(packagePath, { recursive: true });
     const commands: string[][] = [];
     let version = "0.1.15";
     const npm = new DefaultNpmGlobalPaseoCli(async (_command, args) => {

@@ -1,3 +1,4 @@
+import { lstatSync } from "node:fs";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { z } from "zod";
 import { execCommand } from "../../../utils/spawn.js";
@@ -19,7 +20,6 @@ const NpmGlobalCliPackageSchema = z
   .object({
     version: z.string(),
     path: z.string(),
-    link: z.boolean().optional(),
   })
   .passthrough();
 
@@ -112,7 +112,9 @@ function parseNpmGlobalPaseoInstall(stdout: string): NpmGlobalPaseoInstall | nul
     version: cliPackage.data.version,
     packagePath: cliPackage.data.path,
     globalRootPath: list.data.path ?? null,
-    isLinked: cliPackage.data.link === true,
+    // npm links an install by making its node_modules entry a symlink (a junction
+    // on Windows), and `npm ls --json` reports no flag for it.
+    isLinked: lstatSync(cliPackage.data.path).isSymbolicLink(),
   };
 }
 

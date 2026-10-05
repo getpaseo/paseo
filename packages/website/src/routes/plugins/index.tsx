@@ -26,7 +26,7 @@ import {
   mostInstalled,
   newestFirst,
 } from "~/plugins";
-import { ContributeLinks } from "~/plugins/contribute-links";
+import { ContributeSection } from "~/plugins/contribute-links";
 import {
   type BrowseQuery,
   browseHref,
@@ -36,6 +36,7 @@ import {
   parseSearchTerm,
   parseSort,
   parseWindow,
+  SUBMIT_URL,
 } from "~/plugins/links";
 import { NewPluginCard, PluginRankRow } from "~/plugins/plugin-card";
 import { PluginSearch } from "~/plugins/plugin-search";
@@ -57,6 +58,7 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   utils: Wrench,
 };
 
+const SUBMIT_CLASS = "text-sm text-muted-foreground transition-colors hover:text-foreground";
 const SEE_ALL_CLASS =
   "inline-flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
 
@@ -113,8 +115,10 @@ function PluginsPage() {
           </span>
         </h1>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+          <a href={SUBMIT_URL} className={SUBMIT_CLASS}>
+            Submit a plugin
+          </a>
           <PluginSearch scope={searchScope} className="w-full sm:w-56" />
-          <ContributeLinks />
         </div>
       </div>
 
@@ -189,6 +193,8 @@ function PluginsPage() {
           ))}
         </div>
       </section>
+
+      <ContributeSection />
     </SiteShell>
   );
 }

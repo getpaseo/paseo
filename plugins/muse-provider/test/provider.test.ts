@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import os from "node:os";
@@ -14,6 +15,7 @@ import {
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
+import { execCommand } from "@getpaseo/plugin/server";
 import contribute from "../index.server.js";
 
 const connections: ProviderConnection[] = [];
@@ -84,6 +86,7 @@ async function harness(
   async function open(
     persistence?: Extract<ProviderInput, { type: "session.open" }>["persistence"],
     mode = "onRequest",
+    model: string | null = "meta/muse-spark-1.3",
   ) {
     await send({
       type: "session.open",
@@ -97,7 +100,7 @@ async function harness(
         mcpServers: {},
         persist: true,
         mode,
-        model: "meta/muse-spark-1.3",
+        model: model ?? undefined,
         thinkingOption: "high",
         systemPrompt: "Test instructions",
       },
@@ -218,9 +221,9 @@ test("text and reasoning stream, completion overwrites deltas, user echo retains
       { type: "text", text: "hello" },
     ],
   });
-  expect(h.events.filter((event) => event.type === "session.persistence").length).toBeGreaterThan(
-    1,
-  );
+  expect(h.events.findLast((event) => event.type === "session.persistence")).toMatchObject({
+    persistence: { version: 1, data: { model: "meta/muse-spark-1.3", thinkingOption: "high" } },
+  });
 });
 test("tool calls classify read, shell, and edit with fetched JSON patch converted to unified diff", async () => {
   const h = await harness("tools-edit");
@@ -324,23 +327,69 @@ test("interrupt awaits cancelled terminal and reconciles the tool", async () => 
     ),
   ).toBeGreaterThan(terminalIndex);
 });
+test("a fresh connection restores earlier messages from persisted session state", async () => {
+  const original = await harness();
+  const historyPath = path.join(original.root, "native-history.ndjson");
+  original.launch.env.MUSE_TEST_HISTORY = historyPath;
+  await original.open();
+  await original.prompt();
+  await original.wait((event) => event.type === "session.turn" && event.state === "completed");
+  const messages = [
+    ...new Map(
+      original.events
+        .filter((event) => event.type === "timeline.item")
+        .map((event) => event.item)
+        .filter((item) => item.type === "user_message" || item.type === "assistant_message")
+        .map((item) => [item.id, item] as const),
+    ).values(),
+  ];
+  expect(messages.map((item) => item.type)).toEqual(["user_message", "assistant_message"]);
+  const saved = original.events.findLast((event) => event.type === "session.persistence");
+  if (!saved) throw new Error("Expected session persistence");
+  const persistencePath = path.join(original.root, "persistence.json");
+  // Older daemon records carry a view cursor even though their timeline is not durable.
+  await writeFile(
+    persistencePath,
+    JSON.stringify({
+      ...saved.persistence,
+      data: { ...saved.persistence.data, cursor: saved.persistence.data.cursor ?? "v:old:7" },
+    }),
+  );
+  await original.connection.close();
+  const reopened = await harness("text-reasoning", { MUSE_TEST_HISTORY: historyPath });
+  expect(await reopened.open(JSON.parse(await readFile(persistencePath, "utf8")))).toMatchObject({
+    type: "session.ready",
+  });
+  const restored = reopened.events
+    .filter((event) => event.type === "timeline.item")
+    .map((event) => event.item)
+    .filter((item) => item.type === "user_message" || item.type === "assistant_message");
+  expect(restored.map((item) => ({ type: item.type, text: item.text }))).toEqual(
+    messages.map((item) => ({ type: item.type, text: item.text })),
+  );
+  const reopenedState = reopened.events.findLast((event) => event.type === "session.persistence");
+  expect(reopenedState?.persistence.data).not.toHaveProperty("cursor");
+  expect(reopened.events.filter((event) => event.type === "session.turn")).toEqual([]);
+  await reopened.prompt();
+  await reopened.wait((event) => event.type === "session.turn" && event.state === "completed");
+});
+
 for (const cursor of [undefined, "v:old:7"]) {
-  test(`resume ${cursor ? "with cursor emits suffix and ignores old terminal" : "without cursor replays inline history"}`, async () => {
-    const h = await harness(cursor ? "resume-with-cursor" : "resume-without-cursor");
+  test(`resume ${cursor ? "with a legacy persistence cursor" : "without a persistence cursor"} replays inline history`, async () => {
+    const h = await harness("resume-without-cursor");
     await h.open({
       version: 1,
       data: { sessionId: "saved-session", ...(cursor ? { cursor } : {}) },
     });
     expect(h.events.filter((event) => event.type === "session.turn")).toEqual([]);
     const history = h.events.filter((event) => event.type === "timeline.item");
-    if (!cursor)
-      expect(history).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            item: expect.objectContaining({ type: "assistant_message", text: "RESUME_MARKER_OK" }),
-          }),
-        ]),
-      );
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          item: expect.objectContaining({ type: "assistant_message", text: "RESUME_MARKER_OK" }),
+        }),
+      ]),
+    );
     await h.prompt();
     await h.wait((event) => event.type === "session.turn" && event.state === "completed");
     expect(
@@ -348,7 +397,10 @@ for (const cursor of [undefined, "v:old:7"]) {
     ).toHaveLength(1);
     expect(
       (await h.recorded()).find((frame) => frame.method === "session/resume").params,
-    ).toMatchObject({ sessionId: "saved-session", ...(cursor ? { cursor } : {}) });
+    ).toMatchObject({ sessionId: "saved-session" });
+    expect(
+      (await h.recorded()).find((frame) => frame.method === "session/resume").params,
+    ).not.toHaveProperty("cursor");
   });
 }
 test("steer sends ifBusy steer and joins the running turn", async () => {
@@ -459,6 +511,25 @@ for (const [env, expected] of [
     expect(await h.provider.status!({ launch: h.launch })).toEqual(expected);
   });
 }
+test("status preserves the version-probe command and stderr diagnostic", async () => {
+  const h = await harness("catalog-controls", {
+    MUSE_TEST_VERSION_ERROR: "Muse version probe could not read its installation metadata",
+  });
+  // Compare against the original execFile callback: wrapping in MuseError only changed its kind.
+  const previousDiagnostic = await new Promise<string>((resolve, reject) => {
+    execFile(h.launch.command, [...h.launch.args, "--version"], { env: h.launch.env }, (error) => {
+      if (error) resolve(error.message);
+      else reject(new Error("Expected the version probe to fail"));
+    });
+  });
+  const status = await h.provider.status!({ launch: h.launch });
+  expect(status).toEqual({ available: false, diagnostic: previousDiagnostic });
+  expect(status.diagnostic).toContain("--version");
+  expect(status.diagnostic).toContain(
+    "Muse version probe could not read its installation metadata",
+  );
+  expect(await h.recorded()).toEqual([]);
+});
 test("status reports a missing executable", async () => {
   const h = await harness();
   expect(
@@ -610,12 +681,15 @@ test("ordinary subagent tool calls render sub_agent details without inventing ch
     }),
   );
 });
-for (const [variants, reasoningEffortVariants, expected] of [
-  [["low", "high"], ["medium"], ["medium"]],
-  [["low", "high"], "unknown", ["low", "high"]],
-  [[], [], ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]],
+for (const [variants, expected] of [
+  [
+    ["low", "high"],
+    ["low", "high"],
+  ],
+  ["unknown", ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]],
+  [[], ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]],
 ] as const) {
-  test(`catalogue effort discovery ${JSON.stringify(reasoningEffortVariants)} with variants ${JSON.stringify(variants)}`, async () => {
+  test(`catalogue effort discovery with variants ${JSON.stringify(variants)}`, async () => {
     const model = {
       modelId: "test-model",
       providerId: "meta",
@@ -623,7 +697,6 @@ for (const [variants, reasoningEffortVariants, expected] of [
       contextLimit: 123456,
       isDefault: true,
       variants,
-      reasoningEffortVariants,
       defaultReasoningEffort: "high",
     };
     const h = await harness("catalog-controls", { MUSE_TEST_MODELS: JSON.stringify([model]) });
@@ -634,6 +707,153 @@ for (const [variants, reasoningEffortVariants, expected] of [
         defaultModel: "test-model",
         models: [
           { contextWindowMaxTokens: 123456, thinkingOptions: expected.map((id) => ({ id })) },
+        ],
+      },
+    });
+  });
+}
+test("catalogue loads models whose effort tiers carry descriptions", async () => {
+  const deepest = "Use this for deepest analysis and complex fixes.";
+  const row = (modelId: string, isDefault: boolean) => ({
+    modelId,
+    providerId: "meta",
+    displayLabel: modelId,
+    contextLimit: 1000000,
+    isDefault,
+    defaultReasoningEffort: "max",
+    variants: ["minimal", "low", "medium", "high", "xhigh", "max"],
+    reasoningEffortVariants: isDefault ? [] : [{ tier: "xhigh", description: deepest }],
+  });
+  const models = [
+    row("muse-spark-1.3", true),
+    row("muse-spark-1.3-contributor", false),
+    row("muse-spark-1.2", false),
+    row("muse-spark-1.2-contributor", false),
+  ];
+  const h = await harness("catalog-controls", { MUSE_TEST_MODELS: JSON.stringify(models) });
+  await h.send({ type: "catalog", requestId: "models" });
+  const result = await h.wait(
+    (event) => event.type === "catalog" || event.type === "request.failed",
+  );
+  const offered = [
+    { id: "minimal" },
+    { id: "low" },
+    { id: "medium" },
+    { id: "high" },
+    { id: "xhigh" },
+    { id: "max", isDefault: true },
+  ];
+  expect(result).toMatchObject({
+    type: "catalog",
+    catalog: {
+      defaultModel: "muse-spark-1.3",
+      models: [
+        { id: "muse-spark-1.3", defaultThinkingOptionId: "max" },
+        { id: "muse-spark-1.3-contributor", thinkingOptions: offered },
+        { id: "muse-spark-1.2", thinkingOptions: offered },
+        { id: "muse-spark-1.2-contributor", thinkingOptions: offered },
+      ],
+    },
+  });
+});
+for (const [configuredModel, catalogModels, expectedModel] of [
+  ["configured-model", [], "configured-model"],
+  [
+    "",
+    [
+      {
+        modelId: "catalog-model",
+        providerId: "meta",
+        displayLabel: "Catalog model",
+        contextLimit: null,
+        isDefault: true,
+        variants: ["high"],
+      },
+    ],
+    "catalog-model",
+  ],
+  ["", [], undefined],
+] as const) {
+  test(`null session model preserves ${expectedModel ?? "unset model"}`, async () => {
+    const h = await harness("text-reasoning", {
+      MUSE_TEST_NULL_MODEL: "1",
+      MUSE_TEST_MODELS: JSON.stringify(catalogModels),
+    });
+    expect(await h.open(undefined, "onRequest", configuredModel || null)).toEqual({
+      type: "session.ready",
+      requestId: "open",
+      sessionId: "paseo-session",
+    });
+    const config = await h.wait((event) => event.type === "session.config");
+    if (config.type !== "session.config") throw new Error("Expected session config");
+    expect(config.config.model).toBe(expectedModel);
+    const saved = h.events.findLast((event) => event.type === "session.persistence");
+    if (!saved) throw new Error("Expected persistence");
+    expect(saved.persistence.data.model).toBe(expectedModel);
+    await h.prompt();
+    await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+  });
+}
+test("session startup accepts described catalog efforts and publishes the complete list", async () => {
+  const model = {
+    modelId: "meta/muse-spark-1.3",
+    providerId: "meta",
+    displayLabel: "Muse Spark",
+    contextLimit: null,
+    isDefault: true,
+    defaultReasoningEffort: "max",
+    variants: ["minimal", "low", "medium", "high", "xhigh", "max"],
+    reasoningEffortVariants: [{ tier: "xhigh", description: "Deepest analysis" }],
+  };
+  const h = await harness("text-reasoning", { MUSE_TEST_MODELS: JSON.stringify([model]) });
+  expect(await h.open()).toEqual({
+    type: "session.ready",
+    requestId: "open",
+    sessionId: "paseo-session",
+  });
+  expect(await h.wait((event) => event.type === "session.config")).toMatchObject({
+    config: {
+      models: [{ id: model.modelId, defaultThinkingOptionId: "max" }],
+      thinkingOptions: model.variants.map((id) => ({ id, isDefault: id === "max" })),
+    },
+  });
+  await h.send({
+    type: "session.configure",
+    requestId: "choose-max",
+    sessionId: "paseo-session",
+    changes: { thinkingOption: "max" },
+  });
+  await h.wait((event) => event.type === "request.completed" && event.requestId === "choose-max");
+  await h.prompt();
+  await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+  expect(
+    (await h.recorded()).find((frame) => frame.method === "turn/start").params.reasoningEffort,
+  ).toBe("max");
+});
+for (const metadata of [
+  "unknown",
+  [{ tier: "future-tier", description: { text: "Future metadata" } }],
+]) {
+  test(`catalog ignores unused effort descriptions ${JSON.stringify(metadata)}`, async () => {
+    const model = {
+      modelId: "test-model",
+      providerId: "meta",
+      displayLabel: "Muse Spark",
+      contextLimit: null,
+      isDefault: true,
+      defaultReasoningEffort: "high",
+      variants: ["low", "high"],
+      reasoningEffortVariants: metadata,
+    };
+    const h = await harness("catalog-controls", { MUSE_TEST_MODELS: JSON.stringify([model]) });
+    await h.send({ type: "catalog", requestId: "models" });
+    expect(
+      await h.wait((event) => event.type === "catalog" || event.type === "request.failed"),
+    ).toMatchObject({
+      type: "catalog",
+      catalog: {
+        models: [
+          { id: model.modelId, thinkingOptions: [{ id: "low" }, { id: "high", isDefault: true }] },
         ],
       },
     });
@@ -691,7 +911,7 @@ test("fingerprint mismatch is logged but does not prevent opening", async () => 
 });
 for (const restoring of [false, true]) {
   test(`MCP servers map to MSP stdio and streamableHttp on ${restoring ? "resume" : "start"}`, async () => {
-    const h = await harness(restoring ? "resume-with-cursor" : "text-reasoning");
+    const h = await harness(restoring ? "resume-without-cursor" : "text-reasoning");
     await h.send({
       type: "session.open",
       sessionId: "paseo-session",
@@ -1073,6 +1293,46 @@ test("resuming a session reapplies its provider options to the new host", async 
   ]);
   expect(frames.some((f) => f.method === "session/resume")).toBe(true);
 });
+test("an uncorrelated MSP parse error keeps the provider diagnostic", async () => {
+  const h = await harness("text-reasoning", { MUSE_TEST_NULL_ERROR_ID: "1" });
+  expect(await h.open()).toMatchObject({
+    type: "request.failed",
+    error: { code: "parseError", message: "Cannot recover request id" },
+  });
+});
+test("text deltas with an omitted field stream as text", async () => {
+  const h = await harness("text-reasoning", { MUSE_TEST_IMPLICIT_TEXT_DELTA: "1" });
+  await h.open();
+  await h.wait((e) => e.type === "session.ready");
+  await h.prompt();
+  await h.wait((e) => e.type === "session.turn" && e.state === "completed");
+  expect(
+    h.events.some(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "Sum with",
+    ),
+  ).toBe(true);
+});
+test("sessions with a null model import and resume without a null persistence model", async () => {
+  const h = await harness("resume-without-cursor", { MUSE_TEST_NULL_MODEL: "1" });
+  await h.send({
+    type: "sessions",
+    requestId: "null-list",
+    cwd: "/tmp/muse-phase0/repo",
+    limit: 2,
+  });
+  const listed = await h.wait((e) => e.type === "sessions");
+  if (listed.type !== "sessions") throw new Error("Expected sessions");
+  expect(listed.sessions).toHaveLength(2);
+  expect(listed.sessions[0]!.persistence.data.model).toBeUndefined();
+  await h.open(listed.sessions[0]!.persistence);
+  await h.wait((e) => e.type === "session.ready");
+  expect(
+    h.events.some((e) => e.type === "session.config" && e.config.model === "meta/muse-spark-1.3"),
+  ).toBe(true);
+});
 test("sessions list filters workspace and imported persistence opens via resume", async () => {
   const h = await harness("resume-without-cursor");
   await h.send({
@@ -1340,3 +1600,90 @@ test("Muse window identity follows the reported duration instead of assuming fiv
     ],
   });
 });
+
+test("status accepts initialization slower than the account deadline without isolating history", async () => {
+  const h = await harness("catalog-controls", { MUSE_TEST_INITIALIZE_DELAY_MS: "3500" });
+  expect(await h.provider.status!({ launch: h.launch })).toEqual({ available: true });
+  expect(await h.recorded()).toContainEqual({ event: "hostClosed" });
+}, 10000);
+
+for (const extension of ["cmd", "bat"]) {
+  test.runIf(process.platform === "win32")(
+    `launches the discovered Muse .${extension} for status, catalog and sessions`,
+    async () => {
+      const h = await harness("catalog-controls");
+      const shim = path.join(h.root, `muse launcher.${extension}`);
+      await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
+      h.launch.command = shim;
+      h.launch.args = [];
+      expect(await h.provider.status!({ launch: h.launch })).toEqual({ available: true });
+      await h.send({ type: "catalog", requestId: "shim-catalog" });
+      expect(await h.wait((event) => event.type === "catalog")).toMatchObject({
+        requestId: "shim-catalog",
+      });
+      await h.open();
+      expect(await h.wait((event) => event.type === "session.opened")).toMatchObject({
+        sessionId: "paseo-session",
+      });
+    },
+    20000,
+  );
+}
+
+test("force-stops a Muse host that ignores stdin EOF", async () => {
+  const h = await stubbornHostHarness();
+  try {
+    const result = await Promise.race([
+      h.provider.status!({ launch: h.launch }),
+      delay(10000).then(() => {
+        throw new Error("Muse status did not finish closing its host");
+      }),
+    ]);
+    expect(result).toEqual({ available: true });
+    const hosts = (await h.recorded()).filter((row) => row.event === "stubbornHost");
+    expect(hosts).toHaveLength(1);
+    expect(() => process.kill(hosts[0].pid, 0)).toThrow();
+  } finally {
+    await cleanupStubbornHosts(h);
+  }
+}, 15000);
+
+test("closes the whole Muse host after an uncorrelated MSP error", async () => {
+  const h = await stubbornHostHarness({ MUSE_TEST_NULL_ERROR_ID: "1" });
+  try {
+    const result = await h.provider.status!({ launch: h.launch });
+    expect(result).toEqual({ available: false, diagnostic: "Cannot recover request id" });
+    const recorded = await h.recorded();
+    expect(recorded.some((row) => row.event === "hostClosed")).toBe(true);
+    const hosts = recorded.filter((row) => row.event === "stubbornHost");
+    expect(hosts).toHaveLength(1);
+    expect(() => process.kill(hosts[0].pid, 0)).toThrow();
+  } finally {
+    await cleanupStubbornHosts(h);
+  }
+}, 15000);
+
+async function stubbornHostHarness(env: Record<string, string> = {}) {
+  const h = await harness("catalog-controls", { MUSE_TEST_STUBBORN: "1", ...env });
+  if (process.platform === "win32") {
+    const shim = path.join(h.root, "stubborn muse.cmd");
+    await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
+    h.launch.command = shim;
+    h.launch.args = [];
+  }
+  return h;
+}
+async function cleanupStubbornHosts(h: Awaited<ReturnType<typeof harness>>) {
+  // Keep a failing Windows regression from leaving its deliberately stubborn child alive.
+  for (const host of (await h.recorded()).filter((row) => row.event === "stubbornHost")) {
+    if (process.platform === "win32") {
+      await execCommand("taskkill.exe", ["/PID", String(host.pid), "/T", "/F"], {
+        shell: false,
+      }).catch(() => {});
+    } else {
+      try {
+        process.kill(host.pid, "SIGKILL");
+      } catch {}
+    }
+  }
+}

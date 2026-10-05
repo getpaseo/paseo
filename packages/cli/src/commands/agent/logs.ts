@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { connectToDaemon } from "../../utils/client.js";
+import { waitForStop } from "../../utils/wait-for-stop.js";
 import type { CommandOptions } from "../../output/index.js";
 import {
   fetchProjectedTimelineItems,
@@ -224,16 +225,7 @@ async function runFollowMode(
   await unsubscribe.ready;
   console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
-  // Wait for interrupt
-  await new Promise<void>((resolve) => {
-    const cleanup = () => {
-      unsubscribe();
-      resolve();
-    };
-
-    process.on("SIGINT", cleanup);
-    process.on("SIGTERM", cleanup);
-  });
-
+  await waitForStop();
+  unsubscribe();
   await client.close();
 }
