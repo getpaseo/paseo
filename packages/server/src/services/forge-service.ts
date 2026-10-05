@@ -217,11 +217,20 @@ export interface DisablePullRequestAutoMergeOptions {
   status?: PullRequestCommandStatus | null;
 }
 
+export interface MarkPullRequestReadyOptions {
+  cwd: string;
+  prNumber: number;
+}
+
 export interface PullRequestMergeResult {
   success: true;
 }
 
 export interface PullRequestAutoMergeResult {
+  success: true;
+}
+
+export interface PullRequestReadyResult {
   success: true;
 }
 
@@ -483,6 +492,12 @@ export interface ForgeService {
   disablePullRequestAutoMerge(
     options: DisablePullRequestAutoMergeOptions,
   ): Promise<PullRequestAutoMergeResult>;
+  /**
+   * Take a draft change request out of draft. Adapters whose forge has no draft
+   * concept, or whose CLI cannot flip it, reject — the app only offers the
+   * action while the forge itself reports the request as a draft.
+   */
+  markPullRequestReady(options: MarkPullRequestReadyOptions): Promise<PullRequestReadyResult>;
   /**
    * Check whether the adapter can authenticate against the forge for `cwd`.
    * An adapter picks exactly one of two contracts:

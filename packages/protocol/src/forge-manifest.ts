@@ -45,6 +45,13 @@ export interface ForgeDefinition {
   issueNumberPrefix: string;
   /** Icon key; the client falls back to a generic git icon for unknown values. */
   iconKind: string;
+  /**
+   * Adapter support for taking a draft change request out of draft
+   * (`ForgeService.markPullRequestReady`). Required so a new forge must state
+   * this explicitly rather than silently inheriting a working "Set ready"
+   * action it cannot actually perform.
+   */
+  supportsPrSetReady: boolean;
   /** Sign-in recipe, or null when the forge has no Paseo-driven sign-in. */
   signIn: ForgeSignInCommand | null;
   /**
@@ -64,6 +71,7 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     changeRequestNumberPrefix: "#",
     issueNumberPrefix: "#",
     iconKind: "github",
+    supportsPrSetReady: true,
     signIn: { cli: "gh", command: "gh auth login" },
     cloudHosts: ["github.com", "ssh.github.com"],
   },
@@ -75,6 +83,7 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     changeRequestNumberPrefix: "!",
     issueNumberPrefix: "#",
     iconKind: "gitlab",
+    supportsPrSetReady: true,
     signIn: { cli: "glab", command: "glab auth login", hostnameFlag: "--hostname" },
     cloudHosts: ["gitlab.com"],
   },
@@ -86,6 +95,9 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     changeRequestNumberPrefix: "#",
     issueNumberPrefix: "#",
     iconKind: "gitea",
+    // The gitea-family adapter (gitea/forgejo/codeberg) always rejects
+    // markPullRequestReady; keep the action off until it's implemented.
+    supportsPrSetReady: false,
     signIn: { cli: "tea", command: "tea login add" },
     cloudHosts: ["gitea.com"],
   },
@@ -97,6 +109,7 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     changeRequestNumberPrefix: "#",
     issueNumberPrefix: "#",
     iconKind: "forgejo",
+    supportsPrSetReady: false,
     signIn: { cli: "tea", command: "tea login add" },
   },
   {
@@ -107,6 +120,7 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     changeRequestNumberPrefix: "#",
     issueNumberPrefix: "#",
     iconKind: "codeberg",
+    supportsPrSetReady: false,
     signIn: { cli: "tea", command: "tea login add" },
     cloudHosts: ["codeberg.org"],
   },
@@ -139,6 +153,8 @@ export function getForgeDefinitionOrNeutral(id: string): ForgeDefinition {
       changeRequestNumberPrefix: "#",
       issueNumberPrefix: "#",
       iconKind: "git",
+      // Unknown forge: never advertise a capability we haven't verified.
+      supportsPrSetReady: false,
       signIn: null,
     }
   );
