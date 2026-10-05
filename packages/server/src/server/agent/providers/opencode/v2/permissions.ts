@@ -103,7 +103,7 @@ export class SessionPermissions {
             header: field.title ?? field.key,
             question: field.description ?? field.title ?? field.key,
             options: "options" in field ? field.options : undefined,
-            multiple: field.type === "multiselect",
+            multiSelect: field.type === "multiselect",
             allowOther: "custom" in field && field.custom === true,
           })),
         },
@@ -137,8 +137,8 @@ function formAnswer(field: FormInfo["fields"][number], value: unknown): FormValu
     );
   };
   if (field.type === "multiselect") {
-    if (Array.isArray(value) && value.every((item: unknown) => typeof item === "string"))
-      return value.map(labelValue);
+    const selected = multiSelectAnswer(field, value);
+    if (selected) return selected.map(labelValue);
   } else if (field.type === "string" && typeof value === "string") {
     return labelValue(value);
   } else if (field.type === "boolean") {
@@ -155,4 +155,39 @@ function formAnswer(field: FormInfo["fields"][number], value: unknown): FormValu
       return numeric;
   }
   throw new Error(`Invalid answer for OpenCode question ${field.key}`);
+}
+
+type MultiSelectField = Extract<FormInfo["fields"][number], { type: "multiselect" }>;
+
+function multiSelectAnswer(field: MultiSelectField, value: unknown): string[] | undefined {
+  if (Array.isArray(value) && value.every((item: unknown) => typeof item === "string"))
+    return value;
+  if (typeof value !== "string") return undefined;
+  const { selected, custom } = splitJoinedLabels(
+    value,
+    field.options.map((option) => option.label),
+  );
+  if (custom === null) return selected;
+  return field.custom === true ? [...selected, custom] : undefined;
+}
+
+// The shared question card sends a multi-select answer as one comma-joined string in
+// click order. Consume exact option labels from the front, longest first so a label
+// containing ", " wins over its prefix; any remaining text is the typed answer.
+function splitJoinedLabels(
+  answer: string,
+  labels: string[],
+): { selected: string[]; custom: string | null } {
+  let remaining = answer;
+  const selected: string[] = [];
+  while (remaining.length > 0) {
+    const label = labels
+      .filter((candidate) => !selected.includes(candidate))
+      .sort((left, right) => right.length - left.length)
+      .find((candidate) => remaining === candidate || remaining.startsWith(`${candidate}, `));
+    if (!label) break;
+    selected.push(label);
+    remaining = remaining === label ? "" : remaining.slice(label.length + 2);
+  }
+  return { selected, custom: remaining || null };
 }
