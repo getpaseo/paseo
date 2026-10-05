@@ -26,7 +26,9 @@ export async function openAgent(page: Page, session: MockAgentSession): Promise<
 }
 
 export async function reloadAgent(page: Page): Promise<void> {
-  await page.reload({ waitUntil: "commit" });
+  // Reload must not reopen the card under a stationary pointer.
+  await page.mouse.move(0, 0);
+  await page.reload({ waitUntil: "domcontentloaded" });
   await expectComposerVisible(page);
 }
 
@@ -35,6 +37,7 @@ export async function hoverContextWindowMeter(page: Page, name = METER_NAME): Pr
   await page.getByRole("img", { name, exact: true }).hover({ timeout: 30_000 });
   const card = contextWindowDetails(page);
   await expect(card).toBeVisible();
+  await expect(card).toBeInViewport();
   return card;
 }
 

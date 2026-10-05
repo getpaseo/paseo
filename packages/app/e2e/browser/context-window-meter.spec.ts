@@ -277,6 +277,8 @@ for (const theme of ["light", "dark"] as const) {
     });
 
     await test.step("after a resume under another login, only that login shows", async () => {
+      // Refresh can retain focus; return to the composer before testing pointer dismissal.
+      await composerLocator(page).focus();
       // Closed while the old login's report is still on its way.
       await leaveContextWindowMeter(page);
       const slowSource = gate();
