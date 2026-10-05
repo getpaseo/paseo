@@ -3034,6 +3034,48 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("reports the plan mode Claude enters on its own with EnterPlanMode", async () => {
+    // Claude Code announces a mode it switched to itself as a status message
+    // carrying the new permissionMode, right after the EnterPlanMode tool call.
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory: createQueryFactoryForTurns([
+        [
+          { ...createInitMessage(), permissionMode: "acceptEdits" },
+          {
+            type: "system",
+            subtype: "status",
+            status: null,
+            permissionMode: "plan",
+            session_id: "session-1",
+          },
+          createSuccessResult(),
+        ],
+      ]),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "acceptEdits",
+    });
+
+    try {
+      const events = await collectStreamEvents(session, "enter plan mode");
+
+      // Plan is the plan_mode feature beside the access mode, so the agent keeps Accept File Edits.
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "mode_changed", currentModeId: "acceptEdits" }),
+      );
+      expect(await session.getCurrentMode()).toBe("acceptEdits");
+      expect(session.features).toContainEqual(
+        expect.objectContaining({ id: "plan_mode", value: true }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   test("a compaction abandoned mid-turn does not suppress the next compaction marker", async () => {
     // The first turn starts compacting and then ends without ever reaching a
     // compact_boundary, so the marker it opened is never resolved.
