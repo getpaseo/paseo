@@ -28,6 +28,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
+import { Terminal as HeadlessTerminal } from "@xterm/headless";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 
 const hasZsh = existsSync("/bin/zsh");
 
@@ -185,6 +187,52 @@ async function waitForScheduledTimers(expectedTimerCount: number): Promise<void>
 }
 
 describe("createTerminal", () => {
+  it("preserves Korean grid, scrollback, and cursor across repeated snapshot restores", async () => {
+    const lines = ["한글 문장", "공급사 | 상태", "AWS    | 성공", "끝"];
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        rows: 3,
+        cols: 30,
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(lines.join("\r\n"))}); setInterval(() => {}, 1000)`,
+        ],
+      }),
+    );
+    const state = await waitForState(session, (snapshot) => getLines(snapshot).includes("끝"));
+    expect([...state.scrollback, ...state.grid].map(rowToText)).toEqual(lines);
+    const restored = new HeadlessTerminal({
+      rows: state.rows,
+      cols: state.cols,
+      allowProposedApi: true,
+    });
+    try {
+      for (let restore = 0; restore < 10; restore += 1) {
+        restored.reset();
+        await new Promise<void>((resolve) =>
+          restored.write(renderTerminalSnapshotToAnsi(state), resolve),
+        );
+        expect(
+          Array.from({ length: restored.buffer.active.length }, (_, row) =>
+            restored.buffer.active.getLine(row)?.translateToString(true),
+          ),
+        ).toEqual(lines);
+        expect({
+          row: restored.buffer.active.cursorY,
+          col: restored.buffer.active.cursorX,
+        }).toEqual({
+          row: state.cursor.row,
+          col: state.cursor.col,
+        });
+      }
+    } finally {
+      restored.dispose();
+    }
+  });
+
   it("keeps full process titles while stripping path prefixes", () => {
     expect(normalizeProcessTitle("   /usr/local/bin/npm   run   dev   ")).toBe("npm run dev");
     expect(normalizeProcessTitle("/opt/homebrew/bin/node /tmp/work/npm-cli.js run dev")).toBe(
