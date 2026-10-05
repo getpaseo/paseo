@@ -24,6 +24,7 @@ import {
   selectGithubOption,
   expectGithubAttachmentPill,
   openGithubWorkspace,
+  submitMessage,
 } from "../support/helpers/composer";
 import {
   delayBrowserAgentCreatedStatus,
@@ -39,7 +40,10 @@ import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-f
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
-import { withAttachmentSourceFixture } from "../support/helpers/attachment-source";
+import {
+  observeCrossHostAttachmentTraffic,
+  withAttachmentSourceFixture,
+} from "../support/helpers/attachment-source";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { copyPluginFixture } from "../support/helpers/plugin-fixture";
@@ -79,14 +83,7 @@ test.describe("Composer attachments", () => {
       ownProjects: false,
     });
     const plugin = await copyPluginFixture("attachment-source");
-    let searchRequests = 0;
-    const observeFrame = ({ payload }: { payload: string | Buffer }) => {
-      if (String(payload).includes('"plugin.rpc.invoke.request"')) searchRequests += 1;
-    };
-    page.on("websocket", (socket) => {
-      if (new URL(socket.url()).port !== String(sourceHost.port)) return;
-      socket.on("framesent", observeFrame);
-    });
+    const traffic = await observeCrossHostAttachmentTraffic(page, sourceHost.port);
     try {
       await sourceClient.patchDaemonConfig({ pluginsEnabled: true });
       await sourceClient.installDirectoryPlugin(plugin.directory);
@@ -119,13 +116,13 @@ test.describe("Composer attachments", () => {
       await expect(approveRemoteSearch).toBeVisible();
       await expect(page.getByText(/Readable results will be copied to this app/)).toBeVisible();
       await expect(page.getByText("Example conversation")).toHaveCount(0);
-      expect(searchRequests).toBe(0);
+      traffic.expectSearchNotStarted();
 
       await approveRemoteSearch.click();
       await expect(page.getByPlaceholder("Search conversations")).toBeVisible();
       const result = page.getByRole("button", { name: /Example conversation/ });
       await expect(result).toBeVisible({ timeout: 30_000 });
-      expect(searchRequests).toBeGreaterThan(0);
+      await traffic.expectSearchStarted();
       await result.click();
       await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
         "Secondary",
@@ -133,6 +130,8 @@ test.describe("Composer attachments", () => {
       await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
         "Example conversation",
       );
+      await submitMessage(page, "Use the attached conversation.");
+      await traffic.expectSnapshotSubmittedToDestination();
     } finally {
       await sourceClient.close();
       await sourceHost.close();

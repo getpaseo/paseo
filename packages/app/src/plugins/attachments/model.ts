@@ -36,6 +36,12 @@ export function createPluginResourceAttachment(
   };
 }
 
+export function getPluginResourceAttachmentKey(
+  attachment: PluginResourceComposerAttachment,
+): string {
+  return `${attachment.sourceServerId ?? ""}:${attachment.pluginId}:${attachment.sourceId}:${attachment.item.id}`;
+}
+
 export function togglePluginResourceAttachment(
   current: UserComposerAttachment[],
   attachment: PluginResourceComposerAttachment,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createPluginResourceAttachment,
+  getPluginResourceAttachmentKey,
   PluginResourceComposerAttachmentSchema,
   pluginResourceAttachmentToAgentAttachment,
   togglePluginResourceAttachment,
@@ -50,6 +51,8 @@ describe("plugin resource attachments", () => {
     );
 
     expect(PluginResourceComposerAttachmentSchema.parse(remote)).toEqual(remote);
+    expect(getPluginResourceAttachmentKey(local)).toBe(":linear:issues:issue-uuid");
+    expect(getPluginResourceAttachmentKey(remote)).toBe("remote-host:linear:issues:issue-uuid");
     expect(togglePluginResourceAttachment([local], remote)).toEqual([local, remote]);
     expect(togglePluginResourceAttachment([local, remote], remote)).toEqual([local]);
     expect(pluginResourceAttachmentToAgentAttachment(remote)).toMatchObject({

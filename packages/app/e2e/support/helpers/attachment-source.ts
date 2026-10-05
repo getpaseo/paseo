@@ -2,18 +2,93 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { expectComposerVisible } from "./composer";
 import { clickNewChat } from "./launcher";
-import { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import { connectNewWorkspaceDaemonClient, loadSessionMessageReaders } from "./new-workspace";
 import { copyPluginFixture } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
 import { getServerId } from "./server-id";
 import { switchWorkspaceViaSidebar, waitForSidebarHydration } from "./workspace-ui";
 
 const RESULT_TITLE = "Example conversation";
+const SOURCE_PLUGIN_ID = "test-attachment-source";
+const SOURCE_SEARCH_METHOD = "context.search";
+const SNAPSHOT_TEXT = "[User] Example context\n[Assistant] Example response";
+
+const EXPECTED_REMOTE_ATTACHMENT = {
+  type: "text",
+  mimeType: "text/plain",
+  title: "Sample Example conversation",
+  text: SNAPSHOT_TEXT,
+  contextKind: "chat_history",
+  externalResource: {
+    provider: SOURCE_PLUGIN_ID,
+    providerLabel: "Conversation context · Secondary",
+    resourceType: "conversation",
+    id: "sample",
+    identifier: "Sample",
+    title: RESULT_TITLE,
+    url: "https://example.invalid/conversation",
+  },
+};
 
 interface AttachmentSourceActions {
   openShortcut(): Promise<void>;
   attachDefaultResult(): Promise<void>;
   expectAttachmentInDraft(): Promise<void>;
+}
+
+export async function observeCrossHostAttachmentTraffic(page: Page, sourcePort: number) {
+  const frames = await loadSessionMessageReaders();
+  let searchRequestCount = 0;
+  let submittedAttachment: unknown = null;
+
+  page.on("websocket", (socket) => {
+    const socketPort = new URL(socket.url()).port;
+    socket.on("framesent", ({ payload }) => {
+      const message = frames.client(payload);
+      if (
+        socketPort === String(sourcePort) &&
+        message?.type === "plugin.rpc.invoke.request" &&
+        message.pluginId === SOURCE_PLUGIN_ID &&
+        message.method === SOURCE_SEARCH_METHOD
+      ) {
+        searchRequestCount += 1;
+      }
+
+      let attachments: unknown;
+      if (message?.type === "workspace.create.request") {
+        attachments = message.agent?.attachments;
+      } else if (
+        message?.type === "create_agent_request" ||
+        message?.type === "agent.create.request" ||
+        message?.type === "send_agent_message_request"
+      ) {
+        attachments = message.attachments;
+      }
+      if (!Array.isArray(attachments)) return;
+      submittedAttachment = attachments.find(
+        (attachment) =>
+          typeof attachment === "object" &&
+          attachment !== null &&
+          "externalResource" in attachment &&
+          typeof attachment.externalResource === "object" &&
+          attachment.externalResource !== null &&
+          "provider" in attachment.externalResource &&
+          attachment.externalResource.provider === SOURCE_PLUGIN_ID,
+      );
+    });
+  });
+
+  return {
+    expectSearchNotStarted() {
+      expect(searchRequestCount).toBe(0);
+    },
+    async expectSearchStarted() {
+      await expect.poll(() => searchRequestCount).toBeGreaterThan(0);
+    },
+    async expectSnapshotSubmittedToDestination() {
+      await expect.poll(() => submittedAttachment).toMatchObject(EXPECTED_REMOTE_ATTACHMENT);
+    },
+  };
 }
 
 export async function withAttachmentSourceFixture(
