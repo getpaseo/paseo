@@ -7,6 +7,20 @@ function cells(text: string): TerminalState["grid"][number] {
 }
 
 describe("renderTerminalSnapshotToAnsi", () => {
+  it("preserves Korean characters and real spaces without replaying continuation cells", () => {
+    const state: TerminalState = {
+      rows: 1,
+      cols: 8,
+      scrollback: [],
+      grid: [
+        [{ char: "한" }, { char: "" }, { char: "글" }, { char: "" }, { char: " " }, { char: "A" }],
+      ],
+      cursor: { row: 0, col: 6 },
+    };
+
+    expect(renderTerminalSnapshotToAnsi(state)).toContain("한글 A");
+  });
+
   it("renders soft-wrapped rows as one contiguous logical line when wrap flags are present", () => {
     // The server soft-wrapped one logical line "ABCDEFGHIJKLMNOP" at 10 cols into
     // two grid rows. gridWrapped[0] = true marks row 0 as continuing into row 1.
