@@ -1,7 +1,7 @@
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
+import { en } from "@/i18n/resources/en";
 import {
-  BROWSER_TOOLS_WARNING,
   createBrowserToolsPatch,
   getBrowserToolsCardState,
   getBrowserToolsMutationViewState,
@@ -26,7 +26,7 @@ describe("browser tools opt-in config", () => {
       isVisible: true,
       isEnabled: false,
       title: "Browser tools",
-      warning: BROWSER_TOOLS_WARNING,
+      warning: en.settings.host.browserTools.warning,
     });
   });
 

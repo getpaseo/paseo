@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import { i18n } from "@/i18n/i18next";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import invariant from "tiny-invariant";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -86,12 +87,12 @@ function CommandStatusIcon({ status }: { status: CommandStatus }) {
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
+  if (ms < 1000) return i18n.t("common.time.milliseconds", { count: ms });
   const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return i18n.t("common.time.seconds", { count: seconds });
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
-  return `${minutes}m ${remainingSeconds}s`;
+  return i18n.t("common.time.minutesSeconds", { minutes, seconds: remainingSeconds });
 }
 
 /**

@@ -71,6 +71,18 @@ export const en = {
       error: "Error",
       idle: "Idle",
     },
+    time: {
+      justNow: "just now",
+      now: "now",
+      ago: "{{time}} ago",
+      minutes: "{{count}}m",
+      hours: "{{count}}h",
+      days: "{{count}}d",
+      seconds: "{{count}}s",
+      minutesSeconds: "{{minutes}}m {{seconds}}s",
+      hoursMinutes: "{{hours}}h {{minutes}}m",
+      milliseconds: "{{count}}ms",
+    },
   },
   shell: {
     menu: {
@@ -1079,8 +1091,8 @@ export const en = {
       save: "Save",
       delete: "Delete",
       deleteTitle: "Delete {{name}}?",
-      deleteMessage_one: "This removes the label from {{count}} workspace on this host.",
-      deleteMessage_other: "This removes the label from {{count}} workspaces on this host.",
+      deleteMessageOne: "This removes the label from {{count}} workspace on this host.",
+      deleteMessageMany: "This removes the label from {{count}} workspaces on this host.",
       offline: "This host is offline.",
       updateHost: "Update this host to manage labels.",
     },
@@ -1515,6 +1527,12 @@ export const en = {
         description: "Connect your phone to this daemon",
       },
     },
+  },
+  hostPicker: {
+    addHost: "Add host",
+    allHosts: "All hosts",
+    enableBuiltInDaemon: "Enable built-in daemon",
+    fallback: "Host",
   },
   projectPicker: {
     placeholder: "Type to search...",
@@ -2231,6 +2249,7 @@ export const en = {
           ko: "Korean",
           ptBR: "Brazilian Portuguese",
           ru: "Russian",
+          uk: "Ukrainian",
           zhCN: "Simplified Chinese",
         },
       },
@@ -2567,6 +2586,13 @@ export const en = {
           delete: "Delete skill",
         },
       },
+      browserTools: {
+        title: "Browser tools",
+        warning:
+          "Allow agents to access and control Paseo browser tabs, including logged-in browser state. Only enable this for agents you trust.",
+        updating: "Updating browser tools…",
+        accessibilityLabel: "Enable browser tools",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connect to this host to manage orchestration",
@@ -2876,6 +2902,15 @@ export const en = {
         saving: "Saving...",
         cancel: "Cancel",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} left",
+      resettingNow: "resetting now",
+      resets: "resets {{time}}",
+      runsOutNow: "runs out now",
+      runsOut: "runs out {{time}}",
     },
   },
 } as const;

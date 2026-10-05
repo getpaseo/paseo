@@ -75,6 +75,18 @@ export const ko: TranslationResources = {
       error: "오류",
       idle: "대기 중",
     },
+    time: {
+      justNow: "방금",
+      now: "지금",
+      ago: "{{time}} 전",
+      minutes: "{{count}}분",
+      hours: "{{count}}시간",
+      days: "{{count}}일",
+      seconds: "{{count}}초",
+      minutesSeconds: "{{minutes}}분 {{seconds}}초",
+      hoursMinutes: "{{hours}}시간 {{minutes}}분",
+      milliseconds: "{{count}}ms",
+    },
   },
   shell: {
     menu: {
@@ -1078,8 +1090,8 @@ export const ko: TranslationResources = {
       save: "저장",
       delete: "삭제",
       deleteTitle: "{{name}}을(를) 삭제할까요?",
-      deleteMessage_one: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
-      deleteMessage_other: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
+      deleteMessageOne: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
+      deleteMessageMany: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
       offline: "이 호스트는 오프라인입니다.",
       updateHost: "레이블을 관리하려면 호스트를 업데이트하세요.",
     },
@@ -1500,6 +1512,12 @@ export const ko: TranslationResources = {
         description: "휴대폰을 이 데몬에 연결합니다",
       },
     },
+  },
+  hostPicker: {
+    addHost: "호스트 추가",
+    allHosts: "모든 호스트",
+    enableBuiltInDaemon: "내장 데몬 활성화",
+    fallback: "호스트",
   },
   projectPicker: {
     placeholder: "검색할 내용을 입력하세요...",
@@ -2118,6 +2136,7 @@ export const ko: TranslationResources = {
           ko: "한국어",
           ptBR: "브라질 포르투갈어",
           ru: "Русский",
+          uk: "Українська",
           zhCN: "简体中文",
         },
       },
@@ -2451,6 +2470,13 @@ export const ko: TranslationResources = {
           delete: "스킬 삭제",
         },
       },
+      browserTools: {
+        title: "브라우저 도구",
+        warning:
+          "에이전트가 로그인된 브라우저 상태를 포함해 Paseo 브라우저 탭에 접근하고 제어할 수 있게 합니다. 신뢰하는 에이전트에만 활성화하세요.",
+        updating: "브라우저 도구 업데이트 중…",
+        accessibilityLabel: "브라우저 도구 활성화",
+      },
       orchestration: {
         title: "오케스트레이션",
         unavailable: "오케스트레이션을 관리하려면 이 호스트에 연결하세요",
@@ -2762,6 +2788,15 @@ export const ko: TranslationResources = {
         saving: "저장하는 중...",
         cancel: "취소",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} 남음",
+      resettingNow: "지금 재설정 중",
+      resets: "{{time}} 후 재설정",
+      runsOutNow: "지금 소진",
+      runsOut: "{{time}} 후 소진",
     },
   },
 };

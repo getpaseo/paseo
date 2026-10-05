@@ -76,6 +76,18 @@ export const es: TranslationResources = {
       error: "Error",
       idle: "Inactivo",
     },
+    time: {
+      justNow: "justo ahora",
+      now: "ahora",
+      ago: "hace {{time}}",
+      minutes: "{{count}} min",
+      hours: "{{count}} h",
+      days: "{{count}} d",
+      seconds: "{{count}} s",
+      minutesSeconds: "{{minutes}} min {{seconds}} s",
+      hoursMinutes: "{{hours}} h {{minutes}} min",
+      milliseconds: "{{count}} ms",
+    },
   },
   shell: {
     menu: {
@@ -1107,8 +1119,8 @@ export const es: TranslationResources = {
       save: "Guardar",
       delete: "Eliminar",
       deleteTitle: "¿Eliminar {{name}}?",
-      deleteMessage_one: "Esto quita la etiqueta de {{count}} espacio de trabajo en este host.",
-      deleteMessage_other: "Esto quita la etiqueta de {{count}} espacios de trabajo en este host.",
+      deleteMessageOne: "Esto quita la etiqueta de {{count}} espacio de trabajo en este host.",
+      deleteMessageMany: "Esto quita la etiqueta de {{count}} espacios de trabajo en este host.",
       offline: "Este host está desconectado.",
       updateHost: "Actualiza este host para gestionar etiquetas.",
     },
@@ -1536,6 +1548,12 @@ export const es: TranslationResources = {
         description: "Conecta tu teléfono a este demonio",
       },
     },
+  },
+  hostPicker: {
+    addHost: "Agregar anfitrión",
+    allHosts: "Todos los hosts",
+    enableBuiltInDaemon: "Activar el demonio integrado",
+    fallback: "Host",
   },
   projectPicker: {
     placeholder: "Escriba para buscar...",
@@ -2159,6 +2177,7 @@ export const es: TranslationResources = {
           ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
+          uk: "Українська",
           zhCN: "中文",
         },
       },
@@ -2496,6 +2515,13 @@ export const es: TranslationResources = {
           delete: "Eliminar habilidad",
         },
       },
+      browserTools: {
+        title: "Herramientas del navegador",
+        warning:
+          "Permite que los agentes accedan a las pestañas del navegador de Paseo y las controlen, incluido el estado de las sesiones iniciadas. Actívalo solo para agentes de confianza.",
+        updating: "Actualizando herramientas del navegador…",
+        accessibilityLabel: "Activar herramientas del navegador",
+      },
       orchestration: {
         title: "Orquestación",
         unavailable: "Conéctese a este host para administrar la orquestación",
@@ -2808,6 +2834,15 @@ export const es: TranslationResources = {
         saving: "Guardando...",
         cancel: "Cancelar",
       },
+    },
+  },
+  usage: {
+    window: {
+      percentLeft: "{{percent}} restante",
+      resettingNow: "reiniciando ahora",
+      resets: "se reinicia en {{time}}",
+      runsOutNow: "se agota ahora",
+      runsOut: "se agota en {{time}}",
     },
   },
 };

@@ -1,3 +1,5 @@
+import { i18n } from "@/i18n/i18next";
+
 /**
  * How often a relative label can change, which is all a caller needs to know to keep it honest.
  * `static` means it never will again.
@@ -42,19 +44,27 @@ function describeAge(date: Date, now: Date): Age {
   if (elapsedMs < HOUR_MS) {
     return {
       kind: "elapsed",
-      value: `${Math.floor(elapsedMs / MINUTE_MS)}m`,
+      value: i18n.t("common.time.minutes", { count: Math.floor(elapsedMs / MINUTE_MS) }),
       resolution: "minute",
     };
   }
   if (elapsedMs < DAY_MS) {
-    return { kind: "elapsed", value: `${Math.floor(elapsedMs / HOUR_MS)}h`, resolution: "hour" };
+    return {
+      kind: "elapsed",
+      value: i18n.t("common.time.hours", { count: Math.floor(elapsedMs / HOUR_MS) }),
+      resolution: "hour",
+    };
   }
   if (elapsedMs < ABSOLUTE_AFTER_MS) {
-    return { kind: "elapsed", value: `${Math.floor(elapsedMs / DAY_MS)}d`, resolution: "day" };
+    return {
+      kind: "elapsed",
+      value: i18n.t("common.time.days", { count: Math.floor(elapsedMs / DAY_MS) }),
+      resolution: "day",
+    };
   }
 
-  const month = date.toLocaleDateString("en-US", { month: "short" });
-  return { kind: "date", value: `${month} ${date.getDate()}`, resolution: "static" };
+  const value = date.toLocaleDateString(i18n.language, { month: "short", day: "numeric" });
+  return { kind: "date", value, resolution: "static" };
 }
 
 /**
@@ -63,8 +73,12 @@ function describeAge(date: Date, now: Date): Age {
  */
 export function describeTimeAgo(date: Date, now: Date = new Date()): RelativeTimeLabel {
   const age = describeAge(date, now);
-  if (age.kind === "now") return { label: "just now", resolution: age.resolution };
-  if (age.kind === "elapsed") return { label: `${age.value} ago`, resolution: age.resolution };
+  if (age.kind === "now") {
+    return { label: i18n.t("common.time.justNow"), resolution: age.resolution };
+  }
+  if (age.kind === "elapsed") {
+    return { label: i18n.t("common.time.ago", { time: age.value }), resolution: age.resolution };
+  }
   return { label: age.value, resolution: age.resolution };
 }
 
@@ -79,7 +93,7 @@ export function formatTimeAgo(date: Date, now: Date = new Date()): string {
  */
 export function describeCompactTimeAgo(date: Date, now: Date = new Date()): RelativeTimeLabel {
   const age = describeAge(date, now);
-  if (age.kind === "now") return { label: "now", resolution: age.resolution };
+  if (age.kind === "now") return { label: i18n.t("common.time.now"), resolution: age.resolution };
   return { label: age.value, resolution: age.resolution };
 }
 
@@ -92,9 +106,20 @@ export function formatCompactTimeAgo(date: Date, now: Date = new Date()): string
  * "now" → "just now", "5m" → "5m ago", "Jan 15" stays a date.
  */
 export function formatCompactTimeAgoAsProse(label: string): string {
-  if (label === "now") return "just now";
-  if (/^\d/.test(label)) return `${label} ago`;
+  if (label === i18n.t("common.time.now")) return i18n.t("common.time.justNow");
+  if (isElapsedLabel(label)) return i18n.t("common.time.ago", { time: label });
   return label;
+}
+
+const ELAPSED_KEYS = ["common.time.minutes", "common.time.hours", "common.time.days"] as const;
+
+// A date label can start with a digit too ("15 січ."), so match the elapsed formats themselves.
+function isElapsedLabel(label: string): boolean {
+  return ELAPSED_KEYS.some((key) => {
+    const [before = "", after = ""] = i18n.t(key, { skipInterpolation: true }).split("{{count}}");
+    const count = label.slice(before.length, label.length - after.length);
+    return label.startsWith(before) && label.endsWith(after) && /^\d+$/.test(count);
+  });
 }
 
 /**
@@ -140,11 +165,11 @@ export function formatMessageTimestamp(date: Date, now: Date = new Date()): stri
   }
 
   if (daysAgo > 0 && daysAgo < 7) {
-    const weekday = date.toLocaleDateString(undefined, { weekday: "long" });
+    const weekday = date.toLocaleDateString(i18n.language, { weekday: "long" });
     return `${weekday} ${time}`;
   }
 
-  const dateLabel = date.toLocaleDateString(undefined, {
+  const dateLabel = date.toLocaleDateString(i18n.language, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -159,19 +184,23 @@ export function formatMessageTimestamp(date: Date, now: Date = new Date()): stri
  */
 export function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) {
-    return "0s";
+    return i18n.t("common.time.seconds", { count: 0 });
   }
   const totalSeconds = durationMs / 1000;
 
   if (totalSeconds < 60) {
-    return `${Math.floor(totalSeconds)}s`;
+    return i18n.t("common.time.seconds", { count: Math.floor(totalSeconds) });
   }
   const totalMinutes = Math.floor(totalSeconds / 60);
   if (totalMinutes < 60) {
     const seconds = Math.floor(totalSeconds) % 60;
-    return seconds === 0 ? `${totalMinutes}m` : `${totalMinutes}m ${seconds}s`;
+    return seconds === 0
+      ? i18n.t("common.time.minutes", { count: totalMinutes })
+      : i18n.t("common.time.minutesSeconds", { minutes: totalMinutes, seconds });
   }
   const hours = Math.floor(totalMinutes / 60);
   const remMinutes = totalMinutes % 60;
-  return remMinutes === 0 ? `${hours}h` : `${hours}h ${remMinutes}m`;
+  return remMinutes === 0
+    ? i18n.t("common.time.hours", { count: hours })
+    : i18n.t("common.time.hoursMinutes", { hours, minutes: remMinutes });
 }
