@@ -67,7 +67,6 @@ export class Session {
   private readonly host: MspConnection;
   private liveState: Live | undefined;
   private providerId: string | undefined;
-  private cursor: string | undefined;
   private config: ProviderSessionConfig;
   private catalog: ProviderCatalog = { models: [], modes };
   private readonly approvals = new Map<string, WireApproval>();
@@ -110,9 +109,11 @@ export class Session {
       if (input.persistence.version !== 1)
         throw new MuseError("invalidPersistence", "Unsupported Muse persistence version");
       const saved = persistenceSchema.parse(input.persistence.data);
+      // A fresh timeline needs history. MSP cursor resumes return only the suffix,
+      // so even legacy persistence cursors cannot restore this session's projection.
       response = await this.host.command(
         "session/resume",
-        { sessionId: saved.sessionId, cursor: saved.cursor, config: { mcpServers } },
+        { sessionId: saved.sessionId, config: { mcpServers } },
         sessionSchema,
       );
       this.config = {
@@ -168,7 +169,6 @@ export class Session {
       ),
     };
     this.providerId = response.session.providerId ?? undefined;
-    this.cursor = response.viewCursor;
     this.config = {
       ...this.config,
       model: response.session.modelId ?? this.config.model,
@@ -411,10 +411,6 @@ export class Session {
     }
     await this.processNotification(notification);
     this.live().recovery.activity(envelope.viewCursor, this.activeTurnIds().length > 0);
-    if (envelope.viewCursor) {
-      this.cursor = envelope.viewCursor;
-      this.publishPersistence();
-    }
   }
   private async processNotification(notification: Notification): Promise<void> {
     switch (notification.method) {
@@ -597,7 +593,6 @@ export class Session {
       version: 1,
       data: {
         sessionId: this.live().nativeId,
-        ...(this.cursor ? { cursor: this.cursor } : {}),
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(this.config.thinkingOption ? { thinkingOption: this.config.thinkingOption } : {}),
       },

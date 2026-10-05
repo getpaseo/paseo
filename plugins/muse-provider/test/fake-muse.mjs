@@ -80,6 +80,22 @@ function receiveFrame(line) {
   } else for (const row of messages) emitFixtureMessage(row.msg, recorded, frame);
 }
 function controlResponse(frame) {
+  if (frame.method === "session/resume" && process.env.MUSE_TEST_HISTORY) {
+    const result = responseFor(readFixture("resume-without-cursor"), "session/resume");
+    result.session.sessionId = frame.params.sessionId;
+    result.history = frame.params.cursor
+      ? { mode: "none", noneReason: "cursorSuffix", items: null, snapshot: null }
+      : {
+          mode: "inline",
+          items: readFileSync(process.env.MUSE_TEST_HISTORY, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line)),
+          snapshot: null,
+        };
+    respond(frame, result);
+    return true;
+  }
   if (frame.method === "initialized") return true;
   if (frame.method === "initialize" && process.env.MUSE_TEST_EXIT) {
     process.stderr.write("diagnostic tail, not protocol\n");
@@ -438,6 +454,9 @@ function replace(value) {
   return value;
 }
 function send(frame) {
+  if (frame.method === "item/completed" && process.env.MUSE_TEST_HISTORY) {
+    appendFileSync(process.env.MUSE_TEST_HISTORY, JSON.stringify(frame.params.item) + "\n");
+  }
   process.stdout.write(JSON.stringify(frame) + "\n");
 }
 function respond(frame, result) {

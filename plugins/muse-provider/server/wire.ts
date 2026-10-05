@@ -143,7 +143,6 @@ export const sessionSchema = z.object({
 });
 export const persistenceSchema = z.object({
   sessionId: z.string(),
-  cursor: z.string().optional(),
   model: z.string().optional(),
   thinkingOption: effortSchema.optional(),
 });
