@@ -30,7 +30,9 @@ interface QuestionFormCardProps {
 }
 
 const IS_WEB = isWeb;
-const OPTION_PREVIEW_MAX_HEIGHT = 240;
+// Native previews are uncapped: inside the option's Pressable, Android never hands a
+// drag to the preview's nested scroll, so lines past a cap would be unreachable.
+const OPTION_PREVIEW_MAX_HEIGHT = IS_WEB ? 240 : undefined;
 
 function getQuestionInputPlaceholder({
   question,

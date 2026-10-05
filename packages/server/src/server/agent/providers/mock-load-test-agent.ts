@@ -278,6 +278,8 @@ const ROLLOUT_FLAG_PREVIEW = [
   'if (flags.enabled("new-surface")) {',
   "  render(<NewSurface />);",
   "}",
+  ...Array.from({ length: 40 }, (_, i) => `// rollout step ${i + 1}`),
+  "// LAST PREVIEW LINE",
 ].join("\n");
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
