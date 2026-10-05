@@ -1562,13 +1562,7 @@ for (const extension of ["cmd", "bat"]) {
 }
 
 test("force-stops a Muse host that ignores stdin EOF", async () => {
-  const h = await harness("catalog-controls", { MUSE_TEST_STUBBORN: "1" });
-  if (process.platform === "win32") {
-    const shim = path.join(h.root, "stubborn muse.cmd");
-    await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
-    h.launch.command = shim;
-    h.launch.args = [];
-  }
+  const h = await stubbornHostHarness();
   try {
     const result = await Promise.race([
       h.provider.status!({ launch: h.launch }),
@@ -1581,17 +1575,31 @@ test("force-stops a Muse host that ignores stdin EOF", async () => {
     expect(hosts).toHaveLength(1);
     expect(() => process.kill(hosts[0].pid, 0)).toThrow();
   } finally {
-    // Keep a failing Windows regression from leaving its deliberately stubborn child alive.
-    for (const host of (await h.recorded()).filter((row) => row.event === "stubbornHost")) {
-      if (process.platform === "win32") {
-        await execCommand("taskkill.exe", ["/PID", String(host.pid), "/T", "/F"], {
-          shell: false,
-        }).catch(() => {});
-      } else {
-        try {
-          process.kill(host.pid, "SIGKILL");
-        } catch {}
-      }
-    }
+    await cleanupStubbornHosts(h);
   }
 }, 15000);
+
+async function stubbornHostHarness() {
+  const h = await harness("catalog-controls", { MUSE_TEST_STUBBORN: "1" });
+  if (process.platform === "win32") {
+    const shim = path.join(h.root, "stubborn muse.cmd");
+    await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
+    h.launch.command = shim;
+    h.launch.args = [];
+  }
+  return h;
+}
+async function cleanupStubbornHosts(h: Awaited<ReturnType<typeof harness>>) {
+  // Keep a failing Windows regression from leaving its deliberately stubborn child alive.
+  for (const host of (await h.recorded()).filter((row) => row.event === "stubbornHost")) {
+    if (process.platform === "win32") {
+      await execCommand("taskkill.exe", ["/PID", String(host.pid), "/T", "/F"], {
+        shell: false,
+      }).catch(() => {});
+    } else {
+      try {
+        process.kill(host.pid, "SIGKILL");
+      } catch {}
+    }
+  }
+}
