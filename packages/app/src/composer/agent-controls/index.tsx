@@ -1360,6 +1360,8 @@ function DesktopFeatureItem({
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     const selectedOption = feature.options.find((o) => o.id === feature.value);
     const iconOnly = feature.desktopTrigger === "icon";
+    const accelerated =
+      feature.icon === "zap" && selectedOption !== undefined && !selectedOption.isDefault;
     const tooltip = iconOnly
       ? `${feature.label}: ${selectedOption?.label ?? feature.label}`
       : getFeatureTooltip(feature);
@@ -1370,6 +1372,8 @@ function DesktopFeatureItem({
             <AgentControlTrigger
               ref={featureAnchorRef}
               icon={FeatureIcon}
+              iconColor={accelerated ? theme.colors.foreground : theme.colors.foregroundMuted}
+              iconFill={accelerated ? theme.colors.foreground : "none"}
               surface="toolbar"
               label={feature.label}
               value={selectedOption?.label ?? feature.label}
