@@ -225,6 +225,16 @@ second line'`,
     ]);
   });
 
+  it("distinguishes loading and unsuccessful compaction from success", () => {
+    expect(
+      curateAgentActivity([
+        { type: "compaction", status: "loading" },
+        { type: "compaction", status: "completed", outcome: "canceled" },
+        { type: "compaction", status: "completed", outcome: "failed" },
+      ]),
+    ).toBe("[Compacting]\n[Compaction canceled]\n[Compaction failed]");
+  });
+
   it("renders todo/error/compaction entries", () => {
     const timeline: AgentTimelineItem[] = [
       {

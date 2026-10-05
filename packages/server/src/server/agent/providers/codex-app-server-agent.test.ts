@@ -5272,6 +5272,36 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("protects manual compaction from admission and releases it on RPC rejection", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/compact/start": () => ({
+        __jsonRpcError: { code: -32603, message: "compact rejected" },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    try {
+      const command = session.tryHandleOutOfBand?.("/compact");
+      if (!command) throw new Error("Missing compact command");
+      expect(session.isCompacting()).toBe(true);
+      await command.run({ emit: (event) => events.push(event) });
+      expect(session.isCompacting()).toBe(false);
+      expect(events).toMatchObject([
+        {
+          type: "timeline",
+          item: { type: "assistant_message", text: expect.stringContaining("compact rejected") },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("completes a pending Codex compaction when its turn ends", async () => {
     const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
 
@@ -5343,27 +5373,39 @@ describe("Codex app-server provider", () => {
   test.each([
     { status: "failed", terminalType: "turn_failed" },
     { status: "interrupted", terminalType: "turn_canceled" },
-  ])("completes a pending compaction before a $status turn", async ({ status, terminalType }) => {
-    const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
+  ])(
+    "terminalizes a pending compaction honestly before a $status turn",
+    async ({ status, terminalType }) => {
+      const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
 
-    try {
-      appServer.startsCompaction({ threadId: "thread-1", itemId: `compact-${status}` });
-      appServer.completeTurn({
-        status,
-        error: status === "failed" ? { message: "Compaction failed" } : null,
-      });
-      await terminalEvent;
+      try {
+        appServer.startsCompaction({ threadId: "thread-1", itemId: `compact-${status}` });
+        appServer.completeTurn({
+          status,
+          error: status === "failed" ? { message: "Compaction failed" } : null,
+        });
+        await terminalEvent;
 
-      expect(
-        events.map((event) =>
-          event.type === "timeline" ? `${event.item.type}:${event.item.status}` : event.type,
-        ),
-      ).toEqual(["compaction:loading", "compaction:completed", terminalType]);
-      appServer.assertNoErrors();
-    } finally {
-      await session.close();
-    }
-  });
+        expect(
+          events.map((event) =>
+            event.type === "timeline" ? `${event.item.type}:${event.item.status}` : event.type,
+          ),
+        ).toEqual(["compaction:loading", "compaction:completed", terminalType]);
+        expect(events[1]).toMatchObject({
+          type: "timeline",
+          item: {
+            type: "compaction",
+            status: "completed",
+            outcome: status === "interrupted" ? "canceled" : "failed",
+          },
+        });
+        expect(session.isCompacting?.()).toBe(false);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("emits and dedupes Codex thread/compacted notifications", () => {
     const session = createSession();

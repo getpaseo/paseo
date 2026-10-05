@@ -4427,10 +4427,19 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  isCompacting(): boolean {
+    return (
+      this.pendingManualCompactionStarts > 0 ||
+      this.pendingRootCompactionItemIds.size > 0 ||
+      this.pendingAnonymousRootCompactions > 0
+    );
+  }
+
   async steerActiveTurn(
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
+    if (this.isCompacting()) return { status: "unavailable" };
     const client = this.client;
     const threadId = this.currentThreadId;
     const nativeTurnId = this.currentTurnId;
@@ -5108,6 +5117,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!parsed) return null;
 
     if (parsed.commandName === "compact") {
+      // Protect the command from admission, including connection/thread loading.
+      this.pendingManualCompactionStarts += 1;
       return {
         run: async ({ emit }) => {
           const error = await this.executeCompactCommand();
@@ -5148,17 +5159,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!this.client || !this.currentThreadId) {
         throw new Error("Codex thread is not available");
       }
-      this.pendingManualCompactionStarts += 1;
-      try {
-        await this.client.request("thread/compact/start", {
-          threadId: this.currentThreadId,
-        });
-      } catch (error) {
-        this.pendingManualCompactionStarts = Math.max(0, this.pendingManualCompactionStarts - 1);
-        throw error;
-      }
+      await this.client.request("thread/compact/start", {
+        threadId: this.currentThreadId,
+      });
       return null;
     } catch (error) {
+      this.pendingManualCompactionStarts = Math.max(0, this.pendingManualCompactionStarts - 1);
       const message = error instanceof Error ? error.message : "unknown error";
       return `Failed to compact context: ${message}`;
     }
@@ -6141,7 +6147,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, status);
       return;
     }
-    this.completePendingRootCompactions();
+    let unsuccessfulCompaction: "canceled" | "failed" | undefined;
+    if (parsed.status === "interrupted") unsuccessfulCompaction = "canceled";
+    else if (parsed.status === "failed") unsuccessfulCompaction = "failed";
+    this.completePendingRootCompactions(unsuccessfulCompaction);
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
@@ -6278,21 +6287,27 @@ export class CodexAppServerAgentSession implements AgentSession {
     return undefined;
   }
 
-  private completePendingRootCompactions(): void {
+  private completePendingRootCompactions(outcome?: "canceled" | "failed"): void {
     // Some Codex builds end a turn without completing the contextCompaction
     // item. Close every loading timeline row before emitting the terminal turn.
     for (const itemId of this.pendingRootCompactionItemIds) {
       this.emitEvent({
         type: "timeline",
         provider: CODEX_PROVIDER,
-        item: this.createContextCompactionTimelineItem("completed", itemId),
+        item: {
+          ...this.createContextCompactionTimelineItem("completed", itemId),
+          ...(outcome ? { outcome } : {}),
+        },
       });
     }
     for (let index = 0; index < this.pendingAnonymousRootCompactions; index += 1) {
       this.emitEvent({
         type: "timeline",
         provider: CODEX_PROVIDER,
-        item: this.createContextCompactionTimelineItem("completed"),
+        item: {
+          ...this.createContextCompactionTimelineItem("completed"),
+          ...(outcome ? { outcome } : {}),
+        },
       });
     }
     this.pendingRootCompactionItemIds.clear();

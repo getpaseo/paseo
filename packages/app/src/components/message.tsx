@@ -2177,6 +2177,7 @@ export const Notification = memo(function Notification({
 
 interface CompactionMarkerProps {
   status: "loading" | "completed";
+  outcome?: "canceled" | "failed";
   trigger?: "auto" | "manual";
   preTokens?: number;
 }
@@ -2208,10 +2209,11 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
 
 export const CompactionMarker = memo(function CompactionMarker({
   status,
+  outcome,
   trigger,
   preTokens,
 }: CompactionMarkerProps) {
-  const label = getCompactionMarkerLabel({ status, trigger, preTokens });
+  const label = getCompactionMarkerLabel({ status, outcome, trigger, preTokens });
 
   return (
     <View style={compactionStylesheet.container}>

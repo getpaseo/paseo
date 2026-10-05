@@ -538,6 +538,7 @@ export type ProviderTimelineItem =
   | (ProviderTimelineIdentity & {
       type: "compaction";
       status: "loading" | "completed";
+      outcome?: "canceled" | "failed";
       trigger?: "auto" | "manual";
       preTokens?: number;
     })

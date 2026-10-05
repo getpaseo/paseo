@@ -4,6 +4,14 @@ import { i18n } from "@/i18n/i18next";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 
 describe("getCompactionMarkerLabel", () => {
+  it("never labels unsuccessful terminal rows as compacted", () => {
+    expect(
+      getCompactionMarkerLabel({ status: "completed", outcome: "canceled", trigger: "auto" }),
+    ).toBe("Compaction canceled");
+    expect(
+      getCompactionMarkerLabel({ status: "completed", outcome: "failed", trigger: "manual" }),
+    ).toBe("Compaction failed");
+  });
   it("renders loading, automatic, manual, tokenized, and fallback labels", () => {
     expect(getCompactionMarkerLabel({ status: "loading" })).toBe("Compacting...");
     expect(getCompactionMarkerLabel({ status: "completed", trigger: "auto" })).toBe(

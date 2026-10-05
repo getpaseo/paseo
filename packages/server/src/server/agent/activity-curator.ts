@@ -132,6 +132,13 @@ function formatToolCallEntry(
   return activityEntry(summary ? `[${displayName}] ${summary}` : `[${displayName}]`);
 }
 
+function compactionLabel(item: Extract<AgentTimelineItem, { type: "compaction" }>): string {
+  if (item.status === "loading") return "[Compacting]";
+  if (item.outcome === "canceled") return "[Compaction canceled]";
+  if (item.outcome === "failed") return "[Compaction failed]";
+  return "[Compacted]";
+}
+
 function curateProjectedActivityEntries(
   items: readonly AgentTimelineItem[],
   options?: ActivityCuratorOptions,
@@ -185,7 +192,7 @@ function curateProjectedActivityEntries(
         break;
       case "compaction":
         flushBuffers(entries, buffers, options);
-        entries.push(activityEntry("[Compacted]"));
+        entries.push(activityEntry(compactionLabel(item)));
         break;
     }
   }

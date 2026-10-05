@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
@@ -12,6 +12,101 @@ import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentClient, AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
+import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
+
+test("HTTP MCP queues background prompts during native Codex compaction", async () => {
+  const appServer = createFakeCodexAppServer({
+    "turn/steer": () => ({ turnId: "native-compaction-turn" }),
+  });
+  const base = createTestAgentClients().codex!;
+  const host = await createTestPaseoDaemon({
+    agentClients: {
+      codex: {
+        provider: "codex",
+        capabilities: base.capabilities,
+        isAvailable: async () => true,
+        fetchCatalog: (options) => base.fetchCatalog(options),
+        createSession: async (config) =>
+          new CodexAppServerAgentSession(
+            config,
+            null,
+            createTestLogger(),
+            async () => appServer.child,
+          ),
+        resumeSession: (handle, overrides, launchContext) =>
+          base.resumeSession(handle, overrides, launchContext),
+      },
+    },
+  });
+  let client: McpClient | undefined;
+  let agentId: string | undefined;
+  try {
+    client = await createMcpClient(`http://127.0.0.1:${host.port}/mcp/agents`);
+    const created = await callToolStructured(client, "create_agent", {
+      title: "Compacting Codex",
+      provider: "codex/codex-test-model",
+      initialPrompt: "original",
+      background: true,
+      relationship: { kind: "detached" },
+      workspace: { kind: "create", source: { kind: "directory", path: host.paseoHome } },
+    });
+    expect(created).toMatchObject({ agentId: expect.any(String) });
+    expect(appServer.requests().filter((request) => request.method === "turn/start")).toHaveLength(
+      1,
+    );
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-compaction-turn" });
+    agentId = str(created.agentId);
+    appServer.startsCompaction({ threadId: "thread-1", itemId: "native-compact" });
+    await vi.waitFor(() =>
+      expect(
+        host.daemon.agentManager
+          .getTimeline(agentId!)
+          .some((item) => item.type === "compaction" && item.status === "loading"),
+      ).toBe(true),
+    );
+    for (const prompt of ["first update", "second update"]) {
+      const response = await callToolStructured(client, "send_agent_prompt", {
+        agentId,
+        prompt,
+        background: true,
+        notifyOnFinish: false,
+      });
+      expect(response).toMatchObject({ success: true, status: "running", queued: true });
+    }
+    expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
+      [],
+    );
+    expect(appServer.requests().filter((request) => request.method === "turn/start")).toHaveLength(
+      1,
+    );
+    expect(appServer.requests().filter((request) => request.method === "turn/steer")).toEqual([]);
+    appServer.completesCompaction({ threadId: "thread-1", itemId: "native-compact" });
+    await vi.waitFor(() =>
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/steer"),
+      ).toHaveLength(2),
+    );
+    expect(
+      appServer
+        .requests()
+        .filter((request) => request.method === "turn/steer")
+        .map((request) => request.params.input),
+    ).toEqual([
+      [{ type: "text", text: "first update", text_elements: [] }],
+      [{ type: "text", text: "second update", text_elements: [] }],
+    ]);
+    expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
+      [],
+    );
+    appServer.completeTurn({ threadId: "thread-1", turnId: "native-compaction-turn" });
+    appServer.assertNoErrors();
+  } finally {
+    await client?.close();
+    await host.close();
+  }
+});
 
 interface StructuredContent {
   [key: string]: unknown;

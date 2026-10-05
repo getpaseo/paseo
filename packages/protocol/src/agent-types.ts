@@ -349,6 +349,7 @@ export interface CompactionTimelineItem {
   [key: string]: unknown;
   type: "compaction";
   status: "loading" | "completed";
+  outcome?: "canceled" | "failed";
   trigger?: "auto" | "manual";
   preTokens?: number;
 }

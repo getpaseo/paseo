@@ -383,6 +383,8 @@ export const zhCN: TranslationResources = {
       },
     },
     compaction: {
+      canceled: "压缩已取消",
+      failed: "压缩失败",
       loading: "正在压缩...",
       auto: "上下文已自动压缩",
       manual: "上下文已手动压缩",

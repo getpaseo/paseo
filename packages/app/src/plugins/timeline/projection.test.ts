@@ -14,6 +14,30 @@ function thought(text: string, status: "loading" | "ready" = "loading"): StreamI
 }
 
 describe("plugin timeline projection", () => {
+  it.each(["canceled", "failed"] as const)(
+    "exposes the %s compaction outcome to plugin transforms",
+    (outcome) => {
+      const transform: TimelineItemTransform = vi.fn(() => undefined);
+      projectPluginTimelineItems(
+        [
+          {
+            kind: "compaction",
+            id: "compact-1",
+            timestamp: new Date("2026-01-01T00:00:00.000Z"),
+            status: "completed",
+            outcome,
+          },
+        ],
+        transform,
+      );
+      expect(transform).toHaveBeenCalledWith(
+        expect.objectContaining({
+          item: { type: "compaction", status: "completed", outcome },
+        }),
+      );
+    },
+  );
+
   it("does not expose mutable tool detail from stream state", () => {
     const detail = { type: "read" as const, filePath: "/repo/original.ts" };
     const source: StreamItem = {

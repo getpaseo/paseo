@@ -1892,6 +1892,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
     "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
 
+  const QUEUED_AGENT_NOTIFICATION_GUIDANCE =
+    "The prompt is queued until compaction finishes. Its finish notification is armed after delivery. Stop, session closure, or failed compaction cancels pending prompts and records a warning in the target agent's timeline.";
+
   registerTool(
     "send_agent_prompt",
     {
@@ -1902,6 +1905,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       outputSchema: {
         success: z.boolean(),
         status: AgentStatusEnum,
+        queued: z.boolean().optional(),
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
         guidance: z.string().optional(),
@@ -1928,11 +1932,28 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         return true;
       }
 
+      let queuedDelivered = false;
+      let queuedWaitTimedOut = false;
+      let settleQueuedDelivery!: (error: Error | null) => void;
+      const queuedDelivery = new Promise<Error | null>((resolve) => {
+        settleQueuedDelivery = resolve;
+      });
+      function notifyAfterBlockingWait(stillQueued: boolean): boolean {
+        if (!queuedWaitTimedOut) return false;
+        if (stillQueued) return Boolean(notifyOnFinish && callerAgentId);
+        return agentManager.getAgent(agentId)?.lifecycle === "running" && armFinishNotification();
+      }
       const { disposition } = await sendPromptToAgent({
         agentManager,
         agentStorage,
         agentId,
         prompt,
+        onQueuedDelivery: () => {
+          queuedDelivered = true;
+          settleQueuedDelivery(null);
+          if (background || queuedWaitTimedOut) armFinishNotification();
+        },
+        onQueuedCanceled: settleQueuedDelivery,
         sessionMode,
         logger: childLogger,
       });
@@ -1941,20 +1962,24 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (!background) {
         const result = await waitForAgentWithTimeout(agentManager, agentId, {
           waitForActive: true,
+          delivery: disposition === "queued" ? queuedDelivery : undefined,
         });
+        queuedWaitTimedOut = result.timedOut;
+        const stillQueued = disposition === "queued" && !queuedDelivered;
         // The wait ran out while the agent keeps working, so its result arrives as a
         // finish notification instead of in this response.
-        const notifying =
-          result.timedOut &&
-          agentManager.getAgent(agentId)?.lifecycle === "running" &&
-          armFinishNotification();
+        const notifying = notifyAfterBlockingWait(stillQueued);
+        const guidance = stillQueued
+          ? QUEUED_AGENT_NOTIFICATION_GUIDANCE
+          : PROMPTED_AGENT_NOTIFICATION_GUIDANCE;
 
         const responseData = {
           success: true,
           status: result.status,
+          ...(stillQueued ? { queued: true } : {}),
           lastMessage: result.lastMessage,
           permission: sanitizePermissionRequest(result.permission),
-          ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
+          ...(notifying ? { guidance } : {}),
         };
         const validJson = ensureValidJson(responseData);
 
@@ -1965,7 +1990,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         return response;
       }
 
-      const notifying = armFinishNotification();
+      const notifying =
+        disposition === "queued"
+          ? Boolean(notifyOnFinish && callerAgentId)
+          : armFinishNotification();
 
       // Return once the provider has accepted the turn, so the status reports it running.
       if (disposition === "turn_started") {
@@ -1976,9 +2004,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const responseData = {
         success: true,
         status: currentSnapshot?.lifecycle ?? "idle",
+        ...(disposition === "queued" ? { queued: true } : {}),
         lastMessage: null,
         permission: null,
-        ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
+        ...(notifying
+          ? {
+              guidance:
+                disposition === "queued"
+                  ? QUEUED_AGENT_NOTIFICATION_GUIDANCE
+                  : PROMPTED_AGENT_NOTIFICATION_GUIDANCE,
+            }
+          : {}),
       };
       const validJson = ensureValidJson(responseData);
 

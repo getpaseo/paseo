@@ -703,6 +703,8 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   z.object({
     type: z.literal("compaction"),
     status: z.enum(["loading", "completed"]),
+    // The terminal row remains parseable by clients predating unsuccessful outcomes.
+    outcome: z.enum(["canceled", "failed"]).optional(),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
   }),

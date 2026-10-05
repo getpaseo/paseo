@@ -1,0 +1,90 @@
+Server focused suites
+
+ RUN  v4.1.6 <repo>/packages/server
+
+
+ Test Files  6 passed (6)
+      Tests  534 passed (534)
+   Start at  23:47:10
+   Duration  18.64s (transform 1.40s, setup 43ms, import 2.40s, tests 15.82s, environment 0ms)
+
+
+App focused suites (runner footer excerpt)
+ ✓ |unit| src/components/message-compaction-label.test.ts > getCompactionMarkerLabel > renders labels in the active app language 0ms
+
+ Test Files  4 passed (4)
+      Tests  79 passed (79)
+   Start at  23:51:16
+   Duration  502ms (transform 329ms, setup 59ms, import 402ms, tests 20ms, environment 1ms)
+
+
+Protocol compatibility
+
+ RUN  v4.1.7 <repo>/packages/protocol
+
+
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+   Start at  23:36:16
+   Duration  346ms (transform 176ms, setup 0ms, import 269ms, tests 9ms, environment 0ms)
+
+
+HTTP MCP through actual Codex adapter and deterministic native transport
+
+ RUN  v4.1.6 <repo>/packages/server
+
+(node:83218) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:83264) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 31 skipped (32)
+   Start at  23:48:44
+   Duration  7.95s (transform 5.57s, setup 31ms, import 6.91s, tests 910ms, environment 0ms)
+
+
+Live native Codex committed regression
+
+ RUN  v4.1.6 <repo>/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 2 skipped (3)
+   Start at  23:45:01
+   Duration  12.87s (transform 567ms, setup 19ms, import 857ms, tests 11.93s, environment 0ms)
+
+
+Ad hoc live native Codex event trace
+(node:67590) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+turn_started
+turn_completed
+initial: SEED_OK
+prompt disposition: queued
+turn_started
+compaction:loading:ok
+compaction:completed:ok
+turn_completed
+turn_started
+turn_completed
+final: idle QUEUE_DELIVERED_OK
+PASS: live Codex compact completed, queued follow-up delivered, no canceled or failed turns.
+
+Lint (footer excerpt)
+Found 0 warnings and 0 errors.
+Finished in 244ms on 36 files with 177 rules using 10 threads.
+
+Changed-file format check (footer excerpt)
+
+All matched files use the correct format.
+Finished in 126ms on 38 files using 10 threads.
+
+Full monorepo typecheck (error excerpts; exit code 2)
+src/components/draggable-list.native.tsx(122,7): error TS2322: Type '{ testID: string | undefined; data: T[]; keyExtractor: (item: T, index: number) => string; renderItem: ({ item, drag, isActive, getIndex }: RenderItemParams<T>) => ReactElement<unknown, string | JSXElementConstructor<any>>; ... 16 more ...; refreshControl: Element | undefined; }' is not assignable to type 'IntrinsicAttributes & Omit<FlatListProps<T>, "activationDistance" | "animationConfig" | "autoscrollSpeed" | "autoscrollThreshold" | ... 22 more ... | "simultaneousHandlers"> & { ...; } & Partial<...> & { ...; }'.
+  Property 'dragGestureHostPresented' does not exist on type 'IntrinsicAttributes & Omit<FlatListProps<T>, "activationDistance" | "animationConfig" | "autoscrollSpeed" | "autoscrollThreshold" | ... 22 more ... | "simultaneousHandlers"> & { ...; } & Partial<...> & { ...; }'.
+error TS2688: Cannot find type definition file for '@cloudflare/workers-types'.
+
+Build result
+Command: npm run build:server
+Exit code: 0

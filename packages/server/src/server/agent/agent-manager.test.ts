@@ -615,6 +615,238 @@ class SteeringTestSession extends TestAgentSession {
   }
 }
 
+class CompactingTestSession extends SteeringTestSession {
+  compacting = false;
+  readonly delivered: AgentPromptInput[] = [];
+  readonly clearedPermissions: boolean[] = [];
+  isCompacting(): boolean {
+    return this.compacting;
+  }
+  setCompacting(loading: boolean, trigger: "auto" | "manual" = "auto"): void {
+    this.compacting = loading;
+    this.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "compaction",
+        status: loading ? "loading" : "completed",
+        trigger,
+      },
+    });
+  }
+  override async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+  ) {
+    const result = await super.steerActiveTurn(prompt, options);
+    if (result.status === "accepted") {
+      this.delivered.push(prompt);
+      this.clearedPermissions.push(Boolean(options.clearPendingPermissions));
+    }
+    return result;
+  }
+}
+
+async function compactionScenario() {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-compaction-queue-"));
+  const session = new CompactingTestSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await startAgentRun(manager, agent.id, "original", logger, {
+    runOptions: { clientMessageId: "original-client" },
+  });
+  await manager.waitForAgentRunStart(agent.id);
+  return {
+    manager,
+    agentId: agent.id,
+    session,
+    async close() {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    },
+  };
+}
+
+test.each(["auto", "manual"] as const)(
+  "queues incoming prompts through %s compaction and steers them FIFO",
+  async (trigger) => {
+    const { manager, agentId, session, close } = await compactionScenario();
+    try {
+      session.setCompacting(true, trigger);
+      // Submit before the manager has consumed the provider event.
+      const behaviors = [undefined, "interrupt", "steer"] as const;
+      for (const [i, behavior] of behaviors.entries()) {
+        expect(
+          await startAgentRun(manager, agentId, `update-${i}`, logger, {
+            replaceRunning: true,
+            activeTurnBehavior: behavior,
+            clearPendingPermissions: i === 1,
+            runOptions: { clientMessageId: `queued-${i}` },
+          }),
+        ).toEqual({ disposition: "queued" });
+      }
+      expect(session.interruptCount).toBe(0);
+      expect(session.delivered).toEqual([]);
+      session.setCompacting(false, trigger);
+      await vi.waitFor(() =>
+        expect(session.delivered).toEqual(["update-0", "update-1", "update-2"]),
+      );
+      expect(session.clearedPermissions).toEqual([false, true, false]);
+      expect(session.startCount).toBe(1);
+      expect(session.interruptCount).toBe(0);
+      expect(
+        manager
+          .getTimeline(agentId)
+          .filter((item) => item.type === "user_message")
+          .map((item) => item.text),
+      ).toEqual(["original", "update-0", "update-1", "update-2"]);
+    } finally {
+      await close();
+    }
+  },
+);
+
+test("a queued compaction prompt waits for turn completion when steering is unavailable", async () => {
+  const { manager, agentId, session, close } = await compactionScenario();
+  try {
+    session.steerResult = "unavailable";
+    session.setCompacting(true);
+    expect(
+      await startAgentRun(manager, agentId, "later", logger, { replaceRunning: true }),
+    ).toEqual({ disposition: "queued" });
+    session.setCompacting(false);
+    await vi.waitFor(() => expect(session.steerCount).toBeGreaterThan(0));
+    expect(session.startPrompts).toEqual(["original"]);
+    expect(session.interruptCount).toBe(0);
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await vi.waitFor(() => expect(session.startPrompts).toEqual(["original", "later"]));
+    expect(session.interruptCount).toBe(0);
+  } finally {
+    await close();
+  }
+});
+
+test.each(["turn_failed", "turn_canceled"] as const)(
+  "a queued prompt survives %s after successful compaction when steering is unavailable",
+  async (terminalType) => {
+    const { manager, agentId, session, close } = await compactionScenario();
+    try {
+      session.steerResult = "unavailable";
+      session.setCompacting(true);
+      expect(
+        await startAgentRun(manager, agentId, "later", logger, { replaceRunning: true }),
+      ).toEqual({ disposition: "queued" });
+      session.setCompacting(false);
+      await vi.waitFor(() => expect(session.steerCount).toBeGreaterThan(0));
+      session.pushEvent({
+        type: terminalType,
+        provider: "codex",
+        turnId: "active-turn-1",
+        error: "original turn failed after compaction",
+      });
+      await vi.waitFor(() => expect(session.startPrompts).toEqual(["original", "later"]));
+      expect(session.interruptCount).toBe(0);
+      expect(manager.getTimeline(agentId).filter((item) => item.type === "notification")).toEqual(
+        [],
+      );
+    } finally {
+      await close();
+    }
+  },
+);
+
+test.each(["turn_failed", "turn_canceled"] as const)(
+  "%s during active compaction cancels the queued prompt",
+  async (terminalType) => {
+    const { manager, agentId, session, close } = await compactionScenario();
+    const canceled = deferred<Error>();
+    try {
+      session.setCompacting(true);
+      await startAgentRun(manager, agentId, "do not deliver", logger, {
+        replaceRunning: true,
+        onQueuedCanceled: (error) => canceled.resolve(error),
+      });
+      session.pushEvent({
+        type: terminalType,
+        provider: "codex",
+        turnId: "active-turn-1",
+        error: "compaction terminated",
+      });
+      expect((await canceled.promise).message).toBe("Queued prompt canceled before delivery");
+      session.setCompacting(false);
+      await manager.flush();
+      expect(session.startPrompts).toEqual(["original"]);
+      expect(session.delivered).toEqual([]);
+      expect(manager.getTimeline(agentId)).toContainEqual({
+        type: "notification",
+        level: "warning",
+        message: "1 queued message(s) canceled before delivery.",
+      });
+    } finally {
+      await close();
+    }
+  },
+);
+
+test("queued finish notifications arm after actual delivery, not the original turn", async () => {
+  const { manager, agentId, session, close } = await compactionScenario();
+  const delivered = deferred<void>();
+  let armed = false;
+  try {
+    session.steerResult = "unavailable";
+    session.setCompacting(true);
+    await startAgentRun(manager, agentId, "follow up", logger, {
+      replaceRunning: true,
+      onQueuedDelivery: () => {
+        armed = true;
+        delivered.resolve();
+      },
+    });
+    expect(armed).toBe(false);
+    session.setCompacting(false);
+    await vi.waitFor(() => expect(session.steerCount).toBeGreaterThan(0));
+    expect(armed).toBe(false);
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await delivered.promise;
+    expect(armed).toBe(true);
+    expect(session.startPrompts).toEqual(["original", "follow up"]);
+  } finally {
+    await close();
+  }
+});
+
+test("Stop cancels queued compaction messages without restarting the agent", async () => {
+  const { manager, agentId, session, close } = await compactionScenario();
+  try {
+    session.setCompacting(true);
+    await startAgentRun(manager, agentId, "do not restart", logger, { replaceRunning: true });
+    await manager.cancelAgentRun(agentId);
+    session.setCompacting(false);
+    await manager.flush();
+    expect(session.interruptCount).toBe(1);
+    expect(session.startPrompts).toEqual(["original"]);
+    expect(session.delivered).toEqual([]);
+    expect(manager.getTimeline(agentId)).toContainEqual({
+      type: "notification",
+      level: "warning",
+      message: "1 queued message(s) canceled before delivery.",
+    });
+  } finally {
+    await close();
+  }
+});
+
 class UnsupportedSteeringSession extends TestAgentSession {
   interruptCount = 0;
   startCount = 0;

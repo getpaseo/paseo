@@ -71,6 +71,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
       return {
         type: "compaction",
         status: item.status,
+        ...(item.outcome ? { outcome: item.outcome } : {}),
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };

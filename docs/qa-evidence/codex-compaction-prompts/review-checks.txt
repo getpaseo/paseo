@@ -1,0 +1,367 @@
+PR #6180 review corrections: macOS, 2026-10-06.
+Before-fix tests exercised each affected path from 1cd3932 before its corresponding correction, with the new regression tests.
+After-fix tests use the corrected implementation. Trailing whitespace is removed from captured output. No production daemon restart or UI/live-provider run.
+
+
+Regression before fix: post-compaction failure
+Working directory: packages/server
+Command: npx vitest run src/server/agent/agent-manager.test.ts -t 'survives.*after successful compaction' --maxWorkers=1 --bail=1
+Exit status: 1
+
+
+ RUN  v4.1.6 /Users/bkniffler/GitHub/paseo/packages/server
+
+stdout | src/server/agent/agent-manager.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🛡️ auth for agents: https://vestauth.com
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚙️  enable debug logging with { debug: true }
+
+ ❯ src/server/agent/agent-manager.test.ts (200 tests | 1 failed | 198 skipped) 1070ms
+   × a queued prompt survives turn_failed after successful compaction when steering is unavailable 1067ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/agent-manager.test.ts > a queued prompt survives turn_failed after successful compaction when steering is unavailable
+AssertionError: expected [ 'original' ] to deeply equal [ 'original', 'later' ]
+
+- Expected
++ Received
+
+  [
+    "original",
+-   "later",
+  ]
+
+ ❯ src/server/agent/agent-manager.test.ts:758:59
+    756|         error: "original turn failed after compaction",
+    757|       });
+    758|       await vi.waitFor(() => expect(session.startPrompts).toEqual(["or…
+       |                                                           ^
+    759|       expect(session.interruptCount).toBe(0);
+    760|       expect(manager.getTimeline(agentId).filter((item) => item.type =…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 198 skipped (200)
+   Start at  01:14:27
+   Duration  1.64s (transform 302ms, setup 24ms, import 468ms, tests 1.07s, environment 0ms)
+
+
+
+Regression after fix: post-compaction failure and cancellation
+Working directory: packages/server
+Command: npx vitest run src/server/agent/agent-manager.test.ts -t 'survives.*after successful compaction' --maxWorkers=1 --bail=1
+Exit status: 0
+
+
+ RUN  v4.1.6 /Users/bkniffler/GitHub/paseo/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 198 skipped (200)
+   Start at  01:14:40
+   Duration  756ms (transform 317ms, setup 23ms, import 442ms, tests 214ms, environment 0ms)
+
+
+
+Regression before fix: blocking queued MCP call
+Working directory: packages/server
+Command: npx vitest run src/server/agent/mcp-server.test.ts -t 'waits for queued delivery and its answer' --maxWorkers=1 --bail=1
+Exit status: 1
+
+
+ RUN  v4.1.6 /Users/bkniffler/GitHub/paseo/packages/server
+
+stdout | src/server/agent/mcp-server.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: ⚙️  enable debug logging with { debug: true }
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+
+ ❯ src/server/agent/mcp-server.test.ts (126 tests | 1 failed | 124 skipped) 73ms
+     × waits for queued delivery and its answer for a blocking top-level caller 72ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/mcp-server.test.ts > send_agent_prompt MCP tool > waits for queued delivery and its answer for a blocking top-level caller
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/server/agent/mcp-server.test.ts:3958:26
+    3956|         }).then((result) => { returned = true; return result; });
+    3957|         await vi.waitFor(() => expect(session.compactionChecks).toBeGr…
+    3958|         expect(returned).toBe(false);
+       |                          ^
+    3959|         session.setCompacting(false);
+    3960|         session.finishTurn("original answer");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 124 skipped (126)
+   Start at  01:15:06
+   Duration  1.97s (transform 1.19s, setup 19ms, import 1.80s, tests 73ms, environment 0ms)
+
+
+
+Final changed suites
+Working directory: packages/server
+Command: npx vitest run src/server/agent/agent-manager.test.ts src/server/agent/mcp-server.test.ts src/server/agent/compaction-prompt-queue.test.ts --maxWorkers=1 --bail=1
+Exit status: 0
+
+
+ RUN  v4.1.6 /Users/bkniffler/GitHub/paseo/packages/server
+
+
+ Test Files  3 passed (3)
+      Tests  336 passed (336)
+   Start at  01:17:46
+   Duration  15.26s (transform 1.22s, setup 30ms, import 1.89s, tests 13.15s, environment 0ms)
+
+
+
+MCP suite after final test-case edit
+Working directory: packages/server
+Command: npx vitest run src/server/agent/mcp-server.test.ts --maxWorkers=1 --bail=1
+Exit status: 0
+
+
+ RUN  v4.1.6 /Users/bkniffler/GitHub/paseo/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  131 passed (131)
+   Start at  01:26:36
+   Duration  22.41s (transform 3.51s, setup 44ms, import 5.06s, tests 17.18s, environment 0ms)
+
+
+
+Server build
+Working directory: .
+Command: npm run build:server
+Exit status: 0
+
+
+> paseo@0.11.0-beta.4 build:server
+> npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli
+
+
+> paseo@0.11.0-beta.4 build:server-deps
+> npm run build:client && concurrently --kill-others-on-fail --names highlight,plugin,relay --prefix-colors yellow,green,blue "npm run build:highlight" "npm run build:plugin" "npm run build:relay"
+
+
+> paseo@0.11.0-beta.4 build:client
+> npm run build --workspace=@getpaseo/client
+
+
+> @getpaseo/client@0.11.0-beta.4 build
+> npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/protocol@0.11.0-beta.4 prebuild
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.11.0-beta.4 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.11.0-beta.4 build
+> tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/relay@0.11.0-beta.4 build
+> tsc -p tsconfig.json --incremental false
+
+[relay]
+[relay] > paseo@0.11.0-beta.4 build:relay
+[relay] > npm run build --workspace=@getpaseo/relay
+[relay]
+[plugin]
+[plugin] > paseo@0.11.0-beta.4 build:plugin
+[plugin] > npm run build --workspace=@getpaseo/plugin
+[plugin]
+[highlight]
+[highlight] > paseo@0.11.0-beta.4 build:highlight
+[highlight] > npm run build --workspace=@getpaseo/highlight
+[highlight]
+[relay]
+[relay] > @getpaseo/relay@0.11.0-beta.4 build
+[relay] > tsc -p tsconfig.json --incremental false
+[relay]
+[plugin]
+[plugin] > @getpaseo/plugin@0.11.0-beta.4 build
+[plugin] > tsc -p tsconfig.json --incremental false
+[plugin]
+[highlight]
+[highlight] > @getpaseo/highlight@0.11.0-beta.4 build
+[highlight] > tsc -p tsconfig.json --incremental false
+[highlight]
+[relay] npm run build:relay exited with code 0
+[highlight] npm run build:highlight exited with code 0
+[plugin] npm run build:plugin exited with code 0
+
+> @getpaseo/server@0.11.0-beta.4 build
+> npm run build:lib && npm run build:scripts
+
+
+> @getpaseo/server@0.11.0-beta.4 build:lib
+> tsc -p tsconfig.server.json --incremental false && node scripts/build-opencode-bridge-plugin.mjs && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true}); fs.rmSync('dist/server/builtin-plugins',{recursive:true,force:true}); fs.cpSync('../../plugins','dist/server/builtin-plugins',{recursive:true,filter:(source)=>!source.split(require('node:path').sep).some((segment)=>segment==='node_modules'||segment==='test')&&!/\.(test|spec)\.[cm]?[jt]sx?$/.test(source)&&!source.endsWith('.tsbuildinfo')});"
+
+
+> @getpaseo/server@0.11.0-beta.4 build:scripts
+> tsc -p tsconfig.scripts.json --incremental false && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');"
+
+
+> @getpaseo/cli@0.11.0-beta.4 build
+> tsc -p tsconfig.json --incremental false
+
+
+
+Server typecheck
+Working directory: .
+Command: npm run typecheck --workspace=@getpaseo/server
+Exit status: 0
+
+
+> @getpaseo/server@0.11.0-beta.4 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+
+Full typecheck: existing native app and website errors
+Working directory: .
+Command: npm run typecheck
+Exit status: 2
+
+
+> paseo@0.11.0-beta.4 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.11.0-beta.4 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.11.0-beta.4 typecheck
+> tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit
+
+
+> @getpaseo/protocol@0.11.0-beta.4 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.11.0-beta.4 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.11.0-beta.4 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+src/components/draggable-list.native.tsx(122,7): error TS2322: Type '{ testID: string | undefined; data: T[]; keyExtractor: (item: T, index: number) => string; renderItem: ({ item, drag, isActive, getIndex }: RenderItemParams<T>) => ReactElement<unknown, string | JSXElementConstructor<any>>; ... 16 more ...; refreshControl: Element | undefined; }' is not assignable to type 'IntrinsicAttributes & Omit<FlatListProps<T>, "activationDistance" | "animationConfig" | "autoscrollSpeed" | "autoscrollThreshold" | ... 22 more ... | "simultaneousHandlers"> & { ...; } & Partial<...> & { ...; }'.
+  Property 'dragGestureHostPresented' does not exist on type 'IntrinsicAttributes & Omit<FlatListProps<T>, "activationDistance" | "animationConfig" | "autoscrollSpeed" | "autoscrollThreshold" | ... 22 more ... | "simultaneousHandlers"> & { ...; } & Partial<...> & { ...; }'.
+npm error Lifecycle script `typecheck` failed with error:
+npm error code 2
+npm error path /Users/bkniffler/GitHub/paseo/packages/app
+npm error workspace @getpaseo/app@0.11.0-beta.4
+npm error location /Users/bkniffler/GitHub/paseo/packages/app
+npm error command failed
+npm error command sh -c tsgo --noEmit
+
+
+> @getpaseo/relay@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+error TS2688: Cannot find type definition file for '@cloudflare/workers-types'.
+  The file is in the program because:
+    Entry point of type library '@cloudflare/workers-types' specified in compilerOptions
+npm error Lifecycle script `typecheck` failed with error:
+npm error code 2
+npm error path /Users/bkniffler/GitHub/paseo/packages/website
+npm error workspace @getpaseo/website@0.11.0-beta.4
+npm error location /Users/bkniffler/GitHub/paseo/packages/website
+npm error command failed
+npm error command sh -c tsgo --noEmit
+
+
+> @getpaseo/desktop@0.11.0-beta.4 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.11.0-beta.4 typecheck
+> tsgo --noEmit
+
+
+
+Repository-wide lint
+Working directory: .
+Command: npm run lint
+Exit status: 0
+
+
+> paseo@0.11.0-beta.4 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 2.1s on 4565 files with 177 rules using 10 threads.
+
+
+Changed-file formatting
+Working directory: .
+Command: npm run format:check:files -- <changed Markdown and TypeScript files>
+Exit status: 0
+
+
+> paseo@0.11.0-beta.4 format:check:files
+> oxfmt --check docs/qa-evidence/codex-compaction-prompts/report.md packages/server/src/server/agent/compaction-prompt-queue.ts packages/server/src/server/agent/compaction-prompt-queue.test.ts packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-prompt.ts packages/server/src/server/agent/mcp-shared.ts packages/server/src/server/agent/tools/paseo-tools.ts packages/server/src/server/agent/mcp-server.test.ts
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 88ms on 9 files using 10 threads.
+
+
+Second review test-case formatting
+Working directory: .
+Command: npm run format:check:files -- docs/qa-evidence/codex-compaction-prompts/report.md packages/server/src/server/agent/mcp-server.test.ts
+Exit status: 0
+
+
+> paseo@0.11.0-beta.4 format:check:files
+> oxfmt --check docs/qa-evidence/codex-compaction-prompts/report.md packages/server/src/server/agent/mcp-server.test.ts
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 246ms on 2 files using 10 threads.

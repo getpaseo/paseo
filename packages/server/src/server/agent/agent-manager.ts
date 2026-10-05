@@ -78,6 +78,7 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
+import { CompactionPromptQueue, type CompactionPromptDelivery } from "./compaction-prompt-queue.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
@@ -714,6 +715,17 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+interface QueuedCompactionPrompt {
+  prompt: AgentPromptInput;
+  options?: AgentSteerOptions;
+  onDelivered?: () => void;
+  onCanceled?: (error: Error) => void;
+}
+
+export interface QueuePromptDuringCompactionInput extends QueuedCompactionPrompt {
+  agentId: string;
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
@@ -724,6 +736,20 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly compactingAgents = new Set<string>();
+  private readonly compactionPrompts = new CompactionPromptQueue<QueuedCompactionPrompt>({
+    deliver: (input) => this.deliverCompactionPrompt(input),
+    canceled: ({ entry, error }) => entry.onCanceled?.(error),
+    failed: ({ agentId, error }) => {
+      this.logger.error({ agentId, err: error }, "Queued compaction prompt delivery failed");
+      this.reportCompactionQueue({
+        agentId,
+        message: "Queued messages could not be delivered. Send them again.",
+        level: "error",
+      });
+    },
+  });
+
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
@@ -1694,6 +1720,8 @@ export class AgentManager {
   }
 
   private async closeAgentRuntime(agentId: string): Promise<void> {
+    this.cancelCompactionPrompts(agentId);
+    this.compactingAgents.delete(agentId);
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -2389,9 +2417,89 @@ export class AgentManager {
           provider: agent.provider,
           item: { type: "assistant_message", text: `[Error] ${text}` },
         });
+      } finally {
+        this.compactionPrompts.wake(agentId);
       }
     })();
     return true;
+  }
+
+  tryQueuePromptDuringCompaction({ agentId, ...entry }: QueuePromptDuringCompactionInput): boolean {
+    return this.compactionPrompts.enqueue({
+      agentId,
+      entry,
+      compacting: this.isAgentCompacting(agentId),
+    });
+  }
+
+  private isAgentCompacting(agentId: string): boolean {
+    const agent = this.requireSessionAgent(agentId);
+    return agent.session.isCompacting?.() ?? this.compactingAgents.has(agentId);
+  }
+
+  private async deliverCompactionPrompt({
+    agentId,
+    entry,
+    isCurrent,
+  }: CompactionPromptDelivery<QueuedCompactionPrompt>): Promise<boolean> {
+    await this.drainSessionEvents(agentId);
+    if (!isCurrent()) return false;
+    if (this.isAgentCompacting(agentId)) return false;
+    if (this.hasInFlightRun(agentId)) {
+      const result = await this.steerAgentRun(agentId, entry.prompt, entry.options);
+      if (result.status !== "accepted" || !isCurrent()) return false;
+      entry.onDelivered?.();
+      return true;
+    }
+    const iterator = this.streamAgent(agentId, entry.prompt, stripSteerOptions(entry.options));
+    // Advance to provider acceptance before admitting the next queued message.
+    const first = await iterator.next();
+    if (isCurrent()) entry.onDelivered?.();
+    if (!first.done) {
+      void (async () => {
+        try {
+          for await (const _ of iterator) {
+            /* AgentManager broadcasts the events. */
+          }
+        } catch (error) {
+          this.logger.error({ agentId, err: error }, "Queued compaction turn failed");
+        }
+      })();
+    }
+    return true;
+  }
+
+  private reportCompactionQueue({
+    agentId,
+    message,
+    level = "warning",
+  }: {
+    agentId: string;
+    message: string;
+    level?: "warning" | "error";
+  }): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    const item: AgentTimelineItem = { type: "notification", level, message };
+    const row = this.recordTimeline(agentId, item);
+    this.dispatchStream(
+      agentId,
+      { type: "timeline", provider: agent.provider, item },
+      {
+        seq: row.seq,
+        epoch: this.timelineStore.getEpoch(agentId),
+        timestamp: row.timestamp,
+      },
+    );
+  }
+
+  private cancelCompactionPrompts(agentId: string): void {
+    const count = this.compactionPrompts.cancel(agentId);
+    if (count > 0)
+      this.reportCompactionQueue({
+        agentId,
+        message: `${count} queued message(s) canceled before delivery.`,
+      });
   }
 
   async appendTimelineItem(
@@ -3012,6 +3120,7 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
+    this.cancelCompactionPrompts(agentId);
     return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
   }
 
@@ -4237,9 +4346,32 @@ export class AgentManager {
       }
     }
 
+    if (!options?.fromHistory) this.updateCompactionPromptQueue(agent.id, event);
+
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private updateCompactionPromptQueue(agentId: string, event: AgentStreamEvent): void {
+    if (event.type === "timeline" && event.item.type === "compaction") {
+      if (event.item.status === "loading") this.compactingAgents.add(agentId);
+      else this.compactingAgents.delete(agentId);
+      if (event.item.outcome) this.cancelCompactionPrompts(agentId);
+    }
+    if (event.type === "turn_canceled" || event.type === "turn_failed") {
+      // A terminal event after successful compaction releases prompts that could
+      // not be steered. Only termination of the compaction itself cancels them.
+      if (this.compactingAgents.has(agentId)) this.cancelCompactionPrompts(agentId);
+      this.compactingAgents.delete(agentId);
+    }
+    if (
+      isTurnTerminalEvent(event) ||
+      event.type === "turn_started" ||
+      (event.type === "timeline" && event.item.type === "compaction")
+    ) {
+      this.compactionPrompts.wake(agentId);
+    }
   }
 
   private traceHandleStreamEventStart(

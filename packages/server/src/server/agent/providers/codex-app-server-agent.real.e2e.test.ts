@@ -1,9 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
+import { startAgentRun } from "../agent-prompt.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import {
   canRunRealProvider,
@@ -45,6 +47,81 @@ describe("Codex app-server provider (real)", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   }, 30_000);
+
+  test("delivers a queued prompt after real manual compaction without canceling", async () => {
+    const logger = createTestLogger();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-live-compaction-"));
+    const manager = new AgentManager({
+      clients: { codex: new CodexAppServerAgentClient(logger) },
+      paseoToolsEnabled: false,
+      logger,
+    });
+    let agentId: string | undefined;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = manager.subscribe(
+      (entry) => {
+        if (entry.type === "agent_stream" && entry.agentId === agentId) events.push(entry.event);
+      },
+      { replayState: false },
+    );
+    try {
+      const agent = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd,
+          modeId: "full-access",
+          thinkingOptionId: "low",
+          systemPrompt:
+            "This is an isolated QA session. Do not use any tools or agents. Answer each user message exactly as requested.",
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+      agentId = agent.id;
+      await startAgentRun(manager, agentId, "Reply with exactly SEED_OK.", logger);
+      await manager.waitForAgentRunStart(agentId, { signal: AbortSignal.timeout(60_000) });
+      const initial = await manager.waitForAgentEvent(agentId, {
+        signal: AbortSignal.timeout(60_000),
+      });
+      expect(initial).toMatchObject({ status: "idle", lastMessage: "SEED_OK" });
+
+      expect(await startAgentRun(manager, agentId, "/compact", logger)).toEqual({
+        disposition: "out_of_band",
+      });
+      let delivered = false;
+      expect(
+        await startAgentRun(manager, agentId, "Reply with exactly QUEUE_DELIVERED_OK.", logger, {
+          replaceRunning: true,
+          onQueuedDelivery: () => {
+            delivered = true;
+          },
+        }),
+      ).toEqual({ disposition: "queued" });
+      await vi.waitFor(() => expect(delivered).toBe(true), { timeout: 90_000 });
+      await manager.waitForAgentRunStart(agentId, { signal: AbortSignal.timeout(60_000) });
+      const result = await manager.waitForAgentEvent(agentId, {
+        signal: AbortSignal.timeout(60_000),
+      });
+      expect(result).toMatchObject({ status: "idle", lastMessage: "QUEUE_DELIVERED_OK" });
+      const compactions = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "compaction" ? [event.item] : [],
+      );
+      expect(compactions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "loading" }),
+          expect.objectContaining({ status: "completed" }),
+        ]),
+      );
+      expect(compactions.every((item) => item.outcome === undefined)).toBe(true);
+      expect(
+        events.filter((event) => event.type === "turn_canceled" || event.type === "turn_failed"),
+      ).toEqual([]);
+    } finally {
+      unsubscribe();
+      if (agentId) await manager.closeAgent(agentId);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 180_000);
 
   test("keeps a real MultiAgentV2 child inside its parent turn", async () => {
     const client = new CodexAppServerAgentClient(createTestLogger());

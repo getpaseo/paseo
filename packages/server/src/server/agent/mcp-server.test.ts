@@ -240,6 +240,7 @@ function buildAgentManagerSpies() {
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
+    tryQueuePromptDuringCompaction: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
     waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
@@ -3698,6 +3699,25 @@ const HELD_TURN_CAPABILITIES = {
  * turn stays running until `finishTurn()` so a caller's bounded wait can run out first.
  */
 class HeldTurnAgentSession implements AgentSession {
+  private compacting = false;
+  compactionChecks = 0;
+  interruptCount = 0;
+  isCompacting(): boolean {
+    this.compactionChecks += 1;
+    return this.compacting;
+  }
+  setCompacting(loading: boolean, outcome?: "failed" | "canceled"): void {
+    this.compacting = loading;
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      item: {
+        type: "compaction",
+        status: loading ? "loading" : "completed",
+        ...(outcome ? { outcome } : {}),
+      },
+    });
+  }
   readonly capabilities = HELD_TURN_CAPABILITIES;
   readonly id = randomUUID();
   readonly prompts: string[] = [];
@@ -3730,6 +3750,16 @@ class HeldTurnAgentSession implements AgentSession {
     this.activeTurnId = turnId;
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "user_message",
+          text: this.prompts[this.prompts.length - 1]!,
+          messageId: turnId,
+        },
+      });
       if (!this.holdTurns && this.activeTurnId === turnId) {
         this.finishTurn();
       }
@@ -3737,12 +3767,20 @@ class HeldTurnAgentSession implements AgentSession {
     return { turnId };
   }
 
-  finishTurn(): void {
+  finishTurn(text?: string): void {
     const turnId = this.activeTurnId;
     if (!turnId) {
       throw new Error("No held turn to finish");
     }
     this.activeTurnId = null;
+    if (text) {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: { type: "assistant_message", text, messageId: `reply-${turnId}` },
+      });
+    }
     this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
   }
 
@@ -3786,6 +3824,7 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.interruptCount += 1;
     const turnId = this.activeTurnId;
     if (!turnId) {
       return;
@@ -3830,9 +3869,294 @@ class HeldTurnAgentClient implements AgentClient {
   }
 }
 
+interface QueuedPromptCancellationInput {
+  agentManager: AgentManager;
+  agentId: string;
+  session: HeldTurnAgentSession;
+}
+
 describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
+
+  it("returns queued acceptance and notifies only after the queued prompt's turn", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+      await invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "original",
+        notifyOnFinish: false,
+      });
+      const session = childClient.sessions[0]!;
+      session.setCompacting(true);
+      const sent = await invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "follow up",
+        notifyOnFinish: true,
+      });
+      expect(sent.structuredContent).toMatchObject({
+        success: true,
+        queued: true,
+        status: "running",
+      });
+      expect(session.prompts).toEqual(["original"]);
+      expect(session.interruptCount).toBe(0);
+      session.setCompacting(false);
+      session.finishTurn();
+      await vi.waitFor(() => expect(session.prompts).toEqual(["original", "follow up"]));
+      await agentManager.waitForAgentRunStart(child.id);
+      expect(parentClient.sessions[0]!.prompts).toEqual([]);
+      session.finishTurn();
+      await vi.waitFor(() => expect(parentClient.sessions[0]!.prompts).toHaveLength(1));
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(`Agent ${child.id}`);
+      expect(session.interruptCount).toBe(0);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it.each([
+    { caller: "top-level", resolveCaller: (_agentId: string) => undefined, blockingInput: {} },
+    {
+      caller: "agent-scoped",
+      resolveCaller: (agentId: string) => agentId,
+      blockingInput: { background: false },
+    },
+  ])(
+    "waits for queued delivery and its answer for a blocking $caller caller",
+    async ({ resolveCaller, blockingInput }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-blocking-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const client = new HeldTurnAgentClient("codex", true);
+      const agentManager = new AgentManager({
+        clients: { codex: client },
+        registry: storage,
+        logger,
+      });
+      try {
+        const target = await agentManager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const parent = await agentManager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager,
+          agentStorage: storage,
+          callerAgentId: resolveCaller(parent.id),
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        const tool = registeredTool(server, "send_agent_prompt");
+        await invokeToolWithParsedInput(tool, {
+          agentId: target.id,
+          prompt: "original",
+          background: true,
+          notifyOnFinish: false,
+        });
+        const session = client.sessions[0]!;
+        session.setCompacting(true);
+        const checks = session.compactionChecks;
+        let returned = false;
+        const pending = invokeToolWithParsedInput(tool, {
+          agentId: target.id,
+          prompt: "follow up",
+          ...blockingInput,
+        }).then((result) => {
+          returned = true;
+          return result;
+        });
+        await vi.waitFor(() => expect(session.compactionChecks).toBeGreaterThan(checks));
+        expect(returned).toBe(false);
+        session.setCompacting(false);
+        session.finishTurn("original answer");
+        await vi.waitFor(() => expect(session.prompts).toEqual(["original", "follow up"]));
+        await agentManager.waitForAgentRunStart(target.id);
+        expect(returned).toBe(false);
+        session.finishTurn("queued answer");
+        expect((await pending).structuredContent).toEqual({
+          success: true,
+          status: "idle",
+          lastMessage: "queued answer",
+          permission: null,
+        });
+        expect(session.interruptCount).toBe(0);
+        expect(client.sessions[1]!.prompts).toEqual([]);
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it.each([
+    {
+      reason: "stop",
+      cancel: async ({ agentManager, agentId }: QueuedPromptCancellationInput) => {
+        await agentManager.cancelAgentRun(agentId);
+      },
+    },
+    {
+      reason: "close",
+      cancel: async ({ agentManager, agentId }: QueuedPromptCancellationInput) => {
+        await agentManager.closeAgent(agentId);
+      },
+    },
+    {
+      reason: "failed",
+      cancel: ({ session }: QueuedPromptCancellationInput) =>
+        session.setCompacting(false, "failed"),
+    },
+    {
+      reason: "canceled",
+      cancel: ({ session }: QueuedPromptCancellationInput) =>
+        session.setCompacting(false, "canceled"),
+    },
+  ])("reports queued cancellation to a blocking caller on $reason", async ({ cancel }) => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-canceled-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+    });
+    try {
+      const target = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+      await invokeToolWithParsedInput(tool, {
+        agentId: target.id,
+        prompt: "original",
+        background: true,
+      });
+      const session = client.sessions[0]!;
+      session.setCompacting(true);
+      const checks = session.compactionChecks;
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: target.id,
+        prompt: "follow up",
+      });
+      const canceled = expect(pending).rejects.toThrow("Queued prompt canceled before delivery");
+      await vi.waitFor(() => expect(session.compactionChecks).toBeGreaterThan(checks));
+      await cancel({ agentManager, agentId: target.id, session });
+      await canceled;
+      expect(session.prompts).toEqual(["original"]);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("bounds a blocking queued wait and arms its notification only after delivery", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-timeout-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+      await invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "original",
+        notifyOnFinish: false,
+      });
+      const session = childClient.sessions[0]!;
+      session.setCompacting(true);
+      vi.useFakeTimers();
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "follow up",
+        background: false,
+      });
+      await vi.advanceTimersByTimeAsync(31_000);
+      const response = await pending;
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        status: "running",
+        queued: true,
+      });
+      expect(response.structuredContent.lastMessage).toContain(
+        "still queued and has not been delivered",
+      );
+      expect(response.structuredContent.guidance).toContain(
+        "finish notification is armed after delivery",
+      );
+      expect(parentClient.sessions[0]!.prompts).toEqual([]);
+      session.setCompacting(false);
+      session.finishTurn("original answer");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(session.prompts).toEqual(["original", "follow up"]);
+      expect(parentClient.sessions[0]!.prompts).toEqual([]);
+      session.finishTurn("queued answer");
+      await vi.advanceTimersByTimeAsync(1_000);
+      vi.useRealTimers();
+      await vi.waitFor(() => expect(parentClient.sessions[0]!.prompts).toHaveLength(1));
+      expect(parentClient.sessions[0]!.prompts[0]).toContain("queued answer");
+      expect(session.interruptCount).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
 
   it("defaults agent-scoped prompts to background finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();

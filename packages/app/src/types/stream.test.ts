@@ -1382,6 +1382,26 @@ describe("stream reducer canonical tool calls", () => {
     ]);
   });
 
+  it("preserves an unsuccessful compaction outcome while settling its loading row", () => {
+    const state = hydrateStreamState([
+      { event: compactionTimeline("loading", "auto"), timestamp: new Date("2026-10-05T20:00:00Z") },
+      {
+        event: {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "compaction", status: "completed", outcome: "canceled" },
+        },
+        timestamp: new Date("2026-10-05T20:00:01Z"),
+      },
+    ]);
+    assert.deepStrictEqual(
+      state
+        .filter((item) => item.kind === "compaction")
+        .map((item) => ({ status: item.status, outcome: item.outcome, trigger: item.trigger })),
+      [{ status: "completed", outcome: "canceled", trigger: "auto" }],
+    );
+  });
+
   it("terminalizes the loading compaction before a completed turn", () => {
     const state = hydrateStreamState([
       {

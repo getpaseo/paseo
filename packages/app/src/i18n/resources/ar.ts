@@ -383,6 +383,8 @@ export const ar: TranslationResources = {
       },
     },
     compaction: {
+      canceled: "تم إلغاء الضغط",
+      failed: "فشل الضغط",
       loading: "الضغط...",
       auto: "يتم ضغط السياق تلقائيًا",
       manual: "تم ضغط السياق يدويًا",

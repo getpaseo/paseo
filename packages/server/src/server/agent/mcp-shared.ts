@@ -102,6 +102,7 @@ export async function waitForAgentWithTimeout(
   options?: {
     signal?: AbortSignal;
     waitForActive?: boolean;
+    delivery?: Promise<Error | null>;
   },
 ): Promise<AgentWaitWithTimeoutResult> {
   const timeoutController = new AbortController();
@@ -133,7 +134,22 @@ export async function waitForAgentWithTimeout(
     { once: true },
   );
 
+  let rejectDeliveryOnAbort: (() => void) | undefined;
+  let waitingForDelivery = Boolean(options?.delivery);
   try {
+    if (options?.delivery) {
+      const aborted = new Promise<never>((_, reject) => {
+        rejectDeliveryOnAbort = () => reject(combinedController.signal.reason);
+        if (combinedController.signal.aborted) rejectDeliveryOnAbort();
+        else
+          combinedController.signal.addEventListener("abort", rejectDeliveryOnAbort, {
+            once: true,
+          });
+      });
+      const deliveryError = await Promise.race([options.delivery, aborted]);
+      if (deliveryError) throw deliveryError;
+      waitingForDelivery = false;
+    }
     const result = await agentManager.waitForAgentEvent(agentId, {
       signal: combinedController.signal,
       waitForActive: options?.waitForActive,
@@ -150,7 +166,10 @@ export async function waitForAgentWithTimeout(
       });
       const recentActivity = curateAgentActivity(recent.items);
       const waitedSeconds = Math.round(AGENT_WAIT_TIMEOUT_MS / 1000);
-      const message = `Awaiting the agent timed out after ${waitedSeconds}s. This does not mean the agent failed - it is still running. Call get_agent_status to check on it, or continue with other work if you will receive a finish notification.\n\nRecent activity:\n${recentActivity}`;
+      const pendingMessage = waitingForDelivery
+        ? "The prompt is still queued and has not been delivered."
+        : "This does not mean the agent failed - it is still running.";
+      const message = `Awaiting the agent timed out after ${waitedSeconds}s. ${pendingMessage} Call get_agent_status to check on it, or continue with other work if you will receive a finish notification.\n\nRecent activity:\n${recentActivity}`;
       return {
         status: snapshot?.lifecycle ?? "idle",
         permission: null,
@@ -161,6 +180,8 @@ export async function waitForAgentWithTimeout(
     throw error;
   } finally {
     clearTimeout(timeoutId);
+    if (rejectDeliveryOnAbort)
+      combinedController.signal.removeEventListener("abort", rejectDeliveryOnAbort);
   }
 }
 

@@ -494,6 +494,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
       ...existing,
       timelineCursor: retained.timelineCursor,
       status: "completed",
+      outcome: retained.outcome,
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
     };
@@ -795,6 +796,7 @@ export interface CompactionItem {
   turnId?: string;
   timestamp: Date;
   status: "loading" | "completed";
+  outcome?: "canceled" | "failed";
   trigger?: "auto" | "manual";
   preTokens?: number;
 }
@@ -1470,6 +1472,7 @@ function reduceTimelineCompaction(
         ...existing,
         ...(timelineCursor ? { timelineCursor } : {}),
         status: "completed",
+        outcome: item.outcome,
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
       };
@@ -1485,6 +1488,7 @@ function reduceTimelineCompaction(
     ...(timelineCursor ? { timelineCursor } : {}),
     timestamp,
     status: item.status,
+    outcome: item.outcome,
     trigger: item.trigger,
     preTokens: item.preTokens,
   };

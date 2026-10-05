@@ -50,6 +50,24 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+### Context compaction
+
+Incoming prompts wait in a daemon FIFO while the root provider session compacts. The shared
+prompt dispatcher owns this rule, so MCP updates and completion notifications have the same
+protection as composer and CLI messages. On completion, delivery steers the existing turn;
+an unavailable steer waits for the turn to finish instead of replacing it. Provider child
+compaction does not suspend the parent's prompts.
+
+The FIFO belongs to the live runtime. Stop, runtime closure, and failed or canceled compaction
+cancel pending messages and record a timeline warning. Ambiguous delivery errors are reported
+without automatic retries, because the provider may already have accepted the message. MCP
+returns `queued: true` on admission; its finish notification is armed after delivery.
+
+Compaction markers keep the existing `loading` / `completed` wire statuses. An optional
+`outcome` distinguishes canceled and failed terminal rows. Older clients can parse those rows
+but need an app update to display the unsuccessful outcome. A terminal turn settles a loading
+marker; only an explicit successful completion or a successful terminal turn indicates success.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.

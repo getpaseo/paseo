@@ -387,6 +387,8 @@ export const ru: TranslationResources = {
       },
     },
     compaction: {
+      canceled: "Сжатие отменено",
+      failed: "Ошибка сжатия",
       loading: "Сжатие контекста...",
       auto: "Контекст сжат автоматически",
       manual: "Контекст сжат вручную",

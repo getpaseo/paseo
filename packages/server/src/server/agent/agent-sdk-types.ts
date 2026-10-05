@@ -374,6 +374,7 @@ export interface CompactionTimelineItem {
   [key: string]: unknown;
   type: "compaction";
   status: "loading" | "completed";
+  outcome?: "canceled" | "failed";
   trigger?: "auto" | "manual";
   preTokens?: number;
 }
@@ -665,6 +666,8 @@ export interface AgentSession {
   readonly initialTimeline?: ImportedTimelineEntry[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
+  /** Provider-owned live state, including a manual compact RPC before its first event. */
+  isCompacting?(): boolean;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;

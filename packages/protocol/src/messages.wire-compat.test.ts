@@ -11,6 +11,21 @@ import {
   AgentTimelineEntryPayloadSchema,
 } from "./messages.js";
 
+test("unsuccessful compaction outcomes preserve the legacy terminal wire shape", () => {
+  const legacy = z.object({
+    type: z.literal("compaction"),
+    status: z.enum(["loading", "completed"]),
+  });
+  for (const outcome of ["canceled", "failed"] as const) {
+    const item = { type: "compaction", status: "completed", outcome };
+    expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+    expect(legacy.parse(item)).toEqual({ type: "compaction", status: "completed" });
+  }
+  expect(AgentTimelineItemPayloadSchema.parse({ type: "compaction", status: "completed" })).toEqual(
+    { type: "compaction", status: "completed" },
+  );
+});
+
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
   const response = {
     type: "list_terminals_response",
