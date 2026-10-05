@@ -20,11 +20,14 @@ interface FakeClaudeQuery {
   emit(message: SDKMessage): void;
   /** Ends the stream before a result, the way it ends when the Claude Code process dies. */
   end(): void;
+  /** Makes the next setPermissionMode call wait, the way a busy Claude Code process answers late. */
+  holdNextPermissionMode(): () => void;
 }
 
 function createFakeClaudeQuery(): FakeClaudeQuery {
   const permissionModes: PermissionMode[] = [];
   let permissionModeFailure: string | null = null;
+  let permissionModeHold: Promise<void> | null = null;
   const pending: SDKMessage[] = [];
   const waiters: Array<(result: IteratorResult<SDKMessage, void>) => void> = [];
   let ended = false;
@@ -40,6 +43,9 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
         throw new Error(message);
       }
       permissionModes.push(mode);
+      const hold = permissionModeHold;
+      permissionModeHold = null;
+      if (hold) await hold;
     },
     async applyFlagSettings() {},
     async setModel() {},
@@ -80,6 +86,13 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
       else pending.push(message);
     },
     end: finish,
+    holdNextPermissionMode() {
+      let release = () => {};
+      permissionModeHold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
   };
 }
 
@@ -359,6 +372,21 @@ describe("Claude Plan is a feature beside the access mode", () => {
     expect(queries[0]?.permissionModes).toEqual(["plan"]);
     expect(outcome).toEqual({ settled: false });
     expect(permissionRequests(events)).toHaveLength(1);
+  });
+
+  test("overlapping Plan and access changes keep the latest access choice", async () => {
+    const { session, queries } = await createPlanSession({ modeId: "bypassPermissions" });
+    await session.setFeature?.("plan_mode", true);
+
+    const release = queries[0]?.holdNextPermissionMode();
+    const planOff = session.setFeature?.("plan_mode", false);
+    const accessChange = session.setMode("default");
+    release?.();
+    await Promise.all([planOff, accessChange]);
+
+    await expect(session.getCurrentMode()).resolves.toBe("default");
+    expect(planFeatureValue(session)).toBe(false);
+    expect(queries[0]?.permissionModes.at(-1)).toBe("default");
   });
 
   test("lists Plan for every Claude model, beside Fast where the model has it", async () => {

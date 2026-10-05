@@ -2092,6 +2092,8 @@ class ClaudeAgentSession implements AgentSession {
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private executionMode: ClaudeExecutionMode;
+  /** Mode and Plan changes run one at a time, each from the state the previous one left. */
+  private executionModeChange: Promise<void> = Promise.resolve();
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
@@ -2461,9 +2463,22 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    const next = selectClaudeMode(this.executionMode, modeId);
-    assertClaudeModeCanRun(next.accessMode, this.harnessEnvironment);
-    await this.applyExecutionMode(next);
+    await this.changeExecutionMode((current) => {
+      const next = selectClaudeMode(current, modeId);
+      assertClaudeModeCanRun(next.accessMode, this.harnessEnvironment);
+      return next;
+    });
+  }
+
+  private changeExecutionMode(
+    resolveNext: (current: ClaudeExecutionMode) => ClaudeExecutionMode,
+  ): Promise<void> {
+    const change = this.executionModeChange.then(() =>
+      this.applyExecutionMode(resolveNext(this.executionMode)),
+    );
+    // A failed change still reaches its caller; the next one starts from the state it left.
+    this.executionModeChange = change.catch(() => undefined);
+    return change;
   }
 
   private async applyExecutionMode(next: ClaudeExecutionMode): Promise<void> {
@@ -2540,7 +2555,7 @@ class ClaudeAgentSession implements AgentSession {
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
     if (featureId === CLAUDE_PLAN_MODE_FEATURE.id) {
-      await this.applyExecutionMode({ ...this.executionMode, isPlanMode: Boolean(value) });
+      await this.changeExecutionMode((current) => ({ ...current, isPlanMode: Boolean(value) }));
       return;
     }
     if (featureId !== "fast_mode") {
@@ -2690,7 +2705,7 @@ class ClaudeAgentSession implements AgentSession {
     const selectedActionId = response.behavior === "allow" ? response.selectedActionId : undefined;
     if (response.behavior === "allow" && pending.request.kind === "plan") {
       // Leave Plan before taking the card down, so a failed mode change leaves it answerable.
-      await this.applyExecutionMode(approveClaudePlan(this.executionMode, selectedActionId));
+      await this.changeExecutionMode((current) => approveClaudePlan(current, selectedActionId));
       if (this.pendingPermissions.get(requestId) !== pending) {
         return;
       }
