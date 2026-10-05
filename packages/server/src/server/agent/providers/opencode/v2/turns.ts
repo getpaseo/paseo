@@ -60,6 +60,7 @@ interface Turn {
   completion: Promise<void>;
   settle(): void;
   accepted: boolean;
+  questionDismissed: boolean;
 }
 
 export class SessionTurns {
@@ -112,6 +113,7 @@ export class SessionTurns {
       settle,
       accepted,
       output,
+      questionDismissed: false,
     };
     this.turn = turn;
     this.execution = null;
@@ -160,6 +162,13 @@ export class SessionTurns {
     if (event.type === "session.execution.started") this.observeActiveTurn();
     this.execution = event;
     this.sequence = event.durable.seq;
+    this.requestReconciliation();
+  }
+  // OpenCode ends the execution when the user dismisses its question, but reports the
+  // interruption as "shutdown", the same reason as an execution it will resume.
+  questionDismissed() {
+    if (!this.turn) return;
+    this.turn.questionDismissed = true;
     this.requestReconciliation();
   }
   private requestReconciliation() {
@@ -216,7 +225,9 @@ export class SessionTurns {
     this.sequence = execution.durable.seq;
     if (
       execution.type === "session.execution.started" ||
-      (execution.type === "session.execution.interrupted" && execution.data.reason === "shutdown")
+      (execution.type === "session.execution.interrupted" &&
+        execution.data.reason === "shutdown" &&
+        !turn.questionDismissed)
     )
       return;
     // Read the final history only after observing idle. Never turn an observation transport error into an execution failure.

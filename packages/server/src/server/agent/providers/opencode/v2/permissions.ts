@@ -33,6 +33,9 @@ export class SessionPermissions {
   list() {
     return [...this.pending.values()];
   }
+  isQuestion(requestId: string, sessionID: string) {
+    return this.forms.get(requestId)?.sessionID === sessionID;
+  }
   async respondToPermission(requestId: string, response: AgentPermissionResponse) {
     const form = this.forms.get(requestId);
     if (form) {
