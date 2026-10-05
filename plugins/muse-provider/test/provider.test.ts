@@ -84,6 +84,7 @@ async function harness(
   async function open(
     persistence?: Extract<ProviderInput, { type: "session.open" }>["persistence"],
     mode = "onRequest",
+    model: string | null = "meta/muse-spark-1.3",
   ) {
     await send({
       type: "session.open",
@@ -97,7 +98,7 @@ async function harness(
         mcpServers: {},
         persist: true,
         mode,
-        model: "meta/muse-spark-1.3",
+        model: model ?? undefined,
         thinkingOption: "high",
         systemPrompt: "Test instructions",
       },
@@ -685,6 +686,44 @@ test("catalogue loads models whose effort tiers carry descriptions", async () =>
     },
   });
 });
+for (const [configuredModel, catalogModels, expectedModel] of [
+  ["configured-model", [], "configured-model"],
+  [
+    "",
+    [
+      {
+        modelId: "catalog-model",
+        providerId: "meta",
+        displayLabel: "Catalog model",
+        contextLimit: null,
+        isDefault: true,
+        variants: ["high"],
+      },
+    ],
+    "catalog-model",
+  ],
+  ["", [], undefined],
+] as const) {
+  test(`null session model preserves ${expectedModel ?? "unset model"}`, async () => {
+    const h = await harness("text-reasoning", {
+      MUSE_TEST_NULL_MODEL: "1",
+      MUSE_TEST_MODELS: JSON.stringify(catalogModels),
+    });
+    expect(await h.open(undefined, "onRequest", configuredModel || null)).toEqual({
+      type: "session.ready",
+      requestId: "open",
+      sessionId: "paseo-session",
+    });
+    const config = await h.wait((event) => event.type === "session.config");
+    if (config.type !== "session.config") throw new Error("Expected session config");
+    expect(config.config.model).toBe(expectedModel);
+    const saved = h.events.findLast((event) => event.type === "session.persistence");
+    if (!saved) throw new Error("Expected persistence");
+    expect(saved.persistence.data.model).toBe(expectedModel);
+    await h.prompt();
+    await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+  });
+}
 test("session startup accepts described catalog efforts and publishes the complete list", async () => {
   const model = {
     modelId: "meta/muse-spark-1.3",
@@ -1183,6 +1222,46 @@ test("resuming a session reapplies its provider options to the new host", async 
     ["serve", "--sandbox-network", "restricted"],
   ]);
   expect(frames.some((f) => f.method === "session/resume")).toBe(true);
+});
+test("an uncorrelated MSP parse error keeps the provider diagnostic", async () => {
+  const h = await harness("text-reasoning", { MUSE_TEST_NULL_ERROR_ID: "1" });
+  expect(await h.open()).toMatchObject({
+    type: "request.failed",
+    error: { code: "parseError", message: "Cannot recover request id" },
+  });
+});
+test("text deltas with an omitted field stream as text", async () => {
+  const h = await harness("text-reasoning", { MUSE_TEST_IMPLICIT_TEXT_DELTA: "1" });
+  await h.open();
+  await h.wait((e) => e.type === "session.ready");
+  await h.prompt();
+  await h.wait((e) => e.type === "session.turn" && e.state === "completed");
+  expect(
+    h.events.some(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "Sum with",
+    ),
+  ).toBe(true);
+});
+test("sessions with a null model import and resume without a null persistence model", async () => {
+  const h = await harness("resume-without-cursor", { MUSE_TEST_NULL_MODEL: "1" });
+  await h.send({
+    type: "sessions",
+    requestId: "null-list",
+    cwd: "/tmp/muse-phase0/repo",
+    limit: 2,
+  });
+  const listed = await h.wait((e) => e.type === "sessions");
+  if (listed.type !== "sessions") throw new Error("Expected sessions");
+  expect(listed.sessions).toHaveLength(2);
+  expect(listed.sessions[0]!.persistence.data.model).toBeUndefined();
+  await h.open(listed.sessions[0]!.persistence);
+  await h.wait((e) => e.type === "session.ready");
+  expect(
+    h.events.some((e) => e.type === "session.config" && e.config.model === "meta/muse-spark-1.3"),
+  ).toBe(true);
 });
 test("sessions list filters workspace and imported persistence opens via resume", async () => {
   const h = await harness("resume-without-cursor");

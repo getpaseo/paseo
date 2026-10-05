@@ -66,6 +66,14 @@ function controlResponse(frame) {
     process.stderr.write("diagnostic tail, not protocol\n");
     process.exit(Number(process.env.MUSE_TEST_EXIT));
   }
+  if (frame.method === "initialize" && process.env.MUSE_TEST_NULL_ERROR_ID) {
+    send({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Cannot recover request id", data: { kind: "parseError" } },
+    });
+    return true;
+  }
   if (process.env.MUSE_TEST_HANG === frame.method) return true;
   if (frame.method === "session/setReasoningEffort") {
     respond(frame, { status: "accepted", commandId: frame.params.commandId });
@@ -138,6 +146,9 @@ function parityResponse(frame) {
   if (frame.method === "session/list") {
     const result = responseFor(catalogRows, "session/list");
     result.nextCursor = null;
+    if (process.env.MUSE_TEST_NULL_MODEL) {
+      for (const session of result.sessions) session.modelId = null;
+    }
     respond(frame, result);
     return true;
   }
@@ -262,6 +273,7 @@ function emitFixtureMessage(recordedMessage, recorded, frame) {
     return;
   if (frame.method === "session/start" && message.result?.session?.approvalMode)
     message.result.session.approvalMode.mode = frame.params.approvalMode;
+  applyWireVariants(message);
   if (message.result?.viewCursor && process.env.MUSE_TEST_EMPTY_CURSOR)
     message.result.viewCursor = "";
   applyTestVariants(message);
@@ -280,6 +292,19 @@ function emitFixtureMessage(recordedMessage, recorded, frame) {
         item: { ...message.params.item, revision: 1, text: "STALE_REVISION" },
       },
     });
+  }
+}
+function applyWireVariants(message) {
+  if (
+    message.method === "item/delta" &&
+    message.params?.field === "text" &&
+    process.env.MUSE_TEST_IMPLICIT_TEXT_DELTA
+  ) {
+    delete message.params.field;
+  }
+  if (message.result?.session && process.env.MUSE_TEST_NULL_MODEL) {
+    message.result.session.modelId = null;
+    message.result.session.providerId = null;
   }
 }
 function parityDelivery(message) {

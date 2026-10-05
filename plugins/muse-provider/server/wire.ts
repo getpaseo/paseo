@@ -87,7 +87,7 @@ export const notificationSchema = z.object({
 });
 export const frameSchema = z.object({
   jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number()]).optional(),
+  id: z.union([z.string(), z.number()]).nullable().optional(),
   method: z.string().optional(),
   params: z.unknown().optional(),
   result: z.unknown().optional(),
@@ -127,8 +127,8 @@ export const catalogSchema = z.object({
 export const sessionSchema = z.object({
   session: z.object({
     sessionId: z.string(),
-    modelId: z.string(),
-    providerId: z.string(),
+    modelId: z.string().nullable(),
+    providerId: z.string().nullable(),
     approvalMode: z.object({ mode: approvalModeSchema }).optional(),
   }),
   viewCursor: z.string(),
@@ -147,7 +147,11 @@ export const persistenceSchema = z.object({
   model: z.string().optional(),
   thinkingOption: effortSchema.optional(),
 });
-export const deltaSchema = z.object({ itemId: z.string(), field: z.string(), delta: z.string() });
+export const deltaSchema = z.object({
+  itemId: z.string(),
+  field: z.string().default("text"),
+  delta: z.string(),
+});
 export const turnSchema = z.object({
   turnId: z.string(),
   commandId: z.string().optional(),
@@ -245,7 +249,7 @@ export const sessionListSchema = z.object({
       workspaceRoot: z.string().nullable(),
       title: z.string().optional(),
       updatedAt: z.string(),
-      modelId: z.string(),
+      modelId: z.string().nullable(),
     }),
   ),
 });

@@ -170,6 +170,12 @@ export class MspConnection {
       return;
     }
     if (frame.id === undefined) throw new MuseError("invalidFrame", "MSP response has no id");
+    if (frame.id === null) {
+      if (!frame.error) throw new MuseError("invalidFrame", "MSP result has a null id");
+      this.fail(new MuseError(frame.error.data?.kind ?? "rpc", frame.error.message));
+      this.child.kill();
+      return;
+    }
     const pending = this.pending.get(frame.id);
     if (!pending) return;
     clearTimeout(pending.timer);
