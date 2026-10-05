@@ -295,7 +295,8 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
     return false;
   }
   const tag = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
-  if (tag === "p" || isTableStructure(tag)) {
+  // An image has no part to select, so touching it selects all of it.
+  if (tag === "p" || tag === "img" || isTableStructure(tag)) {
     return true;
   }
   const isSelectableSemantic = tag !== null && tag !== "li" && tag !== "ol" && tag !== "ul";
@@ -434,6 +435,7 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   }
   const visibleVoidSelector = ["br", "hr", "img"]
     .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
+    .concat("img")
     .join(",");
   return Boolean(fragment.querySelector(visibleVoidSelector));
 }

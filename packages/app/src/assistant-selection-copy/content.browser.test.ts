@@ -411,6 +411,20 @@ describe("assistant selection copy ranges", () => {
     expect(content?.html).not.toContain("<pre>");
   });
 
+  it("copies an image as its Markdown when the selection stays inside the rendered image", () => {
+    const message = mountFixture();
+    const frame = document.createElement("div");
+    frame.setAttribute("data-paseo-markdown-tag", "img");
+    frame.setAttribute("data-paseo-markdown-src", "https://example.test/chart.png");
+    frame.setAttribute("data-paseo-markdown-alt", "chart");
+    frame.innerHTML = '<div><div><img src="blob:https://example.test/preview" alt=""></div></div>';
+    message.prepend(frame);
+
+    expect(copiedMarkdown(selectNodeContents(fixtureElement(frame, "img").parentElement!))).toBe(
+      "![chart](https://example.test/chart.png)",
+    );
+  });
+
   it("copies code without a fence when every character is selected inside the block", () => {
     const message = mountFixture();
     const blockCode = fixtureElement(

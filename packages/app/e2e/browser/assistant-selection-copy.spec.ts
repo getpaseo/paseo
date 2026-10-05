@@ -687,6 +687,20 @@ test("copying a selection across an assistant image keeps its Markdown source an
     expect((await readRichClipboard(page)).plainText).toBe(
       `Before the image.\n\n![chart](${image})\n\nAfter the image.`,
     );
+
+    // A drag over the image alone selects it inside its rendered frame.
+    await assistantMessageBlocks(page)
+      .locator("img")
+      .evaluate((element) => {
+        const range = document.createRange();
+        range.selectNode(element);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(`![chart](${image})`);
   } finally {
     await agent.cleanup();
   }
