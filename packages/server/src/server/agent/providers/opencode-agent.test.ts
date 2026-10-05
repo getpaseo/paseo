@@ -333,6 +333,76 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     model: TEST_MODEL,
   });
 
+  test.each([
+    { variants: { medium: {}, custom: {} }, selected: "medium", expected: "medium" },
+    { variants: { custom: {} }, selected: "custom", expected: "custom" },
+    { variants: { high: {} }, selected: "medium", expected: undefined },
+    { variants: {}, selected: "medium", expected: undefined },
+  ])(
+    "model switches resolve the retained variant: $selected / $variants",
+    async ({ variants, selected, expected }) => {
+      const cwd = tmpCwd();
+      const runtime = new TestOpenCodeHarness();
+      const upstream = new TestOpenCodeClient();
+      upstream.providerListResponse = {
+        data: {
+          connected: ["test"],
+          all: [
+            {
+              id: "test",
+              name: "Test",
+              source: "api",
+              models: { target: { name: "Target", variants } },
+            },
+          ],
+        },
+      };
+      runtime.enqueueClient(upstream);
+      const client = new OpenCodeAgentClient(logger, undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd,
+        model: "test/source",
+        thinkingOptionId: selected,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        await session.setModel!("test/target");
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBe(expected ?? null);
+        expect(events).toContainEqual({
+          type: "thinking_option_changed",
+          provider: "opencode",
+          thinkingOptionId: expected ?? null,
+        });
+        upstream.sessionPromptAsyncEvents = [
+          { type: "session.idle", properties: { sessionID: "session-1" } },
+        ];
+        await collectTurnEvents(streamSession(session, "Use the selected model"));
+        expect(upstream.calls.sessionPromptAsync).toEqual([
+          expect.objectContaining({
+            model: { providerID: "test", modelID: "target" },
+            ...(expected ? { variant: expected } : {}),
+          }),
+        ]);
+        if (!expected) expect(upstream.calls.sessionPromptAsync[0]).not.toHaveProperty("variant");
+        await session.setThinkingOption!("medium");
+        await expect(session.setModel!("test/missing")).rejects.toThrow(
+          "OpenCode model unavailable",
+        );
+        upstream.providerListResponse = { error: "Catalog unavailable" };
+        await expect(session.setModel!("test/source")).rejects.toThrow("Catalog unavailable");
+        expect((await session.getRuntimeInfo()).model).toBe("test/target");
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -1548,6 +1618,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1658,6 +1729,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1742,6 +1814,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1783,6 +1856,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       undefined,
       undefined,
@@ -1811,6 +1885,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     await session.close();
@@ -1835,6 +1910,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       events,
     );
@@ -1907,6 +1983,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -1997,6 +2074,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2049,6 +2127,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2162,6 +2241,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2277,6 +2357,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const events: AgentStreamEvent[] = [];
@@ -3076,6 +3157,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       sdkClient,
       "ses_sync_abort_failure",
       createTestLogger(),
+      {},
     );
 
     try {
@@ -3674,7 +3756,10 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       await session.startTurn("first");
       await session.interrupt();
+      const descriptor = session.usageSession?.();
       openCode.emitEvent({ type: "server-exited", error: new Error("OpenCode exited") });
+      expect(session.usageSession?.()).toEqual(descriptor);
+      expect(descriptor).not.toBeNull();
       await vi.advanceTimersByTimeAsync(0);
 
       openCode.sessionPromptAsyncEvents = [
@@ -3729,6 +3814,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_timeout",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => new Promise<void>(() => undefined),
@@ -3782,6 +3868,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_slow_stream",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => streamReady.promise,
@@ -3814,6 +3901,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_retry",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => streamReady.promise,
@@ -5492,6 +5580,7 @@ describe("OpenCode provider subagent contract", () => {
       fakeClient,
       "ses_parent",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -5650,6 +5739,7 @@ describe("OpenCode provider subagent contract", () => {
       fakeClient,
       "ses_parent",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -6906,9 +6996,14 @@ describe("OpenCode session permission rules", () => {
         metadata: { cwd },
       });
       try {
+        expect(session.usageSession?.()).toMatchObject({
+          provider: "opencode",
+          sessionKey: expect.any(String),
+        });
         expect(openCode.calls.sessionUpdate).toEqual([]);
       } finally {
         await session.close();
+        expect(session.usageSession?.()).toBeNull();
       }
     } finally {
       rmSync(cwd, { recursive: true, force: true });

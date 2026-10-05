@@ -136,6 +136,24 @@ describe("resolveWorkspaceFilePaths", () => {
     });
   });
 
+  it("resolves files under a drive-root workspace without doubling the separator", () => {
+    expect(resolveWorkspaceFilePaths({ path: "C:/src/app.ts", workspaceRoot: "C:\\" })).toEqual({
+      absolutePath: "C:/src/app.ts",
+      relativePath: "src/app.ts",
+    });
+    expect(resolveWorkspaceFilePaths({ path: "src/app.ts", workspaceRoot: "C:\\" })).toEqual({
+      absolutePath: "C:/src/app.ts",
+      relativePath: "src/app.ts",
+    });
+  });
+
+  it("resolves files under the POSIX root workspace", () => {
+    expect(resolveWorkspaceFilePaths({ path: "/src/app.ts", workspaceRoot: "/" })).toEqual({
+      absolutePath: "/src/app.ts",
+      relativePath: "src/app.ts",
+    });
+  });
+
   it("returns null for home-relative paths that cannot be anchored", () => {
     expect(
       resolveWorkspaceFilePaths({ path: "~/notes.md", workspaceRoot: "/Users/me/repo" }),

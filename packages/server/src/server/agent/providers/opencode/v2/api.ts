@@ -16,7 +16,6 @@ export interface V2Api {
     | "prompt"
     | "command"
     | "compact"
-    | "wait"
     | "interrupt"
     | "revert"
     | "log"

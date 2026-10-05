@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import {
-  BottomSheetBackdrop,
-  BottomSheetScrollView,
-  type BottomSheetScrollViewMethods,
-} from "@gorhom/bottom-sheet";
+import { BottomSheetScrollView, type BottomSheetScrollViewMethods } from "@gorhom/bottom-sheet";
 import { Wrench, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -38,12 +34,7 @@ export function OverviewToolCallGroupSheet({
     visible,
     onClose,
   });
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.5} />
-    ),
-    [],
-  );
+
   const scrollToLatest = useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
@@ -64,7 +55,7 @@ export function OverviewToolCallGroupSheet({
       enableDynamicSizing={false}
       onChange={handleSheetChange}
       onDismiss={handleSheetDismiss}
-      backdropComponent={renderBackdrop}
+      backdropOpacity={0.5}
       enablePanDownToClose
     >
       <View style={styles.container} testID="tool-call-group-sheet">

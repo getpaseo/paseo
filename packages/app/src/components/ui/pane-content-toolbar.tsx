@@ -56,6 +56,8 @@ interface ToolbarButtonCommonProps extends Omit<
 > {
   children: ReactNode;
   label: string;
+  /** What the tooltip says when it is not the label, e.g. a status. Defaults to the label. */
+  tooltip?: ReactNode;
   selected?: boolean;
   compact?: boolean;
   shortcut?: ShortcutKey[][] | null;
@@ -76,6 +78,7 @@ type ToolbarButtonProps = ToolbarButtonCommonProps &
 export function ToolbarButton({
   children,
   label,
+  tooltip: tooltipBody,
   selected = false,
   compact = false,
   shortcut,
@@ -105,7 +108,7 @@ export function ToolbarButton({
   const tooltip = (
     <TooltipContent side={tooltipSide} align="center" offset={8}>
       <View style={styles.tooltipRow}>
-        <Text style={styles.tooltipText}>{label}</Text>
+        {tooltipBody ?? <Text style={styles.tooltipText}>{label}</Text>}
         {shortcut ? <Shortcut chord={shortcut} /> : null}
       </View>
     </TooltipContent>

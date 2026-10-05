@@ -1,0 +1,56 @@
+import {
+  PublishedPluginDetailSchema,
+  type PluginRegistries,
+  type PluginRegistryIdentity,
+} from "@getpaseo/protocol/plugin-registry";
+import type { PluginUpdateTarget } from "@getpaseo/protocol/messages";
+
+export interface RegistryOptions {
+  /** Off: bare owner/repo is GitHub shorthand and no registry is contacted. */
+  enabled?: boolean;
+  defaultUrl?: string;
+  registries?: PluginRegistries;
+}
+export async function resolveRegistryPlugin(
+  identity: PluginRegistryIdentity,
+  options: RegistryOptions,
+  install: boolean,
+) {
+  const base = new URL(identity.url);
+  if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
+    throw new Error("Registry base must be an HTTP(S) URL without credentials");
+  const authorization = options.registries?.[base.host]?.authorization;
+  if (
+    authorization &&
+    base.protocol !== "https:" &&
+    !["localhost", "127.0.0.1", "[::1]"].includes(base.hostname)
+  )
+    throw new Error("Registry credentials require HTTPS");
+  const headers: Record<string, string> = {};
+  if (authorization) headers.Authorization = authorization;
+  if (install) headers["X-Paseo-Install"] = "1";
+  const response = await fetch(`${identity.url.replace(/\/+$/, "")}/plugins/${identity.id}.json`, {
+    headers,
+    redirect: "error",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok)
+    throw new Error(`Registry ${base.host} returned ${response.status} for ${identity.id}`);
+  const plugin = PublishedPluginDetailSchema.parse(await response.json());
+  if (plugin.id !== identity.id) throw new Error("Registry returned a different plugin ID");
+  const artifact = plugin.artifact;
+  const target: PluginUpdateTarget =
+    artifact.kind === "npm"
+      ? {
+          kind: "npm",
+          version: artifact.version,
+          resolved: artifact.resolved,
+          integrity: artifact.integrity,
+        }
+      : { kind: "git", commit: artifact.commit };
+  const input =
+    artifact.kind === "npm"
+      ? { source: `npm:${artifact.package}@${artifact.version}` }
+      : { source: `git:${artifact.remote}`, ref: artifact.commit, pluginPath: artifact.pluginPath };
+  return { input, target, artifact };
+}

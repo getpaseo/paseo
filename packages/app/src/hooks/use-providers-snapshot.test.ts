@@ -9,7 +9,7 @@ import {
 } from "@getpaseo/protocol/provider-snapshot-codec";
 import type { CachedProviderSnapshot, ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
-import { resolveProviderIconName } from "@/components/provider-icon-name";
+import { providerSnapshotIcons } from "@/data/provider-icons";
 import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
 import {
   fetchProvidersSnapshot,
@@ -141,10 +141,9 @@ describe("fetchProvidersSnapshot", () => {
 
     await fetchProvidersSnapshot({ client, serverId, cwd: null, cache: createCache() });
 
-    expect(resolveProviderIconName("snapshot-icon-provider", serverId)).toEqual({
-      kind: "svg",
+    expect(providerSnapshotIcons.getState().get(serverId)?.get("snapshot-icon-provider")).toEqual(
       svg,
-    });
+    );
   });
 
   it("sends no cwd for the home scope", async () => {
