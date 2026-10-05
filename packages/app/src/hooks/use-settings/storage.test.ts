@@ -25,6 +25,8 @@ import {
 } from "@/components/sidebar/display-preferences/row-items";
 import { DEFAULT_CONTENT_MAX_WIDTH, THEME_OPTIONS } from "@/styles/theme";
 
+import { toggleSidebarTrailingItem } from "@/components/sidebar/workspace-trailing/selection";
+
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
 function makeDeps(
@@ -43,6 +45,37 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each(["diff", "timestamp", "both", "none"] as const)(
+    "preserves saved sidebar trailing mode %s",
+    async (mode) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ sidebarWorkspaceTrailing: mode }),
+        }),
+      });
+      expect((await loadAppSettingsFromStorage(deps)).sidebarWorkspaceTrailing).toBe(mode);
+    },
+  );
+
+  it("toggles sidebar stats independently and saves the combined choice", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const initial = await loadAppSettingsFromStorage(deps);
+    expect(initial.sidebarWorkspaceTrailing).toBe("timestamp");
+    const both = toggleSidebarTrailingItem({
+      trailing: initial.sidebarWorkspaceTrailing,
+      choice: "diff",
+    });
+    await saveAppSettings({ queryClient, updates: { sidebarWorkspaceTrailing: both }, deps });
+    expect((await loadAppSettingsFromStorage(deps)).sidebarWorkspaceTrailing).toBe("both");
+    const diffOnly = toggleSidebarTrailingItem({ trailing: both, choice: "timestamp" });
+    expect(diffOnly).toBe("diff");
+    expect(toggleSidebarTrailingItem({ trailing: both, choice: "diff" })).toBe("timestamp");
+    const neither = toggleSidebarTrailingItem({ trailing: diffOnly, choice: "diff" });
+    expect(neither).toBe("none");
+    expect(toggleSidebarTrailingItem({ trailing: neither, choice: "timestamp" })).toBe("timestamp");
+  });
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

@@ -1,3 +1,5 @@
+import { sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
+import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -1953,18 +1955,88 @@ export function SidebarWorkspaceList({
   // this whole subtree, which unmounted the header — and the header is where the display menu's
   // trigger lives, so filtering the last row away closed the menu you were filtering from.
   //
-  // Only the label filter can get here. The project filter resolves against the projects it can
-  // see and falls back to "all projects" when nothing matches, so it either keeps at least one
-  // project or is not applied at all — it can narrow this list but never empty it.
+  // Both label and occupancy filters can empty the list. Keep the menu mounted for recovery.
+  const projectVisibility = useSidebarViewStore((state) => state.projectVisibility);
   const sidebarFilterEmpty =
-    hasActiveLabelFilter && hasProjectsBeforeFilter && projects.length === 0;
+    (hasActiveLabelFilter || projectVisibility === "unarchived") &&
+    hasProjectsBeforeFilter &&
+    projects.length === 0;
 
   // Project mode is the one that keeps its project headers; every other grouping mode is a flat
   // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
   // one's `else`.
+  const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
+  const emptyProjectSortMode = useSidebarViewStore((state) => state.emptyProjectSortMode);
+  const emptyProjects = useMemo(() => {
+    const empty = projects.filter((project) => project.workspaces.length === 0);
+    return groupMode === "status" && emptyProjectSortMode === "project"
+      ? sortSidebarProjectsByName({ projects: empty })
+      : empty;
+  }, [projects, groupMode, emptyProjectSortMode]);
+  const projectModePins = useMemo(
+    () =>
+      groupEmptyProjects
+        ? {
+            ...pinnedGroups,
+            unpinnedProjects: pinnedGroups.unpinnedProjects.filter(
+              (project) => project.workspaces.length > 0,
+            ),
+          }
+        : pinnedGroups,
+    [groupEmptyProjects, pinnedGroups],
+  );
+  const emptyProjectPins = useMemo(
+    () => ({ pinnedChats: [], unpinnedProjects: emptyProjects }),
+    [emptyProjects],
+  );
+  const emptyProjectContent = useMemo(
+    () =>
+      emptyProjects.length > 0 ? (
+        <ProjectModeList
+          bodyOnly
+          projects={emptyProjects}
+          pinnedGroups={emptyProjectPins}
+          workspaceEntriesByKey={workspaceEntriesByKey}
+          projectIconByProjectViewKey={projectIconByProjectViewKey}
+          collapsedProjectKeys={collapsedProjectKeys}
+          onToggleProjectCollapsed={onToggleProjectCollapsed}
+          shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+          onWorkspacePress={onWorkspacePress}
+          sidebarFilterEmpty={false}
+          hasActiveProjectFilter={false}
+          parentGestureRef={parentGestureRef}
+          dragGestureHostActive={dragGestureHostActive}
+          pathname={pathname}
+          hostBadgeByServerId={hostBadgeByServerId}
+          supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+          supportsPinningByServerId={supportsPinningByServerId}
+          onToggleWorkspacePin={onToggleWorkspacePin}
+          onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
+        />
+      ) : null,
+    [
+      emptyProjects,
+      emptyProjectPins,
+      workspaceEntriesByKey,
+      projectIconByProjectViewKey,
+      collapsedProjectKeys,
+      onToggleProjectCollapsed,
+      shortcutIndexByWorkspaceKey,
+      onWorkspacePress,
+      parentGestureRef,
+      dragGestureHostActive,
+      pathname,
+      hostBadgeByServerId,
+      supportsMultiplicityByServerId,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      handlePinnedWorkspaceReorder,
+    ],
+  );
   const content =
     groupMode !== "project" ? (
       <SidebarGroupedModeList
+        emptyProjectContent={emptyProjectContent}
         workspaceGroups={workspaceGroups}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
@@ -1983,7 +2055,8 @@ export function SidebarWorkspaceList({
     ) : (
       <ProjectModeList
         projects={projects}
-        pinnedGroups={pinnedGroups}
+        pinnedGroups={projectModePins}
+        emptyProjectContent={groupEmptyProjects ? emptyProjectContent : null}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
         collapsedProjectKeys={collapsedProjectKeys}
@@ -2017,6 +2090,7 @@ export function SidebarWorkspaceList({
  * above it was status-only.
  */
 function SidebarGroupedModeList({
+  emptyProjectContent,
   workspaceGroups,
   pinnedGroups,
   workspaceEntriesByKey,
@@ -2032,6 +2106,7 @@ function SidebarGroupedModeList({
   parentGestureRef,
   dragGestureHostActive,
 }: {
+  emptyProjectContent?: ReactElement | null;
   workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -2059,6 +2134,7 @@ function SidebarGroupedModeList({
 
   return (
     <SidebarStatusWorkspaceList
+      emptyProjectContent={emptyProjectContent}
       groups={workspaceGroups}
       pinnedWorkspaces={pinnedWorkspaces}
       projectIconByProjectViewKey={projectIconByProjectViewKey}
@@ -2078,6 +2154,8 @@ function SidebarGroupedModeList({
 }
 
 function ProjectModeList({
+  bodyOnly = false,
+  emptyProjectContent,
   projects,
   pinnedGroups,
   workspaceEntriesByKey,
@@ -2109,7 +2187,10 @@ function ProjectModeList({
   | "isRefreshing"
   | "onRefresh"
 > & {
-  /** Swaps the list body for the label filter's empty state. Never the header above it. */
+  /** Render inside the grouped list's scroll owner for projects without workspaces. */
+  bodyOnly?: boolean;
+  emptyProjectContent?: ReactElement | null;
+  /** Swaps the list body for the filter's empty state. Never the header above it. */
   sidebarFilterEmpty: boolean;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;
@@ -2214,13 +2295,19 @@ function ProjectModeList({
       const currentProjectOrder = getProjectOrder();
       if (
         !hasVisibleOrderChanged({
-          currentOrder: currentProjectOrder,
+          currentOrder: unpinnedProjects.map((project) => project.viewKey),
           reorderedVisibleKeys: reorderedProjectKeys,
         })
       ) {
         return;
       }
 
+      const viewStore = useSidebarViewStore.getState();
+      if (viewStore.groupMode === "project") {
+        viewStore.setSortMode("custom");
+      } else {
+        viewStore.setEmptyProjectSortMode("custom");
+      }
       setProjectOrder(
         mergeWithRemainder({
           currentOrder: currentProjectOrder,
@@ -2228,7 +2315,7 @@ function ProjectModeList({
         }),
       );
     },
-    [getProjectOrder, setProjectOrder],
+    [getProjectOrder, setProjectOrder, unpinnedProjects],
   );
 
   const handleWorkspaceReorder = useCallback(
@@ -2237,13 +2324,17 @@ function ProjectModeList({
       const currentWorkspaceOrder = getWorkspaceOrder(projectViewKey);
       if (
         !hasVisibleOrderChanged({
-          currentOrder: currentWorkspaceOrder,
+          currentOrder:
+            unpinnedProjects
+              .find((project) => project.viewKey === projectViewKey)
+              ?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
           reorderedVisibleKeys: reorderedWorkspaceKeys,
         })
       ) {
         return;
       }
 
+      useSidebarViewStore.getState().setWorkspaceSortMode("custom");
       setWorkspaceOrder(
         projectViewKey,
         mergeWithRemainder({
@@ -2252,7 +2343,7 @@ function ProjectModeList({
         }),
       );
     },
-    [getWorkspaceOrder, setWorkspaceOrder],
+    [getWorkspaceOrder, setWorkspaceOrder, unpinnedProjects],
   );
 
   const handleWorktreeCreated = useCallback((workspaceId: string) => {
@@ -2453,15 +2544,22 @@ function ProjectModeList({
         project whose chats are all pinned leaves `unpinnedProjects` empty, and without its term
         the header would go with it, taking the only route back to the filter page. */}
       {unpinnedProjects.length > 0 ||
+      pinnedChats.length > 0 ||
+      emptyProjectContent ||
       hasActiveHostFilter ||
       hasActiveProjectFilter ||
       sidebarFilterEmpty
         ? listHeaderComponent
         : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
+      {emptyProjectContent ? (
+        <SidebarEmptyProjectGroup>{emptyProjectContent}</SidebarEmptyProjectGroup>
+      ) : null}
       {listFooterComponent}
     </>
   );
+
+  if (bodyOnly) return content;
 
   return (
     <View style={styles.container}>

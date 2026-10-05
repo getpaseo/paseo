@@ -56,11 +56,11 @@ export function selectMetaRowItems(input: {
   } = input;
   const items: MetaRowItem[] = [];
 
-  if (currentBranch && visible.branch) {
-    items.push({ kind: "branch", name: currentBranch });
-  }
   if (projectName && visible.project) {
     items.push({ kind: "project", name: projectName });
+  }
+  if (currentBranch && visible.branch) {
+    items.push({ kind: "branch", name: currentBranch });
   }
   if (hasHostBadge) {
     items.push({ kind: "host" });

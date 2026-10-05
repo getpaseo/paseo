@@ -6,10 +6,14 @@ import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export type SidebarGroupMode = "project" | "status";
+export type SidebarWorkspaceSortMode = "name" | "status" | "custom";
+export type SidebarSortMode = "project" | "status" | "custom";
+export type SidebarEmptyProjectSortMode = "project" | "custom";
+export type SidebarProjectVisibility = "all" | "unarchived";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 6;
+const SIDEBAR_VIEW_STORE_VERSION = 10;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -47,6 +51,11 @@ function toggleFilterEntry(list: readonly string[], key: string): string[] {
 
 interface SidebarViewStoreState {
   groupMode: SidebarGroupMode;
+  sortMode: SidebarSortMode;
+  workspaceSortMode: SidebarWorkspaceSortMode;
+  projectVisibility: SidebarProjectVisibility;
+  groupEmptyProjects: boolean;
+  emptyProjectSortMode: SidebarEmptyProjectSortMode;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
   hostFilters: string[];
   /**
@@ -61,7 +70,12 @@ interface SidebarViewStoreState {
    */
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
+  setEmptyProjectSortMode: (mode: SidebarEmptyProjectSortMode) => void;
+  setGroupEmptyProjects: (enabled: boolean) => void;
   setGroupMode: (mode: SidebarGroupMode) => void;
+  setWorkspaceSortMode: (mode: SidebarWorkspaceSortMode) => void;
+  setSortMode: (mode: SidebarSortMode) => void;
+  setProjectVisibility: (visibility: SidebarProjectVisibility) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   toggleProjectFilter: (viewKey: string) => void;
@@ -74,6 +88,11 @@ interface SidebarViewStoreState {
 
 interface SidebarViewPersistedState {
   groupMode: SidebarGroupMode;
+  sortMode: SidebarSortMode;
+  workspaceSortMode: SidebarWorkspaceSortMode;
+  projectVisibility: SidebarProjectVisibility;
+  groupEmptyProjects: boolean;
+  emptyProjectSortMode: SidebarEmptyProjectSortMode;
   hostFilters: string[];
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
@@ -85,6 +104,11 @@ const SidebarLabelFilterSchema = z.object({
 });
 const SidebarViewPersistedStateSchema = z.strictObject({
   groupMode: PersistedSidebarGroupModeSchema.optional(),
+  workspaceSortMode: z.enum(["name", "status", "custom"]).optional(),
+  sortMode: z.enum(["project", "status", "custom"]).optional(),
+  projectVisibility: z.enum(["all", "unarchived"]).optional(),
+  groupEmptyProjects: z.boolean().optional(),
+  emptyProjectSortMode: z.enum(["project", "custom"]).optional(),
   hostFilters: z.array(z.string()).optional(),
   hostFilter: z.string().nullable().optional(),
   projectFilters: z.array(z.string()).optional(),
@@ -123,6 +147,11 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   if (!result.success) {
     return {
       groupMode: "project",
+      sortMode: "custom",
+      workspaceSortMode: "custom",
+      projectVisibility: "all",
+      groupEmptyProjects: true,
+      emptyProjectSortMode: "custom",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -134,6 +163,11 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   if (legacyGroupMode) {
     return {
       groupMode: legacyGroupMode,
+      workspaceSortMode: legacyGroupMode === "status" ? "status" : "custom",
+      sortMode: legacyGroupMode === "status" ? "status" : "custom",
+      projectVisibility: legacyGroupMode === "status" ? "unarchived" : "all",
+      groupEmptyProjects: true,
+      emptyProjectSortMode: "custom",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -142,6 +176,14 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
 
   return {
     groupMode: state.groupMode === "status" ? "status" : "project",
+    // Preserve the old view once; subsequent grouping changes leave both choices alone.
+    workspaceSortMode:
+      state.workspaceSortMode ?? (state.groupMode === "status" ? "status" : "custom"),
+    sortMode: state.sortMode ?? (state.groupMode === "status" ? "status" : "custom"),
+    projectVisibility:
+      state.projectVisibility ?? (state.groupMode === "status" ? "unarchived" : "all"),
+    groupEmptyProjects: state.groupEmptyProjects ?? true,
+    emptyProjectSortMode: state.emptyProjectSortMode ?? "custom",
     hostFilters: readHostFilters(state),
     projectFilters: state.projectFilters ?? [],
     labelFilter: state.labelFilter
@@ -179,10 +221,20 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
   persist(
     (set) => ({
       groupMode: "project",
+      sortMode: "custom",
+      workspaceSortMode: "custom",
+      projectVisibility: "all",
+      groupEmptyProjects: true,
+      emptyProjectSortMode: "custom",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
+      setEmptyProjectSortMode: (mode) => set({ emptyProjectSortMode: mode }),
+      setGroupEmptyProjects: (enabled) => set({ groupEmptyProjects: enabled }),
       setGroupMode: (mode) => set({ groupMode: mode }),
+      setWorkspaceSortMode: (mode) => set({ workspaceSortMode: mode }),
+      setSortMode: (mode) => set({ sortMode: mode }),
+      setProjectVisibility: (visibility) => set({ projectVisibility: visibility }),
       toggleHostFilter: (serverId) =>
         set((state) => ({ hostFilters: toggleFilterEntry(state.hostFilters, serverId) })),
       clearHostFilters: () => set({ hostFilters: [] }),
@@ -229,6 +281,11 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       ),
       partialize: (state) => ({
         groupMode: state.groupMode,
+        workspaceSortMode: state.workspaceSortMode,
+        sortMode: state.sortMode,
+        projectVisibility: state.projectVisibility,
+        groupEmptyProjects: state.groupEmptyProjects,
+        emptyProjectSortMode: state.emptyProjectSortMode,
         hostFilters: state.hostFilters,
         projectFilters: state.projectFilters,
         labelFilter: state.labelFilter,

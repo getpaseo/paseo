@@ -1113,6 +1113,22 @@ export const ru: TranslationResources = {
         project: "Проект",
         status: "Статус",
         labels: "Метки",
+        emptyProjects: "Группировать пустые проекты отдельно",
+      },
+      sorting: {
+        label: "Сортировать проекты",
+        workspaces: "Сортировать рабочие пространства",
+        workspaceName: "Имя рабочего пространства",
+        project: "Название проекта",
+        status: "Статус",
+        custom: "Свой порядок",
+        emptyProjects: "Сортировка пустых проектов",
+      },
+      projectVisibility: {
+        label: "Фильтр",
+        all: "Все проекты",
+        unarchived: "Скрыть пустые проекты",
+        emptyGroup: "Пустые проекты",
       },
       titleSource: {
         label: "Заголовок",

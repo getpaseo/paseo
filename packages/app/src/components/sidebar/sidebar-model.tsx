@@ -1,3 +1,4 @@
+import { useAppSettings } from "@/hooks/use-settings";
 import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
@@ -15,6 +16,7 @@ import {
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
+import { filterSidebarProjects, arrangeSidebarProjects } from "./sidebar-arrangement";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
@@ -55,6 +57,13 @@ export function SidebarModelProvider({
   children: ReactNode;
 }) {
   const list = useSidebarWorkspacesList({ enabled: active });
+  const {
+    settings: { workspaceTitleSource },
+  } = useAppSettings();
+  const workspaceSortMode = useSidebarViewStore((state) => state.workspaceSortMode);
+  const statusWorkspaceOrder = useSidebarOrderStore((state) => state.statusWorkspaceOrder);
+  const sortMode = useSidebarViewStore((state) => state.sortMode);
+  const projectVisibility = useSidebarViewStore((state) => state.projectVisibility);
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
@@ -95,7 +104,11 @@ export function SidebarModelProvider({
   // anything; the label filter reads `labels`, which only exists on an entry. Hydration opens a
   // live session-store subscription over every workspace on every visible host, so widening this
   // for a filter that does not need it costs a retained-but-inactive sidebar real work.
-  const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
+  const needsWorkspaceEntries =
+    groupMode !== "project" ||
+    hasActiveLabelFilter ||
+    workspaceSortMode !== "custom" ||
+    (groupMode === "project" && sortMode === "status");
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
     active !== false || needsWorkspaceEntries,
@@ -116,7 +129,8 @@ export function SidebarModelProvider({
   // project itself, so a project you filtered TO survives even with no workspaces — it still owns
   // a header row you can create your first workspace under. The label filter can only ask about
   // workspaces, so a project it empties has nothing left to show.
-  const filteredProjects = useMemo(() => {
+  const labelFilteredWorkspaceKeys = hasActiveLabelFilter ? visibleWorkspaceKeys : null;
+  const visibleProjects = useMemo(() => {
     let projects = list.projects;
     if (hasActiveProjectFilter) {
       const included = new Set(resolvedProjectFilters);
@@ -125,19 +139,32 @@ export function SidebarModelProvider({
     if (hasActiveLabelFilter) {
       projects = projects.flatMap((project) => {
         const workspaces = project.workspaces.filter((workspace) =>
-          visibleWorkspaceKeys.has(workspace.workspaceKey),
+          labelFilteredWorkspaceKeys?.has(workspace.workspaceKey),
         );
         return workspaces.length > 0 ? [{ ...project, workspaces }] : [];
       });
     }
-    return projects;
+    return filterSidebarProjects(projects, projectVisibility);
   }, [
+    projectVisibility,
     hasActiveLabelFilter,
     hasActiveProjectFilter,
     resolvedProjectFilters,
     list.projects,
-    visibleWorkspaceKeys,
+    labelFilteredWorkspaceKeys,
   ]);
+  const filteredProjects = useMemo(
+    () =>
+      groupMode === "project"
+        ? arrangeSidebarProjects({
+            projects: visibleProjects,
+            mode: sortMode,
+            entries: workspaceEntriesByKey,
+            projectNames: list.projectNamesByViewKey,
+          })
+        : visibleProjects,
+    [groupMode, visibleProjects, sortMode, workspaceEntriesByKey, list.projectNamesByViewKey],
+  );
   const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
   const projectionInput = useMemo(
     () => ({
@@ -147,6 +174,9 @@ export function SidebarModelProvider({
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       projectNamesByViewKey: list.projectNamesByViewKey,
       groupMode,
+      workspaceSortMode,
+      workspaceTitleSource,
+      statusWorkspaceOrder,
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
@@ -155,6 +185,9 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,
+      workspaceSortMode,
+      workspaceTitleSource,
+      statusWorkspaceOrder,
       list.projectNamesByViewKey,
       filteredProjects,
       pinnedCollapsed,

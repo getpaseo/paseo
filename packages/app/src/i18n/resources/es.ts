@@ -1132,6 +1132,22 @@ export const es: TranslationResources = {
         project: "Proyecto",
         status: "Estado",
         labels: "Etiquetas",
+        emptyProjects: "Agrupar los proyectos vacíos por separado",
+      },
+      sorting: {
+        label: "Ordenar proyectos",
+        workspaces: "Ordenar espacios de trabajo",
+        workspaceName: "Nombre del espacio de trabajo",
+        project: "Nombre del proyecto",
+        status: "Estado",
+        custom: "Orden personalizado",
+        emptyProjects: "Ordenar proyectos vacíos",
+      },
+      projectVisibility: {
+        label: "Filtro",
+        all: "Todos los proyectos",
+        unarchived: "Ocultar proyectos vacíos",
+        emptyGroup: "Proyectos vacíos",
       },
       titleSource: {
         label: "Título",

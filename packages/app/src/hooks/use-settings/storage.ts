@@ -39,7 +39,7 @@ export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
 export type PullRequestOpenLocation = "main" | "side" | "explorer";
 /** What a sidebar workspace row shows in the space to the right of its title. */
-export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
+export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "both" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
 const ThemePreferenceSchema = z.enum([
@@ -242,7 +242,7 @@ const StoredAppSettingsSchema = z
       .catch(null),
     syntaxTheme: z.string().refine(isSyntaxThemeId).catch("one"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
-    sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),
+    sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "both", "none"]).catch("timestamp"),
     sidebarRowItems: SidebarRowItemsSchema,
     sidebarChecksDisplay: z
       .enum(["iconAndText", "icon", "none"])

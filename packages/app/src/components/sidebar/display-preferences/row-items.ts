@@ -13,8 +13,8 @@
  */
 
 export const SIDEBAR_ROW_ITEMS = [
-  "branch",
   "project",
+  "branch",
   "host",
   "changeRequest",
   "services",

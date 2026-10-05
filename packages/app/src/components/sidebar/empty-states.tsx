@@ -39,6 +39,7 @@ function SidebarEmptyStateCard({
 export function SidebarFilterEmptyState() {
   const { t } = useTranslation();
   const clearLabelFilter = useSidebarViewStore((state) => state.clearLabelFilter);
+  const setProjectVisibility = useSidebarViewStore((state) => state.setProjectVisibility);
   const clearProjectFilters = useSidebarViewStore((state) => state.clearProjectFilters);
   // Clears every filter that can empty the list, not just the one that did. The card names no
   // filter, so a Clear that undid only one of two active filters would leave it on screen looking
@@ -46,7 +47,8 @@ export function SidebarFilterEmptyState() {
   const clearFilters = useCallback(() => {
     clearLabelFilter();
     clearProjectFilters();
-  }, [clearLabelFilter, clearProjectFilters]);
+    setProjectVisibility("all");
+  }, [clearLabelFilter, clearProjectFilters, setProjectVisibility]);
 
   return (
     <SidebarEmptyStateCard

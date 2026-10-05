@@ -1,4 +1,8 @@
 import {
+  isSidebarTrailingItemEnabled,
+  type SidebarTrailingChoice,
+} from "../workspace-trailing/selection";
+import {
   useCallback,
   useMemo,
   useState,
@@ -25,6 +29,8 @@ import {
   Settings2,
   Tag,
   Type,
+  ArrowDownAZ,
+  GripVertical,
 } from "lucide-react-native";
 import {
   MenuItem,
@@ -49,11 +55,14 @@ import {
   hasActiveSidebarLabelFilter,
   SIDEBAR_UNLABELLED_LABEL_KEY,
   type SidebarGroupMode,
+  type SidebarSortMode,
+  type SidebarEmptyProjectSortMode,
+  type SidebarProjectVisibility,
 } from "@/stores/sidebar-view-store";
 import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
-import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
+import { useSidebarDisplayPreferences } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
@@ -68,7 +77,7 @@ const ThemedCircle = withUnistyles(Circle);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
-const MENU_WIDTH = 232;
+const MENU_WIDTH = 288;
 
 /**
  * Unlabelled's stand-in for a color dot: the same circle at the same size, hollow.
@@ -84,11 +93,45 @@ type OptionIcon = ComponentType<{
   uniProps: (theme: Theme) => { color: string };
 }>;
 
-// Options carry icons; the root rows deliberately do not. The root is four labels with their
+// Options carry icons; the root rows deliberately do not. The root is labels with their
 // current values, and a column of icons there would be decoration competing with the values.
 const GROUPING_ICONS: Record<SidebarGroupMode, OptionIcon> = {
   project: withUnistyles(Folder),
   status: withUnistyles(CircleDashed),
+};
+
+const SORTING_ICONS: Record<SidebarSortMode, OptionIcon> = {
+  project: withUnistyles(ArrowDownAZ),
+  status: GROUPING_ICONS.status,
+  custom: withUnistyles(GripVertical),
+};
+const VISIBILITY_ICONS: Record<SidebarProjectVisibility, OptionIcon> = {
+  all: GROUPING_ICONS.project,
+  unarchived: GROUPING_ICONS.status,
+};
+const WORKSPACE_SORTING_MODES = ["name", "status", "custom"] as const;
+const WORKSPACE_SORTING_ICONS = {
+  name: SORTING_ICONS.project,
+  status: SORTING_ICONS.status,
+  custom: SORTING_ICONS.custom,
+};
+const WORKSPACE_SORTING_LABEL_KEYS = {
+  name: "sidebar.display.sorting.workspaceName",
+  status: "sidebar.display.sorting.status",
+  custom: "sidebar.display.sorting.custom",
+};
+const SORTING_MODES: readonly SidebarSortMode[] = ["project", "status", "custom"];
+const EMPTY_PROJECT_SORTING_MODES: readonly SidebarEmptyProjectSortMode[] = ["project", "custom"];
+
+const PROJECT_VISIBILITIES: readonly SidebarProjectVisibility[] = ["all", "unarchived"];
+const SORTING_LABEL_KEYS: Record<SidebarSortMode, string> = {
+  project: "sidebar.display.sorting.project",
+  status: "sidebar.display.sorting.status",
+  custom: "sidebar.display.sorting.custom",
+};
+const VISIBILITY_LABEL_KEYS: Record<SidebarProjectVisibility, string> = {
+  all: "sidebar.display.projectVisibility.all",
+  unarchived: "sidebar.display.projectVisibility.unarchived",
 };
 
 const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
@@ -167,7 +210,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const hosts = useHosts();
   // `allProjects`, never `projects`: the model's `projects` is already filtered, so a picker fed
   // from it would lose the row that undoes the filter as soon as the filter narrowed to one.
-  const { allProjects, resolvedProjectFilters } = useSidebarModel();
+  const { allProjects, projects, resolvedProjectFilters } = useSidebarModel();
   const { labels } = useWorkspaceLabelProjection();
   const [managerOpen, setManagerOpen] = useState(false);
   const openManager = useCallback(() => setManagerOpen(true), []);
@@ -189,19 +232,96 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   // the only way back to a filter that is still hiding workspaces.
   const showLabelFilter = labels.length > 0 || hasActiveSidebarLabelFilter(preferences.labelFilter);
 
+  const showEmptyProjectSorting =
+    preferences.grouping === "status" &&
+    preferences.groupEmptyProjects &&
+    projects.some((project) => project.workspaces.length === 0);
+
+  const handleToggleEmptyProjects = useCallback(() => {
+    preferences.setGroupEmptyProjects(!preferences.groupEmptyProjects);
+  }, [preferences]);
+
   const pages = useMemo<MenuPageDefinition[]>(() => {
     const definitions: MenuPageDefinition[] = [
       {
         id: "grouping",
         title: t("sidebar.display.grouping.label"),
         content: (
+          <>
+            <OptionList
+              values={GROUPING_MODES}
+              icons={GROUPING_ICONS}
+              labelKeys={GROUPING_LABEL_KEYS}
+              selectedValue={preferences.grouping}
+              onSelect={preferences.setGrouping}
+              testIDPrefix="sidebar-grouping"
+            />
+            <MenuSeparator />
+            <OptionItem
+              value="emptyProjects"
+              icon={GROUPING_ICONS.project}
+              label={t("sidebar.display.grouping.emptyProjects")}
+              selected={preferences.groupEmptyProjects}
+              closeOnSelect={false}
+              onSelect={handleToggleEmptyProjects}
+              testID="sidebar-grouping-empty-projects"
+            />
+          </>
+        ),
+      },
+      {
+        id: "sorting",
+        title: t("sidebar.display.sorting.label"),
+        content: (
           <OptionList
-            values={GROUPING_MODES}
-            icons={GROUPING_ICONS}
-            labelKeys={GROUPING_LABEL_KEYS}
-            selectedValue={preferences.grouping}
-            onSelect={preferences.setGrouping}
-            testIDPrefix="sidebar-grouping"
+            values={SORTING_MODES}
+            icons={SORTING_ICONS}
+            labelKeys={SORTING_LABEL_KEYS}
+            selectedValue={preferences.sorting}
+            onSelect={preferences.setSorting}
+            testIDPrefix="sidebar-sorting"
+          />
+        ),
+      },
+      {
+        id: "sortingWorkspaces",
+        title: t("sidebar.display.sorting.workspaces"),
+        content: (
+          <OptionList
+            values={WORKSPACE_SORTING_MODES}
+            icons={WORKSPACE_SORTING_ICONS}
+            labelKeys={WORKSPACE_SORTING_LABEL_KEYS}
+            selectedValue={preferences.workspaceSorting}
+            onSelect={preferences.setWorkspaceSorting}
+            testIDPrefix="sidebar-workspace-sorting"
+          />
+        ),
+      },
+      {
+        id: "sortingEmptyProjects",
+        title: t("sidebar.display.sorting.emptyProjects"),
+        content: (
+          <OptionList
+            values={EMPTY_PROJECT_SORTING_MODES}
+            icons={SORTING_ICONS}
+            labelKeys={SORTING_LABEL_KEYS}
+            selectedValue={preferences.emptyProjectSorting}
+            onSelect={preferences.setEmptyProjectSorting}
+            testIDPrefix="sidebar-empty-project-sorting"
+          />
+        ),
+      },
+      {
+        id: "projectVisibility",
+        title: t("sidebar.display.projectVisibility.label"),
+        content: (
+          <OptionList
+            values={PROJECT_VISIBILITIES}
+            icons={VISIBILITY_ICONS}
+            labelKeys={VISIBILITY_LABEL_KEYS}
+            selectedValue={preferences.projectVisibility}
+            onSelect={preferences.setProjectVisibility}
+            testIDPrefix="sidebar-project-visibility"
           />
         ),
       },
@@ -272,6 +392,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
     return definitions;
   }, [
     t,
+    handleToggleEmptyProjects,
     preferences,
     hosts,
     showHostFilter,
@@ -307,6 +428,38 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             testID="sidebar-display-grouping"
           >
             {t("sidebar.display.grouping.label")}
+          </MenuSubTrigger>
+          {preferences.grouping === "project" ? (
+            <MenuSubTrigger
+              id="sorting"
+              value={t(SORTING_LABEL_KEYS[preferences.sorting])}
+              testID="sidebar-display-sorting"
+            >
+              {t("sidebar.display.sorting.label")}
+            </MenuSubTrigger>
+          ) : null}
+          <MenuSubTrigger
+            id="sortingWorkspaces"
+            value={t(WORKSPACE_SORTING_LABEL_KEYS[preferences.workspaceSorting])}
+            testID="sidebar-display-workspace-sorting"
+          >
+            {t("sidebar.display.sorting.workspaces")}
+          </MenuSubTrigger>
+          {showEmptyProjectSorting ? (
+            <MenuSubTrigger
+              id="sortingEmptyProjects"
+              value={t(SORTING_LABEL_KEYS[preferences.emptyProjectSorting])}
+              testID="sidebar-display-empty-project-sorting"
+            >
+              {t("sidebar.display.sorting.emptyProjects")}
+            </MenuSubTrigger>
+          ) : null}
+          <MenuSubTrigger
+            id="projectVisibility"
+            value={t(VISIBILITY_LABEL_KEYS[preferences.projectVisibility])}
+            testID="sidebar-display-project-visibility"
+          >
+            {t("sidebar.display.projectVisibility.label")}
           </MenuSubTrigger>
           <MenuSubTrigger
             id="titleSource"
@@ -541,8 +694,8 @@ function OptionList<Value extends string>({
 
 /**
  * Two groups, split by the separator. Above it, what a row may say about a workspace — each one
- * independent. Below it, the one thing the slot to the right of the title holds, so picking the
- * one already showing empties the slot and gives the width back to the title.
+ * independent. Below it, diff stats and last activity are independent toggles for the slot
+ * to the right of the title. Hiding both gives that width back to the title.
  *
  * CI is the one item above the separator with three answers rather than two, so it opens a page
  * instead of ticking, and it goes last: a row that navigates does not belong in the middle of a
@@ -572,7 +725,7 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           value={choice}
           icon={TRAILING_ICONS[choice]}
           label={t(TRAILING_LABEL_KEYS[choice])}
-          selected={preferences.trailing === choice}
+          selected={isSidebarTrailingItemEnabled({ trailing: preferences.trailing, choice })}
           closeOnSelect={false}
           onSelect={preferences.toggleTrailing}
           testID={`sidebar-workspace-trailing-${choice}`}

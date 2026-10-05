@@ -1,3 +1,4 @@
+import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import {
   splitPinnedSidebarGroups,
@@ -8,7 +9,8 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
-import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { arrangeSidebarWorkspaces } from "./sidebar-arrangement";
+import type { SidebarWorkspaceSortMode, SidebarGroupMode } from "@/stores/sidebar-view-store";
 import {
   resolveSidebarProjectIconTargets,
   type SidebarProjectIconTarget,
@@ -42,17 +44,32 @@ export interface SidebarProjectionInput {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
+  workspaceSortMode: SidebarWorkspaceSortMode;
+  workspaceTitleSource: WorkspaceTitleSource;
+  statusWorkspaceOrder: string[];
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
 }
 
+/** Project visible rows and keyboard shortcuts from the same sorting and pinning decisions. */
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
   const pinnedGroups = splitPinnedSidebarGroups({
     projects: input.projects,
     keys: input.pinnedKeys,
     pinnedWorkspaceOrder: input.pinnedWorkspaceOrder,
   });
+  if (input.groupMode === "project") {
+    pinnedGroups.unpinnedProjects = pinnedGroups.unpinnedProjects.map((project) => ({
+      ...project,
+      workspaces: arrangeSidebarWorkspaces({
+        workspaces: project.workspaces,
+        mode: input.workspaceSortMode,
+        entries: input.workspaceEntriesByKey,
+        workspaceTitleSource: input.workspaceTitleSource,
+      }),
+    }));
+  }
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
     (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
@@ -98,9 +115,31 @@ function buildWorkspaceGroups(
   switch (input.groupMode) {
     case "project":
       return [];
-    case "status":
-      return statusWorkspaceGroups(
+    case "status": {
+      const groups = statusWorkspaceGroups(
         buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey),
       );
+      const mode = input.workspaceSortMode;
+      if (mode === "status") return groups;
+      const customKeys = input.statusWorkspaceOrder;
+      const fallbackKeys = input.projects.flatMap((project) =>
+        project.workspaces.map((workspace) => workspace.workspaceKey),
+      );
+      const ranks = new Map(
+        [...new Set([...customKeys, ...fallbackKeys])].map((key, index) => [key, index]),
+      );
+      return groups.map((group) => {
+        const rows = [...group.rows].sort(
+          (a, b) => ranks.get(a.workspaceKey)! - ranks.get(b.workspaceKey)!,
+        );
+        group.rows = arrangeSidebarWorkspaces({
+          workspaces: rows,
+          mode,
+          entries: input.workspaceEntriesByKey,
+          workspaceTitleSource: input.workspaceTitleSource,
+        });
+        return group;
+      });
+    }
   }
 }

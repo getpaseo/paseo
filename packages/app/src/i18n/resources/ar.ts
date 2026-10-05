@@ -1096,6 +1096,22 @@ export const ar: TranslationResources = {
         project: "المشروع",
         status: "الحالة",
         labels: "التسميات",
+        emptyProjects: "تجميع المشاريع الفارغة بشكل منفصل",
+      },
+      sorting: {
+        label: "ترتيب المشاريع",
+        workspaces: "ترتيب مساحات العمل",
+        workspaceName: "اسم مساحة العمل",
+        project: "اسم المشروع",
+        status: "الحالة",
+        custom: "ترتيب مخصص",
+        emptyProjects: "ترتيب المشاريع الفارغة",
+      },
+      projectVisibility: {
+        label: "التصفية",
+        all: "كل المشاريع",
+        unarchived: "إخفاء المشاريع الفارغة",
+        emptyGroup: "المشاريع الفارغة",
       },
       titleSource: {
         label: "العنوان",
