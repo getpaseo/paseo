@@ -227,6 +227,95 @@ describe("OMP CLI runtime", () => {
     expect(eventTypes).toEqual(["notice"]);
   });
 
+  test("emits agent_end for a run that contains an OMP developer message", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const eventTypes: string[] = [];
+    session.onEvent((event) => eventTypes.push(event.type));
+
+    // OMP 18.5 injects a developer reminder mid-run when a tool call matches a rule.
+    const reminder = {
+      role: "developer",
+      content: [
+        { type: "text", text: '<system-reminder reason="rule_violation">…</system-reminder>' },
+      ],
+      attribution: "agent",
+      timestamp: 2,
+    };
+    child.stdout.write(`${JSON.stringify({ type: "message_end", message: reminder })}\n`);
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Write tiny.ts" }], timestamp: 1 },
+          reminder,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Done" }],
+            stopReason: "stop",
+            timestamp: 3,
+          },
+        ],
+      })}\n`,
+    );
+
+    expect(eventTypes).toEqual(["message_end", "agent_end"]);
+  });
+
+  test("emits agent_end for a run that contains every OMP message role Paseo does not render", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const eventTypes: string[] = [];
+    session.onEvent((event) => eventTypes.push(event.type));
+
+    // A prompt that @-mentions a file makes OMP add a fileMention message to the run.
+    const fileMention = {
+      role: "fileMention",
+      files: [{ path: "notes.md", content: "# Notes\n", lineCount: 1 }],
+      timestamp: 2,
+    };
+    child.stdout.write(`${JSON.stringify({ type: "message_end", message: fileMention })}\n`);
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Read @notes.md" }], timestamp: 1 },
+          fileMention,
+          {
+            role: "pythonExecution",
+            code: "print(1)",
+            output: "1\n",
+            cancelled: false,
+            truncated: false,
+            timestamp: 3,
+          },
+          {
+            role: "hookMessage",
+            customType: "hook",
+            content: "hook output",
+            display: false,
+            timestamp: 4,
+          },
+          { role: "branchSummary", summary: "Earlier branch", fromId: "entry-1", timestamp: 5 },
+          {
+            role: "compactionSummary",
+            summary: "Earlier turns",
+            tokensBefore: 1000,
+            timestamp: 6,
+          },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Done" }],
+            stopReason: "stop",
+            timestamp: 7,
+          },
+        ],
+      })}\n`,
+    );
+
+    expect(eventTypes).toEqual(["message_end", "agent_end"]);
+  });
+
   test("lists commands through get_available_commands", async () => {
     const child = createOmpChild();
     const commandTypes: string[] = [];
