@@ -65,6 +65,22 @@ API failures use RFC 9457 problem details. Missing, invalid, or revoked credenti
 
 A valid key without the scope required by an endpoint returns `403` in the same format.
 
+## Run cancellation receipts
+
+For durable cancellation, submit `POST /api/v1/commands` with a stable
+`commandId`, `type: "run.cancel"`, the run ID as `target`, and `args: {}`.
+Read its receipt with `GET /api/v1/commands/{commandId}`. Reusing the command ID
+with a different request fails.
+
+`GET /api/v1/runs/{runId}` distinguishes workflow completion from worker cleanup.
+An interrupt or archive acknowledgement does not prove that the provider stopped.
+For supported Codex workers on Unix, `process_exited` means the daemon observed
+the provider process group exit. Unsupported workers remain `unconfirmed`.
+
+To clean up a timed-out or completed run, use `args: { "cleanupTerminal": true }`
+on a cancellation command. This preserves the original workflow outcome and
+requires the same cancellation identity on retries; it does not launch new work.
+
 ## Trigger validation and installation
 
 `paseo hub deploy --dry-run` validates each `.paseo/triggers/*.yml` file through `POST /api/v1/triggers/validate`. `paseo hub deploy` validates all files first, then installs each through `POST /api/v1/triggers/install`.
