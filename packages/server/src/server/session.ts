@@ -7332,6 +7332,20 @@ export class Session {
         },
       );
 
+      const processExits = (await this.agentStorage.listByWorkspace(request.workspaceId))
+        .filter((record) => record.processExit !== undefined)
+        .map((record) => ({
+          agentId: record.id,
+          workspaceId: record.workspaceId!,
+          provider: record.provider,
+          kind: record.processExit!.kind,
+          groups: record.processExit!.groups,
+          pid: record.processExit!.pid,
+          processGroupId: record.processExit!.processGroupId,
+          observedAt: record.processExit!.observedAt,
+          exitCode: record.processExit!.exitCode,
+          signal: record.processExit!.signal,
+        }));
       const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
       const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
       this.emit({
@@ -7340,6 +7354,7 @@ export class Session {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           archivedAt,
+          processExits,
           error: null,
         },
       });

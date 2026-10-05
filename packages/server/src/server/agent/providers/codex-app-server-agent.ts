@@ -1,3 +1,4 @@
+import type { ProviderProcessExit } from "../../../utils/process-group-exit.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
@@ -245,6 +246,7 @@ const CODEX_MODES: AgentMode[] = [
 const DEFAULT_CODEX_MODE_ID = "auto";
 
 interface CodexAppServerClientLike {
+  getProcessExit?(): ProviderProcessExit | null;
   request(method: string, params?: unknown): Promise<unknown>;
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
   rollbackThread?(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse>;
@@ -4905,6 +4907,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private processExit: ProviderProcessExit | null = null;
+  getProcessExit(): ProviderProcessExit | null {
+    return this.processExit;
+  }
   async close(): Promise<void> {
     this.closed = true;
     this.clearPendingPermissions();
@@ -4940,6 +4946,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentTurnId = null;
     if (client) {
       await client.dispose();
+      this.processExit = client.getProcessExit?.() ?? null;
     }
     this.client = null;
   }

@@ -1708,12 +1708,17 @@ export class AgentManager {
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
+    const processExit = agent.session.getProcessExit?.();
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
 
     let persistError: unknown;
     try {
       await this.persistSnapshot(closedAgent);
+      if (processExit && this.registry) {
+        const record = await this.registry.get(agentId);
+        if (record) await this.registry.upsert({ ...record, processExit });
+      }
     } catch (error) {
       persistError = error;
     }

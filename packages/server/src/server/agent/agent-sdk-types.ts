@@ -1,3 +1,4 @@
+import type { ProviderProcessExit } from "../../utils/process-group-exit.js";
 import type {
   AgentProviderNotice,
   AgentTaskItem,
@@ -691,6 +692,7 @@ export interface AgentSession {
   interrupt(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
+  getProcessExit?(): ProviderProcessExit | null;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;

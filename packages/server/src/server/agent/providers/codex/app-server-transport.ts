@@ -3,6 +3,11 @@ import readline from "node:readline";
 import type { Logger } from "pino";
 import { z } from "zod";
 
+import {
+  detachedProcessGroup,
+  terminateDetachedGroup,
+  type ProviderProcessExit,
+} from "../../../../utils/process-group-exit.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -175,6 +180,11 @@ export class CodexAppServerClient {
   private unexpectedTerminationHandler: UnexpectedTerminationHandler | null = null;
   private nextId = 1;
   private disposed = false;
+  private readonly processGroup: Promise<number | null>;
+  private processExit: ProviderProcessExit | null = null;
+  getProcessExit(): ProviderProcessExit | null {
+    return this.processExit;
+  }
   private stderrBuffer = "";
 
   constructor(
@@ -182,6 +192,7 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
+    this.processGroup = detachedProcessGroup(child);
     this.rl = readline.createInterface({ input: child.stdout });
     this.rl.on("line", (line) => {
       void this.handleLine(line).catch((error) => {
@@ -265,6 +276,11 @@ export class CodexAppServerClient {
       this.child.stdin.end();
     } catch {
       // ignore
+    }
+    const group = await this.processGroup;
+    if (group !== null) {
+      this.processExit = await terminateDetachedGroup(this.child, group);
+      return;
     }
     const result = await terminateWithTreeKill(this.child, {
       gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,

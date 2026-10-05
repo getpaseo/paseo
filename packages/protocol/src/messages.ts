@@ -4536,6 +4536,22 @@ export const ArchiveWorkspaceResponseMessageSchema = z.object({
     requestId: z.string(),
     workspaceId: z.string(),
     archivedAt: z.string().nullable(),
+    processExits: z
+      .array(
+        z.object({
+          kind: z.enum(["provider_group", "daemon_tree"]),
+          groups: z.array(z.number().int().positive()).optional(),
+          agentId: z.string(),
+          workspaceId: z.string(),
+          provider: z.string(),
+          pid: z.number().int().positive(),
+          processGroupId: z.number().int().positive(),
+          observedAt: z.string(),
+          exitCode: z.number().int().nullable(),
+          signal: z.string().nullable(),
+        }),
+      )
+      .optional(),
     error: z.string().nullable(),
   }),
 });

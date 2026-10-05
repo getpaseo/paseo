@@ -75,6 +75,17 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  processExit: z
+    .object({
+      kind: z.enum(["provider_group", "daemon_tree"]),
+      groups: z.array(z.number().int().positive()).optional(),
+      pid: z.number().int().positive(),
+      processGroupId: z.number().int().positive(),
+      observedAt: z.string(),
+      exitCode: z.number().int().nullable(),
+      signal: z.string().nullable(),
+    })
+    .optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -259,6 +270,8 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (agent.lifecycle === "closed" && existing?.processExit)
+        record.processExit = existing.processExit;
       return record;
     });
   }
