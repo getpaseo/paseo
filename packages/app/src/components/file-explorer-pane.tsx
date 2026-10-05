@@ -16,6 +16,8 @@ import {
   Pressable,
   Text,
   View,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
   type StyleProp,
@@ -71,8 +73,14 @@ import {
   restoreExpandedDirectories,
   setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
+  type ExplorerListRow,
   type ExplorerTreeRow,
 } from "@/file-explorer/tree";
+import { settleExplorerTreeRestore } from "@/file-explorer/reveal";
+import {
+  useExplorerReveal,
+  type ScrollToIndexFailedInfo,
+} from "@/file-explorer/use-explorer-reveal";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useToast } from "@/contexts/toast-context";
@@ -135,11 +143,6 @@ function sortTriggerStyle({
 }: PressableStateCallbackType & { hovered?: boolean }) {
   return [styles.sortTrigger, (Boolean(hovered) || pressed) && styles.sortTriggerHovered];
 }
-
-type ExplorerListRow =
-  | { type: "entry"; row: ExplorerTreeRow }
-  | { type: "draft"; parentPath: string; kind: "file" | "directory"; depth: number }
-  | { type: "rename"; entry: ExplorerEntry; depth: number };
 
 type ExplorerPendingEdit =
   | { type: "create"; parentPath: string; kind: "file" | "directory" }
@@ -496,20 +499,39 @@ export function FileExplorerPane({
   const scrollbar = useOverlayFlatListScrollbar(treeListRef, { enabled: !isCompact });
 
   const hasInitializedRef = useRef(false);
+  // The workspace whose persisted expanded folders this tree has finished restoring. A reveal
+  // waits for it: the restore rewrites the expanded set when it lands, which would drop the
+  // folders a reveal expanded alongside it.
+  const [restoredWorkspaceStateKey, setRestoredWorkspaceStateKey] = useState<string | null>(null);
+  // One generation per restore attempt, so only the newest attempt can open the gate. The pane
+  // stays mounted across workspace switches, so after A -> B -> A an older A restore can land
+  // while the newer one is still running; comparing workspace keys can't tell them apart.
+  const restoreGenerationRef = useRef(0);
 
   useEffect(() => {
     hasInitializedRef.current = false;
   }, [workspaceStateKey]);
 
   useEffect(() => {
-    void initializeExplorer({
-      hasWorkspaceScope,
-      hasInitializedRef,
-      workspaceStateKey,
-      persistedExpandedPaths: expandedPaths,
-      showHiddenFiles,
-      requestDirectoryListing,
-      setExpandedPathsForWorkspace,
+    // Runs that find a restore already started or done restore nothing and keep its generation.
+    if (!hasInitializedRef.current) {
+      restoreGenerationRef.current += 1;
+      setRestoredWorkspaceStateKey(null);
+    }
+    const generation = restoreGenerationRef.current;
+    void settleExplorerTreeRestore({
+      restore: initializeExplorer({
+        hasWorkspaceScope,
+        hasInitializedRef,
+        workspaceStateKey,
+        persistedExpandedPaths: expandedPaths,
+        showHiddenFiles,
+        requestDirectoryListing,
+        setExpandedPathsForWorkspace,
+      }),
+      attemptKey: workspaceStateKey,
+      isCurrentAttempt: () => generation === restoreGenerationRef.current,
+      onSettled: setRestoredWorkspaceStateKey,
     });
   }, [
     expandedPaths,
@@ -935,6 +957,20 @@ export function FileExplorerPane({
     return rows;
   }, [pendingEdit, treeRows]);
 
+  const { onScrollToIndexFailed, onListLayout, onListScroll, onListContentSizeChange } =
+    useExplorerReveal({
+      serverId,
+      workspaceStateKey,
+      directories,
+      showHiddenFiles,
+      listRows,
+      treeListRef,
+      requestDirectoryListing,
+      setExpandedPathsForWorkspace,
+      selectExplorerEntry,
+      isTreeRestored: workspaceStateKey !== null && restoredWorkspaceStateKey === workspaceStateKey,
+    });
+
   const showInitialLoading = resolveShowInitialLoading({
     directories,
     isExplorerLoading,
@@ -1068,6 +1104,10 @@ export function FileExplorerPane({
         isRefreshFetching={isRefreshFetching}
         treeListRef={treeListRef}
         scrollbar={scrollbar}
+        onScrollToIndexFailed={onScrollToIndexFailed}
+        onListLayout={onListLayout}
+        onListScroll={onListScroll}
+        onListContentSizeChange={onListContentSizeChange}
         renderTreeRow={renderTreeRow}
         handleSortCycle={handleSortCycle}
         handleToggleHiddenFiles={handleToggleHiddenFiles}
@@ -1142,6 +1182,10 @@ interface FileExplorerPaneContentProps {
   isRefreshFetching: boolean;
   treeListRef: RefObject<FlatList<ExplorerListRow> | null>;
   scrollbar: OverlayFlatListScrollbar;
+  onScrollToIndexFailed: (info: ScrollToIndexFailedInfo) => void;
+  onListLayout: (event: LayoutChangeEvent) => void;
+  onListScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onListContentSizeChange: (width: number, height: number) => void;
   renderTreeRow: (info: ListRenderItemInfo<ExplorerListRow>) => ReactElement;
   handleSortCycle: () => void;
   handleToggleHiddenFiles: () => void;
@@ -1165,6 +1209,10 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     isRefreshFetching,
     treeListRef,
     scrollbar,
+    onScrollToIndexFailed,
+    onListLayout,
+    onListScroll,
+    onListContentSizeChange,
     renderTreeRow,
     handleSortCycle,
     handleToggleHiddenFiles,
@@ -1182,6 +1230,30 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   const handleNewFolderAtRoot = useCallback(() => {
     onNewEntryAtRoot?.(".", "directory");
   }, [onNewEntryAtRoot]);
+
+  const handleTreeLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      scrollbar.onLayout(event);
+      onListLayout(event);
+    },
+    [onListLayout, scrollbar],
+  );
+
+  const handleTreeScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollbar.onScroll(event);
+      onListScroll(event);
+    },
+    [onListScroll, scrollbar],
+  );
+
+  const handleTreeContentSizeChange = useCallback(
+    (width: number, height: number) => {
+      scrollbar.onContentSizeChange(width, height);
+      onListContentSizeChange(width, height);
+    },
+    [onListContentSizeChange, scrollbar],
+  );
 
   const hiddenFilesToggleAccessibilityLabel = showHiddenFiles
     ? t("workspace.fileExplorer.actions.hideHiddenFiles")
@@ -1328,9 +1400,10 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
               keyExtractor={listRowKeyExtractor}
               testID="file-explorer-tree-scroll"
               contentContainerStyle={styles.entriesContent}
-              onLayout={scrollbar.onLayout}
-              onScroll={scrollbar.onScroll}
-              onContentSizeChange={scrollbar.onContentSizeChange}
+              onLayout={handleTreeLayout}
+              onScroll={handleTreeScroll}
+              onContentSizeChange={handleTreeContentSizeChange}
+              onScrollToIndexFailed={onScrollToIndexFailed}
               scrollEventThrottle={16}
               showsVerticalScrollIndicator={!scrollbar.enabled}
               initialNumToRender={24}
@@ -1537,6 +1610,11 @@ function replaceExplorerPathPrefix(
   return `${nextPrefix}${candidatePath.slice(previousPrefix.length)}`;
 }
 
+/**
+ * Lists the root and restores the persisted expanded folders. Resolves to the workspace key once
+ * the restore landed, or null when this call restored nothing: already initialized, no workspace,
+ * or no root listing yet (a later run retries). Folders whose listing fails are skipped.
+ */
 async function initializeExplorer({
   hasWorkspaceScope,
   hasInitializedRef,
@@ -1556,9 +1634,9 @@ async function initializeExplorer({
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<ExplorerDirectory | null>;
   setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: ExpandedPathsUpdate) => void;
-}): Promise<void> {
+}): Promise<string | null> {
   if (!hasWorkspaceScope || hasInitializedRef.current) {
-    return;
+    return null;
   }
   hasInitializedRef.current = true;
   const rootDirectory = await requestDirectoryListing(".", {
@@ -1567,10 +1645,10 @@ async function initializeExplorer({
   });
   if (!rootDirectory) {
     hasInitializedRef.current = false;
-    return;
+    return null;
   }
   if (!workspaceStateKey) {
-    return;
+    return null;
   }
 
   const restoredPaths = await restoreExpandedDirectories({
@@ -1594,6 +1672,7 @@ async function initializeExplorer({
       restoredExpandedPaths: restoredPathsWithHidden,
     }),
   );
+  return workspaceStateKey;
 }
 
 async function refreshExplorerDirectories({

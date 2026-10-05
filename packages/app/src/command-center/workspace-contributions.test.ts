@@ -54,6 +54,7 @@ function source(gitActions: GitActions): {
         copyAgentId: "Copy agent id",
         copyTerminalId: "Copy terminal id",
         copyFilePath: "Copy file path",
+        revealInFiles: "Reveal in Files",
         closeTabsLeft: "Close tabs left",
         closeTabsRight: "Close tabs right",
         closeOtherTabs: "Close other tabs",
@@ -213,6 +214,61 @@ describe("workspace command center contributions", () => {
     expect(
       fixture.dispatched.some((a) => a.id === "sidebar.toggle.right" && a.scope === "sidebar"),
     ).toBe(true);
+  });
+
+  it("lists Reveal in Files only when the focused tab is a file, with no default shortcut", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    const withoutTab = buildWorkspaceCommandCenterContributions(fixture.value);
+    const withAgentTab = buildWorkspaceCommandCenterContributions({
+      ...fixture.value,
+      activeTabKind: "agent",
+      activeTabIndex: 0,
+      activeTabCount: 1,
+    });
+    const withFileTab = buildWorkspaceCommandCenterContributions({
+      ...fixture.value,
+      activeTabKind: "file",
+      activeTabIndex: 0,
+      activeTabCount: 1,
+    });
+
+    expect(withoutTab.map((item) => item.id)).not.toContain("tab:reveal-in-files");
+    expect(withAgentTab.map((item) => item.id)).not.toContain("tab:reveal-in-files");
+    const reveal = withFileTab.find((item) => item.id === "tab:reveal-in-files");
+    expect(reveal?.visibility).toBe("query");
+    expect(reveal?.presentation).toMatchObject({
+      title: "Reveal in Files",
+      shortcutKeys: undefined,
+    });
+    reveal?.run();
+    expect(fixture.dispatched).toEqual([
+      { id: "workspace.tab.reveal-in-files", scope: "workspace" },
+    ]);
+  });
+
+  it("orders Reveal in Files right after Copy file path, with no shared ranks", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    const contributions = buildWorkspaceCommandCenterContributions({
+      ...fixture.value,
+      activeTabKind: "file",
+      activeTabIndex: 1,
+      activeTabCount: 3,
+    });
+    const tabActions = contributions.filter(
+      (item) => item.id.startsWith("tab:") && !/^tab:(open|new)/.test(item.id),
+    );
+
+    expect(tabActions.toSorted((a, b) => a.rank - b.rank).map((item) => item.id)).toEqual([
+      "tab:previous",
+      "tab:next",
+      "tab:close-current",
+      "tab:copy-file-path",
+      "tab:reveal-in-files",
+      "tab:close-left",
+      "tab:close-right",
+      "tab:close-others",
+    ]);
+    expect(new Set(tabActions.map((item) => item.rank)).size).toBe(tabActions.length);
   });
 
   it("keeps workspace creation commands available outside Git", () => {

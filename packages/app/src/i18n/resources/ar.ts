@@ -524,6 +524,11 @@ export const ar: TranslationResources = {
         revealFailed: "فشل إظهار العنصر",
         deleteFailed: "فشل حذف العنصر",
       },
+      reveal: {
+        outsideWorkspace: "هذا الملف خارج مساحة العمل",
+        hidden: "هذا الملف مخفي. أظهر الملفات المخفية لرؤيته.",
+        notFound: "لم يتم العثور على الملف في الملفات",
+      },
       draft: {
         filePlaceholder: "اسم الملف",
         folderPlaceholder: "اسم المجلد",
@@ -631,6 +636,7 @@ export const ar: TranslationResources = {
         copyAgentId: "نسخ معرف الوكيل",
         copyTerminalId: "نسخ معرف المحطة",
         copyFilePath: "Copy file path",
+        revealInFiles: "إظهار في الملفات",
         rename: "إعادة تسمية",
         closeAbove: "إغلاق علامات التبويب أعلاه",
         closeBelow: "إغلاق علامات التبويب أدناه",

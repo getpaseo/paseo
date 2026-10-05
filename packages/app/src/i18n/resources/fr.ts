@@ -530,6 +530,11 @@ export const fr: TranslationResources = {
         revealFailed: "Échec de l'affichage de l'entrée",
         deleteFailed: "Échec de la suppression de l'entrée",
       },
+      reveal: {
+        outsideWorkspace: "Ce fichier se trouve en dehors de l'espace de travail",
+        hidden: "Ce fichier est caché. Affichez les fichiers cachés pour le voir.",
+        notFound: "Fichier introuvable dans Fichiers",
+      },
       draft: {
         filePlaceholder: "Nom du fichier",
         folderPlaceholder: "Nom du dossier",
@@ -637,6 +642,7 @@ export const fr: TranslationResources = {
         copyAgentId: "Copier l'identifiant de l'agent",
         copyTerminalId: "Copier l'identifiant du terminal",
         copyFilePath: "Copy file path",
+        revealInFiles: "Afficher dans Fichiers",
         rename: "Rebaptiser",
         closeAbove: "Fermer les onglets ci-dessus",
         closeBelow: "Fermer les onglets ci-dessous",

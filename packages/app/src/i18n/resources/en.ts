@@ -521,6 +521,11 @@ export const en = {
         revealFailed: "Failed to reveal entry",
         deleteFailed: "Failed to delete entry",
       },
+      reveal: {
+        outsideWorkspace: "This file is outside the workspace",
+        hidden: "This file is hidden. Show hidden files to see it.",
+        notFound: "File not found in Files",
+      },
       draft: {
         filePlaceholder: "File name",
         folderPlaceholder: "Folder name",
@@ -628,6 +633,7 @@ export const en = {
         copyAgentId: "Copy agent id",
         copyTerminalId: "Copy terminal id",
         copyFilePath: "Copy file path",
+        revealInFiles: "Reveal in Files",
         rename: "Rename",
         closeAbove: "Close tabs above",
         closeBelow: "Close tabs below",

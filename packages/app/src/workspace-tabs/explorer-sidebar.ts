@@ -47,18 +47,21 @@ function canUseExplorerSidebar(
   return resolveExplorerSidebarPresentation(input) === "pane";
 }
 
-/** Reveals the Explorer sidebar and selects one of its navigation trees. */
+/**
+ * Reveals the Explorer sidebar and selects one of its navigation trees. Returns false when
+ * nothing opened: the compact overlay needs a checkout, the desktop pane a workspace layout key.
+ */
 export function openExplorerSidebarView(
   input: ExplorerSidebarInput & { view: ExplorerSidebarView },
-): void {
+): boolean {
   if (usesCompactExplorerSidebar(input)) {
-    if (!input.checkout) return;
+    if (!input.checkout) return false;
     const panel = usePanelStore.getState();
     panel.setExplorerTabForCheckout({ ...input.checkout, tab: input.view });
     panel.openCompactFileExplorer(input.checkout);
-    return;
+    return true;
   }
-  if (!input.workspaceKey) return;
+  if (!input.workspaceKey) return false;
   const store = useWorkspaceLayoutStore.getState();
   const paneId = store.showExplorerSidebar(input.workspaceKey);
   store.openTab({
@@ -67,6 +70,7 @@ export function openExplorerSidebarView(
     intent: "reveal",
     placement: paneId ? { mode: "pane", paneId } : undefined,
   });
+  return true;
 }
 
 export function showExplorerSidebar(input: ExplorerSidebarInput): void {

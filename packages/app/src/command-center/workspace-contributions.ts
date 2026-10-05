@@ -35,6 +35,7 @@ export interface WorkspaceCommandCenterLabels {
   copyAgentId: string;
   copyTerminalId: string;
   copyFilePath: string;
+  revealInFiles: string;
   closeTabsLeft: string;
   closeTabsRight: string;
   closeOtherTabs: string;
@@ -67,6 +68,7 @@ export interface WorkspaceCommandCenterIcons {
   splitDown?: CommandCenterIcon;
   changes?: CommandCenterIcon;
   files?: CommandCenterIcon;
+  revealInFiles?: CommandCenterIcon;
   pullRequest?: CommandCenterIcon;
   previousTab?: CommandCenterIcon;
   nextTab?: CommandCenterIcon;
@@ -343,13 +345,21 @@ function buildActiveTabContributions(
         icon: source.icons.copy,
         action: { id: "workspace.tab.copy-file-path", scope: "workspace" },
       }),
+      buildQueryAction(source, {
+        id: "tab:reveal-in-files",
+        rank: 38,
+        title: source.labels.revealInFiles,
+        keywords: ["tab", "file", "reveal", "locate", "show", "explorer", "files", "tree"],
+        icon: source.icons.revealInFiles,
+        action: { id: "workspace.tab.reveal-in-files", scope: "workspace" },
+      }),
     );
   }
   if (source.activeTabIndex > 0) {
     contributions.push(
       buildQueryAction(source, {
         id: "tab:close-left",
-        rank: 38,
+        rank: 39,
         title: source.labels.closeTabsLeft,
         keywords: ["tab", "close", "left"],
         icon: source.icons.close,
@@ -361,7 +371,7 @@ function buildActiveTabContributions(
     contributions.push(
       buildQueryAction(source, {
         id: "tab:close-right",
-        rank: 39,
+        rank: 40,
         title: source.labels.closeTabsRight,
         keywords: ["tab", "close", "right"],
         icon: source.icons.close,
@@ -373,7 +383,7 @@ function buildActiveTabContributions(
     contributions.push(
       buildQueryAction(source, {
         id: "tab:close-others",
-        rank: 40,
+        rank: 41,
         title: source.labels.closeOtherTabs,
         keywords: ["tab", "close", "others"],
         icon: source.icons.close,

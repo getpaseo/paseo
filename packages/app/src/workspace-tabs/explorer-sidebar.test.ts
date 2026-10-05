@@ -78,6 +78,23 @@ describe("Explorer sidebar", () => {
     expect(layout && collectAllTabs(layout.root).map((tab) => tab.target.kind)).toContain("files");
   });
 
+  it("reports whether it opened the Explorer", () => {
+    const compact = { isCompact: true, workspaceKey: null, view: "files" } as const;
+    const desktop = { isCompact: false, supportsPaneSplits: true, view: "files" } as const;
+
+    expect(openExplorerSidebarView({ ...compact, checkout: null })).toBe(false);
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+    expect(openExplorerSidebarView({ ...desktop, workspaceKey: null, checkout: CHECKOUT })).toBe(
+      false,
+    );
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toEqual({});
+
+    expect(openExplorerSidebarView({ ...compact, checkout: CHECKOUT })).toBe(true);
+    expect(
+      openExplorerSidebarView({ ...desktop, workspaceKey: WORKSPACE_KEY, checkout: CHECKOUT }),
+    ).toBe(true);
+  });
+
   it("toggles the desktop Explorer independently of ordinary panes", () => {
     const input = {
       isCompact: false,

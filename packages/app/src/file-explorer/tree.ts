@@ -9,6 +9,11 @@ export interface ExplorerTreeRow {
   depth: number;
 }
 
+export type ExplorerListRow =
+  | { type: "entry"; row: ExplorerTreeRow }
+  | { type: "draft"; parentPath: string; kind: "file" | "directory"; depth: number }
+  | { type: "rename"; entry: ExplorerEntry; depth: number };
+
 interface FlattenExplorerTreeInput {
   directories: ReadonlyMap<string, ExplorerDirectory>;
   expandedPaths: ReadonlySet<string>;

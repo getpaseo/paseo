@@ -524,6 +524,11 @@ export const zhCN: TranslationResources = {
         revealFailed: "显示条目失败",
         deleteFailed: "删除条目失败",
       },
+      reveal: {
+        outsideWorkspace: "此文件位于工作区之外",
+        hidden: "此文件已隐藏。显示隐藏文件即可查看。",
+        notFound: "在文件中未找到此文件",
+      },
       draft: {
         filePlaceholder: "文件名",
         folderPlaceholder: "文件夹名称",
@@ -631,6 +636,7 @@ export const zhCN: TranslationResources = {
         copyAgentId: "复制 Agent ID",
         copyTerminalId: "复制 Terminal ID",
         copyFilePath: "Copy file path",
+        revealInFiles: "在文件中显示",
         rename: "重命名",
         closeAbove: "关闭上方标签",
         closeBelow: "关闭下方标签",
