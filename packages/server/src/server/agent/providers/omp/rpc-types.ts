@@ -637,6 +637,8 @@ export type OmpAgentSessionEvent = z.infer<typeof OmpAgentSessionEventSchema>;
 export type OmpRuntimeEvent = z.infer<typeof OmpRuntimeEventSchema>;
 
 /**
+ * COMPAT(ompLatePromptRejection): added in v0.11.0, remove after 2027-04-05 once the
+ * minimum supported OMP version emits prompt_result errors.
  * OMP 18.3 reports a prompt it rejects after acknowledging it, such as one whose model has
  * no API key, only as a second failed `response` frame for the prompt id. Later releases
  * report the same outcome as a `prompt_result` with `status: "error"`.
