@@ -2473,12 +2473,16 @@ class ClaudeAgentSession implements AgentSession {
   private changeExecutionMode(
     resolveNext: (current: ClaudeExecutionMode) => ClaudeExecutionMode,
   ): Promise<void> {
-    const change = this.executionModeChange.then(() =>
+    return this.runExecutionModeChange(() =>
       this.applyExecutionMode(resolveNext(this.executionMode)),
     );
+  }
+
+  private runExecutionModeChange(change: () => Promise<void>): Promise<void> {
+    const run = this.executionModeChange.then(change);
     // A failed change still reaches its caller; the next one starts from the state it left.
-    this.executionModeChange = change.catch(() => undefined);
-    return change;
+    this.executionModeChange = run.catch(() => undefined);
+    return run;
   }
 
   private async applyExecutionMode(next: ClaudeExecutionMode): Promise<void> {
@@ -2705,12 +2709,17 @@ class ClaudeAgentSession implements AgentSession {
     const selectedActionId = response.behavior === "allow" ? response.selectedActionId : undefined;
     if (response.behavior === "allow" && pending.request.kind === "plan") {
       // Leave Plan before taking the card down, so a failed mode change leaves it answerable.
-      // Claude can withdraw the card while an earlier change runs; then the approval changes nothing.
-      await this.changeExecutionMode((current) =>
-        this.pendingPermissions.get(requestId) === pending
-          ? approveClaudePlan(current, selectedActionId)
-          : current,
-      );
+      // Claude can withdraw the card before or while Plan is left; then the approval changes nothing.
+      await this.runExecutionModeChange(async () => {
+        if (this.pendingPermissions.get(requestId) !== pending) {
+          return;
+        }
+        const previous = this.executionMode;
+        await this.applyExecutionMode(approveClaudePlan(previous, selectedActionId));
+        if (this.pendingPermissions.get(requestId) !== pending) {
+          await this.applyExecutionMode(previous);
+        }
+      });
       if (this.pendingPermissions.get(requestId) !== pending) {
         return;
       }

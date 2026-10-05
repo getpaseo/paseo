@@ -12,6 +12,12 @@ import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../a
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
 
+interface PermissionModeHold {
+  /** Resolves once the held setPermissionMode call has started. */
+  reached: Promise<void>;
+  release(): void;
+}
+
 interface FakeClaudeQuery {
   query: Query;
   permissionModes: PermissionMode[];
@@ -21,13 +27,13 @@ interface FakeClaudeQuery {
   /** Ends the stream before a result, the way it ends when the Claude Code process dies. */
   end(): void;
   /** Makes the next setPermissionMode call wait, the way a busy Claude Code process answers late. */
-  holdNextPermissionMode(): () => void;
+  holdNextPermissionMode(): PermissionModeHold;
 }
 
 function createFakeClaudeQuery(): FakeClaudeQuery {
   const permissionModes: PermissionMode[] = [];
   let permissionModeFailure: string | null = null;
-  let permissionModeHold: Promise<void> | null = null;
+  let permissionModeHold: { reached(): void; released: Promise<void> } | null = null;
   const pending: SDKMessage[] = [];
   const waiters: Array<(result: IteratorResult<SDKMessage, void>) => void> = [];
   let ended = false;
@@ -45,7 +51,10 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
       permissionModes.push(mode);
       const hold = permissionModeHold;
       permissionModeHold = null;
-      if (hold) await hold;
+      if (hold) {
+        hold.reached();
+        await hold.released;
+      }
     },
     async applyFlagSettings() {},
     async setModel() {},
@@ -88,10 +97,15 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
     end: finish,
     holdNextPermissionMode() {
       let release = () => {};
-      permissionModeHold = new Promise<void>((resolve) => {
+      let markReached = () => {};
+      const released = new Promise<void>((resolve) => {
         release = resolve;
       });
-      return release;
+      const reached = new Promise<void>((resolve) => {
+        markReached = resolve;
+      });
+      permissionModeHold = { reached: markReached, released };
+      return { reached, release };
     },
   };
 }
@@ -378,10 +392,10 @@ describe("Claude Plan is a feature beside the access mode", () => {
     const { session, queries } = await createPlanSession({ modeId: "bypassPermissions" });
     await session.setFeature?.("plan_mode", true);
 
-    const release = queries[0]?.holdNextPermissionMode();
+    const hold = queries[0]?.holdNextPermissionMode();
     const planOff = session.setFeature?.("plan_mode", false);
     const accessChange = session.setMode("default");
-    release?.();
+    hold?.release();
     await Promise.all([planOff, accessChange]);
 
     await expect(session.getCurrentMode()).resolves.toBe("default");
@@ -499,19 +513,56 @@ describe("Claude plan approval and query restarts", () => {
     const [request] = harness.session.getPendingPermissions();
     if (!request) throw new Error("Expected a pending plan approval");
 
-    const release = harness.queries[0]?.holdNextPermissionMode();
+    const hold = harness.queries[0]?.holdNextPermissionMode();
     const planOff = harness.session.setFeature?.("plan_mode", false);
     const approval = harness.session.respondToPermission(request.id, {
       behavior: "allow",
       selectedActionId: "implement",
     });
     abort.abort();
-    release?.();
+    hold?.release();
     await Promise.all([planOff, approval]);
 
     await expect(callback).resolves.toEqual({ rejected: "Permission request aborted" });
     await expect(harness.session.getCurrentMode()).resolves.toBe("bypassPermissions");
     expect(harness.queries[0]?.permissionModes).toEqual(["plan", "bypassPermissions"]);
+  });
+
+  test("a plan approval whose card is withdrawn while Plan is being left changes nothing", async () => {
+    const harness = await createPlanSession({ modeId: "bypassPermissions" });
+    await harness.session.setFeature?.("plan_mode", true);
+    await harness.session.startTurn("plan the docs change");
+    const abort = new AbortController();
+    const outcome = harness
+      .canUseTool()(
+        "ExitPlanMode",
+        { plan: "Edit README.md" },
+        { ...toolCallOptions("tool-plan"), signal: abort.signal },
+      )
+      .then(
+        () => "answered",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+    const [request] = harness.session.getPendingPermissions();
+    if (!request) throw new Error("Expected a pending plan approval");
+    const hold = harness.queries[0]?.holdNextPermissionMode();
+    if (!hold) throw new Error("Expected a Claude query");
+
+    const approval = harness.session.respondToPermission(request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    await hold.reached;
+    abort.abort();
+    hold.release();
+    await approval;
+
+    await expect(outcome).resolves.toBe("Permission request aborted");
+    await expect(harness.session.getCurrentMode()).resolves.toBe("bypassPermissions");
+    expect(harness.session.features).toContainEqual(
+      expect.objectContaining({ id: "plan_mode", value: true }),
+    );
+    expect(harness.queries[0]?.permissionModes.at(-1)).toBe("plan");
   });
 
   test("Always Ask plus Plan offers no Implement with Bypass", async () => {
