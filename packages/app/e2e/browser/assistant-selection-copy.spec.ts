@@ -120,6 +120,41 @@ async function selectAssistantElement(page: Page, selector: string): Promise<voi
   });
 }
 
+/**
+ * Select an element from the end of the text before it. A drag that starts in the gap
+ * above a block anchors there, so nothing outside the element is highlighted.
+ */
+async function selectAssistantElementFromEndOf(
+  page: Page,
+  startText: string,
+  selector: string,
+): Promise<void> {
+  await assistantMessageBlocks(page).evaluateAll(
+    (blocks, selected) => {
+      let startNode: Text | null = null;
+      for (const block of blocks) {
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          if (walker.currentNode.textContent?.endsWith(selected.startText)) {
+            startNode = walker.currentNode as Text;
+          }
+        }
+      }
+      const end = blocks.map((block) => block.querySelector(selected.selector)).find(Boolean);
+      if (!startNode || !end) {
+        throw new Error(`Could not find ${selected.startText} — ${selected.selector}`);
+      }
+      const range = document.createRange();
+      range.setStart(startNode, startNode.length);
+      range.setEnd(end, end.childNodes.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    },
+    { startText, selector },
+  );
+}
+
 async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
 }
@@ -564,6 +599,19 @@ test("copying an assistant selection preserves Markdown structure and links", as
 
     const completeCodeClipboard = await readRichClipboard(page);
     expect(completeCodeClipboard.plainText).toBe('const answer = "yes";\n  return answer;');
+
+    // Touching the block before it without selecting any of its text is still a
+    // selection inside the code.
+    await selectAssistantElementFromEndOf(
+      page,
+      "not a generated link.",
+      '[data-paseo-markdown-language="typescript"] [data-paseo-markdown-tag="code"]',
+    );
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      'const answer = "yes";\n  return answer;',
+    );
 
     // Crossing the block boundary expresses an intent to carry its Markdown structure.
     await selectAssistantAcrossCodeLines(page, "const", "After code.");

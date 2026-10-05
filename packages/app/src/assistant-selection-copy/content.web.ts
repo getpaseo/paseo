@@ -67,8 +67,8 @@ export function createAssistantSelectionClipboardContent(
   }
 
   const range = selection.getRangeAt(0);
-  const parts = selectedMessageParts(range);
-  if (!parts) {
+  const parts = selectedMessageParts(range)?.filter((part) => selectsContent(part.range));
+  if (!parts?.length) {
     return null;
   }
 
@@ -103,10 +103,12 @@ export function createAssistantSelectionClipboardContent(
  *
  * A selection contained inside code always copies as code, even when it contains every
  * character. A selection that crosses the code boundary stays on the Markdown path so
- * a complete block retains its fence.
+ * a complete block retains its fence. Crossing means selecting content outside the code:
+ * a drag that starts or ends in the gap beside a block anchors at the edge of the
+ * neighbouring block, which selects nothing there.
  */
 function createPartialCodeContent(range: Range, message: Element): MarkdownClipboardContent | null {
-  const region = closestCodeRegion(range.commonAncestorContainer, message);
+  const region = selectedCodeRegion(range, message);
   if (!region) {
     return null;
   }
@@ -128,6 +130,18 @@ function createPartialCodeContent(range: Range, message: Element): MarkdownClipb
     language: fence?.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE),
     block,
   });
+}
+
+function selectedCodeRegion(range: Range, message: Element): Element | null {
+  const edgeRegions = [range.startContainer, range.endContainer].map((node) =>
+    closestCodeRegion(node, message),
+  );
+  return (
+    edgeRegions.find(
+      // Measure against the whole block, so its own hover Copy button is not outside it.
+      (edge) => edge && selectsNothingOutside(range, edge.closest(CODE_BLOCK_SELECTOR) ?? edge),
+    ) ?? null
+  );
 }
 
 function closestCodeRegion(node: Node, message: Element): Element | null {
@@ -378,6 +392,31 @@ function hasSelectedAllContents(range: Range, element: Element, includeIgnored =
     const after = contents.cloneRange();
     after.setStart(range.endContainer, range.endOffset);
     if (hasMarkdownContent(after.cloneContents(), includeIgnored)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function selectsContent(range: Range): boolean {
+  return hasMarkdownContent(range.cloneContents(), true);
+}
+
+function selectsNothingOutside(range: Range, element: Element): boolean {
+  const contents = document.createRange();
+  contents.selectNodeContents(element);
+
+  if (range.compareBoundaryPoints(Range.START_TO_START, contents) < 0) {
+    const before = range.cloneRange();
+    before.setEnd(contents.startContainer, contents.startOffset);
+    if (selectsContent(before)) {
+      return false;
+    }
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, contents) > 0) {
+    const after = range.cloneRange();
+    after.setStart(contents.endContainer, contents.endOffset);
+    if (selectsContent(after)) {
       return false;
     }
   }
