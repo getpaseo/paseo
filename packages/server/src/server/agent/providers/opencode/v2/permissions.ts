@@ -7,6 +7,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../../../agent-sdk-types.js";
+import { splitMultiSelectAnswer } from "../../question-card-answer.js";
 
 export class SessionPermissions {
   private readonly pending = new Map<string, AgentPermissionRequest>();
@@ -169,31 +170,10 @@ function multiSelectAnswer(field: MultiSelectField, value: unknown): string[] | 
   if (Array.isArray(value) && value.every((item: unknown) => typeof item === "string"))
     return value;
   if (typeof value !== "string") return undefined;
-  const { selected, custom } = splitJoinedLabels(
+  const { selected, custom } = splitMultiSelectAnswer(
     value,
     field.options.map((option) => option.label),
   );
   if (custom === null) return selected;
   return field.custom === true ? [...selected, custom] : undefined;
-}
-
-// The shared question card sends a multi-select answer as one comma-joined string in
-// click order. Consume exact option labels from the front, longest first so a label
-// containing ", " wins over its prefix; any remaining text is the typed answer.
-function splitJoinedLabels(
-  answer: string,
-  labels: string[],
-): { selected: string[]; custom: string | null } {
-  let remaining = answer;
-  const selected: string[] = [];
-  while (remaining.length > 0) {
-    const label = labels
-      .filter((candidate) => !selected.includes(candidate))
-      .sort((left, right) => right.length - left.length)
-      .find((candidate) => remaining === candidate || remaining.startsWith(`${candidate}, `));
-    if (!label) break;
-    selected.push(label);
-    remaining = remaining === label ? "" : remaining.slice(label.length + 2);
-  }
-  return { selected, custom: remaining || null };
 }
