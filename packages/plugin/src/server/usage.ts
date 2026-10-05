@@ -58,6 +58,8 @@ export interface UsageAccount {
   /** Stable across token rotation; [A-Za-z0-9._-]{1,128}. Never a credential or raw email. */
   key: string;
   label?: string;
+  /** Harness owning this login, e.g. Codex, OpenCode, Pi or OMP. */
+  harness?: string;
   /** Store locator, opaque to the daemon. */
   input: JsonValue;
 }
