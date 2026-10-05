@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -400,9 +401,9 @@ class AcpRuntime {
         args: options.options.command.slice(1),
         env: process.env,
       };
-      child = spawn(launch.command, launch.args, {
+      child = spawnProcess(launch.command, launch.args, {
         env: { ...launch.env, ...options.env },
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: "pipe",
       });
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
       child.stderr.on("data", () => undefined);

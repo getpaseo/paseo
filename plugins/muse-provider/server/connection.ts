@@ -1,5 +1,5 @@
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
-import { spawn } from "node:child_process";
+import { spawnProcess } from "@getpaseo/plugin/server";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
@@ -42,15 +42,20 @@ export class MspConnection {
       launch: ProviderLaunch;
       cwd?: string;
       timeoutMs?: number;
+      startupTimeoutMs?: number;
       serveArgs?: string[];
     },
   ) {
     const { launch, cwd } = options;
-    this.child = spawn(launch.command, [...launch.args, "serve", ...(options.serveArgs ?? [])], {
-      env: launch.env,
-      cwd,
-      stdio: "pipe",
-    });
+    this.child = spawnProcess(
+      launch.command,
+      [...launch.args, "serve", ...(options.serveArgs ?? [])],
+      {
+        env: launch.env,
+        cwd,
+        stdio: "pipe",
+      },
+    );
     this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", (chunk: string) => {
       this.stderr = (this.stderr + chunk).slice(-8192);
@@ -89,6 +94,7 @@ export class MspConnection {
         },
       },
       initializedSchema,
+      this.options.startupTimeoutMs ?? 30000,
     );
     if (response.schema.fingerprint !== fingerprint) {
       process.stderr.write(
@@ -123,7 +129,12 @@ export class MspConnection {
       }
     }
   }
-  async request<T>(method: string, params: object, schema: z.ZodType<T>): Promise<T> {
+  async request<T>(
+    method: string,
+    params: object,
+    schema: z.ZodType<T>,
+    timeoutMs = this.options.timeoutMs ?? 10000,
+  ): Promise<T> {
     if (this.failure) throw this.failure;
     if (this.closing) throw new MuseError("closed", "Muse host is closing");
     const id = ++this.sequence;
@@ -131,7 +142,7 @@ export class MspConnection {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new MuseError("timeout", `Muse ${method} timed out`));
-      }, this.options.timeoutMs ?? 10000);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.write({ jsonrpc: "2.0", id, method, params });
     });

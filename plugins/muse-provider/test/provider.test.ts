@@ -1530,3 +1530,32 @@ test("Muse window identity follows the reported duration instead of assuming fiv
     ],
   });
 });
+
+test("status accepts initialization slower than the account deadline without isolating history", async () => {
+  const h = await harness("catalog-controls", { MUSE_TEST_INITIALIZE_DELAY_MS: "3500" });
+  expect(await h.provider.status!({ launch: h.launch })).toEqual({ available: true });
+  expect(await h.recorded()).toContainEqual({ event: "hostClosed" });
+}, 10000);
+
+for (const extension of ["cmd", "bat"]) {
+  test.runIf(process.platform === "win32")(
+    `launches the discovered Muse .${extension} for status, catalog and sessions`,
+    async () => {
+      const h = await harness("catalog-controls");
+      const shim = path.join(h.root, `muse launcher.${extension}`);
+      await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
+      h.launch.command = shim;
+      h.launch.args = [];
+      expect(await h.provider.status!({ launch: h.launch })).toEqual({ available: true });
+      await h.send({ type: "catalog", requestId: "shim-catalog" });
+      expect(await h.wait((event) => event.type === "catalog")).toMatchObject({
+        requestId: "shim-catalog",
+      });
+      await h.open();
+      expect(await h.wait((event) => event.type === "session.opened")).toMatchObject({
+        sessionId: "paseo-session",
+      });
+    },
+    20000,
+  );
+}

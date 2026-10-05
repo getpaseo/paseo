@@ -22,6 +22,14 @@ const receipts = new Set();
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
+  const parsed = JSON.parse(line);
+  if (parsed.method === "initialize" && process.env.MUSE_TEST_INITIALIZE_DELAY_MS) {
+    setTimeout(() => receiveFrame(line), Number(process.env.MUSE_TEST_INITIALIZE_DELAY_MS));
+    return;
+  }
+  receiveFrame(line);
+}
+function receiveFrame(line) {
   const frame = JSON.parse(line);
   if (process.env.MUSE_TEST_REQUESTS)
     appendFileSync(process.env.MUSE_TEST_REQUESTS, JSON.stringify(frame) + "\n");

@@ -22,3 +22,11 @@ export type {
   PluginBeforeRequests,
   PluginLifecycleRegistration,
 } from "./lifecycle.js";
+
+export {
+  spawnProcess,
+  execCommand,
+  isWindowsCommandScript,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "./process.js";
