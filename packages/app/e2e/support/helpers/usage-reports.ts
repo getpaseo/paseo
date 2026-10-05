@@ -5,6 +5,7 @@ import { daemonWsRoutePattern, wsRoutePatternForPort } from "./daemon-port";
 export interface UsageListRequest {
   forceRefresh: boolean;
   reportIds?: string[];
+  agentId?: string;
 }
 
 export interface UsageReportsFixture {
@@ -19,15 +20,25 @@ interface UsageReportsFixtureOptions {
    * `fetchedAt`, or a different answer to a forced refresh).
    */
   lists?: Array<UsageListResponse | ((request: UsageListRequest) => UsageListResponse)>;
-  /** False simulates a host with no usage reporting capability. */
-  usageSupported?: boolean;
+  /**
+   * False simulates a host with no usage reporting capability. A function is read each time the
+   * app connects, so a reload can switch it.
+   */
+  usageSupported?: boolean | (() => boolean);
   /** Released hosts expose provider.usage.list with no source icons. */
   providerUsageListOnly?: boolean;
   /** The host daemon's port; defaults to the E2E daemon. */
   port?: number;
 }
 
-type UsageListResponse = UsageReportEntry[] | { error: string };
+/**
+ * A list of reports, a request error, or a stream: reports sent in order, where a promise holds
+ * the rest of the stream and the response until it settles, like a slow source.
+ */
+export type UsageListResponse =
+  | UsageReportEntry[]
+  | { error: string }
+  | { stream: Array<UsageReportEntry | Promise<unknown>> };
 
 type WebSocketMessage = string | Buffer;
 
@@ -114,6 +125,8 @@ export async function installUsageReportsFixture(
   const listRequests: UsageListRequest[] = [];
   const listCounter = createCounter();
   const usageSupported = options.usageSupported ?? true;
+  const isUsageSupported = () =>
+    typeof usageSupported === "function" ? usageSupported() : usageSupported;
   const providerUsageListOnly = options.providerUsageListOnly ?? false;
   const requestType = providerUsageListOnly
     ? "provider.usage.list.request"
@@ -131,6 +144,7 @@ export async function installUsageReportsFixture(
         const listRequest: UsageListRequest = {
           forceRefresh: request.forceRefresh === true,
           reportIds: Array.isArray(request.reportIds) ? (request.reportIds as string[]) : undefined,
+          agentId: typeof request.agentId === "string" ? request.agentId : undefined,
         };
         listRequests.push(listRequest);
         const scripted = pick(options.lists ?? [[]], listRequests.length - 1);
@@ -139,22 +153,51 @@ export async function installUsageReportsFixture(
           ws.send(
             JSON.stringify({
               type: "session",
-              message: {
-                type: "rpc_error",
-                payload: {
-                  requestId,
-                  requestType,
-                  error: response.error,
-                  code: "transport",
-                },
-              },
+              message: providerUsageListOnly
+                ? {
+                    type: "rpc_error",
+                    payload: { requestId, requestType, error: response.error, code: "transport" },
+                  }
+                : {
+                    type: "usage.list_reports.response",
+                    payload: { requestId, error: response.error },
+                  },
             }),
           );
           listCounter.increment();
           return;
         }
+        const sendUpdate = (report: UsageReportEntry) =>
+          ws.send(
+            JSON.stringify({
+              type: "session",
+              message: { type: "usage.list_reports.update", payload: { requestId, report } },
+            }),
+          );
+        if ("stream" in response) {
+          void (async () => {
+            for (const item of response.stream) {
+              if (item instanceof Promise) await item;
+              else sendUpdate(item);
+            }
+            ws.send(
+              JSON.stringify({
+                type: "session",
+                message: {
+                  type: "usage.list_reports.response",
+                  payload: { requestId, error: null },
+                },
+              }),
+            );
+            listCounter.increment();
+          })();
+          return;
+        }
         const ids = Array.isArray(request.reportIds) ? request.reportIds : null;
         const reports = ids ? response.filter((entry) => ids.includes(entry.id)) : response;
+        if (!providerUsageListOnly) {
+          for (const report of reports) sendUpdate(report);
+        }
         const reply = providerUsageListOnly
           ? {
               type: "provider.usage.list.response",
@@ -165,12 +208,17 @@ export async function installUsageReportsFixture(
                   providerId: entry.sourceId,
                   displayName: entry.sourceLabel,
                   fetchedAt: entry.fetchedAt,
-                  ...entry.report,
-                  planLabel: entry.report.planLabel ?? null,
+                  status: entry.report.status,
+                  windows: entry.report.status === "available" ? entry.report.windows : [],
+                  balances: entry.report.status === "available" ? entry.report.balances : undefined,
+                  details: entry.report.status === "available" ? entry.report.details : undefined,
+                  planLabel:
+                    entry.report.status === "available" ? (entry.report.planLabel ?? null) : null,
+                  error: entry.report.status === "error" ? entry.report.error : null,
                 })),
               },
             }
-          : { type: "usage.list_reports.response", payload: { requestId, reports } };
+          : { type: "usage.list_reports.response", payload: { requestId, error: null } };
         ws.send(JSON.stringify({ type: "session", message: reply }));
         listCounter.increment();
         return;
@@ -181,7 +229,7 @@ export async function installUsageReportsFixture(
     server.onMessage((message) => {
       const serverInfo =
         typeof message === "string"
-          ? withUsageSupportFeature(message, usageSupported, providerUsageListOnly)
+          ? withUsageSupportFeature(message, isUsageSupported(), providerUsageListOnly)
           : null;
       ws.send(serverInfo ?? message);
     });

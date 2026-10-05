@@ -90,11 +90,19 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discover, fetchUsage } from "./usage.js";
+import { inputSchema } from "../shared/input.js";
 
 function fixtureFetch(expectedToken: string): typeof fetch {
   return vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
     expect(init?.headers).toMatchObject({ Authorization: `Bearer ${expectedToken}` });
-    return new Response(JSON.stringify({ five_hour: { utilization: 12 } }), { status: 200 });
+    return new Response(
+      JSON.stringify({
+        account: { uuid: "fixture-account" },
+        organization: { uuid: "fixture-org" },
+        five_hour: { utilization: 12 },
+      }),
+      { status: 200 },
+    );
   }) as unknown as typeof fetch;
 }
 
@@ -125,30 +133,34 @@ describe("Claude credential routes", () => {
         join(dir, ".credentials.json"),
         JSON.stringify({ claudeAiOauth: { accessToken: "fixture-default" } }),
       );
-      const [input] = await discover({
-        home: dir,
-        env: { CLAUDE_CONFIG_DIR: dir },
-        platform: "linux",
-      });
-      expect(input).toEqual({ route: { store: "claude", path: join(dir, ".credentials.json") } });
-      expect((await fetchUsage(input!, fixtureFetch("fixture-default"))).status).toBe("available");
+      const accounts = await discover(
+        { kind: "global" },
+        { home: dir, env: { CLAUDE_CONFIG_DIR: dir }, platform: "linux" },
+        fixtureFetch("fixture-default"),
+      );
+      expect(accounts).toEqual([
+        {
+          key: "fixture-account.fixture-org",
+          input: { route: { store: "claude", path: join(dir, ".credentials.json") } },
+        },
+      ]);
+      expect(
+        (await fetchUsage(inputSchema.parse(accounts[0]!.input), fixtureFetch("fixture-default")))
+          .status,
+      ).toBe("available");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  it("stays unavailable when the routed file has no credentials", async () => {
+  it("throws without fetching when the routed file has no credentials", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-empty-config-"));
     try {
       const fetchApi = vi.fn() as unknown as typeof fetch;
-      expect(
-        (
-          await fetchUsage(
-            { route: { store: "claude", path: join(dir, ".credentials.json") } },
-            fetchApi,
-            { platform: "linux" },
-          )
-        ).status,
-      ).toBe("unavailable");
+      await expect(
+        fetchUsage({ route: { store: "claude", path: join(dir, ".credentials.json") } }, fetchApi, {
+          platform: "linux",
+        }),
+      ).rejects.toThrow("Claude login store no longer exists");
       expect(fetchApi).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });

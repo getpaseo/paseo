@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { discover, fetchUsage, identify } from "./usage.js";
+import { discover, fetchUsage } from "./usage.js";
 
 let home: string;
 beforeEach(async () => {
@@ -19,8 +19,21 @@ async function json(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(value));
 }
-async function account(input: Parameters<typeof fetchUsage>[0], env: NodeJS.ProcessEnv = {}) {
-  return identify(input, lookup(env));
+async function accountIdentity(
+  input: Parameters<typeof fetchUsage>[0],
+  env: NodeJS.ProcessEnv = {},
+) {
+  const accounts = await discover({ kind: "global" }, lookup(env));
+  const account = accounts.find(
+    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
+  );
+  if (!account) throw new Error("Expected discovered login");
+  return { key: account.key, ...(account.label ? { label: account.label } : {}) };
+}
+async function logins(options: Parameters<typeof discover>[1]) {
+  return (await discover({ kind: "global" }, options)).map(
+    (account) => account.input as Parameters<typeof fetchUsage>[0],
+  );
 }
 async function database(path: string) {
   await mkdir((await import("node:path")).dirname(path), { recursive: true });
@@ -70,9 +83,9 @@ test("Pi uses its own OAuth identity and re-reads rotated tokens without writing
   await json(join(home, ".claude.json"), {
     oauthAccount: { accountUuid: "other", organizationUuid: "other-org" },
   });
-  const inputs = await discover(lookup());
+  const inputs = await logins(lookup());
   expect(inputs).toHaveLength(1);
-  expect(await account(inputs[0]!)).toEqual({ key: "pi-account" });
+  expect(await accountIdentity(inputs[0]!)).toEqual({ key: "pi-account" });
   await json(path, {
     "openai-codex": { type: "oauth", access: "fixture-rotated", accountId: "pi-account" },
   });
@@ -99,11 +112,11 @@ test("Pi honors directory override and ignores API keys and malformed files", as
   await json(path, {
     "openai-codex": { type: "oauth", access: "fixture-pi", accountId: "pi-account" },
   });
-  expect(await discover(lookup(env))).toEqual([{ route: { store: "pi", path } }]);
+  expect(await logins(lookup(env))).toEqual([{ route: { store: "pi", path } }]);
   await json(path, { "openai-codex": { type: "api_key", key: "fixture-key" } });
-  expect(await discover(lookup(env))).toEqual([]);
+  expect(await logins(lookup(env))).toEqual([]);
   await writeFile(path, "broken");
-  expect(await discover(lookup(env))).toEqual([]);
+  expect(await logins(lookup(env))).toEqual([]);
 });
 
 test("expired Pi tokens are unavailable without calling usage or refreshing", async () => {
@@ -115,7 +128,7 @@ test("expired Pi tokens are unavailable without calling usage or refreshing", as
       expires: 500,
     },
   });
-  const [input] = await discover(lookup());
+  const [input] = await logins(lookup());
   expect(
     (
       await fetchUsage(
@@ -152,9 +165,12 @@ for (const location of ["default", "profile", "xdg", "override", "config"]) {
     }
     await database(path);
     const before = await readFile(path);
-    const inputs = await discover(lookup(env));
-    expect(inputs).toEqual([{ route: { store: "omp", path, credentialId: 1 } }]);
-    expect(await account(inputs[0]!, env)).toEqual({ key: "omp-account" });
+    const inputs = await logins(lookup(env));
+    expect(inputs).toEqual([
+      { route: { store: "omp", path, credentialId: 1 } },
+      { route: { store: "omp", path, credentialId: 2 } },
+    ]);
+    expect(await accountIdentity(inputs[0]!, env)).toEqual({ key: "omp-account" });
     expect(
       (
         await fetchUsage(
@@ -176,7 +192,7 @@ test("missing SQLite skips only OMP", async () => {
   await json(join(home, ".pi", "agent", "auth.json"), {
     "openai-codex": { type: "oauth", access: "fixture-pi" },
   });
-  const inputs = await discover({ ...lookup(), sqlite: () => undefined });
+  const inputs = await logins({ ...lookup(), sqlite: () => undefined });
   expect(inputs).toEqual([
     { route: { store: "pi", path: join(home, ".pi", "agent", "auth.json") } },
   ]);
@@ -199,17 +215,17 @@ test("Codex and OpenCode discover accounts in preference order with XDG and CODE
   await json(join(data, "opencode", "auth.json"), {
     openai: { type: "oauth", access: "fixture-open", accountId: "same" },
   });
-  const inputs = await discover(lookup(env));
+  const inputs = await logins(lookup(env));
   expect(inputs.map((input) => input.route.store)).toEqual(["codex", "codex", "opencode"]);
-  for (const input of inputs) expect(await account(input, env)).toEqual({ key: "same" });
+  for (const input of inputs) expect(await accountIdentity(input, env)).toEqual({ key: "same" });
   await json(join(data, "opencode", "auth.json"), { openai: { type: "api", key: "fixture-key" } });
-  expect(await discover(lookup(env))).toHaveLength(2);
+  expect(await logins(lookup(env))).toHaveLength(2);
 });
 
 test("OMP fetch re-reads its row after rotation and skips a newly disabled login", async () => {
   const path = join(home, ".omp", "agent", "agent.db");
   await database(path);
-  const [input] = await discover(lookup());
+  const [input] = await logins(lookup());
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
   db.prepare("UPDATE auth_credentials SET data = ? WHERE id = 1").run(
@@ -231,15 +247,13 @@ test("OMP fetch re-reads its row after rotation and skips a newly disabled login
   ).toBe("unavailable");
   db.prepare("UPDATE auth_credentials SET disabled_cause = 'revoked' WHERE id = 1").run();
   db.close();
-  expect(
-    (
-      await fetchUsage(
-        input!,
-        async () => {
-          throw new Error("disabled login must not fetch");
-        },
-        lookup(),
-      )
-    ).status,
-  ).toBe("unavailable");
+  await expect(
+    fetchUsage(
+      input!,
+      async () => {
+        throw new Error("must not fetch");
+      },
+      lookup(),
+    ),
+  ).rejects.toThrow("login store no longer exists");
 });

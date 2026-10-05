@@ -6,6 +6,7 @@ import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { pluginRequirements } from "./plugin-fixture";
+import { waitForSettledPosition } from "./sheet-layout";
 
 /** Real usage-source plugin; its long report exercises the sheet's scrolling boundary. */
 export async function installTallUsageSource() {
@@ -36,8 +37,7 @@ import { z } from "zod";
 export default function contribute(server) {
   server.registerUsageSource({
     id: "tall-usage", label: "Scrolling account", input: z.object({}),
-    discover: async () => [{}],
-    identify: async () => ({ key: "scrolling-account" }),
+    discover: async () => [{key: "scrolling-account", input: {}}],
     fetch: async () => ({ status: "available", windows: Array.from({ length: 20 }, (_, i) => ({
       id: String(i), label: "Window " + (i + 1), usedPct: 25,
     })) }),
@@ -169,6 +169,19 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
   return scope.getByRole("checkbox", { name: new RegExp(`^Pin ${source} ${window}, `) });
 }
 
+/**
+ * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
+ * but buttons, so no row presses or highlights on hover.
+ */
+export async function expectUnpinnableRows(card: Locator): Promise<void> {
+  await expect(card.getByRole("checkbox")).toHaveCount(0);
+  await expect(card.locator('[data-testid^="usage-pin-"]')).toHaveCount(0);
+  const focusable = await card
+    .locator("[tabindex]")
+    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("role") !== "button").length);
+  expect(focusable).toBe(0);
+}
+
 export async function togglePin(scope: Locator, source: string, window: string) {
   const row = pinRow(scope, source, window);
   const pinned = await row.isChecked();
@@ -176,21 +189,86 @@ export async function togglePin(scope: Locator, source: string, window: string) 
   await expect(row).toBeChecked({ checked: !pinned });
 }
 
-/** The usage title row's options menu: Refresh and Used/Remaining. */
+/** The footer's Usage icon, which is there whether or not the Usage item is on. */
+export async function openUsageScreenFromIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Usage", exact: true }).click({ timeout: 30_000 });
+  await expectOnUsageScreen(page);
+}
+
+/** Both footer entry points open Usage over the current screen on a phone. */
+export async function openUsageSheetFromIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Usage", exact: true }).click();
+  await expect(usageSheet(page)).toBeVisible();
+}
+
+export async function closeUsageSheet(page: Page): Promise<void> {
+  const sheet = usageSheet(page);
+  await waitForSettledPosition(sheet);
+  const bounds = await sheet.boundingBox();
+  if (!bounds) throw new Error("Usage sheet must be visible before closing it.");
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y / 2);
+  await expect(sheet).toHaveCount(0);
+}
+
+function summaryInSidebarSwitch(page: Page): Locator {
+  return page.getByRole("switch", { name: "Summary in sidebar", exact: true });
+}
+
+/** Turns the sidebar Usage summary on or off from the Usage screen's Settings. */
+export async function setSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await summaryInSidebarSwitch(page).click();
+  await expectSummaryInSidebar(page, on);
+}
+
+export async function expectSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await expect(summaryInSidebarSwitch(page)).toBeChecked({ checked: on });
+  await closeUsageOptions(page);
+}
+
+/** Open the cog's settings popover or compact sheet. */
 export async function openUsageOptions(page: Page): Promise<void> {
-  await page.locator('[data-testid="usage-options-menu"]:visible').first().click();
-  await expect(page.getByTestId("usage-display-used")).toBeVisible();
+  if (!(await visible(page, "usage-display-used").isVisible())) {
+    await visible(page, "usage-options-menu").click();
+  }
+  await expect(visible(page, "usage-display-used")).toBeVisible();
+}
+
+export function usageOptionsSurface(page: Page): Locator {
+  return page
+    .locator(
+      '[data-testid="usage-options-surface"]:visible, [data-testid="usage-options-surface-content"]:visible',
+    )
+    .first();
+}
+
+export async function expectUsageOptionsFitContent(page: Page): Promise<void> {
+  await waitForSettledPosition(usageOptionsSurface(page));
+  const surface = await usageOptionsSurface(page).boundingBox();
+  const fields = await page.getByTestId("usage-options-fields").boundingBox();
+  if (!surface || !fields) throw new Error("Settings must be visible before measuring its fit.");
+  expect(surface.y + surface.height - (fields.y + fields.height)).toBeLessThanOrEqual(10);
+}
+
+export async function closeUsageOptions(page: Page): Promise<void> {
+  await waitForSettledPosition(usageOptionsSurface(page));
+  await page.mouse.click(0, 0);
+  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
 }
 
 export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {
   await openUsageOptions(page);
-  await page.getByTestId(`usage-display-${displayAs}`).click();
-  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+  await visible(page, `usage-display-${displayAs}`).click();
+  await expect(visible(page, `usage-display-${displayAs}`)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await closeUsageOptions(page);
 }
 
 export async function refreshAllUsage(page: Page): Promise<void> {
-  await openUsageOptions(page);
-  await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
+  await visible(page, "usage-refresh-all").click();
 }
 
 /** Opens the compact sidebar drawer. */

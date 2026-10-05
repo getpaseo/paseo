@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { identify, fetchUsage } from "./usage.js";
+import { discover, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 // node:sqlite has no @types/node@20 typings; require it with a narrow local type.
@@ -97,14 +97,14 @@ describe("cursor usage source", () => {
   ) {
     return {
       listUsage: async () => {
-        const report = await fetchUsage({}, (url, init) => fetchApi(url, init));
+        const report = await fetchFirst((url, init) => fetchApi(url, init));
         return {
           providers: [
             {
               providerId: "cursor",
               ...report,
-              error: report.error ?? null,
-              planLabel: report.planLabel ?? null,
+              error: report.status === "error" ? report.error : null,
+              planLabel: report.status === "available" ? (report.planLabel ?? null) : null,
             },
           ],
         };
@@ -250,26 +250,68 @@ describe("cursor usage source", () => {
     expect(cursor.status).toBe("available");
   });
 
-  it("stays unavailable when state.vscdb is unreadable", async () => {
-    const path = join(homeDir, ".config", "Cursor", "User", "globalStorage");
-    mkdirSync(path, { recursive: true });
-    writeFileSync(join(path, "state.vscdb"), "not a database");
-    const cursor = findProvider(await service().listUsage(), "cursor");
-    expect(cursor.status).toBe("unavailable");
+  it("omits unreadable state.vscdb", async () => {
+    const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "state.vscdb"), "invalid database");
+    expect(await discover()).toEqual([]);
   });
 });
 
-it("identify returns a key when fetch finds cursor credentials", async () => {
+it("discovery returns a locator when fetch finds cursor credentials", async () => {
   const previous = process.env["CURSOR_ACCESS_TOKEN"];
   try {
     process.env["CURSOR_ACCESS_TOKEN"] = "fixture-token";
     let requested = false;
-    await fetchUsage({}, async () => {
+    await fetchFirst(async () => {
       requested = true;
       return new Response(null, { status: 401 });
     });
     expect(requested).toBe(true);
-    expect(await identify()).toEqual({ key: "default" });
+    expect(await discover()).toEqual([
+      { key: "default", input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" } },
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
+    else process.env["CURSOR_ACCESS_TOKEN"] = previous;
+  }
+});
+
+describe("account discovery", () => {
+  it.each(["empty home", "unrelated files"])("returns no accounts for %s", async (scenario) => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const directory = await mkdtemp(join(tmpdir(), "usage-empty-"));
+    const original = { ...process.env };
+    try {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      process.env.HOME = directory;
+      process.env.USERPROFILE = directory;
+      if (scenario === "unrelated files") await writeFile(join(directory, "unrelated.json"), "{}");
+      expect(await discover()).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, original);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+async function fetchFirst(fetchApi: typeof fetch) {
+  const accounts = await discover();
+  const account = accounts[0];
+  if (!account) throw new Error("No configured account");
+  return fetchUsage(account.input as Parameters<typeof fetchUsage>[0], fetchApi);
+}
+
+it.each([401, 403])("reports an existing login rejected with HTTP %i", async (status) => {
+  const previous = process.env["CURSOR_ACCESS_TOKEN"];
+  try {
+    process.env["CURSOR_ACCESS_TOKEN"] = "fixture-rejected-login";
+    const report = await fetchUsage(
+      { store: "env", locator: "CURSOR_ACCESS_TOKEN" },
+      async () => new Response(null, { status }),
+    );
+    expect(report).toEqual({ status: "unavailable", problem: { kind: "rejected", status } });
   } finally {
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
     else process.env["CURSOR_ACCESS_TOKEN"] = previous;

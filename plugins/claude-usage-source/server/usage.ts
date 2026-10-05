@@ -9,7 +9,9 @@ import { z } from "zod";
 import {
   hashAccountKey,
   toneFromUsedPct,
-  unavailableUsage,
+  unavailable,
+  type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -27,6 +29,7 @@ const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
     .object({
       accessToken: z.string().optional(),
+      expiresAt: z.number().optional(),
       refreshToken: z.string().optional(),
       subscriptionType: z.string().optional(),
       rateLimitTier: z.string().optional(),
@@ -313,10 +316,11 @@ async function runSecurityCommand(args: string[]): Promise<string | null> {
 export async function readClaudeKeychainCredentials(
   run: ClaudeKeychainCommandRunner = runSecurityCommand,
   account: string = claudeKeychainAccount(),
+  service: string = CLAUDE_KEYCHAIN_SERVICE,
 ): Promise<unknown | null> {
   const lookups = [
-    ["find-generic-password", "-a", account, "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
-    ["find-generic-password", "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+    ["find-generic-password", "-a", account, "-w", "-s", service],
+    ["find-generic-password", "-w", "-s", service],
   ];
 
   for (const args of lookups) {
@@ -335,7 +339,7 @@ export async function readClaudeKeychainCredentials(
 }
 
 interface ClaudeCredentialLookup extends StoreLookup {
-  readKeychainCredentials?: () => Promise<unknown | null>;
+  readKeychainCredentials?: (service: string, account: string) => Promise<unknown | null>;
   claudeHome?: string;
 }
 
@@ -348,28 +352,105 @@ function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
 
 async function keychainCredentialRecord(
   lookup: ClaudeCredentialLookup,
+  route = claudeKeychainRoute(lookup),
 ): Promise<ClaudeCredentialRecord | null> {
   if ((lookup.platform ?? process.platform) !== "darwin") return null;
   const parsed = ClaudeCredentialsSchema.safeParse(
-    await (lookup.readKeychainCredentials ?? readClaudeKeychainCredentials)(),
+    await (lookup.readKeychainCredentials
+      ? lookup.readKeychainCredentials(route.service, route.account)
+      : readClaudeKeychainCredentials(undefined, route.account, route.service)),
   );
   return parsed.success ? toCredentialRecord(parsed.data) : null;
 }
 
-export async function discover(lookup: ClaudeCredentialLookup = {}): Promise<UsageInput[]> {
-  const candidates: UsageInput[] = [
-    { route: { store: "claude", path: claudeCredentialPath(lookup) } },
-  ];
-  if ((lookup.platform ?? process.platform) === "darwin")
-    candidates.push({ route: { store: "keychain" } });
-  candidates.push(
+export async function discover(
+  scope: UsageScope,
+  lookup: ClaudeCredentialLookup = {},
+  fetchApi: typeof fetch = fetch,
+): Promise<UsageAccount[]> {
+  if (scope.kind === "session")
+    lookup = {
+      ...lookup,
+      env: scope.env,
+      home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
+    };
+  const candidates =
+    scope.kind === "global" ? await globalRoutes(lookup) : await sessionRoutes(scope, lookup);
+  const accounts: UsageAccount[] = [];
+  for (const input of candidates) {
+    const credentials = await resolveClaudeCredentials(input, lookup);
+    if (!credentials) continue;
+    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), input };
+    if (credentials.expires !== undefined && credentials.expires <= (lookup.now ?? Date.now)()) {
+      accounts.push(fallback);
+      continue;
+    }
+    try {
+      const profile = await readProfile(
+        credentials.oauth.accessToken,
+        fetchApi,
+        lookup.now ?? Date.now,
+      );
+      accounts.push("status" in profile ? fallback : { ...profile, input });
+    } catch {
+      // Keep the login visible; fetching usage reports the vendor failure.
+      accounts.push(fallback);
+    }
+  }
+  return accounts;
+}
+
+function claudeKeychainRoute(lookup: ClaudeCredentialLookup) {
+  const env = lookup.env ?? process.env;
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  // macOS still uses Keychain with CLAUDE_CONFIG_DIR, with an entry keyed to that directory:
+  // https://code.claude.com/docs/en/authentication#credential-management
+  // Verified in @anthropic-ai/claude-code 2.1.59, package/cli.js: _c() appends the first
+  // 8 SHA-256 hex characters of HA() (the NFC-normalized config directory).
+  const suffix = configDir ? `-${hashAccountKey(configDir.normalize("NFC")).slice(0, 8)}` : "";
+  return {
+    store: "keychain" as const,
+    service: `${CLAUDE_KEYCHAIN_SERVICE}${suffix}`,
+    account: claudeKeychainAccount(env.USER),
+  };
+}
+
+async function claudeRoute(lookup: ClaudeCredentialLookup): Promise<UsageInput> {
+  const route = claudeKeychainRoute(lookup);
+  return (await keychainCredentialRecord(lookup, route))
+    ? { route }
+    : { route: { store: "claude", path: claudeCredentialPath(lookup) } };
+}
+
+async function globalRoutes(lookup: ClaudeCredentialLookup): Promise<UsageInput[]> {
+  return [
+    await claudeRoute(lookup),
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
-  );
-  const present: UsageInput[] = [];
-  for (const input of candidates)
-    if (await resolveClaudeCredentials(input, lookup)) present.push(input);
-  return present;
+  ];
+}
+
+async function sessionRoutes(
+  scope: Extract<UsageScope, { kind: "session" }>,
+  lookup: ClaudeCredentialLookup,
+): Promise<UsageInput[]> {
+  if (scope.provider === "claude") {
+    const env = scope.env;
+    const foreign =
+      env.ANTHROPIC_BASE_URL &&
+      env.ANTHROPIC_BASE_URL.replace(/\/+$/, "") !== "https://api.anthropic.com";
+    if (enabled(env.CLAUDE_CODE_USE_BEDROCK) || enabled(env.CLAUDE_CODE_USE_VERTEX) || foreign)
+      return [];
+    return [await claudeRoute(lookup)];
+  }
+  if (!scope.model?.startsWith("anthropic/")) return [];
+  if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
+  if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
+  return [];
+}
+
+function enabled(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
 
 /** Re-read the selected login; the harness owns token refresh. */
@@ -379,7 +460,12 @@ export async function resolveClaudeCredentials(
 ): Promise<ClaudeCredentialRecord | null> {
   const route = input.route;
   if (route.store === "claude") return readCredentialFile(route.path);
-  if (route.store === "keychain") return keychainCredentialRecord(lookup);
+  if (route.store === "keychain")
+    return keychainCredentialRecord(lookup, {
+      store: "keychain",
+      service: route.service ?? CLAUDE_KEYCHAIN_SERVICE,
+      account: route.account ?? claudeKeychainAccount(),
+    });
   const oauth = await readHarness(route, lookup);
   return oauth ? { oauth: { accessToken: oauth.access }, expires: oauth.expires } : null;
 }
@@ -397,7 +483,9 @@ async function readCredentialFile(path: string): Promise<ClaudeCredentialRecord 
 
 function toCredentialRecord(credentials: ClaudeCredentials): ClaudeCredentialRecord | null {
   const oauth = credentials.claudeAiOauth;
-  return oauth?.accessToken ? { oauth: { ...oauth, accessToken: oauth.accessToken } } : null;
+  return oauth?.accessToken
+    ? { oauth: { ...oauth, accessToken: oauth.accessToken }, expires: oauth.expiresAt }
+    : null;
 }
 
 export async function fetchUsage(
@@ -433,7 +521,16 @@ export async function fetchUsage(
     return parsed;
   }
 
-  async function callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
+  async function callClaudeApi(token: string, now: number): Promise<ClaudeUsageResponse | number> {
+    for (const [key, until] of rateLimitedUntil) {
+      if (until <= now) rateLimitedUntil.delete(key);
+    }
+    const tokenKey = hashAccountKey(token);
+    const limitedUntil = rateLimitedUntil.get(tokenKey);
+    if (limitedUntil !== undefined && limitedUntil > now)
+      throw rateLimitedError(limitedUntil - now);
+    rateLimitedUntil.delete(tokenKey);
+
     const res = await fetchApi("https://api.anthropic.com/api/oauth/usage", {
       signal: AbortSignal.timeout(15_000),
       headers: {
@@ -442,28 +539,43 @@ export async function fetchUsage(
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
+    if (res.status === 401 || res.status === 403) return res.status;
+    if (res.status === 429) {
+      const waitMs = retryAfterMs(res.headers.get("retry-after"), now);
+      if (waitMs !== null) rateLimitedUntil.set(tokenKey, now + waitMs);
+      throw rateLimitedError(waitMs);
+    }
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }
 
   const credentials = await resolveClaudeCredentials(input, credentialLookup);
+  if (!credentials) throw new Error("Claude login store no longer exists");
+  const refreshedBy =
+    input.route.store === "claude" || input.route.store === "keychain"
+      ? "claude"
+      : input.route.store;
   if (
-    !credentials ||
-    (credentials.expires !== undefined &&
-      credentials.expires <= (credentialLookup.now ?? Date.now)())
-  ) {
-    return unavailableUsage();
-  }
+    credentials.expires !== undefined &&
+    credentials.expires <= (credentialLookup.now ?? Date.now)()
+  )
+    return unavailable({
+      kind: "expired",
+      expiresAt: new Date(credentials.expires).toISOString(),
+      refreshedBy,
+    });
+  const profile = await cachedProfile(
+    credentials.oauth.accessToken,
+    (credentialLookup.now ?? Date.now)(),
+  );
+  if (profile && "status" in profile)
+    return unavailable({ kind: "rejected", status: profile.status, refreshedBy });
 
   const { oauth } = credentials;
   const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-  const resp = await callClaudeApi(oauth.accessToken);
+  const resp = await callClaudeApi(oauth.accessToken, (credentialLookup.now ?? Date.now)());
 
-  if (resp === "NEEDS_AUTH") {
-    // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
-    return unavailableUsage();
-  }
+  if (typeof resp === "number") return unavailable({ kind: "rejected", status: resp, refreshedBy });
 
   const scoped = reconcileScopedLimits(
     legacyScopedLimits(resp),
@@ -497,11 +609,38 @@ export async function fetchUsage(
   };
 }
 
+// A 429 from the usage endpoint carries Retry-After, observed in the tens of minutes. Until it
+// passes, a fetch (including a forced Refresh) answers from here instead of calling again.
+const rateLimitedUntil = new Map<string, number>();
+
+function retryAfterMs(header: string | null, now: number): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
+}
+
+function rateLimitedError(waitMs: number | null): Error {
+  const when = waitMs === null ? "later" : `in ${formatWait(waitMs)}`;
+  return new Error(`Rate limited by Claude. Try again ${when}.`);
+}
+
+function formatWait(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return minutes < 60 ? `${minutes}m` : `${Math.ceil(minutes / 60)}h`;
+}
+
 // The OAuth usage endpoint meters the active organization selected by the token.
-type ClaudeIdentity = { key: string; label?: string } | null;
+type ClaudeIdentity = { key: string; label?: string } | { status: number };
 const PROFILE_TTL_MS = 300_000;
 const PROFILE_CACHE_LIMIT = 128;
 const profileCache = new Map<string, { at: number; result: Promise<ClaudeIdentity> }>();
+
+function cachedProfile(token: string, now: number): Promise<ClaudeIdentity> | undefined {
+  pruneProfileCache(now);
+  return profileCache.get(hashAccountKey(token))?.result;
+}
 
 function pruneProfileCache(now: number): void {
   for (const [key, entry] of profileCache) {
@@ -509,15 +648,11 @@ function pruneProfileCache(now: number): void {
   }
 }
 
-export async function identify(
-  input: UsageInput,
-  fetchApi: typeof fetch = fetch,
-  now: () => number = Date.now,
-  credentialLookup: ClaudeCredentialLookup = {},
-) {
-  const credentials = await resolveClaudeCredentials(input, credentialLookup);
-  if (!credentials) return null;
-  const token = credentials.oauth.accessToken;
+async function readProfile(
+  token: string,
+  fetchApi: typeof fetch,
+  now: () => number,
+): Promise<ClaudeIdentity> {
   const tokenHash = hashAccountKey(token);
   pruneProfileCache(now());
   const pending = profileCache.get(tokenHash);
@@ -536,7 +671,7 @@ export async function identify(
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    if (response.status === 401 || response.status === 403) return null;
+    if (response.status === 401 || response.status === 403) return { status: response.status };
     if (!response.ok) throw new Error(`Claude profile API returned ${response.status}`);
     const profile = z
       .object({

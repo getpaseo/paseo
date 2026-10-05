@@ -1757,6 +1757,12 @@ export const fr: TranslationResources = {
       helper: "Connectez-vous à un daemon Paseo sur l’hôte distant.",
       fields: {
         target: "Hôte SSH",
+        password: "Mot de passe du démon",
+        optional: "Facultatif",
+      },
+      passwordVisibility: {
+        show: "Afficher le mot de passe",
+        hide: "Masquer le mot de passe",
       },
       actions: {
         cancel: "Annuler",
@@ -1988,6 +1994,8 @@ export const fr: TranslationResources = {
     dismiss: "Rejeter",
   },
   contextWindow: {
+    noData: "Aucune donnée de contexte",
+    accessibilityNoData: "Fenêtre de contexte : aucune donnée de contexte",
     title: "Fenêtre contextuelle",
     used: "{{percentage}}% utilisé",
     tokens: "Jetons{{used}}/{{max}}",

@@ -27,8 +27,8 @@ export function UsageSection({
   testID?: string;
 }) {
   const trailing = useMemo(
-    () => <UsageControls view={view} display={display} onRefresh={onRefresh} />,
-    [display, onRefresh, view],
+    () => <UsageControls view={view} onRefresh={onRefresh} />,
+    [onRefresh, view],
   );
 
   return (

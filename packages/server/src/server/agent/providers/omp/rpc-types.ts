@@ -480,6 +480,8 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       type: z.literal("prompt_result"),
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
+      status: z.string().optional(),
+      error: z.object({ message: z.string() }).passthrough().optional(),
     })
     .passthrough(),
   z.object({ type: z.literal("process_exit"), error: z.string() }).passthrough(),

@@ -61,7 +61,7 @@ function HostUsage({
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
-  const { view, refresh, controls } = useHostUsageWithControls(hostSelection, display);
+  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
   return (
     <UsagePage actions={controls}>
       <View testID={`usage-host-${serverId}`}>

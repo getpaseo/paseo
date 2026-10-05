@@ -1916,10 +1916,14 @@ export class HostRuntimeStore {
     host: string;
     sshPort?: number;
     daemonPort?: number;
+    password?: string;
     label?: string;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     return this.probeAndUpsertConnection({
       label: input.label,
+      // The daemon hashes and compares the password verbatim (`paseo daemon
+      // set-password` keeps what it reads), so whitespace is significant here.
+      password: input.password ? input.password : undefined,
       connection: createRemoteSshHostConnection(input),
     });
   }
@@ -2844,6 +2848,7 @@ export interface HostMutations {
     host: string;
     sshPort?: number;
     daemonPort?: number;
+    password?: string;
     label?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   beginLinkPairing: () => LinkPairing;

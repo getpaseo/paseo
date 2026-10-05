@@ -3,17 +3,13 @@ import { UsageSourceRegistry } from "./index.js";
 
 function source(input: {
   id: string;
-  discover?: () => Promise<unknown[]>;
-  identify?: (value: unknown) => Promise<{ key: string; label?: string } | null>;
+  discover?: () => Promise<Array<{ key: string; label?: string; input: unknown }>>;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
     id: input.id,
     label: input.id,
     discover: input.discover ?? (async () => []),
-    identify:
-      input.identify ??
-      (async (value: unknown) => ({ key: (value as { account: string }).account })),
     fetch: input.fetch ?? (async () => ({ status: "available", windows: [] })),
   };
 }
@@ -24,7 +20,7 @@ test("discovery preserves account IDs and updates input after token rotation", a
   registry.register(
     source({
       id: "codex",
-      discover: async () => [{ account: "work", token }],
+      discover: async () => [{ key: "work", input: { token } }],
       fetch: async (input) => ({
         status: "available",
         windows: [{ id: "token", label: (input as { token: string }).token }],
@@ -47,7 +43,7 @@ test("coalesces per account, caches errors, and refreshes only requested IDs", a
   registry.register(
     source({
       id: "source",
-      discover: async () => [{ account: "a" }, { account: "b" }],
+      discover: async () => ["a", "b"].map((account) => ({ key: account, input: { account } })),
       fetch: async (input) => {
         const account = (input as { account: string }).account;
         counts.set(account, (counts.get(account) ?? 0) + 1);
@@ -76,28 +72,14 @@ test("coalesces per account, caches errors, and refreshes only requested IDs", a
   expect(counts.get("a")).toBe(3);
 });
 
-test("invalid keys become source errors and missing identities produce no report", async () => {
-  const registry = new UsageSourceRegistry();
-  registry.register(
-    source({
-      id: "source",
-      discover: async () => [{ account: "bad:key" }, { account: "none" }],
-      identify: async (input) => {
-        const account = (input as { account: string }).account;
-        return account === "none" ? null : { key: account };
-      },
-    }),
-  );
-  const reports = await registry.listReports();
-  expect(reports.map((entry) => entry.id)).toEqual(["source:!error"]);
-  expect(reports[0]?.report.status).toBe("error");
-});
-
 test("legacy listing uses oldest fetchedAt", async () => {
   let now = 1000;
   const registry = new UsageSourceRegistry(() => now);
   registry.register(
-    source({ id: "source", discover: async () => [{ account: "a" }, { account: "b" }] }),
+    source({
+      id: "source",
+      discover: async () => ["a", "b"].map((account) => ({ key: account, input: { account } })),
+    }),
   );
   await registry.listReports();
   now = 2000;
@@ -115,7 +97,7 @@ test("concurrent requests for the same ID share one vendor fetch", async () => {
   registry.register(
     source({
       id: "coalesced",
-      discover: async () => [{ account: "one" }],
+      discover: async () => [{ key: "one", input: {} }],
       fetch: async () => {
         fetches++;
         return response;
@@ -130,49 +112,64 @@ test("concurrent requests for the same ID share one vendor fetch", async () => {
   expect(fetches).toBe(1);
 });
 
-test("source failure IDs cannot collide with an account named error", async () => {
-  const registry = new UsageSourceRegistry();
-  registry.register(
-    source({
-      id: "source",
-      discover: async () => [{ account: "error" }, { account: "bad:key" }],
-    }),
-  );
-  const reports = await registry.listReports();
-  expect(reports).toHaveLength(2);
-  expect(reports.find((entry) => entry.id === "source:error")?.report.status).toBe("available");
-  expect(reports.find((entry) => entry.report.status === "error")?.id).toMatch(
-    /^source:[^A-Za-z0-9._-]/,
-  );
-});
-
-test("expired cached entries are pruned when a new report is written", async () => {
+test("rediscovery removes an old account from targeted refreshes", async () => {
   let now = 0;
   const registry = new UsageSourceRegistry(() => now, 100);
   let account = "old";
-  registry.register(source({ id: "source", discover: async () => [{ account }] }));
+  registry.register(source({ id: "source", discover: async () => [{ key: account, input: {} }] }));
   await registry.listReports();
   await registry.listReports({ reportIds: ["source:old"] });
   now = 101;
   account = "new";
   await registry.listReports();
   await registry.listReports({ reportIds: ["source:new"] });
-  const cache = Reflect.get(registry, "cache") as Map<string, unknown>;
-  expect([...cache.keys()]).toEqual(["source:new"]);
+  expect(await registry.listReports({ reportIds: ["source:old"] })).toEqual([]);
 });
 
-test("discovery failures have an ID outside the account namespace", async () => {
-  const registry = new UsageSourceRegistry();
+test("discovery failures log once while other sources still report", async () => {
+  const warnings: unknown[][] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, {
+    warn: (...args: unknown[]) => {
+      warnings.push(args);
+    },
+  });
+  const err = new Error("subprocess stopped");
   registry.register(
     source({
-      id: "source",
+      id: "kimi",
       discover: async () => {
-        throw new Error("discovery failed");
+        throw err;
       },
     }),
   );
-  const discovered = await registry.listReports();
-  expect(discovered.map((entry) => entry.id)).toEqual(["source:!error"]);
+  registry.register(source({ id: "healthy", discover: async () => [{ key: "one", input: {} }] }));
+  const updates: string[] = [];
+  const reports = await registry.listReports({ onReport: (report) => updates.push(report.id) });
+  expect(reports.map((report) => report.id)).toEqual(["healthy:one"]);
+  expect(updates).toEqual(["healthy:one"]);
+  expect(warnings).toEqual([[{ sourceId: "kimi", err }, "Usage source discovery failed"]]);
+});
+
+test("a failed fetch is logged as well as reported", async () => {
+  const warnings: unknown[][] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, {
+    warn: (...args: unknown[]) => {
+      warnings.push(args);
+    },
+  });
+  const err = new Error("Rate limited by Claude. Try again in 38m.");
+  registry.register(
+    source({
+      id: "claude",
+      discover: async () => [{ key: "work", input: {} }],
+      fetch: async () => {
+        throw err;
+      },
+    }),
+  );
+  const [report] = await registry.listReports();
+  expect(report?.report).toEqual({ status: "error", error: err.message });
+  expect(warnings).toEqual([[{ sourceId: "claude", err }, "Usage fetch failed"]]);
 });
 
 test("legacy listing distinguishes labeled accounts and preserves unlabeled names", async () => {
@@ -180,11 +177,12 @@ test("legacy listing distinguishes labeled accounts and preserves unlabeled name
   registry.register(
     source({
       id: "claude",
-      discover: async () => [{ account: "work" }, { account: "personal" }, { account: "default" }],
-      identify: async (input) => {
-        const { account } = input as { account: string };
-        return { key: account, label: account === "default" ? undefined : account };
-      },
+      discover: async () =>
+        ["work", "personal", "default"].map((key) => ({
+          key,
+          label: key === "default" ? undefined : key,
+          input: {},
+        })),
     }),
   );
   expect(
@@ -199,16 +197,14 @@ test("duplicate logins follow discovery order and fall back on unavailable, erro
     registry.register(
       source({
         id: "codex",
-        discover: async () => [0, 1, 2],
-        identify: async (input) => {
-          if (input === 0) await new Promise((resolve) => setTimeout(resolve, 10));
-          return { key: "same" };
-        },
+        discover: async () => [0, 1, 2].map((input) => ({ key: "same", input })),
         fetch: async (input) => {
           calls.push(Number(input));
           if (input === 0) {
             if (failure === "throw") throw new Error("revoked");
-            return { status: failure, windows: [] };
+            return failure === "unavailable"
+              ? { status: failure, problem: { kind: "rejected", status: 401 } }
+              : { status: failure, error: "revoked" };
           }
           return {
             status: "available",
@@ -224,56 +220,178 @@ test("duplicate logins follow discovery order and fall back on unavailable, erro
   }
 });
 
-test("targeted refresh skips a login that changed accounts and preserves fallback", async () => {
-  let firstAccount = "original";
-  const fetched: unknown[] = [];
+test("targeted refresh re-reads the login without discovering again", async () => {
+  let discoveries = 0;
+  let value = "old";
   const registry = new UsageSourceRegistry();
   registry.register(
     source({
       id: "source",
-      discover: async () => [0, 1],
-      identify: async (input) => ({ key: input === 0 ? firstAccount : "original" }),
-      fetch: async (input) => {
-        fetched.push(input);
-        return { status: "available", windows: [] };
+      discover: async () => {
+        discoveries++;
+        return [{ key: "original", input: {} }];
       },
+      fetch: async () => ({ status: "available", windows: [{ id: "session", label: value }] }),
     }),
   );
   await registry.listReports();
-  firstAccount = "different";
+  value = "new";
   const reports = await registry.listReports({
     reportIds: ["source:original"],
     forceRefresh: true,
   });
-  expect(reports[0]?.id).toBe("source:original");
-  expect(reports[0]?.report.status).toBe("available");
-  expect(fetched).toEqual([0, 1]);
+  expect(reports[0]?.report).toEqual({
+    status: "available",
+    windows: [{ id: "session", label: "new" }],
+  });
+  expect(discoveries).toBe(1);
 });
 
-test("discovery identifies a source's logins concurrently and keeps their order", async () => {
+test("a thrown fetch is an error card", async () => {
   const registry = new UsageSourceRegistry();
-  const fetched: unknown[] = [];
-  let release!: () => void;
-  const allStarted = new Promise<void>((resolve) => (release = resolve));
-  let started = 0;
   registry.register(
     source({
-      id: "claude",
-      discover: async () => [0, 1, 2],
-      // Each identification waits until all three started; serial identification never finishes.
-      identify: async (input) => {
-        if (++started === 3) release();
-        await allStarted;
-        if (input === 0) await new Promise((resolve) => setTimeout(resolve, 10));
-        return { key: "same" };
-      },
-      fetch: async (input) => {
-        fetched.push(input);
-        return { status: "unavailable", windows: [] };
+      id: "source",
+      discover: async () => [{ key: "one", input: {} }],
+      fetch: async () => {
+        throw new Error("Store deleted");
       },
     }),
   );
-  const reports = await registry.listReports();
-  expect(reports.map((entry) => entry.id)).toEqual(["claude:same"]);
-  expect(fetched).toEqual([0, 1, 2]);
+  expect((await registry.listReports())[0]?.report).toEqual({
+    status: "error",
+    error: "Store deleted",
+  });
+});
+
+test("an unavailable login falls back to the next available login", async () => {
+  const calls: unknown[] = [];
+  const registry = new UsageSourceRegistry();
+  registry.register(
+    source({
+      id: "source",
+      discover: async () => [1, 2].map((input) => ({ key: "same", input })),
+      fetch: async (input) => {
+        calls.push(input);
+        return input === 1
+          ? {
+              status: "unavailable",
+              problem: { kind: "expired", expiresAt: "1970-01-01T00:00:00.000Z" },
+            }
+          : { status: "available", windows: [] };
+      },
+    }),
+  );
+  expect(
+    (await registry.listReports()).map((entry) => ({ id: entry.id, report: entry.report })),
+  ).toEqual([{ id: "source:same", report: { status: "available", windows: [] } }]);
+  expect(calls).toEqual([1, 2]);
+});
+
+test("failed fallbacks preserve the final problem", async () => {
+  const registry = new UsageSourceRegistry();
+  registry.register(
+    source({
+      id: "source",
+      discover: async () => [1, 2].map((input) => ({ key: "same", input })),
+      fetch: async (input) => ({
+        status: "unavailable",
+        problem: { kind: "rejected", status: input === 1 ? 401 : 403 },
+      }),
+    }),
+  );
+  expect((await registry.listReports())[0]?.report).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status: 403 },
+  });
+});
+
+test("session discovery reuses accounts, separates launches, and retains live agent reports globally", async () => {
+  const sessions = new Map([
+    ["one", { provider: "claude", env: { HOME: "/one" }, sessionKey: "launch-1" }],
+    ["two", { provider: "claude", env: { HOME: "/two" }, sessionKey: "launch-2" }],
+  ]);
+  const existing = new Set(["one", "two", "closed"]);
+  const discoveries: string[] = [];
+  let fetches = 0;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => existing.has(id),
+    usageSession: (id) => sessions.get(id) ?? null,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      discoveries.push(scope.kind === "global" ? "global" : scope.env.HOME);
+      if (scope.kind === "global") return [{ key: "default", input: "default" }];
+      return [{ key: scope.env.HOME === "/new" ? "new" : "same", input: scope.env.HOME }];
+    },
+    fetch: async () => {
+      fetches++;
+      return { status: "available", windows: [] };
+    },
+  });
+  expect(await registry.listReports({ agentId: "closed" })).toEqual([]);
+  expect((await registry.listReports({ agentId: "one" })).map((r) => r.id)).toEqual([
+    "claude:same",
+  ]);
+  await registry.listReports({ agentId: "one" });
+  await registry.listReports({ agentId: "two" });
+  expect(discoveries).toEqual(["/one", "/two"]);
+  expect(fetches).toBe(1);
+  expect((await registry.listReports()).map((r) => r.id)).toEqual([
+    "claude:default",
+    "claude:same",
+  ]);
+  sessions.set("one", { provider: "claude", env: { HOME: "/new" }, sessionKey: "launch-3" });
+  expect((await registry.listReports({ agentId: "one" })).map((r) => r.id)).toEqual(["claude:new"]);
+  existing.delete("two");
+  sessions.delete("two");
+  expect((await registry.listReports()).map((r) => r.id)).toEqual(["claude:default", "claude:new"]);
+  await expect(registry.listReports({ agentId: "missing" })).rejects.toThrow("Unknown agent");
+  await expect(registry.listReports({ agentId: "one", reportIds: [] })).rejects.toThrow("agentId");
+});
+
+test("reports arrive independently and a hung fetch settles as an error before completion", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, undefined, 25);
+  let finishSlow!: (value: unknown) => void;
+  const slow = new Promise<unknown>((resolve) => {
+    finishSlow = resolve;
+  });
+  const reports: string[] = [];
+  let firstReport!: () => void;
+  const first = new Promise<void>((resolve) => {
+    firstReport = resolve;
+  });
+  for (const id of ["slow", "fast", "also-fast"]) {
+    registry.register(
+      source({
+        id,
+        discover: async () => [{ key: "account", input: {} }],
+        fetch: async () => (id === "slow" ? slow : { status: "available", windows: [] }),
+      }),
+    );
+  }
+  let complete = false;
+  const request = registry
+    .listReports({
+      onReport: (entry) => {
+        reports.push(entry.id);
+        firstReport();
+      },
+    })
+    .then((entries) => {
+      complete = true;
+      return entries;
+    });
+  await first;
+  expect(reports).toEqual(["fast:account", "also-fast:account"]);
+  expect(complete).toBe(false);
+  const entries = await request;
+  expect(reports).toEqual(["fast:account", "also-fast:account", "slow:account"]);
+  expect(entries[0]?.report).toEqual({ status: "error", error: "Usage fetch timed out" });
+  finishSlow({ status: "available", windows: [] });
+  expect((await registry.listReports({ reportIds: ["slow:account"] }))[0]?.report).toEqual(
+    entries[0]?.report,
+  );
 });

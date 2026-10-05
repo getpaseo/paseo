@@ -20,7 +20,7 @@ export interface AudioEngine {
   toggleMute(): boolean;
   isMuted(): boolean;
 
-  play(audio: AudioPlaybackSource): Promise<number>;
+  play(audio: AudioPlaybackSource, signal?: AbortSignal): Promise<number>;
   stop(): void;
   clearQueue(): void;
   isPlaying(): boolean;
