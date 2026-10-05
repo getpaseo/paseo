@@ -412,6 +412,9 @@ export const ptBR: TranslationResources = {
       loading: "Carregando sessões recentes...",
       failedProvider: "Não foi possível carregar as sessões de {{provider}}",
       failedImport: "Não foi possível importar a sessão selecionada.",
+      failedImportDetails: "Não foi possível importar a sessão selecionada. {{message}}",
+      codexSessionInUse:
+        "Esta sessão do Codex está em uso. Saia do terminal ou cliente do Codex que está com esta sessão aberta e tente importar novamente.",
     },
     actions: {
       refresh: "Atualizar sessões",

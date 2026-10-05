@@ -618,13 +618,19 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an import error state without closing when selected session import fails", async () => {
+  it.each([
+    ["import unavailable", "Could not import selected session. import unavailable"],
+    [
+      "Failed to resume Codex thread abc: thread abc already has an active writer",
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    ],
+  ])("shows import failure details without closing: %s", async (message, expected) => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [createProviderSessionEntry({ providerId: "claude", providerLabel: "Claude Code" })],
     }));
     const importAgent = vi.fn(async () => {
-      throw new Error("import unavailable");
+      throw new Error(message);
     });
     const onClose = vi.fn();
     const onImportedAgent = vi.fn();
@@ -643,7 +649,7 @@ describe("ImportSessionSheet", () => {
 
     fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
 
-    await screen.findByText("Could not import selected session.");
+    await screen.findByText(expected);
     expect(importAgent).toHaveBeenCalledWith({
       providerId: "claude",
       providerHandleId: "provider-thread-1",
