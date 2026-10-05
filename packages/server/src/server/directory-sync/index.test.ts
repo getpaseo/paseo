@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { DirectorySyncService } from "./index.js";
+import type { AgentSnapshotPayload, ProjectPlacementPayload } from "@getpaseo/protocol/messages";
+import { type AgentDirectoryEntry, DirectorySyncService } from "./index.js";
 
 function project(projectId: string, name: string) {
   return {
@@ -89,4 +90,36 @@ describe("DirectorySyncService", () => {
       headSeq: 1,
     });
   });
+
+  test("re-sends an unchanged agent with a pending permission in a changes read", () => {
+    const service = new DirectorySyncService("generation");
+    const waiting = agentEntry("waiting", 1);
+    const idle = agentEntry("idle", 0);
+    service.synchronizeAgents([waiting, idle], {});
+
+    expect(
+      service.synchronizeAgents([waiting, idle], { generation: "generation", afterSeq: 2 }),
+    ).toEqual({
+      entries: [{ ...waiting, syncSeq: 1 }],
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      sync: { generation: "generation", mode: "changes", headSeq: 2, removals: [] },
+    });
+  });
 });
+
+function agentEntry(id: string, pendingPermissionCount: number): AgentDirectoryEntry {
+  const agent: Partial<AgentSnapshotPayload> = {
+    id,
+    provider: "claude",
+    status: "running",
+    pendingPermissions: Array.from({ length: pendingPermissionCount }, (_, index) => ({
+      id: `permission-${index}`,
+      provider: "claude",
+      name: "shell",
+      kind: "tool" as const,
+      input: {},
+    })),
+  };
+  const placement: Partial<ProjectPlacementPayload> = {};
+  return { agent: agent as AgentSnapshotPayload, project: placement as ProjectPlacementPayload };
+}
