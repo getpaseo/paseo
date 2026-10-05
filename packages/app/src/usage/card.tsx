@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { useCompactTimeAgo } from "@/hooks/use-time-ago";
+import { i18n } from "@/i18n/i18next";
 import { UsageBalanceBar } from "./balance-bar";
 import { usageCopy } from "./copy";
 import type { UsageDisplay } from "./display";
@@ -24,7 +25,9 @@ import { UsageWindowBar } from "./window-bar";
 
 function statusText(report: UsageReport): string | null {
   if (report.status === "available") return null;
-  return report.status === "error" ? "Error" : "Unavailable";
+  return report.status === "error"
+    ? i18n.t("providerUsage.status.error")
+    : i18n.t("providerUsage.status.unavailable");
 }
 
 function reportContent(report: UsageReport) {

@@ -4,6 +4,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
 import {
+  expectUsageBalanceInsideCard,
   installUsageReportsFixture,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
@@ -163,18 +164,7 @@ test.describe("usage settings", () => {
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
 
-    const card = page.getByTestId("usage-card");
-    const value = page.getByTestId("provider-usage-balance-credits-value");
-    const reset = page.getByTestId("provider-usage-balance-credits-reset");
-    await expect(value).toBeVisible({ timeout: 10_000 });
-    await expect(reset).toHaveText(/resets \d+d/);
-    await expect(reset).toBeVisible();
-    const [cardBox, valueBox] = await Promise.all([card.boundingBox(), value.boundingBox()]);
-    expect(cardBox).not.toBeNull();
-    expect(valueBox).not.toBeNull();
-    expect((valueBox?.x ?? 0) + (valueBox?.width ?? 0)).toBeLessThanOrEqual(
-      (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
-    );
+    await expectUsageBalanceInsideCard(page, "credits");
   });
 
   test("asks to update a host without usage support and never calls it", async ({ page }) => {

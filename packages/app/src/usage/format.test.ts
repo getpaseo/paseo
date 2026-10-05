@@ -79,7 +79,7 @@ describe("formatAmount", () => {
     await i18n.changeLanguage("ko");
 
     expect(formatProviderUsageLabel("session", "Session")).toBe("세션");
-    expect(formatProviderUsageLabel("five_hour", "Session")).toBe("세션");
+    expect(formatProviderUsageLabel("five_hour", "5-hour limit")).toBe("5-hour limit");
     expect(formatProviderUsageLabel("credits", "Credits")).toBe("크레딧");
     expect(formatProviderUsageLabel("custom_limit", "Custom limit")).toBe("Custom limit");
   });

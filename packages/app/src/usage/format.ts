@@ -4,7 +4,6 @@ import type { UsageBalanceUnit } from "./types";
 
 const providerUsageLabelKeys = {
   session: "providerUsage.labels.session",
-  five_hour: "providerUsage.labels.session",
   weekly: "providerUsage.labels.weekly",
   monthly: "providerUsage.labels.monthly",
   code_review: "providerUsage.labels.codeReview",
@@ -22,7 +21,8 @@ export function clampPct(value: number): number {
 }
 
 export function formatPct(value: number, locale?: string): string {
-  return new Intl.NumberFormat(locale, {
+  const resolvedLocale = locale ?? i18n.resolvedLanguage;
+  return new Intl.NumberFormat(resolvedLocale, {
     style: "percent",
     maximumFractionDigits: 0,
   }).format(clampPct(value) / 100);
