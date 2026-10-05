@@ -155,6 +155,19 @@ async function selectAssistantElementFromEndOf(
   );
 }
 
+/** A drag over an image alone selects it inside its rendered frame. */
+async function selectAssistantImage(page: Page): Promise<void> {
+  await assistantMessageBlocks(page)
+    .locator("img")
+    .evaluate((element) => {
+      const range = document.createRange();
+      range.selectNode(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+}
+
 async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
 }
@@ -688,16 +701,7 @@ test("copying a selection across an assistant image keeps its Markdown source an
       `Before the image.\n\n![chart](${image})\n\nAfter the image.`,
     );
 
-    // A drag over the image alone selects it inside its rendered frame.
-    await assistantMessageBlocks(page)
-      .locator("img")
-      .evaluate((element) => {
-        const range = document.createRange();
-        range.selectNode(element);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-      });
+    await selectAssistantImage(page);
     await copySelection(page);
 
     expect((await readRichClipboard(page)).plainText).toBe(`![chart](${image})`);
