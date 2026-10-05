@@ -792,6 +792,11 @@ export const en = {
           pending: "Pulling and pushing...",
           success: "Pulled and pushed",
         },
+        commitAndPush: {
+          label: "Commit and push",
+          pending: "Committing and pushing...",
+          success: "Committed and pushed",
+        },
         viewPr: "View PR",
         viewPr_mr: "View MR",
         createPr: {
@@ -893,6 +898,7 @@ export const en = {
           failedPull: "Failed to pull",
           failedPush: "Failed to push",
           failedPullAndPush: "Failed to pull and push",
+          failedCommitAndPush: "Failed to commit and push",
           failedCreatePr: "Failed to create PR",
           failedMergePr: "Failed to merge PR",
           failedEnableAutoMerge: "Failed to enable auto-merge",

@@ -805,6 +805,11 @@ export const ru: TranslationResources = {
           pending: "Получение и отправка изменений...",
           success: "Изменения получены и отправлены",
         },
+        commitAndPush: {
+          label: "Закоммитить и отправить",
+          pending: "Коммит и отправка изменений...",
+          success: "Изменения закоммичены и отправлены",
+        },
         viewPr: "Посмотреть PR",
         createPr: {
           label: "Создать PR",
@@ -902,6 +907,7 @@ export const ru: TranslationResources = {
           failedPull: "Не удалось получить изменения",
           failedPush: "Не удалось отправить изменения",
           failedPullAndPush: "Не удалось получить и отправить изменения",
+          failedCommitAndPush: "Не удалось закоммитить и отправить изменения",
           failedCreatePr: "Не удалось создать PR.",
           failedMergePr: "Не удалось выполнить слияние PR",
           failedEnableAutoMerge: "Не удалось включить автослияние",

@@ -16,6 +16,7 @@ export type CheckoutGitAsyncActionId =
   | "pull-and-push"
   | "refresh"
   | "create-pr"
+  | "commit-and-push"
   | "merge-pr-squash"
   | "merge-pr-merge"
   | "merge-pr-rebase"
@@ -108,6 +109,7 @@ interface CheckoutGitActionsStoreState {
   pullAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
   refresh: (params: { serverId: string; cwd: string }) => Promise<void>;
   createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
+  commitAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
   mergePr: (params: {
     serverId: string;
     cwd: string;
@@ -253,6 +255,28 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         if (pullPayload.error) {
           throw new Error(pullPayload.error.message);
         }
+        const pushPayload = await client.checkoutPush(cwd);
+        if (pushPayload.error) {
+          throw new Error(pushPayload.error.message);
+        }
+      },
+    });
+  },
+
+  commitAndPush: async ({ serverId, cwd }) => {
+    await runCheckoutAction({
+      serverId,
+      cwd,
+      actionId: "commit-and-push",
+      run: async () => {
+        const client = resolveClient(serverId);
+        const commitPayload = await client.checkoutCommit(cwd, { addAll: true });
+        if (commitPayload.error) {
+          throw new Error(commitPayload.error.message);
+        }
+        // Invalidate now so a later push failure doesn't leave the diff/status
+        // views showing pre-commit state.
+        await invalidateCheckoutGitQueries(serverId, cwd);
         const pushPayload = await client.checkoutPush(cwd);
         if (pushPayload.error) {
           throw new Error(pushPayload.error.message);
