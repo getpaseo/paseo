@@ -1,3 +1,4 @@
+import { getWorkspaceStateBucketPriority } from "@getpaseo/protocol/agent-state-bucket";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { deriveSidebarStateBucket } from "./sidebar-agent-state";
@@ -18,7 +19,6 @@ export function buildWorkspaceAgentActivityIndex(
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
-  const latestActivityAtByWorkspaceId = new Map<string, Date>();
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
@@ -26,24 +26,20 @@ export function buildWorkspaceAgentActivityIndex(
       continue;
     }
 
-    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
-    const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
-    if (latestActivityAt && enteredAt <= latestActivityAt) {
-      continue;
-    }
-    latestActivityAtByWorkspaceId.set(agent.workspaceId, enteredAt);
-
-    const status = deriveSidebarStateBucket({
-      status: workspaceAgentStatus(agent),
-      pendingPermissionCount: agent.pendingPermissions.length,
-      requiresAttention: agent.requiresAttention,
-      attentionReason: agent.attentionReason,
-    });
-    activityByWorkspaceId.set(agent.workspaceId, {
+    const candidate: WorkspaceAgentActivity = {
       agentId: agent.id,
-      status,
-      enteredAt,
-    });
+      status: deriveSidebarStateBucket({
+        status: workspaceAgentStatus(agent),
+        pendingPermissionCount: agent.pendingPermissions.length,
+        requiresAttention: agent.requiresAttention,
+        attentionReason: agent.attentionReason,
+      }),
+      enteredAt: agent.attentionTimestamp ?? agent.updatedAt,
+    };
+    const current = activityByWorkspaceId.get(agent.workspaceId);
+    if (!current || outranksWorkspaceAgentActivity(candidate, current)) {
+      activityByWorkspaceId.set(agent.workspaceId, candidate);
+    }
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
@@ -60,6 +56,21 @@ export function buildWorkspaceAgentActivityIndex(
     return previous instanceof Map ? previous : new Map(previous);
   }
   return activityByWorkspaceId;
+}
+
+// The most urgent agent stands for its workspace, using the server's bucket priority for
+// workspace rows; the most recent activity breaks a tie.
+function outranksWorkspaceAgentActivity(
+  candidate: WorkspaceAgentActivity,
+  current: WorkspaceAgentActivity,
+): boolean {
+  const rankDelta =
+    getWorkspaceStateBucketPriority(candidate.status) -
+    getWorkspaceStateBucketPriority(current.status);
+  if (rankDelta !== 0) {
+    return rankDelta < 0;
+  }
+  return (candidate.enteredAt?.getTime() ?? 0) > (current.enteredAt?.getTime() ?? 0);
 }
 
 function areWorkspaceAgentActivityIndexesIdentical(
