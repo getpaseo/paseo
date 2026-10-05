@@ -194,7 +194,7 @@ export class MspConnection {
     if (frame.id === null) {
       if (!frame.error) throw new MuseError("invalidFrame", "MSP result has a null id");
       this.fail(new MuseError(frame.error.data?.kind ?? "rpc", frame.error.message));
-      this.child.kill();
+      void this.close().catch(() => {});
       return;
     }
     const pending = this.pending.get(frame.id);

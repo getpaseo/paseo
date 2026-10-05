@@ -1599,8 +1599,23 @@ test("force-stops a Muse host that ignores stdin EOF", async () => {
   }
 }, 15000);
 
-async function stubbornHostHarness() {
-  const h = await harness("catalog-controls", { MUSE_TEST_STUBBORN: "1" });
+test("closes the whole Muse host after an uncorrelated MSP error", async () => {
+  const h = await stubbornHostHarness({ MUSE_TEST_NULL_ERROR_ID: "1" });
+  try {
+    const result = await h.provider.status!({ launch: h.launch });
+    expect(result).toEqual({ available: false, diagnostic: "Cannot recover request id" });
+    const recorded = await h.recorded();
+    expect(recorded.some((row) => row.event === "hostClosed")).toBe(true);
+    const hosts = recorded.filter((row) => row.event === "stubbornHost");
+    expect(hosts).toHaveLength(1);
+    expect(() => process.kill(hosts[0].pid, 0)).toThrow();
+  } finally {
+    await cleanupStubbornHosts(h);
+  }
+}, 15000);
+
+async function stubbornHostHarness(env: Record<string, string> = {}) {
+  const h = await harness("catalog-controls", { MUSE_TEST_STUBBORN: "1", ...env });
   if (process.platform === "win32") {
     const shim = path.join(h.root, "stubborn muse.cmd");
     await writeFile(shim, `@echo off\r\n"${process.execPath}" "${h.launch.args[0]}" %*\r\n`);
