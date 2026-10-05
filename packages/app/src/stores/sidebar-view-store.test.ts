@@ -39,6 +39,22 @@ describe("sidebar view store", () => {
     });
   });
 
+  it("restores host-project grouping with its filters after a version migration", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "host-project",
+        hostFilters: ["host-a", "host-b"],
+        projectFilters: ["project"],
+        labelFilter: { labels: ["urgent"] },
+      }),
+    ).toEqual({
+      groupMode: "host-project",
+      hostFilters: ["host-a", "host-b"],
+      projectFilters: ["project"],
+      labelFilter: { labels: ["urgent"] },
+    });
+  });
+
   it("toggles multiple hosts into and out of the filter", () => {
     const store = useSidebarViewStore.getState();
     store.toggleHostFilter("host-a");

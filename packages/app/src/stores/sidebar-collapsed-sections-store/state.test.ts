@@ -4,6 +4,7 @@ import {
   mergePersistedCollapsedProjects,
   serializeCollapsedProjects,
   setProjectCollapsed,
+  setWorkspaceGroupCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
@@ -18,6 +19,24 @@ function emptyState(): CollapsedProjectsState {
 }
 
 describe("sidebar collapsed projects transitions", () => {
+  it("reveals a host without changing another collapsed host or project, and persists the result", () => {
+    let state = toggleWorkspaceGroupCollapsed(emptyState(), "host-a");
+    state = toggleWorkspaceGroupCollapsed(state, "host-b");
+    state = setProjectCollapsed(state, "host-b-project", true);
+    state = setWorkspaceGroupCollapsed(state, "host-a", false);
+    const restored = mergePersistedCollapsedProjects(
+      serializeCollapsedProjects(state),
+      emptyState(),
+    );
+    expect(serializeCollapsedProjects(restored)).toEqual({
+      collapsedProjectKeys: ["host-b-project"],
+      collapsedWorkspaceGroupKeys: ["host-b"],
+      collapsedPinned: false,
+    });
+    expect(setWorkspaceGroupCollapsed(state, "host-a", false)).toBe(state);
+    expect(setProjectCollapsed(state, "host-b-project", true)).toBe(state);
+  });
+
   it("tracks collapsed project keys as a Set", () => {
     let state = emptyState();
 

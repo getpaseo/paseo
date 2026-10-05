@@ -4,17 +4,26 @@ import type {
   SidebarWorkspaceEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
-import { buildSidebarProjection } from "./sidebar-projection";
+import { buildSidebarProjection, type SidebarProjectionInput } from "./sidebar-projection";
+import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
+import {
+  isSidebarHostProjectOrder,
+  sidebarHostGroupKey,
+  sidebarHostProjectKey,
+  type SidebarHostGroup,
+} from "./sidebar-host-groups";
+import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 
 function makeWorkspace(
   id: string,
   statusBucket: SidebarWorkspaceEntry["statusBucket"] = "done",
   labels: string[] = [],
   projectViewKey = "project",
+  serverId = "srv",
 ) {
   const placement: SidebarWorkspacePlacement = {
-    workspaceKey: `srv:${id}`,
-    serverId: "srv",
+    workspaceKey: `${serverId}:${id}`,
+    serverId,
     workspaceId: id,
     projectViewKey,
     projectName: "Project",
@@ -63,10 +72,7 @@ function makeProject(
   };
 }
 
-function projectionInput(options?: {
-  groupMode?: "project" | "status";
-  pinnedCollapsed?: boolean;
-}) {
+function projectionInput(options?: { groupMode?: SidebarGroupMode; pinnedCollapsed?: boolean }) {
   const pinned = makeWorkspace("pinned", "running");
   const unpinned = makeWorkspace("unpinned", "needs_input");
   return {
@@ -92,7 +98,7 @@ function projectionInput(options?: {
  * Two projects, one workspace each, both labelled — so every grouping mode puts rows from more
  * than one project on screen, and a mode that asked for fewer icons than it renders would show it.
  */
-function twoProjectInput(groupMode: "project" | "status") {
+function twoProjectInput(groupMode: SidebarGroupMode) {
   const first = makeWorkspace("first", "running", ["Urgent"], "project");
   const second = makeWorkspace("second", "needs_input", ["Backend"], "other-project");
   return {
@@ -110,7 +116,197 @@ function twoProjectInput(groupMode: "project" | "status") {
   };
 }
 
+function sharedHostInput(): SidebarProjectionInput {
+  const local = makeWorkspace("local");
+  const remote = makeWorkspace("remote", "running", [], "project", "other");
+  const project = makeProject([local.placement, remote.placement]);
+  project.hosts.push({
+    serverId: "other",
+    projectId: "remote-project",
+    iconWorkingDir: "/remote/project",
+    worktreeSupport: "supported",
+  });
+  return {
+    ...projectionInput({ groupMode: "host-project" }),
+    projects: [project],
+    pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+    workspaceEntriesByKey: new Map([
+      [local.entry.workspaceKey, local.entry],
+      [remote.entry.workspaceKey, remote.entry],
+    ]),
+  };
+}
+
+function summarizeHostProject(project: SidebarProjectEntry) {
+  return {
+    viewKey: project.viewKey,
+    hosts: project.hosts.map((placement) => placement.projectId),
+    path: project.iconWorkingDir,
+    workspaces: project.workspaces.map((workspace) => workspace.workspaceKey),
+  };
+}
+
+function summarizeHostGroup(host: SidebarHostGroup) {
+  return { serverId: host.serverId, projects: host.projects.map(summarizeHostProject) };
+}
+
+function projectWorkspaceKeys(project: SidebarProjectEntry) {
+  return project.workspaces.map((workspace) => workspace.workspaceKey);
+}
+
+function hostWorkspaceKeys(host: SidebarHostGroup) {
+  return host.projects.map(projectWorkspaceKeys);
+}
+
+function hostCreationActions(host: SidebarHostGroup) {
+  return host.projects.map(
+    (project) => buildSidebarProjectRowModel({ project, collapsed: false }).trailingAction,
+  );
+}
+
+describe("isSidebarHostProjectOrder", () => {
+  it("accepts a complete project reorder within one host", () => {
+    const [host] = buildSidebarProjection(twoProjectInput("host-project")).hostGroups;
+    if (!host) throw new Error("Expected a host with two projects");
+    expect(isSidebarHostProjectOrder(host, host.projects.toReversed())).toBe(true);
+  });
+
+  it("rejects a project from another host even when its canonical project key matches", () => {
+    const [primary, secondary] = buildSidebarProjection(sharedHostInput()).hostGroups;
+    if (!primary || !secondary) throw new Error("Expected both hosts");
+    expect(primary.projects[0]?.viewKey).toEqual(secondary.projects[0]?.viewKey);
+    expect(isSidebarHostProjectOrder(primary, secondary.projects)).toBe(false);
+    expect(isSidebarHostProjectOrder(secondary, primary.projects)).toBe(false);
+  });
+
+  it("rejects a project reorder with missing or duplicate projects", () => {
+    const [host] = buildSidebarProjection(twoProjectInput("host-project")).hostGroups;
+    const first = host?.projects[0];
+    if (!host || !first) throw new Error("Expected a host with two projects");
+    expect(isSidebarHostProjectOrder(host, [first])).toBe(false);
+    expect(isSidebarHostProjectOrder(host, [first, first])).toBe(false);
+  });
+});
+
 describe("buildSidebarProjection", () => {
+  it("shows a shared project separately on each host, with only that host's workspaces and actions", () => {
+    const projection = buildSidebarProjection(sharedHostInput());
+    expect(projection.hostGroups.map(summarizeHostGroup)).toEqual([
+      {
+        serverId: "srv",
+        projects: [
+          {
+            viewKey: "project",
+            hosts: ["project"],
+            path: "/repo/project",
+            workspaces: ["srv:local"],
+          },
+        ],
+      },
+      {
+        serverId: "other",
+        projects: [
+          {
+            viewKey: "project",
+            hosts: ["remote-project"],
+            path: "/remote/project",
+            workspaces: ["other:remote"],
+          },
+        ],
+      },
+    ]);
+    expect(projection.hostGroups[0]?.projects[0]?.sectionKey).not.toEqual(
+      projection.hostGroups[1]?.projects[0]?.sectionKey,
+    );
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "local" },
+      { serverId: "other", workspaceId: "remote" },
+    ]);
+  });
+
+  it("collapses a host or its project without hiding the equivalent project on another host", () => {
+    const projectCollapsed = buildSidebarProjection({
+      ...sharedHostInput(),
+      collapsedProjectKeys: new Set([sidebarHostProjectKey("srv", "project")]),
+    });
+    expect(projectCollapsed.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "other", workspaceId: "remote" },
+    ]);
+
+    const hostCollapsed = buildSidebarProjection({
+      ...sharedHostInput(),
+      collapsedWorkspaceGroupKeys: new Set([sidebarHostGroupKey("other")]),
+    });
+    expect(hostCollapsed.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "local" },
+    ]);
+  });
+
+  it("keeps globally pinned workspaces and a host's empty project with its own creation action", () => {
+    const projection = buildSidebarProjection({
+      ...sharedHostInput(),
+      pinnedKeys: {
+        pinnedWorkspaceKeys: ["srv:local"],
+        pinnedAtByKey: { "srv:local": "2026-09-28T12:00:00.000Z" },
+      },
+    });
+    expect(projection.pinnedGroups.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
+      "srv:local",
+    ]);
+    expect(projection.hostGroups.map(hostWorkspaceKeys)).toEqual([[[]], [["other:remote"]]]);
+    expect(projection.hostGroups.map(hostCreationActions)).toEqual([
+      [
+        {
+          kind: "new_workspace",
+          target: expect.objectContaining({ serverId: "srv", projectId: "project" }),
+        },
+      ],
+      [
+        {
+          kind: "new_workspace",
+          target: expect.objectContaining({ serverId: "other", projectId: "remote-project" }),
+        },
+      ],
+    ]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "local" },
+      { serverId: "other", workspaceId: "remote" },
+    ]);
+  });
+
+  it("uses saved host, project and workspace order for the rows and their shortcuts", () => {
+    const input = sharedHostInput();
+    const extra = makeWorkspace("extra", "done", [], "extra-project");
+    const second = makeWorkspace("second");
+    input.projects[0]?.workspaces.push(second.placement);
+    input.projects.push(makeProject([extra.placement], "extra-project"));
+    const projection = buildSidebarProjection({
+      ...input,
+      hostOrder: ["other", "srv"],
+      projectOrder: [
+        sidebarHostProjectKey("srv", "extra-project"),
+        sidebarHostProjectKey("srv", "project"),
+      ],
+      workspaceOrderByProject: {
+        [sidebarHostProjectKey("srv", "project")]: ["srv:second", "srv:local"],
+      },
+    });
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "other", workspaceId: "remote" },
+      { serverId: "srv", workspaceId: "extra" },
+      { serverId: "srv", workspaceId: "second" },
+      { serverId: "srv", workspaceId: "local" },
+    ]);
+    const iconHostByViewKey = new Map(
+      projection.projectIconTargets.map((target) => [target.projectViewKey, target.serverId]),
+    );
+    expect(
+      projection.hostGroups
+        .flatMap((host) => host.projects)
+        .map((project) => iconHostByViewKey.get(project.sectionKey)),
+    ).toEqual(["other", "srv", "srv"]);
+  });
+
   // The rule that outlived the bug it was written for: a project icon is fetched per project, so
   // whatever a mode groups by, the rows it produces can only reference projects already covered.
   for (const groupMode of ["project", "status"] as const) {

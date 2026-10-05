@@ -1099,6 +1099,7 @@ export const ko: TranslationResources = {
       trigger: "표시 설정",
       heading: "표시",
       grouping: {
+        hostProject: "호스트 → 프로젝트",
         label: "그룹화",
         project: "프로젝트",
         status: "상태",

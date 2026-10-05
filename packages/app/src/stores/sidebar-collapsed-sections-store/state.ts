@@ -57,6 +57,7 @@ export function setProjectCollapsed(
   projectKey: string,
   collapsed: boolean,
 ): CollapsedProjectsState {
+  if (state.collapsedProjectKeys.has(projectKey) === collapsed) return state;
   const next = new Set(state.collapsedProjectKeys);
   if (collapsed) {
     next.add(projectKey);
@@ -64,6 +65,18 @@ export function setProjectCollapsed(
     next.delete(projectKey);
   }
   return { ...state, collapsedProjectKeys: next };
+}
+
+export function setWorkspaceGroupCollapsed(
+  state: CollapsedProjectsState,
+  workspaceGroupKey: string,
+  collapsed: boolean,
+): CollapsedProjectsState {
+  if (state.collapsedWorkspaceGroupKeys.has(workspaceGroupKey) === collapsed) return state;
+  const next = new Set(state.collapsedWorkspaceGroupKeys);
+  if (collapsed) next.add(workspaceGroupKey);
+  else next.delete(workspaceGroupKey);
+  return { ...state, collapsedWorkspaceGroupKeys: next };
 }
 
 export function serializeCollapsedProjects(state: CollapsedProjectsState): {

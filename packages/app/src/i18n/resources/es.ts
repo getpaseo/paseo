@@ -1128,6 +1128,7 @@ export const es: TranslationResources = {
       trigger: "Preferencias de visualización",
       heading: "Visualización",
       grouping: {
+        hostProject: "Host → Proyecto",
         label: "Agrupación",
         project: "Proyecto",
         status: "Estado",

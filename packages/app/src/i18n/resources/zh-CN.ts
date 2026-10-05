@@ -1084,6 +1084,7 @@ export const zhCN: TranslationResources = {
       trigger: "显示偏好",
       heading: "显示",
       grouping: {
+        hostProject: "主机 → 项目",
         label: "分组",
         project: "项目",
         status: "状态",

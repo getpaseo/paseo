@@ -1118,6 +1118,7 @@ export const ptBR: TranslationResources = {
       trigger: "Preferências de exibição",
       heading: "Exibição",
       grouping: {
+        hostProject: "Host → Projeto",
         label: "Agrupamento",
         project: "Projeto",
         status: "Status",
