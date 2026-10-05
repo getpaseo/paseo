@@ -827,6 +827,50 @@ describe("Claude permission cards on the Plan path settle exactly once", () => {
     ]);
   });
 
+  test("a request still waiting when the turn completes stays answerable", async () => {
+    // A background subagent can still be waiting on its tool after Claude's main turn completes.
+    const harness = await createPlanSession({ modeId: "default" });
+    await harness.session.setFeature?.("plan_mode", true);
+    await harness.session.startTurn("plan");
+    const callback = harness.canUseTool()(
+      "mcp__qa__search_docs",
+      { query: "x" },
+      toolCallOptions("tool-mcp"),
+    );
+    const outcome = settledOutcome(callback);
+    const [request] = harness.session.getPendingPermissions();
+    if (!request) throw new Error("Expected a pending tool permission");
+
+    harness.queries[0]?.emit({
+      type: "result",
+      subtype: "success",
+      duration_ms: 1,
+      duration_api_ms: 1,
+      is_error: false,
+      num_turns: 1,
+      result: "Planned.",
+      stop_reason: null,
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0 },
+      modelUsage: {},
+      permission_denials: [],
+      uuid: "00000000-0000-4000-8000-00000000000c",
+      session_id: "22222222-2222-4222-8222-222222222222",
+    } as unknown as SDKMessage);
+    await letThePumpRun();
+
+    expect(harness.events.map((event) => event.type)).toContain("turn_completed");
+    await expect(outcome).resolves.toEqual({ settled: false });
+    expect(harness.session.getPendingPermissions().map((pending) => pending.id)).toEqual([
+      request.id,
+    ]);
+    await harness.session.respondToPermission(request.id, { behavior: "allow" });
+    await expect(callback).resolves.toMatchObject({ behavior: "allow" });
+    expect(resolutions(harness.events)).toEqual([
+      expect.objectContaining({ requestId: request.id, resolution: { behavior: "allow" } }),
+    ]);
+  });
+
   test("a late answer after the user interrupted the turn is accepted once", async () => {
     const harness = await createPlanSession({ modeId: "default" });
     await harness.session.setFeature?.("plan_mode", true);
