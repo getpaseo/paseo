@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reloadActiveBrowserOrWindow } from "./menu.js";
+import { buildWindowMenuItem, reloadActiveBrowserOrWindow } from "./menu.js";
 
 class FakeWebContents {
   public readonly reloads: string[] = [];
@@ -66,5 +66,18 @@ describe("reloadActiveBrowserOrWindow", () => {
     expect(browserReloads.firstBrowser.reloads).toEqual([]);
     expect(browserReloads.secondBrowser.reloads).toEqual(["force-reload"]);
     expect(browserReloads.secondWindow.webContents.reloads).toEqual([]);
+  });
+});
+
+describe("buildWindowMenuItem", () => {
+  it("uses the native macOS Window menu", () => {
+    expect(buildWindowMenuItem("darwin")).toEqual({ role: "windowMenu" });
+  });
+
+  it("preserves Paseo's custom Window menu outside macOS", () => {
+    expect(buildWindowMenuItem("win32")).toEqual({
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "close" }],
+    });
   });
 });
