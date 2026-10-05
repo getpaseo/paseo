@@ -484,6 +484,36 @@ describe("Claude plan approval and query restarts", () => {
     expect(harness.queries[0]?.permissionModes).toEqual(["plan"]);
   });
 
+  test("a plan approval queued behind another change does nothing once its card is gone", async () => {
+    const harness = await createPlanSession({ modeId: "bypassPermissions" });
+    await harness.session.setFeature?.("plan_mode", true);
+    await harness.session.startTurn("plan the docs change");
+    const abort = new AbortController();
+    const callback = settledOutcome(
+      harness.canUseTool()(
+        "ExitPlanMode",
+        { plan: "Edit README.md" },
+        { ...toolCallOptions("tool-plan"), signal: abort.signal },
+      ),
+    );
+    const [request] = harness.session.getPendingPermissions();
+    if (!request) throw new Error("Expected a pending plan approval");
+
+    const release = harness.queries[0]?.holdNextPermissionMode();
+    const planOff = harness.session.setFeature?.("plan_mode", false);
+    const approval = harness.session.respondToPermission(request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    abort.abort();
+    release?.();
+    await Promise.all([planOff, approval]);
+
+    await expect(callback).resolves.toEqual({ rejected: "Permission request aborted" });
+    await expect(harness.session.getCurrentMode()).resolves.toBe("bypassPermissions");
+    expect(harness.queries[0]?.permissionModes).toEqual(["plan", "bypassPermissions"]);
+  });
+
   test("Always Ask plus Plan offers no Implement with Bypass", async () => {
     const harness = await planningSession("default");
     const { callback, request } = await requestPlanApproval(harness);

@@ -2705,7 +2705,12 @@ class ClaudeAgentSession implements AgentSession {
     const selectedActionId = response.behavior === "allow" ? response.selectedActionId : undefined;
     if (response.behavior === "allow" && pending.request.kind === "plan") {
       // Leave Plan before taking the card down, so a failed mode change leaves it answerable.
-      await this.changeExecutionMode((current) => approveClaudePlan(current, selectedActionId));
+      // Claude can withdraw the card while an earlier change runs; then the approval changes nothing.
+      await this.changeExecutionMode((current) =>
+        this.pendingPermissions.get(requestId) === pending
+          ? approveClaudePlan(current, selectedActionId)
+          : current,
+      );
       if (this.pendingPermissions.get(requestId) !== pending) {
         return;
       }
