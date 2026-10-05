@@ -31,8 +31,6 @@ const TAB_ON = `${TAB_BASE} border-white text-white`;
 const TAB_OFF = `${TAB_BASE} border-transparent text-muted-foreground hover:text-foreground`;
 const CLEAR_CLASS =
   "text-sm text-extra-muted-foreground transition-colors hover:text-muted-foreground";
-const CONTRIBUTE_CLASS =
-  "text-sm text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
 /** All plugins or one category: sidebar, Most installed / Newest tabs, and the card grid. */
 export function BrowsePage({
@@ -156,7 +154,7 @@ function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery
         ))}
         <div className="my-3 h-px bg-white/10" />
         <div className="flex flex-col gap-1.5 px-2.5">
-          <ContributeLinks className={CONTRIBUTE_CLASS} />
+          <ContributeLinks />
         </div>
       </nav>
       <nav aria-label="Categories" className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-1 lg:hidden">
