@@ -1143,6 +1143,19 @@ export const ko: TranslationResources = {
     pinned: {
       title: "고정됨",
     },
+    folder: {
+      title: "폴더",
+      none: "없음",
+      newFolder: "새 폴더",
+      name: "폴더 이름",
+      create: "만들기",
+      save: "저장",
+      menu: "폴더 작업",
+      rename: "이름 변경",
+      moveUp: "위로 이동",
+      moveDown: "아래로 이동",
+      delete: "폴더 삭제",
+    },
     host: {
       noHost: "호스트 없음",
       switchTitle: "호스트 전환",

@@ -1144,6 +1144,19 @@ export const en = {
     pinned: {
       title: "Pinned",
     },
+    folder: {
+      title: "Folder",
+      none: "None",
+      newFolder: "New folder",
+      name: "Folder name",
+      create: "Create",
+      save: "Save",
+      menu: "Folder actions",
+      rename: "Rename",
+      moveUp: "Move up",
+      moveDown: "Move down",
+      delete: "Delete folder",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",

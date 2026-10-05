@@ -1128,6 +1128,19 @@ export const zhCN: TranslationResources = {
     pinned: {
       title: "已置顶",
     },
+    folder: {
+      title: "文件夹",
+      none: "无",
+      newFolder: "新建文件夹",
+      name: "文件夹名称",
+      create: "创建",
+      save: "保存",
+      menu: "文件夹操作",
+      rename: "重命名",
+      moveUp: "上移",
+      moveDown: "下移",
+      delete: "删除文件夹",
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",

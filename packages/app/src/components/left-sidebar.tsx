@@ -39,6 +39,7 @@ import {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
+import type { SidebarProjectFolderGroups } from "@/components/sidebar/sidebar-projection";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
@@ -72,6 +73,7 @@ interface SidebarSharedProps {
   workspaceGroups: SidebarWorkspaceGroup[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  projectFolderGroups: SidebarProjectFolderGroups;
   projects: SidebarProjectEntry[];
   hasProjectsBeforeFilter: boolean;
   hasActiveProjectFilter: boolean;
@@ -131,6 +133,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     workspaceGroups,
     projectIconTargets,
     pinnedGroups,
+    projectFolderGroups,
     collapsedProjectKeys,
     toggleProjectCollapsed,
     groupMode,
@@ -215,6 +218,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     workspaceGroups,
     projectIconTargets,
     pinnedGroups,
+    projectFolderGroups,
     projects,
     hasProjectsBeforeFilter,
     hasActiveProjectFilter: resolvedProjectFilters.length > 0,
@@ -514,6 +518,7 @@ function MobileSidebar({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  projectFolderGroups,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -596,6 +601,7 @@ function MobileSidebar({
             workspaceGroups={workspaceGroups}
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
+            projectFolderGroups={projectFolderGroups}
             projects={projects}
             hasProjectsBeforeFilter={hasProjectsBeforeFilter}
             hasActiveProjectFilter={hasActiveProjectFilter}
@@ -630,6 +636,7 @@ function DesktopSidebar({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  projectFolderGroups,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -774,6 +781,7 @@ function DesktopSidebar({
             workspaceGroups={workspaceGroups}
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
+            projectFolderGroups={projectFolderGroups}
             projects={projects}
             hasProjectsBeforeFilter={hasProjectsBeforeFilter}
             hasActiveProjectFilter={hasActiveProjectFilter}

@@ -1136,6 +1136,19 @@ export const ar: TranslationResources = {
     pinned: {
       title: "المثبتة",
     },
+    folder: {
+      title: "المجلد",
+      none: "بلا",
+      newFolder: "مجلد جديد",
+      name: "اسم المجلد",
+      create: "إنشاء",
+      save: "حفظ",
+      menu: "إجراءات المجلد",
+      rename: "إعادة التسمية",
+      moveUp: "نقل لأعلى",
+      moveDown: "نقل لأسفل",
+      delete: "حذف المجلد",
+    },
     host: {
       noHost: "لا مضيف",
       switchTitle: "تبديل المضيف",

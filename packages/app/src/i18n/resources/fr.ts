@@ -1172,6 +1172,19 @@ export const fr: TranslationResources = {
     pinned: {
       title: "Épinglés",
     },
+    folder: {
+      title: "Dossier",
+      none: "Aucun",
+      newFolder: "Nouveau dossier",
+      name: "Nom du dossier",
+      create: "Créer",
+      save: "Enregistrer",
+      menu: "Actions du dossier",
+      rename: "Renommer",
+      moveUp: "Monter",
+      moveDown: "Descendre",
+      delete: "Supprimer le dossier",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d'hôte",

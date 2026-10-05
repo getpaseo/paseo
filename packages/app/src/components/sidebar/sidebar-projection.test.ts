@@ -85,6 +85,9 @@ function projectionInput(options?: {
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
+    folders: [] as { id: string; name: string }[],
+    projectAssignments: [] as { folderId: string; refs: string[] }[],
+    collapsedFolderIds: [] as string[],
   };
 }
 
@@ -161,6 +164,60 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "pinned" },
       { serverId: "srv", workspaceId: "unpinned" },
+    ]);
+  });
+
+  it("puts foldered projects first and numbers shortcuts in that order", () => {
+    const projection = buildSidebarProjection({
+      ...twoProjectInput("project"),
+      folders: [
+        { id: "work", name: "Work" },
+        { id: "empty", name: "Empty" },
+      ],
+      projectAssignments: [
+        { folderId: "work", refs: ["srv:other-project"] },
+        { folderId: "missing-folder", refs: ["srv:project"] },
+      ],
+    });
+
+    const { folderGroups, rootProjects } = projection.projectFolderGroups;
+    expect(folderGroups.map((group) => group.folder.id)).toEqual(["work", "empty"]);
+    expect(folderGroups[0]?.projects.map((project) => project.viewKey)).toEqual(["other-project"]);
+    expect(folderGroups[1]?.projects).toEqual([]);
+    expect(rootProjects.map((project) => project.viewKey)).toEqual(["project"]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "second" },
+      { serverId: "srv", workspaceId: "first" },
+    ]);
+  });
+
+  it("keeps a project in its folder when its view key changes", () => {
+    const input = twoProjectInput("project");
+    // Same host-local project id, new grouping key, as after a git remote change.
+    const renamed = { ...input.projects[1]!, viewKey: "remote-changed" };
+    const projection = buildSidebarProjection({
+      ...input,
+      projects: [input.projects[0]!, renamed],
+      folders: [{ id: "work", name: "Work" }],
+      projectAssignments: [{ folderId: "work", refs: ["srv:other-project"] }],
+    });
+
+    expect(
+      projection.projectFolderGroups.folderGroups[0]?.projects.map((project) => project.viewKey),
+    ).toEqual(["remote-changed"]);
+  });
+
+  it("skips shortcuts for projects inside a collapsed folder", () => {
+    const projection = buildSidebarProjection({
+      ...twoProjectInput("project"),
+      folders: [{ id: "work", name: "Work" }],
+      projectAssignments: [{ folderId: "work", refs: ["srv:other-project"] }],
+      collapsedFolderIds: ["work"],
+    });
+
+    expect(projection.projectFolderGroups.folderGroups[0]?.collapsed).toBe(true);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "first" },
     ]);
   });
 
