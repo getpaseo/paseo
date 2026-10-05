@@ -2490,10 +2490,16 @@ class ClaudeAgentSession implements AgentSession {
     try {
       await this.applyExecutionMode(previous);
     } catch (error) {
-      // The live query may keep the abandoned mode, so the next one starts from this state.
+      // The live query may still run in the abandoned mode. End its turn and retire it now, so
+      // nothing runs in that mode and the next query starts from the restored state.
       this.executionMode = previous;
       this.cachedRuntimeInfo = null;
-      this.queryRestartNeeded = true;
+      this.failActiveTurns(
+        `Claude Code could not return to the mode before the withdrawn plan approval: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      await this.retireQuery();
       throw error;
     }
   }
@@ -3237,43 +3243,50 @@ class ClaudeAgentSession implements AgentSession {
     return { kind: "fresh-session" };
   }
 
+  private async retireQuery(): Promise<void> {
+    const oldQuery = this.query;
+    if (!oldQuery) {
+      return;
+    }
+    const oldInput = this.input;
+    // Null out query/input BEFORE awaiting the old iterator's return so the
+    // old pump sees this.query !== activeQuery and skips failActiveTurns.
+    this.query = null;
+    this.input = null;
+    this.queryPumpPromise = null;
+    this.queryRestartNeeded = false;
+    // Ending the input retires the process on purpose. Detach first so its
+    // exit is not reported as a crash.
+    const retiredChild = this.childProcess;
+    this.childProcess = null;
+    if (retiredChild) this.failRunningRuntimeTasks();
+    oldInput?.end();
+    oldQuery.close?.();
+    try {
+      await oldQuery.return?.();
+    } catch {
+      /* ignore */
+    }
+    // Tree-kill the old process tree now that the SDK has cleaned up.
+    // If we skip this, MCP children of the previous claude process can
+    // survive as orphans when the session spawns a replacement query.
+    if (retiredChild) {
+      await terminateWithTreeKill(retiredChild, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }).catch(() => {
+        /* process may already be dead */
+      });
+    }
+  }
+
   private async ensureQuery(): Promise<Query> {
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
     }
 
     if (this.queryRestartNeeded && this.query) {
-      const oldQuery = this.query;
-      const oldInput = this.input;
-      // Null out query/input BEFORE awaiting the old iterator's return so the
-      // old pump sees this.query !== activeQuery and skips failActiveTurns.
-      this.query = null;
-      this.input = null;
-      this.queryPumpPromise = null;
-      this.queryRestartNeeded = false;
-      // Ending the input retires the process on purpose. Detach first so its
-      // exit is not reported as a crash.
-      const retiredChild = this.childProcess;
-      this.childProcess = null;
-      if (retiredChild) this.failRunningRuntimeTasks();
-      oldInput?.end();
-      oldQuery.close?.();
-      try {
-        await oldQuery.return?.();
-      } catch {
-        /* ignore */
-      }
-      // Tree-kill the old process tree now that the SDK has cleaned up.
-      // If we skip this, MCP children of the previous claude process can
-      // survive as orphans when the session spawns a replacement query.
-      if (retiredChild) {
-        await terminateWithTreeKill(retiredChild, {
-          gracefulTimeoutMs: 2_000,
-          forceTimeoutMs: 2_000,
-        }).catch(() => {
-          /* process may already be dead */
-        });
-      }
+      await this.retireQuery();
     }
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes

@@ -26,6 +26,8 @@ interface FakeClaudeQuery {
   emit(message: SDKMessage): void;
   /** Ends the stream before a result, the way it ends when the Claude Code process dies. */
   end(): void;
+  /** Whether the session closed this query. */
+  isClosed(): boolean;
   /** Makes the next setPermissionMode call wait, the way a busy Claude Code process answers late. */
   holdNextPermissionMode(): PermissionModeHold;
 }
@@ -37,6 +39,7 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
   const pending: SDKMessage[] = [];
   const waiters: Array<(result: IteratorResult<SDKMessage, void>) => void> = [];
   let ended = false;
+  let closed = false;
   const finish = () => {
     ended = true;
     for (const waiter of waiters.splice(0)) waiter({ value: undefined, done: true });
@@ -68,8 +71,12 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
       return [];
     },
     async interrupt() {},
-    close: finish,
+    close() {
+      closed = true;
+      finish();
+    },
     async return() {
+      closed = true;
       finish();
       return { value: undefined, done: true };
     },
@@ -95,6 +102,7 @@ function createFakeClaudeQuery(): FakeClaudeQuery {
       else pending.push(message);
     },
     end: finish,
+    isClosed: () => closed,
     holdNextPermissionMode() {
       let release = () => {};
       let markReached = () => {};
@@ -597,7 +605,9 @@ describe("Claude plan approval and query restarts", () => {
     expect(harness.session.features).toContainEqual(
       expect.objectContaining({ id: "plan_mode", value: true }),
     );
-    await harness.session.interrupt();
+    // The query that may still be in Accept File Edits is gone, and its turn ended with it.
+    expect(query.isClosed()).toBe(true);
+    expect(harness.events.map((event) => event.type)).toContain("turn_failed");
     await harness.session.startTurn("continue planning");
     expect(harness.launches).toHaveLength(2);
     expect(harness.launches[1]?.options.permissionMode).toBe("plan");
