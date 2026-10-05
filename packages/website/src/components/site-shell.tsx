@@ -4,12 +4,17 @@ import { SiteHeader } from "~/components/site-header";
 
 interface SiteShellProps {
   children: ReactNode;
-  width: "default" | "prose";
+  width: "default" | "prose" | "wide";
 }
 
+const MAIN_CLASSES: Record<SiteShellProps["width"], string> = {
+  prose: "max-w-prose p-6 md:p-12 mx-auto",
+  default: "max-w-5xl p-6 md:p-20 mx-auto",
+  wide: "max-w-7xl p-6 md:p-20 mx-auto",
+};
+
 export function SiteShell({ children, width }: SiteShellProps) {
-  const mainClasses =
-    width === "prose" ? "max-w-prose p-6 md:p-12 mx-auto" : "max-w-5xl p-6 md:p-20 mx-auto";
+  const mainClasses = MAIN_CLASSES[width];
   return (
     <div className="min-h-screen bg-background">
       <main className={mainClasses}>

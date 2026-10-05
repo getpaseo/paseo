@@ -171,9 +171,27 @@ export async function recordUpwardTraversal(
     let lastWheelAt = -Infinity;
     let inputFinishedAt: number | null = null;
     let imageLoads = 0;
-    let mounted = 0;
+    let mounted = scroll.querySelectorAll("[data-history-row-id]").length;
     let unmounted = 0;
-    let previousIds = new Set<string>();
+    const collectRows = (node: Node, rows: Set<Element>) => {
+      if (!(node instanceof Element)) return;
+      if (node.matches("[data-history-row-id]")) rows.add(node);
+      for (const row of node.querySelectorAll("[data-history-row-id]")) rows.add(row);
+    };
+    const recordMutations = (records: MutationRecord[]) => {
+      // A newly inserted container and its children can both appear in one
+      // delivery. Count each DOM row once, including rows removed before paint.
+      const added = new Set<Element>();
+      const removed = new Set<Element>();
+      for (const record of records) {
+        for (const node of record.addedNodes) collectRows(node, added);
+        for (const node of record.removedNodes) collectRows(node, removed);
+      }
+      mounted += added.size;
+      unmounted += removed.size;
+    };
+    const mutations = new MutationObserver(recordMutations);
+    mutations.observe(scroll, { childList: true, subtree: true });
     const wheel = (event: WheelEvent) => {
       wheelTotal += -event.deltaY;
       lastWheelAt = performance.now();
@@ -205,10 +223,8 @@ export async function recordUpwardTraversal(
         const box = row.getBoundingClientRect();
         return { id: row.dataset.historyRowId!, top: box.top - rect.top, height: box.height };
       });
-      const ids = new Set(rows.map((row) => row.id));
-      mounted += [...ids].filter((id) => !previousIds.has(id)).length;
-      unmounted += [...previousIds].filter((id) => !ids.has(id)).length;
-      previousIds = ids;
+      // Include rows mounted and removed in the same commit, before sampling.
+      recordMutations(mutations.takeRecords());
       // Preserve the row crossing the reading line. Rows below an expanding
       // visible image legitimately move even when the reading position is stable.
       const anchor = rows.find((row) => row.top < rect.height && row.top + row.height > 8);
@@ -246,6 +262,7 @@ export async function recordUpwardTraversal(
       stop() {
         cancelAnimationFrame(frame);
         resizeObserver.disconnect();
+        mutations.disconnect();
         scroll.removeEventListener("wheel", wheel);
         scroll.removeEventListener("load", imageLoad, true);
       },
@@ -362,9 +379,9 @@ export async function reportScrollJumps(
     worstReversePx: Math.max(0, ...jumps.map((jump) => -jump.movement)),
     frameGapP95Ms: gaps[Math.floor(gaps.length * 0.95)],
     frameGapMaxMs: gaps.at(-1),
-    imageLoads: frames.at(-1)?.imageLoads,
-    mounted: frames.at(-1)?.mounted,
-    unmounted: frames.at(-1)?.unmounted,
+    imageLoads: frames[frames.length - 1].imageLoads,
+    mounted: frames[frames.length - 1].mounted,
+    unmounted: frames[frames.length - 1].unmounted,
     jumps,
   };
   await writeFile(testInfo.outputPath("scroll-summary.json"), JSON.stringify(summary, null, 2));
@@ -382,7 +399,7 @@ export async function reportScrollJumps(
     body: JSON.stringify(react),
     contentType: "application/json",
   });
-  await testInfo.attach("scroll-end", { body: await page.screenshot(), contentType: "image/png" });
+  await attachTimelineScreenshot(page, testInfo, "scroll-end");
   console.log(
     `[scroll] ${testInfo.title}: ${JSON.stringify({ ...summary, jumps: jumps.slice(0, 5) })}`,
   );
@@ -395,6 +412,15 @@ export async function reportScrollJumps(
     "must exercise virtualization",
   ).toBe(true);
   expect(summary.imageLoads, "must exercise image completion during traversal").toBeGreaterThan(0);
+  expect(
+    summary.mounted - summary.unmounted,
+    "row counters must balance against the final DOM",
+  ).toBe(frames[frames.length - 1].rows.length);
+  const uniqueRows = new Set(frames.flatMap((frame) => frame.rows.map((row) => row.id))).size;
+  expect(
+    summary.mounted,
+    "prepending must not mount a discarded range before correcting the viewport",
+  ).toBeLessThanOrEqual(uniqueRows * 1.25);
   expect(
     jumps,
     "visible text must not reverse direction while scrolling upward or move after input stops",
@@ -431,4 +457,81 @@ async function traceScrollIfRequested(
     await writeFile(path, chunks.join(""));
     await testInfo.attach("scroll-chromium-trace", { path, contentType: "application/json" });
   };
+}
+
+/** Hold real image bytes until the reader has reached its placeholder. */
+export async function expectImageSpaceReserved(page: Page, testInfo: TestInfo): Promise<void> {
+  let released = false;
+  const pending = new Set<() => void>();
+  const server = createServer((_request, response) => {
+    const send = () => {
+      response.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" });
+      response.end(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160"><rect width="240" height="160" fill="#369"/></svg>',
+      );
+    };
+    if (released) send();
+    else pending.add(send);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Image server did not listen");
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "reserved-timeline-image-",
+      title: "Reserved image geometry",
+      featureValues: {
+        mockAssistantResponses: [
+          `Before the image.\n\n![Reserved image](http://127.0.0.1:${address.port}/image.svg)\n\nText below the image.`,
+        ],
+      },
+    });
+    try {
+      await agent.client.sendAgentMessage(agent.agentId, "Show the delayed image");
+      await agent.client.waitForFinish(agent.agentId, 15_000);
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, "Show the delayed image");
+      const image = page.getByRole("img", { name: "Reserved image" }).first();
+      await expect(image).toBeVisible();
+      const before = await image.boundingBox();
+      await attachTimelineScreenshot(page, testInfo, "image-placeholder");
+      released = true;
+      for (const send of pending) send();
+      await expect
+        .poll(() =>
+          image.evaluate((element) => {
+            const img =
+              element instanceof HTMLImageElement ? element : element.querySelector("img");
+            return img?.naturalWidth;
+          }),
+        )
+        .toBe(240);
+      await expect
+        .poll(async () => {
+          const box = await image.boundingBox();
+          return box ? Math.round((box.width / box.height) * 100) : 0;
+        })
+        .toBe(150);
+      const after = await image.boundingBox();
+      await attachTimelineScreenshot(page, testInfo, "image-loaded");
+      expect(before?.height, "reserve the final image height before the HTTP response").toBe(
+        after?.height,
+      );
+    } finally {
+      await agent.cleanup();
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+async function attachTimelineScreenshot(
+  page: Page,
+  testInfo: TestInfo,
+  name: string,
+): Promise<void> {
+  const path = testInfo.outputPath(`${name}.png`);
+  await page.getByTestId("agent-chat-scroll").screenshot({ path });
+  await testInfo.attach(name, { path, contentType: "image/png" });
 }

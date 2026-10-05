@@ -1956,6 +1956,8 @@ export const en = {
     dismiss: "Dismiss",
   },
   contextWindow: {
+    noData: "No context data",
+    accessibilityNoData: "Context window: No context data",
     title: "Context window",
     used: "{{percentage}}% used",
     tokens: "{{used}} / {{max}} tokens",

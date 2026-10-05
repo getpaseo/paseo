@@ -58,8 +58,9 @@ const additionalInputs = [
   "packages/server/dist/server/terminal/shell-integration/**",
   // Silero VAD ONNX model (sherpa speech provider)
   "packages/server/dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx",
-  // OpenCode loads this plugin from a content-addressed runtime copy.
-  "packages/server/dist/server/server/agent/providers/opencode/bridge-plugin.bundle.mjs",
+  // OpenCode loads these plugins from a content-addressed runtime copy, one
+  // bundle per supported OpenCode version (opencode/ and opencode/v2/).
+  "packages/server/dist/server/server/agent/providers/opencode/**/bridge-plugin.bundle.mjs",
   // Server runtime config files (read by path, not require)
   "packages/server/.env.example",
   // CLI shebang script wrapping dist/index.js

@@ -1,11 +1,16 @@
 import { describe, expect, test } from "vitest";
+import path from "node:path";
 import {
   DaemonSelfUpdateInProgressError,
   DaemonSelfUpdater,
   type DaemonSelfUpdateRuntime,
   type DaemonSelfUpdatePhase,
 } from "./daemon-self-updater.js";
-import type { CommandResult, NpmGlobalPaseoInstall } from "./npm-global-cli.js";
+import {
+  DefaultNpmGlobalPaseoCli,
+  type CommandResult,
+  type NpmGlobalPaseoInstall,
+} from "./npm-global-cli.js";
 
 interface TestLogger {
   errors: Array<{ obj: object; msg?: string }>;
@@ -100,6 +105,45 @@ async function runUpdate(input: {
 }
 
 describe("DaemonSelfUpdater", () => {
+  test("probes and updates the running install's prefix when npm defaults elsewhere", async () => {
+    const prefix = path.resolve("custom npm prefix");
+    const root = process.platform === "win32" ? prefix : path.join(prefix, "lib");
+    const packagePath = path.join(root, "node_modules", "@getpaseo", "cli");
+    const commands: string[][] = [];
+    let version = "0.1.15";
+    const npm = new DefaultNpmGlobalPaseoCli(async (_command, args) => {
+      commands.push(args);
+      if (args[args.indexOf("--prefix") + 1] !== prefix) {
+        return { exitCode: 1, stdout: "{}", stderr: "No CLI in npm's default prefix" };
+      }
+      if (args.includes("install")) version = "0.1.96";
+      return {
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          path: root,
+          dependencies: { "@getpaseo/cli": { version, path: packagePath } },
+        }),
+      };
+    });
+    const { result } = await runUpdate({
+      runtime: {
+        npm,
+        installOrigin: {
+          resolveCurrentServerPackageRoot: () =>
+            path.join(packagePath, "node_modules", "@getpaseo", "server"),
+        },
+      },
+    });
+    expect(result).toEqual({ success: true, error: null, newVersion: "0.1.96" });
+    expect(commands).toHaveLength(3);
+    expect(commands.map((args) => args.slice(-2))).toEqual([
+      ["--prefix", prefix],
+      ["--prefix", prefix],
+      ["--prefix", prefix],
+    ]);
+  });
+
   test("refuses a Desktop-managed daemon without touching npm", async () => {
     const calls: RuntimeCall[] = [];
     const runtime = createRuntime({ calls, inspections: [] });

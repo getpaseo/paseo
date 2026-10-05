@@ -134,6 +134,7 @@ describe("Claude credential routes", () => {
         JSON.stringify({ claudeAiOauth: { accessToken: "fixture-default" } }),
       );
       const accounts = await discover(
+        { kind: "global" },
         { home: dir, env: { CLAUDE_CONFIG_DIR: dir }, platform: "linux" },
         fixtureFetch("fixture-default"),
       );

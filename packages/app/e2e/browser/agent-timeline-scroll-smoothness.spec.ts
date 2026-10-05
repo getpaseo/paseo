@@ -2,6 +2,7 @@ import { test } from "../support/fixtures";
 import { expect } from "@playwright/test";
 import {
   findScrollJumps,
+  expectImageSpaceReserved,
   type ScrollFrame,
   observeTimelinePages,
   openOnlyTimelineTail,
@@ -145,3 +146,7 @@ for (const cadence of scrollCadences) {
     });
   });
 }
+
+test("reserves image space before its response arrives", async ({ page }, testInfo) => {
+  await expectImageSpaceReserved(page, testInfo);
+});

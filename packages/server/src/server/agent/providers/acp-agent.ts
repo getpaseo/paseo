@@ -2455,10 +2455,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
-    }
-    this.pendingPermissions.clear();
+    this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
@@ -2474,10 +2471,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
-    for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
-    }
-    this.pendingPermissions.clear();
+    this.cancelPendingPermissions();
 
     if (this.connection && this.sessionId) {
       try {
@@ -3178,8 +3172,29 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  // ACP reports context occupancy out of band from the prompt response, so the
+  // composer's context meter cannot read it from `turn_completed`. Forward it as
+  // the same `usage_updated` snapshot the native adapters emit, preserving the
+  // turn usage this session already recorded. The guards match the meter's own
+  // validity rules, so a provider cannot push a window the meter would reject.
   private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+    const contextWindowMaxTokens =
+      Number.isFinite(update.size) && update.size > 0 ? update.size : undefined;
+    const contextWindowUsedTokens =
+      Number.isFinite(update.used) && update.used >= 0 ? update.used : undefined;
+    if (contextWindowMaxTokens === undefined || contextWindowUsedTokens === undefined) {
+      return;
+    }
+    this.pushEvent({
+      type: "usage_updated",
+      provider: this.provider,
+      usage: {
+        ...this.currentTurnUsage,
+        contextWindowMaxTokens,
+        contextWindowUsedTokens,
+      },
+      turnId: this.activeForegroundTurnId ?? undefined,
+    });
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
@@ -3277,12 +3292,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // A turn that ends without completing leaves no way to answer its open
+    // permission requests, so tell the agent they were cancelled.
+    if (event.type !== "turn_completed") {
+      this.cancelPendingPermissions();
+    }
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
     }
     this.pushEvent(event);
+  }
+
+  private cancelPendingPermissions(): void {
+    for (const pending of this.pendingPermissions.values()) {
+      pending.resolve({ outcome: { outcome: "cancelled" } });
+    }
+    this.pendingPermissions.clear();
   }
 
   private emitBootstrapThreadEvent(): void {

@@ -1009,7 +1009,7 @@ describe("ClaudeAgentSession features", () => {
 
     expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
       effort: "xhigh",
-      thinking: { type: "adaptive" },
+      thinking: { type: "adaptive", display: "summarized" },
       settings: { ultracode: true },
     });
 
@@ -1223,7 +1223,7 @@ describe("ClaudeAgentSession features", () => {
 
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
-    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],
+    ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
     ["provider default", null, undefined, undefined],
   ])("reconciles Off when switching to a %s", async (_label, modelId, thinking, effort) => {
@@ -3064,6 +3064,44 @@ describe("ClaudeAgentSession context window usage", () => {
         event.type === "timeline" && event.item.type === "compaction" ? [event.item.status] : [],
       );
       expect(compactions).toEqual(["loading", "completed", "loading", "completed"]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports the plan mode Claude enters on its own with EnterPlanMode", async () => {
+    // Claude Code announces a mode it switched to itself as a status message
+    // carrying the new permissionMode, right after the EnterPlanMode tool call.
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory: createQueryFactoryForTurns([
+        [
+          { ...createInitMessage(), permissionMode: "acceptEdits" },
+          {
+            type: "system",
+            subtype: "status",
+            status: null,
+            permissionMode: "plan",
+            session_id: "session-1",
+          },
+          createSuccessResult(),
+        ],
+      ]),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "acceptEdits",
+    });
+
+    try {
+      const events = await collectStreamEvents(session, "enter plan mode");
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "mode_changed", currentModeId: "plan" }),
+      );
+      expect(await session.getCurrentMode()).toBe("plan");
     } finally {
       await session.close();
     }

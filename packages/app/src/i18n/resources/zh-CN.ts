@@ -1909,6 +1909,8 @@ export const zhCN: TranslationResources = {
     dismiss: "关闭",
   },
   contextWindow: {
+    noData: "暂无上下文数据",
+    accessibilityNoData: "上下文窗口：暂无上下文数据",
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
     tokens: "{{used}} / {{max}} tokens",

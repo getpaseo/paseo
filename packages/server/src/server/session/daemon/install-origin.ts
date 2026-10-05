@@ -15,6 +15,21 @@ export const daemonInstallOriginRuntime: DaemonInstallOriginRuntime = {
   resolveCurrentServerPackageRoot,
 };
 
+export function resolveNpmGlobalPrefix(serverPackageRoot: string | null): string | undefined {
+  if (!serverPackageRoot) return undefined;
+  let directory = serverPackageRoot;
+  let prefix: string | undefined;
+  while (path.dirname(directory) !== directory) {
+    if (path.basename(directory) === "node_modules") {
+      const root = path.dirname(directory);
+      if (process.platform === "win32") prefix = root;
+      else if (path.basename(root) === "lib") prefix = path.dirname(root);
+    }
+    directory = path.dirname(directory);
+  }
+  return prefix;
+}
+
 export function validateDaemonInstallOrigin(
   install: NpmGlobalPaseoInstall,
   daemonVersion: string | null,

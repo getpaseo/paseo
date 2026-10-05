@@ -2053,6 +2053,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
+  private readonly harnessEnvironment: Record<string, string>;
+  private readonly usageSessionKey = randomUUID();
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   /** The exact SDK query/input pair that owns the current foreground turn. */
@@ -2090,7 +2092,11 @@ class ClaudeAgentSession implements AgentSession {
     // identity and status from frames for them. Detecting the capability beats comparing version
     // strings: it reacts to what this session actually does.
     isDescriptorOwnedElsewhere: () => this.taskProtocolSource.isActive,
+    // The parent's tool call owns its card once its result arrives. A background child streams
+    // its frames after Claude has already answered the call, and re-emitting the card from them
+    // would replace the settled card with an unlabeled, running one.
     needsSyntheticParentToolCard: (toolUseId) =>
+      this.toolUseCache.has(toolUseId) &&
       this.taskProtocolSource.needsSyntheticParentToolCard(toolUseId),
   });
   private persistedHistory: PersistedTimelineEntry[] = [];
@@ -2128,6 +2134,7 @@ class ClaudeAgentSession implements AgentSession {
     this.agentId = options.agentId;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
+    this.harnessEnvironment = this.buildSdkEnv();
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
@@ -2422,7 +2429,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeModeCanRun(normalized, this.buildSdkEnv());
+    assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -3241,10 +3248,18 @@ class ClaudeAgentSession implements AgentSession {
       return { thinking: { type: "disabled" }, effort: undefined, ultracode: false };
     }
     if (thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) {
-      return { thinking: { type: "adaptive" }, effort: "xhigh", ultracode: true };
+      return {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: "xhigh",
+        ultracode: true,
+      };
     }
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      return { thinking: { type: "adaptive" }, effort: thinkingOptionId, ultracode: false };
+      return {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: thinkingOptionId,
+        ultracode: false,
+      };
     }
     return { thinking: undefined, effort: undefined, ultracode: false };
   }
@@ -3255,7 +3270,17 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private buildSdkEnv(): NodeJS.ProcessEnv {
+  usageSession() {
+    if (this.closed) return null;
+    return {
+      provider: "claude",
+      model: this.config.model,
+      env: this.harnessEnvironment,
+      sessionKey: this.usageSessionKey,
+    };
+  }
+
+  private buildSdkEnv() {
     return createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
@@ -3271,7 +3296,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.toolPolicy,
     );
     const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
-    const sdkEnv = this.buildSdkEnv();
+    const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(this.currentMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
@@ -4296,6 +4321,19 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (message.subtype === "status") {
+      // Claude Code reports a mode it switched to on its own, such as entering
+      // plan mode with the EnterPlanMode tool, through the status message.
+      if (
+        isPermissionMode(message.permissionMode) &&
+        this.observePermissionMode(message.permissionMode)
+      ) {
+        events.push({
+          type: "mode_changed",
+          provider: "claude",
+          currentModeId: this.currentMode,
+          availableModes: this.availableModes,
+        });
+      }
       const status = toObjectRecord(message)?.status;
       if (status === "compacting") {
         this.compacting = true;
@@ -4607,10 +4645,7 @@ class ClaudeAgentSession implements AgentSession {
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
     this.availableModes = DEFAULT_MODES;
-    this.currentMode = message.permissionMode;
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
+    this.observePermissionMode(message.permissionMode);
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
@@ -4627,6 +4662,16 @@ class ClaudeAgentSession implements AgentSession {
       this.cachedRuntimeInfo = null;
     }
     return { threadStartedSessionId, notice };
+  }
+
+  /** Records a mode Claude Code reports, returning whether it differs from the current one. */
+  private observePermissionMode(mode: PermissionMode): boolean {
+    const changed = this.currentMode !== mode;
+    this.currentMode = mode;
+    if (mode !== "plan") {
+      this.planResumeMode = mode;
+    }
+    return changed;
   }
 
   private readMissingResumedConversationError(message: SDKMessage): string | null {
@@ -5064,7 +5109,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = claudeConfigDir(this.buildSdkEnv());
+    const configDir = claudeConfigDir(this.harnessEnvironment);
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);

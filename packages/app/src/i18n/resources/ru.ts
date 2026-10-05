@@ -1964,6 +1964,8 @@ export const ru: TranslationResources = {
     dismiss: "Закрыть",
   },
   contextWindow: {
+    noData: "Нет данных о контексте",
+    accessibilityNoData: "Контекстное окно: нет данных о контексте",
     title: "Контекстное окно",
     used: "Использовано: {{percentage}}%",
     tokens: "Токены: {{used}} / {{max}}",

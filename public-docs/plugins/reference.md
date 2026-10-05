@@ -166,6 +166,29 @@ The scaffold's `tsconfig.json` omits the DOM library. Keep DOM globals out of cr
 components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
 `layout.platform` carries the same value as React Native's `Platform.OS` for rendering decisions.
 
+### Play audio
+
+Call `client.playAudio({ base64, mimeType }): Promise<void>` to play an audio file on the
+current client (browser, Electron, iOS, or Android). Pass the base64 file returned by your
+plugin RPC; no browser globals or platform checks are needed.
+
+```ts
+const audio = await client.rpc(renderSpeech, { text: "Your agent needs you" });
+// renderSpeech returns { base64: string, mimeType: "audio/wav" }.
+await client.playAudio(audio);
+```
+
+The promise resolves when playback finishes and rejects if the file is invalid, playback
+fails, or the plugin unloads. Calls share Paseo's voice playback queue and play in order.
+Unloading a plugin cancels its active and queued audio. Voice playback controls can also
+interrupt that shared queue. Playback does not request microphone permission.
+
+Use PCM WAV or MP3 for portable files. Other codecs depend on the client's decoder.
+MIME parameters are accepted. Pass a complete audio file; raw PCM samples are not supported.
+Browsers require user interaction before allowing sound; handle rejection and offer a
+play button. The function plays on the device running the plugin client, not on the daemon,
+and does not promise delivery while the app is suspended or closed.
+
 ### External links and workspace browsers
 
 Use `ExternalLink` to open documentation outside Paseo:
@@ -322,12 +345,16 @@ interface UsageAccount {
   input: JsonValue;
 }
 
+type UsageScope =
+  | { kind: "global" }
+  | { kind: "session"; provider: string; model?: string; env: Record<string, string> };
+
 interface UsageSourceRegistration {
   id: string;
   label: string;
   icon?: string;
   input: ZodType;
-  discover(): Promise<UsageAccount[]>;
+  discover(scope: UsageScope): Promise<UsageAccount[]>;
   fetch(input: unknown): Promise<UsageReport>;
 }
 
@@ -348,10 +375,28 @@ type UsageProblem =
   | { kind: "no_quota"; detail: string };
 ```
 
-Return every account whose login exists on the machine from `discover()`, including expired
-logins. Return `[]` when none exists. Discovery takes no arguments and must work independently of
-agent sessions and provider names. Inputs name credential stores; never put credentials in inputs
-or reports. Paseo validates each input against your schema before calling `fetch()`.
+`discover({ kind: "global" })` queries machine login stores, including expired logins. Session
+scope queries only the login stores selected by that harness's resolved launch environment.
+Return `[]` when no login exists or the session does not use your source. Never scan default stores
+from session discovery or scan agents from global discovery. Discovery is a query, with no agent
+lifecycle hooks. Closed agents have no session scope until resumed.
+
+Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
+input against your schema before calling `fetch()`. The same key in any scope is the same report;
+agents sharing an account share the fetch cache. Fetches have a 20-second deadline.
+
+Built-in session routes:
+
+| Source        | Session                                       | Login store                                                                                    |
+| ------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claude        | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
+| Claude        | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
+| Codex         | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
+| Codex         | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Other sources | Any                                           | No session discovery                                                                           |
+
+Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
+with `OPENAI_BASE_URL` set.
 
 Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
 organization whose quota is metered and survives token rotation. Never use a credential or raw
@@ -2243,6 +2288,11 @@ Paseo resolves an identifier in this order:
    HTTPS. `github:` requires that shorthand; `git:` accepts it as well as URLs and SCP sources.
 6. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
+
+Plugin registry installs are off by default. When the daemon enables them with
+`pluginRegistryEnabled: true` or `PASEO_PLUGIN_REGISTRY_ENABLED=1`, bare `owner/slug` and
+`host/owner/slug` resolve through the plugin registry instead of GitHub, the registry record owns
+the revision and plugin path, and GitHub shorthand requires `github:`.
 
 Directory lookup happens on the daemon host. The app uses the `paseo-plugin.json` ID; the CLI
 accepts `--id <runtime-id>` to override it. An existing installation ID is rejected without changing

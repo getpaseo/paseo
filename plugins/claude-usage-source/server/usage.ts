@@ -11,6 +11,7 @@ import {
   toneFromUsedPct,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -315,10 +316,11 @@ async function runSecurityCommand(args: string[]): Promise<string | null> {
 export async function readClaudeKeychainCredentials(
   run: ClaudeKeychainCommandRunner = runSecurityCommand,
   account: string = claudeKeychainAccount(),
+  service: string = CLAUDE_KEYCHAIN_SERVICE,
 ): Promise<unknown | null> {
   const lookups = [
-    ["find-generic-password", "-a", account, "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
-    ["find-generic-password", "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+    ["find-generic-password", "-a", account, "-w", "-s", service],
+    ["find-generic-password", "-w", "-s", service],
   ];
 
   for (const args of lookups) {
@@ -337,7 +339,7 @@ export async function readClaudeKeychainCredentials(
 }
 
 interface ClaudeCredentialLookup extends StoreLookup {
-  readKeychainCredentials?: () => Promise<unknown | null>;
+  readKeychainCredentials?: (service: string, account: string) => Promise<unknown | null>;
   claudeHome?: string;
 }
 
@@ -350,27 +352,30 @@ function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
 
 async function keychainCredentialRecord(
   lookup: ClaudeCredentialLookup,
+  route = claudeKeychainRoute(lookup),
 ): Promise<ClaudeCredentialRecord | null> {
   if ((lookup.platform ?? process.platform) !== "darwin") return null;
   const parsed = ClaudeCredentialsSchema.safeParse(
-    await (lookup.readKeychainCredentials ?? readClaudeKeychainCredentials)(),
+    await (lookup.readKeychainCredentials
+      ? lookup.readKeychainCredentials(route.service, route.account)
+      : readClaudeKeychainCredentials(undefined, route.account, route.service)),
   );
   return parsed.success ? toCredentialRecord(parsed.data) : null;
 }
 
 export async function discover(
+  scope: UsageScope,
   lookup: ClaudeCredentialLookup = {},
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageAccount[]> {
-  // Claude Code only reads the file when its Keychain login is empty.
-  const primary: UsageInput = (await keychainCredentialRecord(lookup))
-    ? { route: { store: "keychain" } }
-    : { route: { store: "claude", path: claudeCredentialPath(lookup) } };
-  const candidates: UsageInput[] = [
-    primary,
-    { route: { store: "pi", path: piAuthPath(lookup) } },
-    ...discoverOmp(lookup).map((route) => ({ route })),
-  ];
+  if (scope.kind === "session")
+    lookup = {
+      ...lookup,
+      env: scope.env,
+      home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
+    };
+  const candidates =
+    scope.kind === "global" ? await globalRoutes(lookup) : await sessionRoutes(scope, lookup);
   const accounts: UsageAccount[] = [];
   for (const input of candidates) {
     const credentials = await resolveClaudeCredentials(input, lookup);
@@ -395,6 +400,59 @@ export async function discover(
   return accounts;
 }
 
+function claudeKeychainRoute(lookup: ClaudeCredentialLookup) {
+  const env = lookup.env ?? process.env;
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  // macOS still uses Keychain with CLAUDE_CONFIG_DIR, with an entry keyed to that directory:
+  // https://code.claude.com/docs/en/authentication#credential-management
+  // Verified in @anthropic-ai/claude-code 2.1.59, package/cli.js: _c() appends the first
+  // 8 SHA-256 hex characters of HA() (the NFC-normalized config directory).
+  const suffix = configDir ? `-${hashAccountKey(configDir.normalize("NFC")).slice(0, 8)}` : "";
+  return {
+    store: "keychain" as const,
+    service: `${CLAUDE_KEYCHAIN_SERVICE}${suffix}`,
+    account: claudeKeychainAccount(env.USER),
+  };
+}
+
+async function claudeRoute(lookup: ClaudeCredentialLookup): Promise<UsageInput> {
+  const route = claudeKeychainRoute(lookup);
+  return (await keychainCredentialRecord(lookup, route))
+    ? { route }
+    : { route: { store: "claude", path: claudeCredentialPath(lookup) } };
+}
+
+async function globalRoutes(lookup: ClaudeCredentialLookup): Promise<UsageInput[]> {
+  return [
+    await claudeRoute(lookup),
+    { route: { store: "pi", path: piAuthPath(lookup) } },
+    ...discoverOmp(lookup).map((route) => ({ route })),
+  ];
+}
+
+async function sessionRoutes(
+  scope: Extract<UsageScope, { kind: "session" }>,
+  lookup: ClaudeCredentialLookup,
+): Promise<UsageInput[]> {
+  if (scope.provider === "claude") {
+    const env = scope.env;
+    const foreign =
+      env.ANTHROPIC_BASE_URL &&
+      env.ANTHROPIC_BASE_URL.replace(/\/+$/, "") !== "https://api.anthropic.com";
+    if (enabled(env.CLAUDE_CODE_USE_BEDROCK) || enabled(env.CLAUDE_CODE_USE_VERTEX) || foreign)
+      return [];
+    return [await claudeRoute(lookup)];
+  }
+  if (!scope.model?.startsWith("anthropic/")) return [];
+  if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
+  if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
+  return [];
+}
+
+function enabled(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+
 /** Re-read the selected login; the harness owns token refresh. */
 export async function resolveClaudeCredentials(
   input: UsageInput,
@@ -402,7 +460,12 @@ export async function resolveClaudeCredentials(
 ): Promise<ClaudeCredentialRecord | null> {
   const route = input.route;
   if (route.store === "claude") return readCredentialFile(route.path);
-  if (route.store === "keychain") return keychainCredentialRecord(lookup);
+  if (route.store === "keychain")
+    return keychainCredentialRecord(lookup, {
+      store: "keychain",
+      service: route.service ?? CLAUDE_KEYCHAIN_SERVICE,
+      account: route.account ?? claudeKeychainAccount(),
+    });
   const oauth = await readHarness(route, lookup);
   return oauth ? { oauth: { accessToken: oauth.access }, expires: oauth.expires } : null;
 }
@@ -458,7 +521,16 @@ export async function fetchUsage(
     return parsed;
   }
 
-  async function callClaudeApi(token: string): Promise<ClaudeUsageResponse | number> {
+  async function callClaudeApi(token: string, now: number): Promise<ClaudeUsageResponse | number> {
+    for (const [key, until] of rateLimitedUntil) {
+      if (until <= now) rateLimitedUntil.delete(key);
+    }
+    const tokenKey = hashAccountKey(token);
+    const limitedUntil = rateLimitedUntil.get(tokenKey);
+    if (limitedUntil !== undefined && limitedUntil > now)
+      throw rateLimitedError(limitedUntil - now);
+    rateLimitedUntil.delete(tokenKey);
+
     const res = await fetchApi("https://api.anthropic.com/api/oauth/usage", {
       signal: AbortSignal.timeout(15_000),
       headers: {
@@ -468,6 +540,11 @@ export async function fetchUsage(
       },
     });
     if (res.status === 401 || res.status === 403) return res.status;
+    if (res.status === 429) {
+      const waitMs = retryAfterMs(res.headers.get("retry-after"), now);
+      if (waitMs !== null) rateLimitedUntil.set(tokenKey, now + waitMs);
+      throw rateLimitedError(waitMs);
+    }
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }
@@ -496,7 +573,7 @@ export async function fetchUsage(
 
   const { oauth } = credentials;
   const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-  const resp = await callClaudeApi(oauth.accessToken);
+  const resp = await callClaudeApi(oauth.accessToken, (credentialLookup.now ?? Date.now)());
 
   if (typeof resp === "number") return unavailable({ kind: "rejected", status: resp, refreshedBy });
 
@@ -530,6 +607,28 @@ export async function fetchUsage(
     balances: [],
     details,
   };
+}
+
+// A 429 from the usage endpoint carries Retry-After, observed in the tens of minutes. Until it
+// passes, a fetch (including a forced Refresh) answers from here instead of calling again.
+const rateLimitedUntil = new Map<string, number>();
+
+function retryAfterMs(header: string | null, now: number): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
+}
+
+function rateLimitedError(waitMs: number | null): Error {
+  const when = waitMs === null ? "later" : `in ${formatWait(waitMs)}`;
+  return new Error(`Rate limited by Claude. Try again ${when}.`);
+}
+
+function formatWait(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return minutes < 60 ? `${minutes}m` : `${Math.ceil(minutes / 60)}h`;
 }
 
 // The OAuth usage endpoint meters the active organization selected by the token.
