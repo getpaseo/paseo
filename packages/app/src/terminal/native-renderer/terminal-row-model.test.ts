@@ -12,6 +12,18 @@ function cell(
 }
 
 describe("terminal row model", () => {
+  test("keeps Korean runs on their columns with empty continuation cells", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+    const [row] = buildRows({
+      grid: [[cell("한"), cell(""), cell("글"), cell(""), cell(" "), cell("A")]],
+      resolver,
+    });
+
+    expect(row.runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
+      { text: "한글 A", cellCount: 6 },
+    ]);
+  });
+
   test("preserves terminal cell width for styled runs and trailing spaces", () => {
     const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
 
