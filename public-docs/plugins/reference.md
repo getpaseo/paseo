@@ -1712,6 +1712,8 @@ Every callback receives:
 | `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
 
+Pass `{ background: true }` to add the panel without navigating to its workspace, showing Explorer, or changing a visible tab. A hidden Explorer selects the panel, so the user sees it when they next show Explorer. Use it to place a panel in a workspace the user has not asked to see, such as one that was only now created.
+
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown screen and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 
 ## Slash commands
