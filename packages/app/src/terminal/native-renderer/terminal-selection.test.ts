@@ -41,6 +41,26 @@ function rowWithText(
 }
 
 describe("native terminal selection", () => {
+  it("copies Korean text and real spaces without wide-character continuation spaces", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+    try {
+      await terminal.write("한글 문장 | 성공");
+      const bounds = terminal.getBufferBounds();
+      expect(
+        extractTerminalSelectedText({
+          terminal,
+          selection: {
+            start: { row: bounds.cursorRow, col: 0 },
+            end: { row: bounds.cursorRow, col: bounds.cursorCol - 1 },
+            coordinateEpoch: bounds.coordinateEpoch,
+          },
+        }),
+      ).toBe("한글 문장 | 성공");
+    } finally {
+      terminal.dispose();
+    }
+  });
+
   it("expands a long-press coordinate to the whole terminal word", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
     await terminal.write("before PASEO_TARGET after\r\n");
