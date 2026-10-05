@@ -320,6 +320,32 @@ describe("assistant selection copy ranges", () => {
     ).toBe("6. Second bullet text");
   });
 
+  it("keeps the next number when a drag crosses a code block nested in an item", () => {
+    const message = mountFixture();
+    const list = fixtureElement(message, '[data-paseo-markdown-tag="ul"]');
+    list.outerHTML = [
+      '<div data-paseo-markdown-tag="ol" data-paseo-markdown-list-start="1">',
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">1.</div>',
+      "<div><div><span>Install it:</span></div>",
+      '<div data-paseo-markdown-tag="pre" data-paseo-markdown-language="sh">',
+      '<div data-paseo-markdown-tag="code"><span>brew install foo</span></div>',
+      '<button data-paseo-markdown-ignore="true">Copy</button>',
+      "</div></div>",
+      "</div>",
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">2.</div>',
+      "<div><div><span>Done.</span></div></div>",
+      "</div>",
+      "</div>",
+    ].join("");
+
+    const content = copyAcross(message, "Install it:", "Done.");
+
+    expect(content?.plainText).toBe("Install it:\n\n```sh\nbrew install foo\n```\n\n2. Done.");
+    expect(content?.html).toContain("<div>2. Done.</div>");
+  });
+
   it("retains nested markers when a drag includes the complete outer item", () => {
     const message = mountFixture();
     const firstItem = fixtureElement(message, '[data-paseo-markdown-tag="li"]');

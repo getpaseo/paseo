@@ -53,9 +53,7 @@ turndown.addRule("compactListItem", {
     if (parent?.nodeName !== "OL") {
       return `${options.bulletListMarker} ${item}\n`;
     }
-    const start = Number(parent.getAttribute("start") ?? 1);
-    const index = Array.from(parent.children).indexOf(node);
-    return `${start + index}. ${item}\n`;
+    return `${node.getAttribute("value")}. ${item}\n`;
   },
 });
 
@@ -496,6 +494,7 @@ function restoreMarkdownElements(container: HTMLElement): void {
       if (start) {
         semanticElement.setAttribute("start", start);
       }
+      numberOrderedListItems(semanticElement, Number(start ?? 1));
     }
     if (tagName === "pre") {
       const language = element.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
@@ -526,6 +525,20 @@ function restoreMarkdownElements(container: HTMLElement): void {
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
+}
+
+/**
+ * Each item carries its number before Turndown re-parses the HTML. Until then every
+ * child of the list is one item, including a partly selected item demoted to a `p`.
+ * The parser splits a `p` that holds a code block into several siblings, so counting
+ * siblings afterwards numbers the next item too high.
+ */
+function numberOrderedListItems(list: Element, start: number): void {
+  Array.from(list.children).forEach((child, index) => {
+    if (child.tagName === "LI") {
+      child.setAttribute("value", String(start + index));
+    }
+  });
 }
 
 function unwrapIncompleteTables(container: HTMLElement): void {
