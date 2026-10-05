@@ -47,19 +47,15 @@ async function selectSpeed(page: Page, label: string): Promise<void> {
   const toolbarTrigger = page.getByRole("button", { name: `Speed: ${label}`, exact: true });
   const sheetTrigger = page.getByRole("button", { name: "Select speed", exact: true });
   await expect(toolbarTrigger.or(sheetTrigger)).toBeVisible();
-  if (await toolbarTrigger.isVisible()) {
-    await expect(toolbarTrigger).toHaveText("");
-    await page.screenshot({
-      path: test.info().outputPath(`desktop-${label.toLowerCase()}-selected.png`),
-    });
-    const icon = toolbarTrigger.locator("svg");
-    if (label === "Normal") await expect(icon).toHaveAttribute("fill", "none");
-    else {
-      const color = await icon.getAttribute("stroke");
-      if (!color) throw new Error("Speed icon must have a stroke color");
-      await expect(icon).toHaveAttribute("fill", color);
-    }
-  } else await expect(sheetTrigger).toContainText(label);
+  if (await toolbarTrigger.isVisible()) await expect(toolbarTrigger).toHaveText("");
+  else await expect(sheetTrigger).toContainText(label);
+}
+
+async function speedIconColor(page: Page, label: string): Promise<string | null> {
+  return page
+    .getByRole("button", { name: `Speed: ${label}`, exact: true })
+    .locator("svg")
+    .getAttribute("stroke");
 }
 
 async function expectSpeedChoices(page: Page, choices: string[]): Promise<void> {
@@ -110,13 +106,21 @@ for (const viewport of [
         await expect(trigger).toHaveText("");
         await page.screenshot({ path: testInfo.outputPath("desktop-normal-trigger.png") });
       }
+      const normalColor = viewport.name === "desktop" ? await speedIconColor(page, "Normal") : null;
+      if (viewport.name === "desktop") {
+        await openSpeedSelector(page);
+        await selectSpeed(page, "Fast");
+        const fastColor = await speedIconColor(page, "Fast");
+        expect(fastColor).not.toBe(normalColor);
+        await page.screenshot({ path: testInfo.outputPath("desktop-fast-selected.png") });
+      }
       await openSpeedSelector(page);
       await expectSpeedChoices(page, ["Normal", "Fast", "Ultrafast"]);
       await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-speed-options.png`) });
-      await selectSpeed(page, "Fast");
-      await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-fast-selected.png`) });
-      await openSpeedSelector(page);
       await selectSpeed(page, "Ultrafast");
+      if (viewport.name === "desktop") {
+        expect(await speedIconColor(page, "Ultrafast")).not.toBe(normalColor);
+      }
       await openSpeedSelector(page);
       await expectSpeedChoices(page, ["Normal", "Fast", "Ultrafast"]);
       await page.screenshot({
@@ -124,6 +128,7 @@ for (const viewport of [
       });
       await selectSpeed(page, "Normal");
       if (viewport.name === "desktop") {
+        expect(await speedIconColor(page, "Normal")).toBe(normalColor);
         await switchAgentModel(agent.id, "gpt-6-sol");
         await openSpeedSelector(page);
         await expectSpeedChoices(page, ["Normal", "Fast"]);

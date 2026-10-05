@@ -12,7 +12,6 @@ type AgentControlTriggerProps = Omit<
 > & {
   icon: AgentControlIcon;
   iconColor?: string;
-  iconFill?: string;
   surface: "toolbar" | "sheet";
   label: string;
   value?: string;
@@ -28,7 +27,6 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
     {
       icon: Icon,
       iconColor,
-      iconFill = "none",
       surface,
       label,
       value,
@@ -74,11 +72,11 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       >
         {isSheet ? (
           <View style={styles.sheetGlyph}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} fill={iconFill} />
+            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
           </View>
         ) : (
           <ComposerToolbarGlyph size={resolvedGlyphSize}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} fill={iconFill} />
+            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
           </ComposerToolbarGlyph>
         )}
         {isSheet ? (

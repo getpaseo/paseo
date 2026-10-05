@@ -55,6 +55,7 @@ import type {
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import {
   getFeatureHighlightColor,
+  isFeatureActive,
   getFeatureTooltip,
   getAgentControlHintKey,
   resolveAgentModelSelection,
@@ -211,8 +212,7 @@ function getModeProviderDefinitions(modeControl: AgentModeControlValue | null) {
 }
 
 function getFeatureIconColor(
-  featureId: string,
-  enabled: boolean,
+  feature: AgentFeature,
   palette: {
     blue: { 400: string };
     green: { 400: string };
@@ -220,11 +220,11 @@ function getFeatureIconColor(
   },
   foregroundMuted: string,
 ): string {
-  if (!enabled) {
+  if (!isFeatureActive(feature)) {
     return foregroundMuted;
   }
 
-  switch (getFeatureHighlightColor(featureId)) {
+  switch (getFeatureHighlightColor(feature.id)) {
     case "blue":
       return palette.blue[400];
     case "green":
@@ -1335,8 +1335,7 @@ function DesktopFeatureItem({
           <AgentControlTrigger
             icon={FeatureIcon}
             iconColor={getFeatureIconColor(
-              feature.id,
-              feature.value,
+              feature,
               theme.colors.palette,
               theme.colors.foregroundMuted,
             )}
@@ -1360,8 +1359,6 @@ function DesktopFeatureItem({
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     const selectedOption = feature.options.find((o) => o.id === feature.value);
     const iconOnly = feature.desktopTrigger === "icon";
-    const accelerated =
-      feature.icon === "zap" && selectedOption !== undefined && !selectedOption.isDefault;
     const tooltip = iconOnly
       ? `${feature.label}: ${selectedOption?.label ?? feature.label}`
       : getFeatureTooltip(feature);
@@ -1372,8 +1369,11 @@ function DesktopFeatureItem({
             <AgentControlTrigger
               ref={featureAnchorRef}
               icon={FeatureIcon}
-              iconColor={accelerated ? theme.colors.foreground : theme.colors.foregroundMuted}
-              iconFill={accelerated ? theme.colors.foreground : "none"}
+              iconColor={getFeatureIconColor(
+                feature,
+                theme.colors.palette,
+                theme.colors.foregroundMuted,
+              )}
               surface="toolbar"
               label={feature.label}
               value={selectedOption?.label ?? feature.label}
@@ -1457,8 +1457,7 @@ function SheetFeatureItem({
           ref={featureAnchorRef}
           icon={FeatureIcon}
           iconColor={getFeatureIconColor(
-            feature.id,
-            feature.value,
+            feature,
             theme.colors.palette,
             theme.colors.foregroundMuted,
           )}
@@ -1494,6 +1493,11 @@ function SheetFeatureItem({
         <AgentControlTrigger
           ref={featureAnchorRef}
           icon={FeatureIcon}
+          iconColor={getFeatureIconColor(
+            feature,
+            theme.colors.palette,
+            theme.colors.foregroundMuted,
+          )}
           surface="sheet"
           label={feature.label}
           value={selectedOption?.label ?? feature.label}
