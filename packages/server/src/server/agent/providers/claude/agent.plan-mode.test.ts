@@ -565,6 +565,44 @@ describe("Claude plan approval and query restarts", () => {
     expect(harness.queries[0]?.permissionModes.at(-1)).toBe("plan");
   });
 
+  test("a withdrawn plan approval keeps Plan when Claude Code cannot take the mode back", async () => {
+    const harness = await createPlanSession({ modeId: "bypassPermissions" });
+    await harness.session.setFeature?.("plan_mode", true);
+    await harness.session.startTurn("plan the docs change");
+    const abort = new AbortController();
+    void harness
+      .canUseTool()(
+        "ExitPlanMode",
+        { plan: "Edit README.md" },
+        { ...toolCallOptions("tool-plan"), signal: abort.signal },
+      )
+      .catch(() => undefined);
+    const [request] = harness.session.getPendingPermissions();
+    if (!request) throw new Error("Expected a pending plan approval");
+    const query = harness.queries[0];
+    const hold = query?.holdNextPermissionMode();
+    if (!query || !hold) throw new Error("Expected a Claude query");
+
+    const approval = harness.session.respondToPermission(request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    await hold.reached;
+    abort.abort();
+    query.failNextPermissionMode("Claude Code process exited");
+    hold.release();
+
+    await expect(approval).rejects.toThrow("Claude Code process exited");
+    await expect(harness.session.getCurrentMode()).resolves.toBe("bypassPermissions");
+    expect(harness.session.features).toContainEqual(
+      expect.objectContaining({ id: "plan_mode", value: true }),
+    );
+    await harness.session.interrupt();
+    await harness.session.startTurn("continue planning");
+    expect(harness.launches).toHaveLength(2);
+    expect(harness.launches[1]?.options.permissionMode).toBe("plan");
+  });
+
   test("Always Ask plus Plan offers no Implement with Bypass", async () => {
     const harness = await planningSession("default");
     const { callback, request } = await requestPlanApproval(harness);

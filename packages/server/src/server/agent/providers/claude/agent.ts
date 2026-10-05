@@ -2485,6 +2485,19 @@ class ClaudeAgentSession implements AgentSession {
     return run;
   }
 
+  /** Returns to a state Paseo already left, even when Claude Code cannot be told right now. */
+  private async restoreExecutionMode(previous: ClaudeExecutionMode): Promise<void> {
+    try {
+      await this.applyExecutionMode(previous);
+    } catch (error) {
+      // The live query may keep the abandoned mode, so the next one starts from this state.
+      this.executionMode = previous;
+      this.cachedRuntimeInfo = null;
+      this.queryRestartNeeded = true;
+      throw error;
+    }
+  }
+
   private async applyExecutionMode(next: ClaudeExecutionMode): Promise<void> {
     const sdkMode = toClaudeSdkPermissionMode(next);
     if (sdkMode !== this.sdkPermissionMode) {
@@ -2717,7 +2730,7 @@ class ClaudeAgentSession implements AgentSession {
         const previous = this.executionMode;
         await this.applyExecutionMode(approveClaudePlan(previous, selectedActionId));
         if (this.pendingPermissions.get(requestId) !== pending) {
-          await this.applyExecutionMode(previous);
+          await this.restoreExecutionMode(previous);
         }
       });
       if (this.pendingPermissions.get(requestId) !== pending) {
