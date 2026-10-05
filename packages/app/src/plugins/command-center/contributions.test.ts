@@ -197,10 +197,10 @@ describe("plugin Command Center contributions", () => {
         openSurface(pluginId, surfaceId) {
           opened.push(`${pluginId}/surface/${surfaceId}`);
         },
-        openWorkspacePanel(pluginId, panelId, location) {
+        openWorkspacePanel({ pluginId, panelId, location }) {
           opened.push(`${pluginId}/workspace/${panelId}/${location}`);
         },
-        openAgentPanel(pluginId, panelId, agentId, location) {
+        openAgentPanel({ pluginId, panelId, agentId, location }) {
           opened.push(`${pluginId}/agent/${panelId}/${agentId}/${location}`);
         },
       },

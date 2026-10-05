@@ -11,16 +11,19 @@ import { resolvePluginPanelOpenLocation } from "./workspace-panels/locations";
 import { parsePluginOpenScreenInput } from "./surface-contribution";
 import type { InstalledPlugin } from "./types";
 
+export interface PluginPanelOpenRequest {
+  pluginId: string;
+  panelId: string;
+  location: PluginPanelLocation;
+  /** Adds the panel without navigating, showing Explorer, or changing a visible tab. */
+  background?: boolean;
+}
+
 export interface PluginNavigation {
   openSettings(pluginId: string, screenId: string): void;
   openSurface(pluginId: string, surfaceId: string, params?: PluginScreenParams): void;
-  openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
-  openAgentPanel(
-    pluginId: string,
-    panelId: string,
-    agentId: string,
-    location: PluginPanelLocation,
-  ): void;
+  openWorkspacePanel(request: PluginPanelOpenRequest): void;
+  openAgentPanel(request: PluginPanelOpenRequest & { agentId: string }): void;
 }
 
 export function createPluginCapabilities(
@@ -65,11 +68,12 @@ export function createPluginAgentActionContext(input: {
       const panel = plugin.workspacePanels.find((candidate) => candidate.id === panelId);
       if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
       const location = resolvePluginPanelOpenLocation(panel, options?.location);
+      const request = { pluginId: plugin.id, panelId, location, background: options?.background };
       if (panel.context === "workspace") {
-        navigation.openWorkspacePanel(plugin.id, panelId, location);
+        navigation.openWorkspacePanel(request);
         return;
       }
-      navigation.openAgentPanel(plugin.id, panelId, agent.id, location);
+      navigation.openAgentPanel({ ...request, agentId: agent.id });
     },
   };
 }
@@ -93,7 +97,12 @@ export function createPluginWorkspaceActionContext(input: {
       );
       if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
       const location = resolvePluginPanelOpenLocation(panel, options?.location);
-      navigation.openWorkspacePanel(plugin.id, panelId, location);
+      navigation.openWorkspacePanel({
+        pluginId: plugin.id,
+        panelId,
+        location,
+        background: options?.background,
+      });
     },
   };
 }
