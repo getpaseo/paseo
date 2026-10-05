@@ -1590,6 +1590,8 @@ export const ptBR: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "Execute agentes neste computador. O Paseo inicia o daemon ao abrir o aplicativo. O comportamento ao sair pode ser alterado nas Configurações.",
     title: "Bem-vindo ao Paseo",
     subtitle: "Conecte seu computador para começar",
     actions: {
@@ -1657,6 +1659,14 @@ export const ptBR: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Daemons locais",
+      searching: "Buscando neste computador…",
+      empty: "Nenhum daemon local encontrado. Você ainda pode inserir um endereço abaixo.",
+      failed: "Não foi possível buscar daemons locais. Insira um endereço ou tente novamente.",
+      refresh: "Atualizar",
+      passwordRequired: "Senha necessária",
+    },
     hostPassword: {
       title: "Senha de {{host}}",
       label: "Senha do host",

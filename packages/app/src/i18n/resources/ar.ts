@@ -1558,6 +1558,8 @@ export const ar: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "شغّل الوكلاء على هذا الكمبيوتر. يبدأ Paseo الخدمة عند فتح التطبيق. يمكنك تغيير سلوك الإنهاء في الإعدادات.",
     title: "مرحبا بكم في Paseo",
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {
@@ -1625,6 +1627,14 @@ export const ar: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "الخدمات المحلية",
+      searching: "جارٍ البحث على هذا الكمبيوتر…",
+      empty: "لم يتم العثور على خدمة محلية. يمكنك إدخال عنوان أدناه.",
+      failed: "تعذر البحث عن الخدمات المحلية. أدخل عنوانًا أو حاول مجددًا.",
+      refresh: "تحديث",
+      passwordRequired: "كلمة المرور مطلوبة",
+    },
     hostPassword: {
       title: "كلمة المرور لـ {{host}}",
       label: "كلمة مرور المضيف",

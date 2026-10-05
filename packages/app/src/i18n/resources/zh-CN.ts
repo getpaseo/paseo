@@ -1541,6 +1541,8 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "在这台电脑上运行智能体。开启后，Paseo 会随应用启动 daemon；退出时的行为可在设置中调整。",
     title: "欢迎使用 Paseo",
     subtitle: "连接你的电脑即可开始",
     actions: {
@@ -1608,6 +1610,14 @@ export const zhCN: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "本机 daemon",
+      searching: "正在探测本机服务…",
+      empty: "未发现本机 daemon，你仍可在下方手动填写地址。",
+      failed: "无法探测本机 daemon，请手动填写地址或重试。",
+      refresh: "重新探测",
+      passwordRequired: "需要密码",
+    },
     hostPassword: {
       title: "{{host}} 的密码",
       label: "主机密码",

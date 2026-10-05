@@ -1609,6 +1609,8 @@ export const fr: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "Exécutez des agents sur cet ordinateur. Paseo démarre le daemon à l’ouverture de l’app. Son comportement à la fermeture se règle dans les paramètres.",
     title: "Bienvenue surPaseo",
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
@@ -1676,6 +1678,14 @@ export const fr: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Daemons locaux",
+      searching: "Recherche sur cet ordinateur…",
+      empty: "Aucun daemon local trouvé. Vous pouvez saisir une adresse ci-dessous.",
+      failed: "Impossible de rechercher les daemons locaux. Saisissez une adresse ou réessayez.",
+      refresh: "Actualiser",
+      passwordRequired: "Mot de passe requis",
+    },
     hostPassword: {
       title: "Mot de passe pour {{host}}",
       label: "Mot de passe de l’hôte",

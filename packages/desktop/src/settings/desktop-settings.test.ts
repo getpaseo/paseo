@@ -41,6 +41,7 @@ describe("desktop-settings", () => {
 
     expect(settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
     expect(persisted.settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
+    expect(persisted.settings.daemon.manageBuiltInDaemon).toBe(false);
   });
 
   it("handles concurrent first-launch reads without racing the settings write", async () => {
@@ -58,6 +59,18 @@ describe("desktop-settings", () => {
     expect(persisted.settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
     expect(files).toEqual(["desktop-settings.json"]);
   });
+
+  it.each([true, false])(
+    "preserves the saved daemon startup choice %s",
+    async (manageBuiltInDaemon) => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await createDesktopSettingsStore({ userDataPath }).patch({ daemon: { manageBuiltInDaemon } });
+      expect(
+        (await createDesktopSettingsStore({ userDataPath }).get()).daemon.manageBuiltInDaemon,
+      ).toBe(manageBuiltInDaemon);
+    },
+  );
 
   it("coerces invalid persisted values back to safe defaults", async () => {
     const userDataPath = await createTempUserDataDir();
@@ -83,7 +96,7 @@ describe("desktop-settings", () => {
       releaseChannel: "stable",
       notifications: { playSound: true },
       daemon: {
-        manageBuiltInDaemon: true,
+        manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,
       },
     });
@@ -105,7 +118,7 @@ describe("desktop-settings", () => {
       releaseChannel: "beta",
       notifications: { playSound: true },
       daemon: {
-        manageBuiltInDaemon: true,
+        manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,
       },
     });

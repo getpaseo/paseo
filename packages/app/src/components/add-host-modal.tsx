@@ -18,6 +18,9 @@ import {
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { PairingTargetTracker } from "./pair-link-credentials";
+import { isElectronRuntime } from "@/desktop/host";
+import { LocalDaemonDiscovery } from "@/desktop/components/local-daemon-discovery";
+import type { DiscoveredLocalDaemon } from "@/desktop/daemon/discover-local-daemons";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
@@ -325,6 +328,17 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
   const advancedTarget = useRef(new PairingTargetTracker("", true));
 
+  const handleSelectLocalDaemon = useCallback((daemon: DiscoveredLocalDaemon) => {
+    setHost(daemon.host);
+    setPort(String(daemon.port));
+    setUseTls(false);
+    setPassword("");
+    setErrorMessage("");
+    setIsAdvancedOpen(false);
+    setAdvancedUri("");
+    bumpInputResetKey();
+  }, []);
+
   const connectIcon = useMemo(
     () => <Link2 size={16} color={theme.colors.accentForeground} />,
     [theme.colors.accentForeground],
@@ -544,6 +558,10 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
       testID="add-host-modal"
     >
       <Text style={styles.helper}>{t("pairing.direct.helper")}</Text>
+
+      {isElectronRuntime() ? (
+        <LocalDaemonDiscovery onSelect={handleSelectLocalDaemon} disabled={isSaving} />
+      ) : null}
 
       <View style={styles.portRow}>
         <View style={hostFieldStyle}>

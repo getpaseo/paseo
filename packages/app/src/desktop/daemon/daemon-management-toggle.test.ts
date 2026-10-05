@@ -56,6 +56,19 @@ function makeDeps(overrides?: {
 
 describe("executeDaemonManagementToggle", () => {
   describe("enable path (currentlyManaging: false)", () => {
+    it("restores client-only startup when enabling fails", async () => {
+      const saved: boolean[] = [];
+      const { deps } = makeDeps({
+        persistSettings: async (next) => {
+          saved.push(next.manageBuiltInDaemon);
+        },
+        startDaemon: async () => {
+          throw new Error("EADDRINUSE");
+        },
+      });
+      await expect(executeDaemonManagementToggle(false, null, deps)).rejects.toThrow("EADDRINUSE");
+      expect(saved).toEqual([true, false]);
+    });
     it("persists the new setting then starts the daemon", async () => {
       const { deps, calls } = makeDeps();
 

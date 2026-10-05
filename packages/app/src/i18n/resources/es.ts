@@ -1605,6 +1605,8 @@ export const es: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "Ejecuta agentes en este equipo. Paseo inicia el daemon al abrir la app. Puedes cambiar su comportamiento al salir en Ajustes.",
     title: "Bienvenido aPaseo",
     subtitle: "Conecte su computadora para comenzar",
     actions: {
@@ -1672,6 +1674,15 @@ export const es: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Daemons locales",
+      searching: "Buscando en este equipo…",
+      empty: "No se encontró ningún daemon local. Puedes introducir una dirección abajo.",
+      failed:
+        "No se pudieron buscar daemons locales. Introduce una dirección o inténtalo de nuevo.",
+      refresh: "Actualizar",
+      passwordRequired: "Contraseña requerida",
+    },
     hostPassword: {
       title: "Contraseña de {{host}}",
       label: "Contraseña del host",

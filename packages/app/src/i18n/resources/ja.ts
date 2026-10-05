@@ -1575,6 +1575,8 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "このコンピューターでエージェントを実行します。有効にすると、アプリ起動時に Paseo がデーモンを起動します。終了時の動作は設定で変更できます。",
     title: "Paseoへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
@@ -1642,6 +1644,14 @@ export const ja: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "ローカルデーモン",
+      searching: "このコンピューターを検索中…",
+      empty: "ローカルデーモンが見つかりません。下にアドレスを入力できます。",
+      failed: "ローカルデーモンを検索できませんでした。アドレスを入力するか、再試行してください。",
+      refresh: "再検索",
+      passwordRequired: "パスワードが必要です",
+    },
     hostPassword: {
       title: "{{host}} のパスワード",
       label: "ホストのパスワード",

@@ -1568,6 +1568,8 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
+    localDaemonHint:
+      "이 컴퓨터에서 에이전트를 실행합니다. Paseo는 앱을 열 때 데몬을 시작합니다. 종료 시 동작은 설정에서 변경할 수 있습니다.",
     title: "Paseo에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
@@ -1635,6 +1637,14 @@ export const ko: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "로컬 데몬",
+      searching: "이 컴퓨터에서 검색 중…",
+      empty: "로컬 데몬을 찾지 못했습니다. 아래에 주소를 직접 입력할 수 있습니다.",
+      failed: "로컬 데몬을 검색할 수 없습니다. 주소를 입력하거나 다시 시도하세요.",
+      refresh: "새로고침",
+      passwordRequired: "비밀번호 필요",
+    },
     hostPassword: {
       title: "{{host}}의 비밀번호",
       label: "호스트 비밀번호",

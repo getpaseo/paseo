@@ -26,6 +26,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { isFdroidBuild } from "@/constants/build-profile";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
+import { WelcomeLocalDaemon } from "@/desktop/components/welcome-local-daemon";
 
 interface WelcomeAction {
   key: "scan-qr" | "direct-connection" | "remote-ssh" | "paste-pairing-link";
@@ -302,6 +303,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
             {actions.map((action) => (
               <WelcomeActionButton key={action.key} action={action} />
             ))}
+            {isElectronRuntime() ? <WelcomeLocalDaemon /> : null}
           </View>
 
           <Button

@@ -69,6 +69,24 @@ Either way, the fix for a missing tool lives in your shell config (`.zshrc`, `.z
 
 This login-shell step runs on macOS and Linux. On Windows, Paseo uses the environment it was launched with.
 
+## Choosing a local server on Desktop
+
+A new Desktop profile opens the welcome screen without starting a daemon. Choose
+**Enable built-in daemon** to run agents on this computer, or **Direct connection**
+to connect to a daemon you already run. Existing profiles retain their saved
+built-in daemon setting.
+
+Direct connection automatically checks loopback TCP listeners at port `6767` and
+the local port recorded in Desktop's daemon config or running-instance file.
+Select a discovered daemon to fill in its address, then connect. Password-protected
+daemons still require a password. Other TCP ports and remote hosts can be entered
+manually. Discovery does not search socket/pipe listeners or scan the LAN.
+
+Once enabled, the built-in daemon starts with Desktop. By default, quitting
+Desktop stops the daemon it started in that session. **Keep daemon running after
+quit** changes that behavior. Connecting to an independently started daemon does
+not give Desktop ownership of its lifecycle.
+
 ## Desktop cannot start its local server
 
 If the local server fails to start, choose **Continue without local server** on

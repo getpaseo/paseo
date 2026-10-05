@@ -107,6 +107,7 @@ try {
     instance: captured,
   });
   await openDesktop();
+  await command("patch_desktop_settings", { daemon: { manageBuiltInDaemon: true } });
   const attached = await command("start_desktop_daemon");
   assert.equal(attached.pid, captured.pid);
   assert.equal(attached.desktopManaged, true);

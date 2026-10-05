@@ -19,7 +19,14 @@ export async function executeDaemonManagementToggle(
 ): Promise<DaemonManagementToggleResult> {
   if (!currentlyManaging) {
     await deps.persistSettings({ manageBuiltInDaemon: true });
-    const newStatus = await deps.startDaemon();
+    let newStatus: DesktopDaemonStatus;
+    try {
+      newStatus = await deps.startDaemon();
+    } catch (error) {
+      // Failed opt-in must not turn the next launch into another startup error.
+      await deps.persistSettings({ manageBuiltInDaemon: false });
+      throw error;
+    }
     return { kind: "enabled", newStatus };
   }
 
