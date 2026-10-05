@@ -24,18 +24,27 @@ export async function detachedProcessGroup(child: TreeKillTarget): Promise<numbe
     return null;
   }
 }
-function alive(group: number): boolean {
+async function alive(group: number): Promise<boolean> {
   try {
     process.kill(-group, 0);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    if (process.platform === "darwin" && (error as NodeJS.ErrnoException).code === "EPERM") {
+      // Darwin can deny a group probe while its last child is being reaped.
+      // EPERM alone is not evidence of exit: inspect numeric membership.
+      const { stdout } = await exec("ps", ["-axo", "pid=,pgid="], { timeout: 2_000 });
+      return stdout.split("\n").some((line) => {
+        const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+        return match !== null && Number(match[2]) === group;
+      });
+    }
     throw error;
   }
 }
 async function waitForGroupExit(group: number, milliseconds: number): Promise<boolean> {
   const deadline = Date.now() + milliseconds;
-  while (alive(group)) {
+  while (await alive(group)) {
     if (Date.now() >= deadline) return false;
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
@@ -48,7 +57,7 @@ export async function terminateDetachedGroup(
 ): Promise<ProviderProcessExit> {
   if (!child.pid || group !== child.pid || group <= 1)
     throw new Error("Invalid owned process group");
-  if (alive(group)) {
+  if (await alive(group)) {
     try {
       process.kill(-group, "SIGTERM");
     } catch (error) {
