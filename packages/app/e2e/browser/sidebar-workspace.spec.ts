@@ -6,6 +6,11 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  expectWorkspaceHoverCardClosed,
+  expectWorkspaceHoverCardOpen,
+  expectWorkspaceHoverCardStaysOpen,
+  focusWorkspaceRowWithKeyboard,
+  movePointerAwayFromWorkspaceHoverCard,
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
 } from "../support/helpers/sidebar";
@@ -399,6 +404,47 @@ test.describe("Sidebar workspace list", () => {
       const hoverCard = await openWorkspaceHoverCard(page, workspace.workspaceId);
       await expect(page.getByTestId("hover-card-workspace-host")).toHaveText("localhost");
       await expect(hoverCard).not.toContainText(/\b(Online|Connecting|Offline|Error|Idle)\b/);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("workspace hover card closes when the pointer leaves a clicked row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-click-leave-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      const row = await openWorkspaceFromSidebar(page, workspace.workspaceId);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+
+      await row.click();
+      await expect(row).toBeFocused();
+      await expectWorkspaceHoverCardOpen(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("workspace hover card stays open for a keyboard-focused row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-keyboard-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await openWorkspaceFromSidebar(page, workspace.workspaceId);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+
+      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardStaysOpen(page);
+      await page.keyboard.press("Escape");
+      await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
     }

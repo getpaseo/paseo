@@ -98,14 +98,21 @@ function WebHoverCard({
     );
   }, []);
 
+  // Keyboard focus keeps the card open for keyboard users; the focus a pointer click leaves
+  // behind on the trigger or a button in the card does not outlast the pointer leaving.
+  const keyboardFocusInside = useCallback(() => {
+    return focusInside() && document.activeElement?.matches(":focus-visible") === true;
+  }, [focusInside]);
+
   const scheduleClose = useCallback(() => {
-    if (focusInside()) return;
+    if (keyboardFocusInside()) return;
     if (graceTimerRef.current) return;
     graceTimerRef.current = setTimeout(() => {
       graceTimerRef.current = null;
+      if (keyboardFocusInside()) return;
       setOpen(false);
     }, CLOSE_GRACE_MS);
-  }, [focusInside]);
+  }, [keyboardFocusInside]);
 
   const openNow = useCallback(() => {
     clearGraceTimer();
