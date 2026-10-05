@@ -23,11 +23,4 @@ export type {
   PluginLifecycleRegistration,
 } from "./lifecycle.js";
 
-export {
-  spawnProcess,
-  terminateProcess,
-  execCommand,
-  isWindowsCommandScript,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "./process.js";
+export { spawnProcess, execCommand, terminateProcess } from "./process.js";

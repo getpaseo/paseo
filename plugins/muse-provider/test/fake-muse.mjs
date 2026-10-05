@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const scenario = process.env.MUSE_TEST_SCENARIO || "text-reasoning";
 if (process.argv.includes("--version")) {
+  if (process.env.MUSE_TEST_VERSION_ERROR) {
+    process.stderr.write(process.env.MUSE_TEST_VERSION_ERROR + "\n");
+    process.exit(17);
+  }
   process.stdout.write(`Muse Code ${process.env.MUSE_TEST_VERSION || "1.4.1"}\n`);
   process.exit(0);
 }

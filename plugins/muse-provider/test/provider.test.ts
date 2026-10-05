@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import os from "node:os";
@@ -461,6 +462,25 @@ for (const [env, expected] of [
     expect(await h.provider.status!({ launch: h.launch })).toEqual(expected);
   });
 }
+test("status preserves the version-probe command and stderr diagnostic", async () => {
+  const h = await harness("catalog-controls", {
+    MUSE_TEST_VERSION_ERROR: "Muse version probe could not read its installation metadata",
+  });
+  // Compare against the original execFile callback: wrapping in MuseError only changed its kind.
+  const previousDiagnostic = await new Promise<string>((resolve, reject) => {
+    execFile(h.launch.command, [...h.launch.args, "--version"], { env: h.launch.env }, (error) => {
+      if (error) resolve(error.message);
+      else reject(new Error("Expected the version probe to fail"));
+    });
+  });
+  const status = await h.provider.status!({ launch: h.launch });
+  expect(status).toEqual({ available: false, diagnostic: previousDiagnostic });
+  expect(status.diagnostic).toContain("--version");
+  expect(status.diagnostic).toContain(
+    "Muse version probe could not read its installation metadata",
+  );
+  expect(await h.recorded()).toEqual([]);
+});
 test("status reports a missing executable", async () => {
   const h = await harness();
   expect(

@@ -27,11 +27,6 @@ interface ExecCommandResult {
   stdout: string;
   stderr: string;
 }
-export {
-  isWindowsCommandScript,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "./process-internal/windows-command.js";
 function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
