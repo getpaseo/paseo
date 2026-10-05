@@ -115,10 +115,12 @@ export const catalogSchema = z.object({
       contextLimit: z.number().nullable(),
       isDefault: z.boolean(),
       defaultReasoningEffort: effortSchema.nullable().optional(),
-      reasoningEffortVariants: z
-        .array(z.object({ tier: effortSchema, description: z.string().optional() }))
+      // Validate consumed fields only. Muse's described subset (reasoningEffortVariants)
+      // is presentation metadata; its shape must not gate catalog discovery or session startup.
+      variants: z
+        .union([z.array(effortSchema), z.literal("unknown")])
+        .transform((variants) => (variants === "unknown" ? [] : variants))
         .default([]),
-      variants: z.union([z.array(effortSchema), z.literal("unknown")]).default([]),
     }),
   ),
 });

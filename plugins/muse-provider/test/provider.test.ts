@@ -685,6 +685,71 @@ test("catalogue loads models whose effort tiers carry descriptions", async () =>
     },
   });
 });
+test("session startup accepts described catalog efforts and publishes the complete list", async () => {
+  const model = {
+    modelId: "meta/muse-spark-1.3",
+    providerId: "meta",
+    displayLabel: "Muse Spark",
+    contextLimit: null,
+    isDefault: true,
+    defaultReasoningEffort: "max",
+    variants: ["minimal", "low", "medium", "high", "xhigh", "max"],
+    reasoningEffortVariants: [{ tier: "xhigh", description: "Deepest analysis" }],
+  };
+  const h = await harness("text-reasoning", { MUSE_TEST_MODELS: JSON.stringify([model]) });
+  expect(await h.open()).toEqual({
+    type: "session.ready",
+    requestId: "open",
+    sessionId: "paseo-session",
+  });
+  expect(await h.wait((event) => event.type === "session.config")).toMatchObject({
+    config: {
+      models: [{ id: model.modelId, defaultThinkingOptionId: "max" }],
+      thinkingOptions: model.variants.map((id) => ({ id, isDefault: id === "max" })),
+    },
+  });
+  await h.send({
+    type: "session.configure",
+    requestId: "choose-max",
+    sessionId: "paseo-session",
+    changes: { thinkingOption: "max" },
+  });
+  await h.wait((event) => event.type === "request.completed" && event.requestId === "choose-max");
+  await h.prompt();
+  await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+  expect(
+    (await h.recorded()).find((frame) => frame.method === "turn/start").params.reasoningEffort,
+  ).toBe("max");
+});
+for (const metadata of [
+  "unknown",
+  [{ tier: "future-tier", description: { text: "Future metadata" } }],
+]) {
+  test(`catalog ignores unused effort descriptions ${JSON.stringify(metadata)}`, async () => {
+    const model = {
+      modelId: "test-model",
+      providerId: "meta",
+      displayLabel: "Muse Spark",
+      contextLimit: null,
+      isDefault: true,
+      defaultReasoningEffort: "high",
+      variants: ["low", "high"],
+      reasoningEffortVariants: metadata,
+    };
+    const h = await harness("catalog-controls", { MUSE_TEST_MODELS: JSON.stringify([model]) });
+    await h.send({ type: "catalog", requestId: "models" });
+    expect(
+      await h.wait((event) => event.type === "catalog" || event.type === "request.failed"),
+    ).toMatchObject({
+      type: "catalog",
+      catalog: {
+        models: [
+          { id: model.modelId, thinkingOptions: [{ id: "low" }, { id: "high", isDefault: true }] },
+        ],
+      },
+    });
+  });
+}
 test("status accepts future credential states and drains its maintenance host", async () => {
   const h = await harness("catalog-controls", { MUSE_TEST_ACCOUNT: "futureCredential" });
   expect(await h.provider.status!({ launch: h.launch })).toEqual({ available: true });

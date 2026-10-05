@@ -63,8 +63,7 @@ export class Catalog {
 
 export function presentCatalog(response: z.infer<typeof catalogSchema>): ProviderCatalog {
   const models = response.models.map((model) => {
-    const supported =
-      Array.isArray(model.variants) && model.variants.length > 0 ? model.variants : efforts;
+    const supported = model.variants.length > 0 ? model.variants : efforts;
     return {
       id: model.modelId,
       label: model.displayLabel,
