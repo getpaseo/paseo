@@ -1110,6 +1110,9 @@ export const en = {
         title: "Title",
         branch: "Branch name",
       },
+      tabRows: {
+        label: "Tabs",
+      },
       show: {
         label: "Show",
         branch: "Branch",
@@ -1210,6 +1213,11 @@ export const en = {
       },
     },
     workspace: {
+      tabs: {
+        open: "Open {{name}}",
+        expand: "Show tabs",
+        collapse: "Hide tabs",
+      },
       status: {
         serviceRunning: "Service {{name}} running",
         serviceUnhealthy: "Service {{name}} unhealthy",

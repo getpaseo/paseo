@@ -1,4 +1,4 @@
-import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
+import { memo, useMemo, useCallback, useState, type ComponentType, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
@@ -87,6 +87,12 @@ export function SidebarWorkspaceRowFrame({
   );
 }
 
+export interface SidebarWorkspaceLeadingWrapperProps {
+  workspace: SidebarWorkspaceEntry;
+  isHovered: boolean;
+  children: ReactNode;
+}
+
 export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowContent({
   workspace,
   hostBadge,
@@ -100,6 +106,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
+  LeadingWrapper,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -117,6 +124,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
+  /**
+   * Wraps the leading visual so the row can swap it, e.g. for the tab folder's disclosure while
+   * hovered. A component rather than a render function so the row's memo holds across renders.
+   */
+  LeadingWrapper?: ComponentType<SidebarWorkspaceLeadingWrapperProps>;
   children?: ReactNode;
 }) {
   const {
@@ -135,26 +147,34 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     [isHovered, isCreating],
   );
 
+  const leading = leadingProjectName ? (
+    <ProjectStatusIndicator
+      iconDataUri={leadingProjectIconDataUri}
+      displayName={leadingProjectName}
+      projectViewKey={workspace.projectViewKey}
+      statusBucket={workspace.statusBucket}
+      backdrop={backdrop}
+      loading={isLoading}
+      testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+    />
+  ) : (
+    <WorkspaceStatusIndicator
+      bucket={workspace.statusBucket}
+      workspaceKind={workspace.workspaceKind}
+      loading={isLoading}
+      reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+    />
+  );
+
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
+        {LeadingWrapper ? (
+          <LeadingWrapper workspace={workspace} isHovered={isHovered}>
+            {leading}
+          </LeadingWrapper>
         ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
+          leading
         )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>

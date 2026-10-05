@@ -24,6 +24,9 @@ export interface SidebarDisplayPreferences {
   toggleRowItem: (item: SidebarRowItem) => void;
   checksDisplay: SidebarChecksDisplay;
   setChecksDisplay: (display: SidebarChecksDisplay) => void;
+  /** Whether workspace rows can open as folders of their tabs. */
+  tabRows: boolean;
+  toggleTabRows: () => void;
   trailing: SidebarWorkspaceTrailing;
   /** Picking the choice that is already showing clears the slot. */
   toggleTrailing: (choice: SidebarTrailingChoice) => void;
@@ -66,6 +69,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       sidebarWorkspaceTrailing,
       sidebarRowItems,
       sidebarChecksDisplay,
+      sidebarTabRows,
     },
     updateSettings,
   } = useAppSettings();
@@ -85,6 +89,10 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     },
     [updateSettings, sidebarRowItems],
   );
+
+  const toggleTabRows = useCallback(() => {
+    void updateSettings({ sidebarTabRows: !sidebarTabRows });
+  }, [updateSettings, sidebarTabRows]);
 
   const setChecksDisplay = useCallback(
     (display: SidebarChecksDisplay) => {
@@ -112,6 +120,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleRowItem,
       checksDisplay: sidebarChecksDisplay,
       setChecksDisplay,
+      tabRows: sidebarTabRows,
+      toggleTabRows,
       trailing: sidebarWorkspaceTrailing,
       toggleTrailing,
       hostFilters,
@@ -133,6 +143,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleRowItem,
       sidebarChecksDisplay,
       setChecksDisplay,
+      sidebarTabRows,
+      toggleTabRows,
       sidebarWorkspaceTrailing,
       toggleTrailing,
       hostFilters,

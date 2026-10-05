@@ -1081,6 +1081,9 @@ export const zhCN: TranslationResources = {
   },
   sidebar: {
     display: {
+      tabRows: {
+        label: "标签页",
+      },
       trigger: "显示偏好",
       heading: "显示",
       grouping: {
@@ -1192,6 +1195,11 @@ export const zhCN: TranslationResources = {
       },
     },
     workspace: {
+      tabs: {
+        open: "打开 {{name}}",
+        expand: "显示标签页",
+        collapse: "隐藏标签页",
+      },
       status: {
         serviceRunning: "服务 {{name}} 运行中",
         serviceUnhealthy: "服务 {{name}} 异常",

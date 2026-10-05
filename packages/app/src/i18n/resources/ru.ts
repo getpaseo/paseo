@@ -1106,6 +1106,9 @@ export const ru: TranslationResources = {
   },
   sidebar: {
     display: {
+      tabRows: {
+        label: "Вкладки",
+      },
       trigger: "Настройки отображения",
       heading: "Отображение",
       grouping: {
@@ -1220,6 +1223,11 @@ export const ru: TranslationResources = {
       },
     },
     workspace: {
+      tabs: {
+        open: "Открыть {{name}}",
+        expand: "Показать вкладки",
+        collapse: "Скрыть вкладки",
+      },
       status: {
         serviceRunning: "Сервис {{name}} запущен",
         serviceUnhealthy: "Сервис {{name}} работает некорректно",

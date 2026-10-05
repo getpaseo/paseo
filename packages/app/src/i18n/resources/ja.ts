@@ -1102,6 +1102,9 @@ export const ja: TranslationResources = {
   },
   sidebar: {
     display: {
+      tabRows: {
+        label: "タブ",
+      },
       trigger: "表示設定",
       heading: "表示",
       grouping: {
@@ -1216,6 +1219,11 @@ export const ja: TranslationResources = {
       },
     },
     workspace: {
+      tabs: {
+        open: "{{name}} を開く",
+        expand: "タブを表示",
+        collapse: "タブを非表示",
+      },
       status: {
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",

@@ -1124,6 +1124,9 @@ export const fr: TranslationResources = {
   },
   sidebar: {
     display: {
+      tabRows: {
+        label: "Onglets",
+      },
       trigger: "Préférences d'affichage",
       heading: "Affichage",
       grouping: {
@@ -1238,6 +1241,11 @@ export const fr: TranslationResources = {
       },
     },
     workspace: {
+      tabs: {
+        open: "Ouvrir {{name}}",
+        expand: "Afficher les onglets",
+        collapse: "Masquer les onglets",
+      },
       status: {
         serviceRunning: "Service {{name}} en cours",
         serviceUnhealthy: "Service {{name}} en échec",
