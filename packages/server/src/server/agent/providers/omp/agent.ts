@@ -698,9 +698,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private lastKnownThinkingOptionId: string | null;
-  private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
-  private outOfBandCompactionStarted = false;
-  private outOfBandCompactionCompleted = false;
+  private manualCompactionRunning = false;
   private commandCache: AgentSlashCommand[] | null = null;
   private readonly subagentIndex = new OmpSubagentIndex();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
@@ -1379,30 +1377,24 @@ export class OmpAgentSession implements AgentSession {
     customInstructions: string | undefined,
     emit: (event: AgentStreamEvent) => void,
   ): Promise<void> {
-    if (this.outOfBandCompactionEmit) {
+    if (this.manualCompactionRunning) {
       throw new Error("An OMP compact command is already running");
     }
-    this.outOfBandCompactionEmit = emit;
-    this.outOfBandCompactionStarted = false;
-    this.outOfBandCompactionCompleted = false;
+    // OMP answers a manual compact with its RPC response alone, without
+    // compaction_start or compaction_end, so the request owns both rows.
+    this.manualCompactionRunning = true;
+    const emitCompaction = (status: "loading" | "completed") =>
+      emit({
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "compaction", status, trigger: "manual" },
+      });
+    emitCompaction("loading");
     try {
       await this.runtimeSession.compact(customInstructions);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (
-        this.outOfBandCompactionEmit === emit &&
-        this.outOfBandCompactionStarted &&
-        !this.outOfBandCompactionCompleted
-      ) {
-        this.emitCompactionTimeline({
-          turnId: undefined,
-          item: {
-            type: "compaction",
-            status: "completed",
-            trigger: "manual",
-          },
-        });
-      }
+      emitCompaction("completed");
       emit({
         type: "timeline",
         provider: this.provider,
@@ -1411,13 +1403,12 @@ export class OmpAgentSession implements AgentSession {
           text: `[Error] Failed to compact context: ${message}`,
         },
       });
+      return;
     } finally {
-      if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionStarted) {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
-      }
+      this.manualCompactionRunning = false;
     }
+    emitCompaction("completed");
+    await this.usagePoller.refresh();
   }
 
   private async executeAutoCompactCommand(
@@ -1823,24 +1814,8 @@ export class OmpAgentSession implements AgentSession {
         return;
       }
       case "compaction_start":
-        this.emitCompactionTimeline({
-          turnId,
-          item: {
-            type: "compaction",
-            status: "loading",
-            trigger: event.reason === "manual" ? "manual" : "auto",
-          },
-        });
-        return;
       case "compaction_end":
-        this.emitCompactionTimeline({
-          turnId,
-          item: {
-            type: "compaction",
-            status: "completed",
-            trigger: event.reason === "manual" ? "manual" : "auto",
-          },
-        });
+        this.handleCompactionEvent(event, turnId);
         return;
       case "agent_end": {
         const messages = event.messages ?? [];
@@ -1894,35 +1869,24 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private emitCompactionTimeline(input: {
-    turnId: string | undefined;
-    item: Extract<AgentStreamEvent, { type: "timeline" }>["item"];
-  }): void {
-    const emitOutOfBand = this.outOfBandCompactionEmit;
-    if (emitOutOfBand && input.item.type === "compaction") {
-      if (input.item.status === "loading") {
-        this.outOfBandCompactionStarted = true;
-      }
-      if (input.item.status === "completed") {
-        this.outOfBandCompactionCompleted = true;
-      }
-    }
-    const event: AgentStreamEvent = {
-      type: "timeline",
-      provider: this.provider,
-      ...(emitOutOfBand ? {} : { turnId: input.turnId }),
-      item: input.item,
-    };
-    if (emitOutOfBand) {
-      emitOutOfBand(event);
-      if (input.item.type === "compaction" && input.item.status === "completed") {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
-      }
+  private handleCompactionEvent(
+    event: Extract<OmpAgentSessionEvent, { type: "compaction_start" | "compaction_end" }>,
+    turnId: string | undefined,
+  ): void {
+    // A manual compact emits its own rows around the request.
+    if (this.manualCompactionRunning) {
       return;
     }
-    this.emit(event);
+    this.emit({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "compaction",
+        status: event.type === "compaction_start" ? "loading" : "completed",
+        trigger: event.reason === "manual" ? "manual" : "auto",
+      },
+    });
   }
 
   private handleMessageUpdate(

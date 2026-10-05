@@ -168,7 +168,6 @@ export class FakeOmpSession implements OmpRuntimeSession {
   subagents: FakeOmpSubagentSnapshot[] = [];
   readonly subagentSubscriptionErrors = new Map<FakeOmpSubagentSubscriptionLevel, Error>();
   compactError: Error | null = null;
-  emitCompactEnd = true;
   getStateError: Error | null = null;
   promptAck: OmpPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
@@ -266,11 +265,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   }
 
   async compact(customInstructions?: string): Promise<void> {
+    // Like OMP, answer a manual compact with the response alone, no compaction events.
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
-    this.emit({ type: "compaction_start", reason: "manual" });
-    if (this.emitCompactEnd) {
-      this.emit({ type: "compaction_end", reason: "manual" });
-    }
     if (this.compactError) {
       throw this.compactError;
     }

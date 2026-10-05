@@ -185,7 +185,79 @@ afterEach(() => {
   roots.clear();
 });
 
+async function waitForTimelineItem(
+  client: DaemonClient,
+  agentId: string,
+  predicate: (item: AgentTimelineItem) => boolean,
+): Promise<AgentTimelineItem> {
+  const deadline = Date.now() + 60_000;
+  let items: AgentTimelineItem[] = [];
+  while (Date.now() < deadline) {
+    items = await timeline(client, agentId);
+    const item = items.find(predicate);
+    if (item) return item;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for OMP timeline item: ${JSON.stringify(items)}`);
+}
+
+async function contextWindowUsedTokens(client: DaemonClient, agentId: string) {
+  const result = await client.fetchAgent(agentId);
+  return result?.agent.lastUsage?.contextWindowUsedTokens;
+}
+
+function compactionFiller(): string {
+  const teas = ["assam", "darjeeling", "sencha", "oolong"];
+  return Array.from(
+    { length: 2500 },
+    (_, index) =>
+      `Record ${String(index).padStart(5, "0")}: tea=${teas[index % teas.length]} origin=region-${index % 37} notes=lorem ipsum dolor sit amet`,
+  ).join("\n");
+}
+
 describe("daemon E2E (real OMP)", () => {
+  test(
+    "manual compact shows its progress and refreshes context usage",
+    async () => {
+      const harness = await createHarness();
+      try {
+        const agent = await createAgent(harness, "manual-compact");
+        await promptAndFinish(harness, agent.id, "Reply exactly: ready");
+        await promptAndFinish(
+          harness,
+          agent.id,
+          `${compactionFiller()}\n\nWhich tea is in record 00007? Reply with one word.`,
+        );
+        await promptAndFinish(harness, agent.id, "Reply exactly: after-filler");
+        const usedBefore = await contextWindowUsedTokens(harness.client, agent.id);
+        expect(usedBefore).toBeGreaterThan(20_000);
+
+        await harness.client.sendMessage(agent.id, "/compact");
+        await waitForTimelineItem(
+          harness.client,
+          agent.id,
+          (item) => item.type === "compaction" && item.status === "completed",
+        );
+
+        expect(await timeline(harness.client, agent.id)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "compaction", status: "loading", trigger: "manual" }),
+            expect.objectContaining({ type: "compaction", status: "completed", trigger: "manual" }),
+          ]),
+        );
+        await harness.client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) =>
+            (snapshot.lastUsage?.contextWindowUsedTokens ?? Infinity) < (usedBefore ?? 0),
+          60_000,
+        );
+      } finally {
+        await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
   test(
     "prompt, native tool, and resumed follow-up",
     async () => {
