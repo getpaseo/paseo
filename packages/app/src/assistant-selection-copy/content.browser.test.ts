@@ -644,6 +644,24 @@ describe("assistant selection copy inside highlighted code", () => {
     expect(content?.plainText).toBe("const answer = 1;\n  if (answer) {\n    doThing();");
   });
 
+  it("keeps an image selected beside the code in the copy", () => {
+    const message = mountHighlighted();
+    const image = document.createElement("div");
+    image.setAttribute("data-paseo-markdown-tag", "p");
+    image.innerHTML = '<div><img src="https://example.test/chart.png" alt="chart"></div>';
+    message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(image);
+    const before = tokenText(message, "Before the block.");
+
+    const content = copyBetween(
+      [before, before.length],
+      [tokenText(message, "    doThing();"), 14],
+    );
+
+    expect(content?.plainText).toBe(
+      "![chart](https://example.test/chart.png)\n\n```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```",
+    );
+  });
+
   it("retains the fence when a complete code block is selected across its boundary", () => {
     const message = mountHighlighted();
 

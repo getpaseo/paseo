@@ -434,6 +434,7 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   }
   const visibleVoidSelector = ["br", "hr"]
     .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
+    .concat("img")
     .join(",");
   return Boolean(fragment.querySelector(visibleVoidSelector));
 }
