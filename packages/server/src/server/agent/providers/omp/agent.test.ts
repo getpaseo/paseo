@@ -1236,6 +1236,25 @@ describe("OMP agent client and session", () => {
     expect(omp.runtime().prompts).toEqual([{ message: "continue", imageCount: 0 }]);
   });
 
+  test("ignores a prompt rejection a previous OMP process left for a reused request id", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "prompt_result",
+      id: "req_1",
+      agentInvoked: false,
+      status: "error",
+      error: { message: "No API key found for anthropic." },
+    });
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+
+    await omp.runPromptWithoutTurnOnNextRuntime("/session", "req_1");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.turnFailures()).toEqual(["OMP RPC process exited with code 1 and signal null"]);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("reports an immediate relaunch failure without retrying in a loop", async () => {
     const omp = new OmpHarness();
     await omp.start();

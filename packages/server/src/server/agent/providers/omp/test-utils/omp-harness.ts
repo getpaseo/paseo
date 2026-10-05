@@ -294,6 +294,14 @@ export class OmpHarness {
     return await run;
   }
 
+  async runPromptWithoutTurnOnNextRuntime(input: string, requestId: string): Promise<unknown> {
+    const session = this.requireSession();
+    this.omp.queueSessionSetup((runtime) => {
+      runtime.promptAck = { requestId, agentInvoked: false };
+    });
+    return await session.run(input);
+  }
+
   async runPromptWithoutTurn(input: string): Promise<unknown> {
     const session = this.requireSession();
     this.omp.latestSession().promptAck = { agentInvoked: false };
