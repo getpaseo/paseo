@@ -130,6 +130,7 @@ import {
   type ProviderCatalog,
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
+  type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
@@ -295,6 +296,13 @@ interface AsyncMessageInput<T> {
 interface ClaudeReplayOwnership {
   restoredIds: ReadonlySet<string>;
   toolOwners: ReadonlyMap<string, string>;
+  /** The parent's Task calls, keyed by tool-call id, so their cards replay labeled as they were live. */
+  subagentToolCalls: ReadonlyMap<string, ClaudeSubagentCardFacts>;
+}
+
+interface ClaudeSubagentCardFacts {
+  title?: string;
+  description?: string;
 }
 
 interface PersistedTimelineEntry {
@@ -2092,7 +2100,11 @@ class ClaudeAgentSession implements AgentSession {
     // identity and status from frames for them. Detecting the capability beats comparing version
     // strings: it reacts to what this session actually does.
     isDescriptorOwnedElsewhere: () => this.taskProtocolSource.isActive,
+    // The parent's tool call owns its card once its result arrives. A background child streams
+    // its frames after Claude has already answered the call, and re-emitting the card from them
+    // would replace the settled card with an unlabeled, running one.
     needsSyntheticParentToolCard: (toolUseId) =>
+      this.toolUseCache.has(toolUseId) &&
       this.taskProtocolSource.needsSyntheticParentToolCard(toolUseId),
   });
   private persistedHistory: PersistedTimelineEntry[] = [];
@@ -4245,16 +4257,7 @@ class ClaudeAgentSession implements AgentSession {
     return {
       type: "timeline",
       provider: "claude",
-      item: {
-        ...toolCall,
-        detail: {
-          type: "sub_agent",
-          ...(declaration.title ? { subAgentType: declaration.title } : {}),
-          ...(declaration.description ? { description: declaration.description } : {}),
-          log: "",
-          actions: [],
-        },
-      },
+      item: { ...toolCall, detail: buildClaudeSubagentCardDetail(declaration) },
     };
   }
 
@@ -4317,6 +4320,19 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (message.subtype === "status") {
+      // Claude Code reports a mode it switched to on its own, such as entering
+      // plan mode with the EnterPlanMode tool, through the status message.
+      if (
+        isPermissionMode(message.permissionMode) &&
+        this.observePermissionMode(message.permissionMode)
+      ) {
+        events.push({
+          type: "mode_changed",
+          provider: "claude",
+          currentModeId: this.currentMode,
+          availableModes: this.availableModes,
+        });
+      }
       const status = toObjectRecord(message)?.status;
       if (status === "compacting") {
         this.compacting = true;
@@ -4628,10 +4644,7 @@ class ClaudeAgentSession implements AgentSession {
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
     this.availableModes = DEFAULT_MODES;
-    this.currentMode = message.permissionMode;
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
+    this.observePermissionMode(message.permissionMode);
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
@@ -4648,6 +4661,16 @@ class ClaudeAgentSession implements AgentSession {
       this.cachedRuntimeInfo = null;
     }
     return { threadStartedSessionId, notice };
+  }
+
+  /** Records a mode Claude Code reports, returning whether it differs from the current one. */
+  private observePermissionMode(mode: PermissionMode): boolean {
+    const changed = this.currentMode !== mode;
+    this.currentMode = mode;
+    if (mode !== "plan") {
+      this.planResumeMode = mode;
+    }
+    return changed;
   }
 
   private readMissingResumedConversationError(message: SDKMessage): string | null {
@@ -4953,6 +4976,7 @@ class ClaudeAgentSession implements AgentSession {
     const sidechainEntries = [parentContent, ...sidechains.contents]
       .flatMap(parseClaudeHistoryRecords)
       .filter((entry) => entry.isSidechain === true && typeof entry.agentId === "string");
+    const parentFacts = readClaudeReplayParentFacts(parentEntries);
 
     // Replay produces the same observations the live task protocol produces, then folds them
     // with the same function, so identity and status are derived once for both paths.
@@ -4963,7 +4987,7 @@ class ClaudeAgentSession implements AgentSession {
         entries,
         parentFacts: readClaudeReplayParentFacts(entries as ClaudeHistoryEntry[]),
       })),
-      parent: readClaudeReplayParentFacts(parentEntries),
+      parent: parentFacts,
       convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
     });
     const observations = [
@@ -4992,6 +5016,7 @@ class ClaudeAgentSession implements AgentSession {
     const replay = {
       restoredIds: restoredProviderSubagentIds,
       toolOwners: subagentReplay.toolOwners,
+      subagentToolCalls: parentFacts.toolCalls,
     };
     if (observations.length === 0) return replay;
 
@@ -5058,7 +5083,12 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     const taskSnapshot = this.taskState.observe(entry);
-    const items = [...(taskSnapshot ? [taskSnapshot] : []), ...this.convertHistoryEntry(entry)];
+    const items = [
+      ...(taskSnapshot ? [taskSnapshot] : []),
+      ...this.convertHistoryEntry(entry).map((item) =>
+        labelReplayedSubagentCard(item, replay.subagentToolCalls),
+      ),
+    ];
     const isVisibleUserEntry =
       entry.type === "user" &&
       typeof entry.uuid === "string" &&
@@ -5806,6 +5836,33 @@ function parseClaudeHistoryRecords(content: string): ClaudeHistoryEntry[] {
     }
   }
   return entries;
+}
+
+/** The parent's card for a subagent, labeled with its type and task. */
+function buildClaudeSubagentCardDetail(
+  facts: ClaudeSubagentCardFacts,
+): Extract<ToolCallDetail, { type: "sub_agent" }> {
+  return {
+    type: "sub_agent",
+    ...(facts.title ? { subAgentType: facts.title } : {}),
+    ...(facts.description ? { description: facts.description } : {}),
+    log: "",
+    actions: [],
+  };
+}
+
+/**
+ * Live, a Task call's card is built from the task protocol's declaration. Replay has no task
+ * protocol, so the generic tool mapper leaves the card unlabeled; label it from the same facts.
+ */
+function labelReplayedSubagentCard(
+  item: AgentTimelineItem,
+  subagentToolCalls: ReadonlyMap<string, ClaudeSubagentCardFacts>,
+): AgentTimelineItem {
+  if (item.type !== "tool_call") return item;
+  const facts = subagentToolCalls.get(item.callId);
+  if (!facts) return item;
+  return { ...item, detail: buildClaudeSubagentCardDetail(facts) };
 }
 
 /**

@@ -275,6 +275,7 @@ export class UsageSourceRegistry {
     try {
       return UsageReportSchema.parse(await source.fetch(input));
     } catch (error) {
+      this.logger.warn({ sourceId: source.id, err: error }, "Usage fetch failed");
       return { status: "error", error: error instanceof Error ? error.message : String(error) };
     }
   }

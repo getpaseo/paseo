@@ -129,15 +129,28 @@ describe("@gotgenes/pi-subagents adapter", () => {
     expect(new Set(upserts.map((event) => event?.id)).size).toBe(1);
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
   });
-  test("keeps claimed notification text visible in history", async () => {
+  test("keeps claimed notification text in a tool row in history", async () => {
     const fixture = readSubagentFixture(new URL("./fixtures/background.json", import.meta.url));
-    const text = fixture.messages.find((message) => message.role === "custom")?.content;
+    const notification = fixture.messages.find((message) => message.role === "custom");
+    const text = notification?.content;
     const events = [];
     for await (const event of streamPiHistory("pi", fixture.messages)) events.push(event);
     expect(events).toContainEqual({
       type: "timeline",
       provider: "pi",
-      item: { type: "assistant_message", text },
+      item: {
+        type: "tool_call",
+        callId: "pi-custom-1",
+        name: notification?.customType,
+        status: "completed",
+        detail: { type: "plain_text", text },
+        metadata: {
+          synthetic: true,
+          customType: notification?.customType,
+          details: notification?.details,
+        },
+        error: null,
+      },
     });
     expect(events.some((event) => event.type === "provider_subagent")).toBe(true);
   });

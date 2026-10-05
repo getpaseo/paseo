@@ -1,11 +1,14 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle } from "react-native-svg";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import { useHostReportsUsage } from "@/usage";
+import type { Theme } from "@/styles/theme";
 import { ContextWindowDetails } from "./context-window-details";
 import { ContextWindowSheet } from "./context-window-sheet";
 
@@ -16,19 +19,16 @@ interface ContextWindowMeterProps {
   usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
-  /** Reserve the meter footprint and show a loading ring while usage is pending. */
-  pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
 }
 
 const SVG_SIZE = 14;
+const USAGE_POPOVER_WIDTH = 300;
 const COMPACT_SVG_SIZE = 12;
-const COMPACT_CENTER = COMPACT_SVG_SIZE / 2;
 const COMPACT_RADIUS = 5;
 const STROKE_WIDTH = 2;
 const COMPACT_STROKE_WIDTH = 1.75;
-const COMPACT_CIRCUMFERENCE = 2 * Math.PI * COMPACT_RADIUS;
 
 function isValidMaxTokens(value: number): boolean {
   return Number.isFinite(value) && value > 0;
@@ -59,28 +59,22 @@ function formatSessionCost(value: number): string | null {
   return `$${value.toFixed(2)}`;
 }
 
-function getMeterColors(
-  percentage: number,
-  theme: ReturnType<typeof useUnistyles>["theme"],
-): { progress: string; track: string } {
-  const track = theme.colors.surface3;
+function getProgressColor(percentage: number, theme: Theme): string {
   if (percentage > 90) {
-    return { progress: theme.colors.destructive, track };
+    return theme.colors.destructive;
   }
   if (percentage >= 70) {
-    return { progress: theme.colors.palette.amber[500], track };
+    return theme.colors.palette.amber[500];
   }
-  return { progress: theme.colors.foregroundMuted, track };
+  return theme.colors.foregroundMuted;
 }
 
 function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   if (showPercentage) {
     return {
       svgSize: COMPACT_SVG_SIZE,
-      center: COMPACT_CENTER,
       radius: COMPACT_RADIUS,
       strokeWidth: COMPACT_STROKE_WIDTH,
-      circumference: COMPACT_CIRCUMFERENCE,
       containerStyle: styles.containerWithLabel,
     };
   }
@@ -88,13 +82,64 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   const resolvedStrokeWidth = glyphSize ? 2 : STROKE_WIDTH;
   return {
     svgSize: resolvedSize,
-    center: resolvedSize / 2,
     radius: (resolvedSize - resolvedStrokeWidth) / 2,
     strokeWidth: resolvedStrokeWidth,
-    circumference: Math.PI * (resolvedSize - resolvedStrokeWidth),
     containerStyle: styles.container,
   };
 }
+
+// Wrap the whole SVG: withUnistyles adds a div on web, which cannot sit inside an SVG.
+const ContextWindowRing = withUnistyles(function ContextWindowRing({
+  size,
+  radius,
+  strokeWidth,
+  percentage,
+  trackColor,
+  progressColor,
+}: {
+  size: number;
+  radius: number;
+  strokeWidth: number;
+  percentage: number | null;
+  trackColor: string;
+  progressColor: string;
+}) {
+  const center = size / 2;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <Svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Circle
+        cx={center}
+        cy={center}
+        r={radius}
+        fill="none"
+        stroke={trackColor}
+        strokeWidth={strokeWidth}
+      />
+      {percentage !== null ? (
+        <Circle
+          cx={center}
+          cy={center}
+          r={radius}
+          fill="none"
+          stroke={progressColor}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference - (clampPercentage(percentage) / 100) * circumference}
+          // SVG strokes start at three o'clock; the ring reads clockwise from twelve.
+          transform={`rotate(-90 ${center} ${center})`}
+        />
+      ) : null}
+    </Svg>
+  );
+});
 
 export function ContextWindowMeter({
   serverId,
@@ -103,15 +148,13 @@ export function ContextWindowMeter({
   usedTokens,
   totalCostUsd,
   showPercentage = false,
-  pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
   // Usage cards need a wider popover; without them it keeps the plain tooltip shape.
   const showsUsage = useHostReportsUsage(serverId);
-  const popoverWidth = Math.min(360, width - 24);
+  const popoverWidth = Math.min(USAGE_POPOVER_WIDTH, width - 24);
   // Compact screens open the details in a sheet, which can hold a pressable Refresh.
   const isCompact = useIsCompactFormFactor();
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -121,79 +164,39 @@ export function ContextWindowMeter({
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
-  // No usage yet: reserve the footprint with a track-only ring while a session is
-  // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
-  if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
-    return (
-      <View style={geometry.containerStyle}>
-        <Svg
-          width={geometry.svgSize}
-          height={geometry.svgSize}
-          viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <Circle
-            cx={geometry.center}
-            cy={geometry.center}
-            r={geometry.radius}
-            fill="none"
-            stroke={theme.colors.surface3}
-            strokeWidth={geometry.strokeWidth}
-          />
-        </Svg>
-        {showPercentage ? <View style={styles.skeletonLabel} /> : null}
-      </View>
-    );
-  }
-
-  const clampedPercentage = clampPercentage(percentage);
-  const roundedPercentage = Math.round(percentage);
-  const { svgSize, center, radius, strokeWidth, circumference, containerStyle } = geometry;
-  const dashOffset = circumference - (clampedPercentage / 100) * circumference;
-  const colors = getMeterColors(clampedPercentage, theme);
+  const context = useMemo(
+    () =>
+      percentage !== null && maxTokens !== null && usedTokens !== null
+        ? { percentage: Math.round(percentage), maxTokens, usedTokens }
+        : null,
+    [percentage, maxTokens, usedTokens],
+  );
+  const meterColors = useCallback(
+    (theme: Theme) => ({
+      progressColor: getProgressColor(percentage ?? 0, theme),
+      trackColor: theme.colors.surface3,
+    }),
+    [percentage],
+  );
   const formattedSessionCost =
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
-
+  const containerStyle = geometry.containerStyle;
   const ring = (
-    <Svg
-      width={svgSize}
-      height={svgSize}
-      viewBox={`0 0 ${svgSize} ${svgSize}`}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-    >
-      <Circle
-        cx={center}
-        cy={center}
-        r={radius}
-        fill="none"
-        stroke={colors.track}
-        strokeWidth={strokeWidth}
-      />
-      <Circle
-        cx={center}
-        cy={center}
-        r={radius}
-        fill="none"
-        stroke={colors.progress}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={dashOffset}
-        // SVG strokes start at three o'clock; the ring reads clockwise from twelve.
-        transform={`rotate(-90 ${center} ${center})`}
-      />
-    </Svg>
+    <ContextWindowRing
+      size={geometry.svgSize}
+      radius={geometry.radius}
+      strokeWidth={geometry.strokeWidth}
+      percentage={percentage}
+      uniProps={meterColors}
+    />
   );
-  const percentageLabel = showPercentage ? (
-    <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
-  ) : null;
-  const accessibilityLabel = t("contextWindow.accessibility", { percentage: roundedPercentage });
+  const percentageLabel =
+    showPercentage && context ? (
+      <Text style={styles.percentageLabel}>{`${context.percentage}%`}</Text>
+    ) : null;
+  const accessibilityLabel = context
+    ? t("contextWindow.accessibility", { percentage: context.percentage })
+    : t("contextWindow.accessibilityNoData");
 
   if (isCompact) {
     return (
@@ -212,9 +215,7 @@ export function ContextWindowMeter({
           <ContextWindowDetails
             serverId={serverId}
             agentId={agentId}
-            percentage={roundedPercentage}
-            usedTokens={usedTokens}
-            maxTokens={maxTokens}
+            context={context}
             sessionCost={formattedSessionCost}
             showTitle={false}
             refreshable
@@ -224,10 +225,51 @@ export function ContextWindowMeter({
     );
   }
 
+  const popoverStyle = showsUsage
+    ? [styles.usagePopover, { width: popoverWidth }]
+    : styles.plainPopover;
+
+  // Native wide screens have no hover, so the details open in a tooltip on press. The tooltip
+  // takes no presses, so its usage cards have no Refresh.
+  if (isNative) {
+    return (
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            style={containerStyle}
+            testID="context-window-meter"
+            accessibilityRole="image"
+            accessibilityLabel={accessibilityLabel}
+          >
+            {ring}
+            {percentageLabel}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          align="center"
+          offset={8}
+          maxWidth={showsUsage ? popoverWidth : undefined}
+          style={popoverStyle}
+          testID="context-window-meter-tooltip"
+        >
+          <ContextWindowDetails
+            serverId={serverId}
+            agentId={agentId}
+            context={context}
+            sessionCost={formattedSessionCost}
+            showTitle
+            refreshable={false}
+          />
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
+    <HoverCard>
+      <HoverCardTrigger focusable accessibilityLabel={accessibilityLabel}>
+        <View
           style={containerStyle}
           testID="context-window-meter"
           accessibilityRole="image"
@@ -235,28 +277,26 @@ export function ContextWindowMeter({
         >
           {ring}
           {percentageLabel}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        align="center"
+        </View>
+      </HoverCardTrigger>
+      <HoverCardContent
+        placement="top"
         offset={8}
-        maxWidth={showsUsage ? popoverWidth : undefined}
-        style={showsUsage ? [styles.popover, { width: popoverWidth }] : undefined}
-        testID="context-window-meter-tooltip"
+        role="dialog"
+        accessibilityLabel={t("contextWindow.title")}
+        testID="context-window-details"
+        style={popoverStyle}
       >
         <ContextWindowDetails
           serverId={serverId}
           agentId={agentId}
-          percentage={roundedPercentage}
-          usedTokens={usedTokens}
-          maxTokens={maxTokens}
+          context={context}
           sessionCost={formattedSessionCost}
           showTitle
-          refreshable={false}
+          refreshable
         />
-      </TooltipContent>
-    </Tooltip>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
@@ -281,11 +321,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
-  skeletonLabel: {
-    width: 22,
-    height: theme.fontSize.base,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface3,
-  },
-  popover: { padding: theme.spacing[4], gap: theme.spacing[4] },
+  // Plain details use a small inset; account usage cards have their own content density.
+  plainPopover: { paddingVertical: theme.spacing[1], paddingHorizontal: theme.spacing[2] },
+  usagePopover: { padding: theme.spacing[3], gap: theme.spacing[3] },
 }));

@@ -10,12 +10,12 @@ import {
   getAuthor,
   getRegistry,
   getPluginsByAuthor,
+  mostInstalled,
   pluginOwner,
-  sortPlugins,
 } from "~/plugins";
 import { AuthorAvatar } from "~/plugins/author-link";
 import { PluginsNotFound } from "~/plugins/not-found";
-import { PLUGIN_GRID_CLASS, PluginCard } from "~/plugins/plugin-card";
+import { PluginCard } from "~/plugins/plugin-card";
 import "~/styles.css";
 
 export const Route = createFileRoute("/plugins/$owner")({
@@ -23,7 +23,7 @@ export const Route = createFileRoute("/plugins/$owner")({
     const registry = await getRegistry();
     const first = registry.plugins.find((plugin) => pluginOwner(plugin) === params.owner);
     if (!first) throw notFound();
-    return { plugins: registry.plugins, author: getAuthor(first) };
+    return { plugins: registry.plugins, installs: registry.installs, author: getAuthor(first) };
   },
   head: ({ params, loaderData }) =>
     pageMeta(
@@ -43,13 +43,13 @@ const LINK_CLASS =
   "inline-flex items-center gap-1 text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
 function AuthorPage() {
-  const { plugins: allPlugins, author } = Route.useLoaderData();
+  const { plugins: allPlugins, installs, author } = Route.useLoaderData();
   const crumbs = useMemo<BreadcrumbItem[]>(
     () => [{ label: "Plugins", href: "/plugins" }, { label: author.name }],
     [author],
   );
 
-  const plugins = sortPlugins(getPluginsByAuthor(allPlugins, author.username), "popular");
+  const plugins = mostInstalled(getPluginsByAuthor(allPlugins, author.username), installs, "all");
   const github = authorGitHubUrl(author);
 
   return (
@@ -84,9 +84,9 @@ function AuthorPage() {
         </div>
       </div>
 
-      <div className={`mt-12 ${PLUGIN_GRID_CLASS}`}>
+      <div className="mt-12 grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
         {plugins.map((plugin) => (
-          <PluginCard key={plugin.id} plugin={plugin} />
+          <PluginCard key={plugin.id} plugin={plugin} installs={installs[plugin.id]?.all ?? 0} />
         ))}
       </div>
     </SiteShell>

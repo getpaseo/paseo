@@ -66,7 +66,7 @@ interface Live {
 export class Session {
   private readonly host: MspConnection;
   private liveState: Live | undefined;
-  private providerId = "meta";
+  private providerId: string | undefined;
   private cursor: string | undefined;
   private config: ProviderSessionConfig;
   private catalog: ProviderCatalog = { models: [], modes };
@@ -167,11 +167,11 @@ export class Session {
         },
       ),
     };
-    this.providerId = response.session.providerId;
+    this.providerId = response.session.providerId ?? undefined;
     this.cursor = response.viewCursor;
     this.config = {
       ...this.config,
-      model: response.session.modelId,
+      model: response.session.modelId ?? this.config.model,
       mode: response.session.approvalMode?.mode ?? this.config.mode ?? "onRequest",
     };
     this.options.emit({
@@ -194,14 +194,7 @@ export class Session {
     for (const notification of this.buffered) this.enqueue(notification);
     this.buffered.length = 0;
     await this.notifications;
-    this.catalog = presentCatalog(
-      await this.host.request("model/list", { sessionId: this.live().nativeId }, catalogSchema),
-    );
-    const selected = this.catalog.models.find((model) => model.id === this.config.model);
-    this.config = {
-      ...this.config,
-      thinkingOption: this.config.thinkingOption ?? selected?.defaultThinkingOptionId,
-    };
+    await this.readCatalog();
     await this.live().commands.refresh();
     this.publishPersistence();
     this.publishConfig();
@@ -229,6 +222,19 @@ export class Session {
     for (const approval of pending.approvals) await this.permission(approval);
     for (const question of pending.userInputs) this.live().questions.requested(question);
   }
+  private async readCatalog(): Promise<void> {
+    this.catalog = presentCatalog(
+      await this.host.request("model/list", { sessionId: this.live().nativeId }, catalogSchema),
+    );
+    const model = this.config.model ?? this.catalog.defaultModel;
+    const selected = this.catalog.models.find((entry) => entry.id === model);
+    this.config = {
+      ...this.config,
+      model,
+      thinkingOption: this.config.thinkingOption ?? selected?.defaultThinkingOptionId,
+    };
+  }
+
   async prompt(prompt: ProviderPrompt): Promise<void> {
     if (await this.live().commands.compact(prompt)) return;
     const id = commandId();

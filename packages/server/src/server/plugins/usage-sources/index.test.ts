@@ -150,6 +150,28 @@ test("discovery failures log once while other sources still report", async () =>
   expect(warnings).toEqual([[{ sourceId: "kimi", err }, "Usage source discovery failed"]]);
 });
 
+test("a failed fetch is logged as well as reported", async () => {
+  const warnings: unknown[][] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, {
+    warn: (...args: unknown[]) => {
+      warnings.push(args);
+    },
+  });
+  const err = new Error("Rate limited by Claude. Try again in 38m.");
+  registry.register(
+    source({
+      id: "claude",
+      discover: async () => [{ key: "work", input: {} }],
+      fetch: async () => {
+        throw err;
+      },
+    }),
+  );
+  const [report] = await registry.listReports();
+  expect(report?.report).toEqual({ status: "error", error: err.message });
+  expect(warnings).toEqual([[{ sourceId: "claude", err }, "Usage fetch failed"]]);
+});
+
 test("legacy listing distinguishes labeled accounts and preserves unlabeled names", async () => {
   const registry = new UsageSourceRegistry(() => 1000);
   registry.register(

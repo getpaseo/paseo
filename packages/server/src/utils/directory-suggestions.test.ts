@@ -1078,4 +1078,12 @@ describe("filesystem threads held by concurrent searches", () => {
 
     expect(peak).toBeLessThanOrEqual(2);
   });
+
+  // Searches over one tree walk it in the same order, so searches stuck on one unreadable folder
+  // must hold one thread between them and leave the other for unrelated searches.
+  it("shares one filesystem request among searches waiting on the same path", async () => {
+    const peak = await peakPendingFilesystemRequests(searchWhileTyping);
+
+    expect(peak).toBe(1);
+  });
 });

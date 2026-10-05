@@ -36,6 +36,25 @@ async function commitAll(repository: string, message: string): Promise<string> {
   return stdout.trim();
 }
 
+/** Points https://github.com/fixture/repository.git at a local repository for the callback. */
+async function withGitHubFixture(repository: string, run: () => Promise<void>): Promise<void> {
+  const overlay = {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: `url.${pathToFileURL(repository).href}.insteadOf`,
+    GIT_CONFIG_VALUE_0: "https://github.com/fixture/repository.git",
+  };
+  const previous = Object.fromEntries(Object.keys(overlay).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, overlay);
+  try {
+    await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 describe("managed Git plugin sources", () => {
   it("does not expose Git URL credentials when cloning fails", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
@@ -52,14 +71,7 @@ describe("managed Git plugin sources", () => {
     const repository = await createRepository();
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-github-home-"));
     roots.push(home);
-    const overlay = {
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: `url.${pathToFileURL(repository).href}.insteadOf`,
-      GIT_CONFIG_VALUE_0: "https://github.com/fixture/repository.git",
-    };
-    const previous = Object.fromEntries(Object.keys(overlay).map((key) => [key, process.env[key]]));
-    Object.assign(process.env, overlay);
-    try {
+    await withGitHubFixture(repository, async () => {
       const sources = new ManagedPluginSources(home);
       for (const source of ["github:fixture/repository", "git:fixture/repository"]) {
         const candidate = await sources.prepareInstall({ source });
@@ -69,12 +81,7 @@ describe("managed Git plugin sources", () => {
         });
         await sources.discard(candidate);
       }
-    } finally {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
+    });
   }, 30_000);
 
   it("offers current default HEAD after installing a tag", async () => {
@@ -273,6 +280,37 @@ describe("managed Git plugin sources", () => {
 });
 
 describe("registry plugin sources", () => {
+  it("treats owner/repository as GitHub shorthand without contacting the registry while registry installs are off", async () => {
+    const repository = await createRepository();
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-off-home-"));
+    roots.push(home);
+    const requests: Array<string | undefined> = [];
+    const server = createServer((req, res) => {
+      requests.push(req.url);
+      res.statusCode = 404;
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing registry address");
+    try {
+      await withGitHubFixture(repository, async () => {
+        const sources = new ManagedPluginSources(home, {
+          defaultUrl: `http://127.0.0.1:${address.port}`,
+        });
+        const candidate = await sources.prepareInstall({ source: "fixture/repository" });
+        expect(candidate.record).toEqual({
+          kind: "git",
+          remote: "https://github.com/fixture/repository.git",
+        });
+        await sources.discard(candidate);
+      });
+      expect(requests).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 30_000);
+
   it("installs a bare id from a private registry and polls its pin without install intent", async () => {
     const repository = await createRepository();
     await mkdir(path.join(repository, "packages/example"), { recursive: true });
@@ -331,6 +369,7 @@ describe("registry plugin sources", () => {
     const url = `http://${host}/internal`;
     try {
       const sources = new ManagedPluginSources(home, {
+        enabled: true,
         defaultUrl: url,
         registries: { [host]: { authorization: "Bearer test" } },
       });
@@ -405,7 +444,7 @@ it("installs and updates only the npm artifacts pinned by the plugin registry", 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing registry address");
-  const options = { defaultUrl: `http://127.0.0.1:${address.port}` };
+  const options = { enabled: true, defaultUrl: `http://127.0.0.1:${address.port}` };
   try {
     const sources = new ManagedPluginSources(home, options);
     const candidate = await sources.place(

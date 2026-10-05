@@ -2253,12 +2253,11 @@ directory. The app does not expand `~`; your shell may expand it before the CLI 
 
 | Source                     | Accepted form                                                              | Example                                       |
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
-| Registry plugin            | `owner/slug` or `host/owner/slug`                                          | `omercnet/dracula`                            |
 | Host directory             | Absolute or relative path on the daemon host                               | `/srv/paseo/plugins/review`                   |
-| GitHub repository          | `github:owner/repository`                                                  | `github:acme/paseo-review`                    |
+| GitHub repository          | `github:owner/repository` or `owner/repository`                            | `github:acme/paseo-review`                    |
 | Git repository             | `git:<URL or SCP source>`; the prefix is optional for URLs and SCP sources | `git:https://git.example.com/acme/review.git` |
 | npm package                | `npm:<name>[@<version, tag, or range>]`; `npm:` is optional                | `npm:@acme/paseo-review@^1.2.0`               |
-| Plugin below a source root | Append `:relative/plugin/path` to an explicit npm/Git source               | `github:acme/monorepo:plugins/review`         |
+| Plugin below a source root | Append `:relative/plugin/path` to any source                               | `github:acme/monorepo:plugins/review`         |
 
 Git URLs use `https://`, `http://`, `ssh://`, `git://`, or `file://`. SCP sources use
 `user@host:path`. `file://` selects Git acquisition, not directory installation.
@@ -2283,11 +2282,15 @@ Paseo resolves an identifier in this order:
    across hosts. URL ports and the separator in an SCP source stay part of the source. A suffix
    that does not satisfy these rules stays part of the identifier.
 4. Without an explicit prefix, an existing directory matching the remaining source wins.
-5. Resolve bare `owner/slug` and `host/owner/slug` through the plugin registry. Registry records
-   own the artifact revision and plugin path. GitHub shorthand requires `github:`; `git:` also
-   accepts shorthand, URLs, and SCP sources.
+5. Resolve Git URLs and SCP sources as Git; expand exact `owner/repository` shorthand to GitHub
+   HTTPS. `github:` requires that shorthand; `git:` accepts it as well as URLs and SCP sources.
 6. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
+
+Plugin registry installs are off by default. When the daemon enables them with
+`pluginRegistryEnabled: true` or `PASEO_PLUGIN_REGISTRY_ENABLED=1`, bare `owner/slug` and
+`host/owner/slug` resolve through the plugin registry instead of GitHub, the registry record owns
+the revision and plugin path, and GitHub shorthand requires `github:`.
 
 Directory lookup happens on the daemon host. The app uses the `paseo-plugin.json` ID; the CLI
 accepts `--id <runtime-id>` to override it. An existing installation ID is rejected without changing
@@ -2334,9 +2337,9 @@ deletes its managed files; removing a directory plugin keeps your source directo
 paseo plugin init /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
-paseo plugin add github:owner/repository
+paseo plugin add owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
-paseo plugin add github:owner/monorepo:plugins/review
+paseo plugin add owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update <id>
 paseo plugin update --all --check

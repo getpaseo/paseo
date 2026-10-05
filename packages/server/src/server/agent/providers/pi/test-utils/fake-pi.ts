@@ -57,6 +57,7 @@ export class FakePi implements PiRuntime {
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: PiRpcSlashCommand[][] = [];
   private readonly queuedSessionSetups: Array<(session: FakePiSession) => void> = [];
+  private readonly removedModels = new Set<string>();
 
   constructor(command: [string, ...string[]] = ["pi"]) {
     this.command = command;
@@ -68,7 +69,10 @@ export class FakePi implements PiRuntime {
       session: input,
     });
     this.recordedLaunches.push(launch);
-    const session = new FakePiSession(launch);
+    if (launch.model && this.removedModels.has(launch.model)) {
+      throw new Error(`Model "${launch.model}" not found`);
+    }
+    const session = new FakePiSession(launch, this.removedModels);
     session.commands = this.queuedCommands.shift() ?? [];
     this.queuedSessionSetups.shift()?.(session);
     this.sessions.push(session);
@@ -81,6 +85,11 @@ export class FakePi implements PiRuntime {
 
   queueSessionSetup(setup: (session: FakePiSession) => void): void {
     this.queuedSessionSetups.push(setup);
+  }
+
+  // Pi refuses to launch with, or switch to, a model it no longer knows.
+  removeModel(modelId: string): void {
+    this.removedModels.add(modelId);
   }
 
   latestSession(): FakePiSession {
@@ -145,7 +154,10 @@ export class FakePiSession implements PiRuntimeSession {
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
 
-  constructor(launch: PiRuntimeLaunch) {
+  constructor(
+    launch: PiRuntimeLaunch,
+    private readonly removedModels: ReadonlySet<string> = new Set(),
+  ) {
     this.environment = launch.env ?? {};
     this.state = {
       model: null,
@@ -267,6 +279,9 @@ export class FakePiSession implements PiRuntimeSession {
 
   async setModel(provider: string, modelId: string): Promise<PiModel> {
     this.setModelRequests.push({ provider, modelId });
+    if (this.removedModels.has(`${provider}/${modelId}`)) {
+      throw new Error(`Model not found: ${provider}/${modelId}`);
+    }
     if (!this.setModelResult) {
       throw new Error("FakePi setModel requires setModelResult to be scripted");
     }

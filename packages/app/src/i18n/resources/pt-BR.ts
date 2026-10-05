@@ -1734,6 +1734,12 @@ export const ptBR: TranslationResources = {
       helper: "Conecte-se a um daemon Paseo no host remoto.",
       fields: {
         target: "Host SSH",
+        password: "Senha do daemon",
+        optional: "Opcional",
+      },
+      passwordVisibility: {
+        show: "Mostrar senha",
+        hide: "Ocultar senha",
       },
       actions: {
         cancel: "Cancelar",
@@ -1964,6 +1970,8 @@ export const ptBR: TranslationResources = {
     dismiss: "Dispensar",
   },
   contextWindow: {
+    noData: "Sem dados de contexto",
+    accessibilityNoData: "Janela de contexto: sem dados de contexto",
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",
