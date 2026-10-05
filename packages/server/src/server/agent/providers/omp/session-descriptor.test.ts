@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
+import {
+  listOmpImportableSessions,
+  readOmpImportSessionConfig,
+  resolveOmpSessionFile,
+} from "./session-descriptor.js";
 
 async function writeSession(root: string, relativePath: string, lines: unknown[]): Promise<string> {
   const filePath = path.join(root, "sessions", relativePath);
@@ -95,6 +99,50 @@ describe("OMP session descriptor", () => {
     });
   });
 
+  test("resolves a bare session id to its file and reads the same import config", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-by-id-"));
+    const sessionDir = path.join(root, "sessions");
+    const cwd = path.join(root, "repo");
+    const sessionId = "01a03dc8-77bb-7000-b0a3-bb7d25477e81";
+    const sessionFile = await writeSession(
+      root,
+      `project/2026-08-26T11-15-43-163Z_${sessionId}.jsonl`,
+      [
+        { type: "title", v: 1, title: "", updatedAt: "2026-08-26T11:15:43.163Z" },
+        { type: "session", version: 3, id: sessionId, timestamp: "2026-08-26T11:15:43.163Z", cwd },
+        {
+          type: "model_change",
+          id: "model-1",
+          timestamp: "2026-08-26T11:15:43.200Z",
+          model: "anthropic/claude-opus-5",
+        },
+      ],
+    );
+    // A decoy whose filename does not follow the `<timestamp>_<id>` convention
+    // but whose header carries the id must still be found.
+    const oddlyNamedId = "renamed-session";
+    const oddlyNamed = await writeSession(root, "project/notes.jsonl", [
+      { type: "session", id: oddlyNamedId, timestamp: "2026-08-27T00:00:00.000Z", cwd },
+      {
+        type: "model_change",
+        id: "model-2",
+        timestamp: "2026-08-27T00:00:00.100Z",
+        model: "mimorouter/claude-fable-5-1",
+      },
+    ]);
+
+    await expect(resolveOmpSessionFile(sessionId, { sessionDir })).resolves.toBe(sessionFile);
+    await expect(resolveOmpSessionFile(sessionFile, { sessionDir })).resolves.toBe(sessionFile);
+    await expect(resolveOmpSessionFile(oddlyNamedId, { sessionDir })).resolves.toBe(oddlyNamed);
+    await expect(resolveOmpSessionFile("does-not-exist", { sessionDir })).resolves.toBeNull();
+
+    const byId = await readOmpImportSessionConfig(sessionId, { sessionDir });
+    const byPath = await readOmpImportSessionConfig(sessionFile, { sessionDir });
+    expect(byId).toEqual({ model: "anthropic/claude-opus-5" });
+    expect(byId).toEqual(byPath);
+    await expect(readOmpImportSessionConfig("does-not-exist", { sessionDir })).resolves.toEqual({});
+  });
+
   test("keeps recent nested OMP subagent sessions importable", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-nested-"));
     const cwd = path.join(root, "repo");
@@ -145,4 +193,99 @@ describe("OMP session descriptor", () => {
       expect.objectContaining({ providerHandleId: sessionFile, cwd }),
     ]);
   });
+
+  test("uses a named OMP profile's session directory", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-omp-profile-home-"));
+    const cwd = path.join(home, "repo");
+    const sessionFile = path.join(
+      home,
+      ".omp",
+      "profiles",
+      "qa",
+      "agent",
+      "sessions",
+      "project",
+      "profile.jsonl",
+    );
+    await mkdir(path.dirname(sessionFile), { recursive: true });
+    await writeFile(sessionFile, JSON.stringify({ type: "session", id: "qa-profile", cwd }));
+
+    await expect(
+      listOmpImportableSessions({
+        homeDir: home,
+        env: {},
+        runtimeSettings: { env: { OMP_PROFILE: "qa" } },
+      }),
+    ).resolves.toEqual([expect.objectContaining({ providerHandleId: sessionFile })]);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "uses a profile's XDG data directory after OMP has created it",
+    async () => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-omp-xdg-home-"));
+      const cwd = path.join(home, "repo");
+      const xdgDataHome = path.join(home, "xdg-data");
+      const sessionFile = path.join(
+        xdgDataHome,
+        "omp",
+        "profiles",
+        "qa",
+        "sessions",
+        "project",
+        "session.jsonl",
+      );
+      await mkdir(path.dirname(sessionFile), { recursive: true });
+      await writeFile(sessionFile, JSON.stringify({ type: "session", id: "xdg-profile", cwd }));
+
+      await expect(
+        listOmpImportableSessions({
+          homeDir: home,
+          env: { OMP_PROFILE: "qa", XDG_DATA_HOME: xdgDataHome },
+        }),
+      ).resolves.toEqual([expect.objectContaining({ providerHandleId: sessionFile })]);
+    },
+  );
+
+  test.runIf(process.platform === "win32")(
+    "ignores a profile's XDG data directory on Windows",
+    async () => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-omp-windows-xdg-home-"));
+      const cwd = path.join(home, "repo");
+      const xdgDataHome = path.join(home, "xdg-data");
+      const xdgSessionFile = path.join(
+        xdgDataHome,
+        "omp",
+        "profiles",
+        "qa",
+        "sessions",
+        "project",
+        "xdg.jsonl",
+      );
+      const profileSessionFile = path.join(
+        home,
+        ".omp",
+        "profiles",
+        "qa",
+        "agent",
+        "sessions",
+        "project",
+        "profile.jsonl",
+      );
+      await Promise.all([
+        mkdir(path.dirname(xdgSessionFile), { recursive: true }),
+        mkdir(path.dirname(profileSessionFile), { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(xdgSessionFile, JSON.stringify({ type: "session", id: "xdg-profile", cwd })),
+        writeFile(profileSessionFile, JSON.stringify({ type: "session", id: "qa-profile", cwd })),
+      ]);
+
+      await expect(
+        listOmpImportableSessions({
+          homeDir: home,
+          env: { OMP_PROFILE: "qa", XDG_DATA_HOME: xdgDataHome },
+        }),
+      ).resolves.toEqual([expect.objectContaining({ providerHandleId: profileSessionFile })]);
+    },
+  );
 });

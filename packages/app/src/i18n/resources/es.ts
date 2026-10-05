@@ -27,6 +27,7 @@ export const es: TranslationResources = {
     total: "{{total}} coincidencias",
   },
   common: {
+    bottomSheetBackdrop: "Fondo del panel inferior",
     back: "Atrás",
     loading: "Cargando...",
     actions: {
@@ -444,7 +445,9 @@ export const es: TranslationResources = {
       recovery: {
         archivedTitle: "Espacio de trabajo archivado",
         restoreDescription:
-          "{{workspaceName}} se archivó y se eliminó su worktree. Restaura la rama {{branch}} para volver a abrirlo.",
+          "Restaura {{workspaceName}} para volver a sus agentes. Su worktree usará la rama {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Restaura {{workspaceName}} para volver a sus agentes. Se creará una rama nueva desde la base guardada o la rama predeterminada del repositorio.",
         unarchiveDescription:
           "{{workspaceName}} está archivado. Desarchívalo para volver a abrirlo.",
         restoreAction: "Restaurar",
@@ -1181,6 +1184,9 @@ export const es: TranslationResources = {
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
     },
+    footer: {
+      usage: "Uso",
+    },
     help: {
       trigger: "Ayuda y soporte",
       sectionHelp: "Ayuda",
@@ -1568,6 +1574,8 @@ export const es: TranslationResources = {
     noFiles: "No se encontraron archivos ni directorios",
     noCommands: "No se encontraron comandos",
     failedToLoad: "No se pudo cargar",
+    chooseProjectForCommands: "Elige un proyecto para ver los comandos",
+    chooseModelForCommands: "Selecciona un modelo para ver los comandos",
   },
   loadOlderHistory: {
     failed: "No se pudo cargar el historial anterior",
@@ -1659,6 +1667,21 @@ export const es: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "Contraseña de {{host}}",
+      label: "Contraseña del host",
+    },
+    hostConfirmation: {
+      title: "¿Conectar con este host?",
+      description:
+        "Este host podrá ejecutar código en esta app y acceder a tus otros hosts conectados. Conéctate solo si lo reconoces.",
+      descriptionChanged:
+        "Este enlace cambia cómo te conectas a este host. El host podrá ejecutar código en esta app y acceder a tus otros hosts conectados. Conéctate solo si lo reconoces.",
+      hostLabel: "Host",
+      fingerprintLabel: "Huella de la clave",
+      relayLabel: "Relay",
+      connect: "Conectar",
+    },
     connectionMethods: {
       title: "Agregar conexión",
       direct: {
@@ -1726,6 +1749,12 @@ export const es: TranslationResources = {
       helper: "Conéctate a un daemon de Paseo en el host remoto.",
       fields: {
         target: "Host SSH",
+        password: "Contraseña del daemon",
+        optional: "Opcional",
+      },
+      passwordVisibility: {
+        show: "Mostrar contraseña",
+        hide: "Ocultar contraseña",
       },
       actions: {
         cancel: "Cancelar",
@@ -1956,6 +1985,8 @@ export const es: TranslationResources = {
     dismiss: "Despedir",
   },
   contextWindow: {
+    noData: "No hay datos de contexto",
+    accessibilityNoData: "Ventana de contexto: No hay datos de contexto",
     title: "ventana contextual",
     used: "{{percentage}}% utilizado",
     tokens: "Fichas{{used}}/{{max}}",
@@ -1997,8 +2028,11 @@ export const es: TranslationResources = {
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",
+      chat: "Chat",
       appearance: "Apariencia",
-      layout: en.settings.sections.layout,
+      sidebar: "Barra lateral",
+      terminal: "Terminal",
+      browser: "Navegador",
       editor: "Editor",
       shortcuts: "Atajos",
       integrations: "Integraciones",
@@ -2057,6 +2091,7 @@ export const es: TranslationResources = {
     },
     general: {
       title: "General",
+      sending: "Envío",
       browserData: {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",
@@ -2087,8 +2122,6 @@ export const es: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "URL de servicio",
-        description: "Dónde abrir URL desde scripts en ejecución",
         options: {
           ask: "Preguntar",
           inApp: "EnPaseo",
@@ -2108,7 +2141,6 @@ export const es: TranslationResources = {
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",
         description: "Cómo aparecen las llamadas a herramientas en la cronología",
-        accessibilityLabel: "Seleccionar visualización de llamadas a herramientas ({{value}})",
         options: {
           overview: "Resumen",
           detailed: "Detalle completo",
@@ -2211,9 +2243,16 @@ export const es: TranslationResources = {
         description: "Muestra un esquema para saltar entre instrucciones",
       },
       sidebar: {
-        title: "Barra lateral",
-        description:
-          "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+        header: {
+          title: "Encabezado",
+          description:
+            "Elige qué elementos aparecen en la parte superior de la barra lateral y en qué orden",
+        },
+        footer: {
+          title: "Pie",
+          description:
+            "Elige qué filas aparecen en la parte inferior de la barra lateral y en qué orden. Añadir proyecto y la fila de iconos siempre se muestran",
+        },
         moveUp: "Mover hacia arriba",
         moveDown: "Mover hacia abajo",
       },
@@ -2237,6 +2276,14 @@ export const es: TranslationResources = {
         codeSize: "Tamaño del código",
         codeSizeHint: "Se usa en código, diferencias y la salida del terminal",
         codeSizeAccessibility: "Tamaño de fuente del código",
+      },
+      layout: {
+        title: "Diseño",
+        contentWidth: "Ancho del contenido",
+        contentWidthHint: "Ancho máximo del chat y de los archivos Markdown en pantallas anchas",
+        contentWidthAccessibility: "Ancho del contenido en píxeles",
+        reset: "Restablecer",
+        resetAccessibility: "Restablecer el ancho del contenido",
       },
       syntax: {
         title: "Sintaxis",
@@ -2348,6 +2395,9 @@ export const es: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "Elimina este host y vuelve a añadirlo con la contraseña que pide este daemon.",
+      },
       appearance: {
         title: "Apariencia",
         name: {

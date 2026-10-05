@@ -8,6 +8,7 @@ export const OmpThinkingLevelSchema = z.enum([
   "high",
   "xhigh",
   "max",
+  "auto",
 ]);
 
 export const OmpImageContentSchema = z
@@ -37,6 +38,13 @@ export const OmpAssistantContentSchema = z.discriminatedUnion("type", [
 const OmpUserMessageSchema = z
   .object({
     role: z.literal("user"),
+    content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
+  })
+  .passthrough();
+// OMP injects hidden developer messages, such as rule-violation reminders, into a run.
+const OmpDeveloperMessageSchema = z
+  .object({
+    role: z.literal("developer"),
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
@@ -78,13 +86,30 @@ const OmpBashExecutionMessageSchema = z
     timestamp: z.number(),
   })
   .passthrough();
+// Roles Paseo does not render. They are listed so that a frame carrying one, such as
+// agent_end, still parses; every role in OMP's RPC AgentMessage must appear in the union.
+const OmpPythonExecutionMessageSchema = z
+  .object({ role: z.literal("pythonExecution") })
+  .passthrough();
+const OmpHookMessageSchema = z.object({ role: z.literal("hookMessage") }).passthrough();
+const OmpBranchSummaryMessageSchema = z.object({ role: z.literal("branchSummary") }).passthrough();
+const OmpCompactionSummaryMessageSchema = z
+  .object({ role: z.literal("compactionSummary") })
+  .passthrough();
+const OmpFileMentionMessageSchema = z.object({ role: z.literal("fileMention") }).passthrough();
 
 export const OmpAgentMessageSchema = z.discriminatedUnion("role", [
   OmpUserMessageSchema,
+  OmpDeveloperMessageSchema,
   OmpCustomMessageSchema,
   OmpAssistantMessageSchema,
   OmpToolResultMessageSchema,
   OmpBashExecutionMessageSchema,
+  OmpPythonExecutionMessageSchema,
+  OmpHookMessageSchema,
+  OmpBranchSummaryMessageSchema,
+  OmpCompactionSummaryMessageSchema,
+  OmpFileMentionMessageSchema,
 ]);
 
 export const OmpModelThinkingSchema = z
@@ -128,6 +153,8 @@ export const OmpSessionStateSchema = z
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
     autoCompactionEnabled: z.boolean().optional(),
+    fastModeEnabled: z.boolean().optional(),
+    fastModeActive: z.boolean().optional(),
     sessionFile: z.string().optional(),
     sessionId: z.string(),
     sessionName: z.string().optional(),
@@ -333,7 +360,8 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
 export const OmpTodoItemSchema = z
   .object({
     content: z.string(),
-    status: z.enum(["pending", "in_progress", "completed", "abandoned"]),
+    status: z.enum(["pending", "in_progress", "completed", "abandoned", "blocked"]),
+    blocker: z.string().optional(),
   })
   .passthrough();
 export const OmpTodoPhaseSchema = z
@@ -444,6 +472,7 @@ const OmpExtensionUiRequestSchema = z
     title: z.string().optional(),
     message: z.string().optional(),
     options: z.array(z.string()).optional(),
+    optionDetails: z.unknown().optional(),
     placeholder: z.string().optional(),
     url: z.string().optional(),
     launchUrl: z.string().optional(),
@@ -475,6 +504,8 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       type: z.literal("prompt_result"),
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
+      status: z.string().optional(),
+      error: z.object({ message: z.string() }).passthrough().optional(),
     })
     .passthrough(),
   z.object({ type: z.literal("process_exit"), error: z.string() }).passthrough(),
@@ -494,6 +525,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpRpcHostToolCallRequestSchema,
   OmpRpcHostToolCancelRequestSchema,
   OmpRpcHostToolUpdateSchema,
+  z.object({ type: z.literal("model_changed") }).passthrough(),
 ]);
 
 const OmpCommandBase = { id: z.string().optional() };
@@ -512,6 +544,13 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("steer"),
+    message: z.string(),
+    images: z.array(OmpImageContentSchema).optional(),
+  }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
   z.object({

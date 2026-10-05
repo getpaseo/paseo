@@ -17,7 +17,7 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
-import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -190,10 +190,13 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     provider: record.provider,
     cwd: record.cwd,
   };
+  // lastModeId is the last live mode — it also covers provider-side switches
+  // that never reach record.config.modeId.
+  const modeId = record.lastModeId ?? record.config?.modeId;
+  if (modeId != null) config.modeId = modeId;
   if (!record.config) {
     return config;
   }
-  if (record.config.modeId != null) config.modeId = record.config.modeId;
   if (record.config.model != null) config.model = record.config.model;
   if (record.config.thinkingOptionId != null) {
     config.thinkingOptionId = record.config.thinkingOptionId;
@@ -292,11 +295,6 @@ interface AgentManagerRescueTimeouts {
 interface ProviderEnabledFlag {
   enabled: boolean;
   derivedFromProviderId?: string | null;
-  validateOptions?: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
-  applyOptions?: (
-    config: AgentSessionConfig,
-    options: ProviderOptions | undefined,
-  ) => AgentSessionConfig;
   applyToolPolicy?: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -1162,6 +1160,11 @@ export class AgentManager {
     }
   }
 
+  usageSession(id: string) {
+    const agent = this.agents.get(id);
+    return agent?.session?.usageSession?.() ?? null;
+  }
+
   getAgent(id: string): ManagedAgent | null {
     const agent = this.agents.get(id);
     return agent ? { ...agent } : null;
@@ -1943,6 +1946,7 @@ export class AgentManager {
     if (agent.runtimeInfo) {
       agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
     }
+    this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -3488,11 +3492,31 @@ export class AgentManager {
         options,
       });
 
+      // Read history before publishing the agent: a provider failure must leave the
+      // session unregistered so the registration catch closes it.
+      const startupHistory: AgentStreamEvent[] = [];
+      if (session.initialTimeline?.length && !managed.historyPrimed) {
+        for await (const event of session.streamHistory()) {
+          startupHistory.push(limitAgentStreamEventContent(event));
+        }
+      }
+
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
+      if (session.initialTimeline?.length) {
+        if (!managed.historyPrimed) {
+          // Legacy/imported chats need their existing history before startup rows.
+          await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
+        } else {
+          for (const entry of session.initialTimeline) {
+            this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
+          }
+        }
+        this.refreshSessionPersistence(managed);
+      }
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(managed, {
@@ -3714,6 +3738,11 @@ export class AgentManager {
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
     this.emitState(agent, options);
+    if (!agent.internal) {
+      this.pluginLifecycle?.emit("agent.closed", {
+        agent: describeHookAgent({ ...agent, title: agent.config.title }),
+      });
+    }
   }
   private subscribeToSession(agent: ActiveManagedAgent): void {
     if (agent.unsubscribeSession) {
@@ -3888,6 +3917,19 @@ export class AgentManager {
     return this.registry;
   }
 
+  /**
+   * Provider-side mode switches (ACP current_mode_update, in-session
+   * commands, permission-driven transitions) must land in config.modeId too —
+   * reloadAgentSession and the persisted record derive the resumed session's
+   * mode from it, so leaving it stale silently downgrades the mode on resume.
+   */
+  private applyObservedMode(agent: ActiveManagedAgent, modeId: string | null): void {
+    agent.currentModeId = modeId;
+    if (modeId != null) {
+      agent.config.modeId = modeId;
+    }
+  }
+
   private async refreshSessionState(
     agent: ActiveManagedAgent,
     options?: { emit?: boolean },
@@ -3900,7 +3942,7 @@ export class AgentManager {
     }
 
     try {
-      agent.currentModeId = await agent.session.getCurrentMode();
+      this.applyObservedMode(agent, await agent.session.getCurrentMode());
     } catch {
       agent.currentModeId = null;
     }
@@ -4023,6 +4065,9 @@ export class AgentManager {
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
+    history:
+      | AsyncIterable<AgentStreamEvent>
+      | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): Promise<void> {
     const deferredBroadcast = typeof broadcast === "function";
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
@@ -4032,7 +4077,7 @@ export class AgentManager {
       // Collect the whole replay before touching either store. A stream that fails
       // halfway then leaves the committed timeline as it was, instead of a partial
       // copy the next attempt would append to.
-      for await (const rawEvent of agent.session.streamHistory()) {
+      for await (const rawEvent of history) {
         const event = limitAgentStreamEventContent(rawEvent);
         if (event.type === "provider_subagent") {
           historySubagentEvents.push(event);
@@ -4277,7 +4322,7 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "mode_changed":
-        agent.currentModeId = event.currentModeId;
+        this.applyObservedMode(agent, event.currentModeId);
         agent.availableModes = event.availableModes;
         if (agent.runtimeInfo) {
           agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
@@ -4293,7 +4338,7 @@ export class AgentManager {
             agent.cwd,
           );
         }
-        agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
+        this.applyObservedMode(agent, event.runtimeInfo.modeId ?? agent.currentModeId);
         flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
@@ -5070,22 +5115,15 @@ export class AgentManager {
 
   private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
     const definition = this.providerDefinitions.get(config.provider);
-    if (config.providerOptions !== undefined && !definition?.validateOptions) {
-      throw new Error(`Provider '${config.provider}' does not accept providerOptions`);
-    }
-    const validatedOptions = definition?.validateOptions?.(config.providerOptions);
-    const withOptions = definition?.applyOptions
-      ? definition.applyOptions(config, validatedOptions)
-      : config;
-    this.validateToolPolicyServers(withOptions);
-    if (withOptions.toolPolicy && !definition?.applyToolPolicy) {
+    this.validateToolPolicyServers(config);
+    if (config.toolPolicy && !definition?.applyToolPolicy) {
       throw new Error(
         `Provider '${config.provider}' cannot preapprove exact MCP tools for unattended execution`,
       );
     }
     return definition?.applyToolPolicy
-      ? definition.applyToolPolicy(withOptions, withOptions.toolPolicy)
-      : withOptions;
+      ? definition.applyToolPolicy(config, config.toolPolicy)
+      : config;
   }
 
   private validateToolPolicyServers(config: AgentSessionConfig): void {

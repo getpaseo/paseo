@@ -9,7 +9,7 @@ const metrics = {
   actionsReservedWidth: 120,
   rowPaddingHorizontal: 8,
   tabGap: 4,
-  minTabWidth: 96,
+  minTabWidth: 64,
   maxTabWidth: 160,
   tabIconWidth: 14,
   tabContentGap: 4,
@@ -29,7 +29,20 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.requiresHorizontalScrollFallback).toBe(false);
     expect(result.items).toHaveLength(3);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([96, 104, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([90, 104, 83]);
+  });
+
+  it("lets short labels use their content width below the old 96px floor", () => {
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 300,
+      tabLabelWidths: [29, 52],
+      metrics: { ...metrics, actionsReservedWidth: 36 },
+    });
+    expect(result.items).toEqual([
+      { width: 64, showLabel: true },
+      { width: 86, showLabel: true },
+    ]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
 
   it("sizes a single tab between the minimum and maximum from its content", () => {
@@ -52,7 +65,7 @@ describe("computeWorkspaceTabLayout", () => {
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([117, 103, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([132, 102, 82]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
@@ -75,27 +88,27 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("keeps every tab at the clickable minimum at the exact fit boundary", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 532,
+      viewportWidth: 404,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
     });
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([96, 96, 96, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([64, 64, 64, 64]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
   it("uses horizontal scroll rather than shrinking below the clickable minimum", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 531,
+      viewportWidth: 403,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
     });
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([96, 96, 96, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([64, 64, 64, 64]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 

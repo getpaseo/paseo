@@ -14,7 +14,7 @@ Migrating an existing plugin? Follow the standalone [runtime-entry migration gui
 
 Local plugins are directory sources installed into one Paseo daemon. A plugin can contribute:
 
-- React Native surfaces and sidebar items to Paseo clients;
+- React Native screens and sidebar header and footer items to Paseo clients;
 - workspace and agent panels opened as workspace tabs;
 - global, workspace, and agent actions in the Command Center;
 - slash commands in the message composer;
@@ -98,7 +98,7 @@ and cannot show this new diagnostic.
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
 old `index.ts` fails to load and points at the [migration guide](/docs/plugins/migration).
 
-Plugin, surface, sidebar-item, workspace-panel, Command Center item, attachment-source, and
+Plugin, screen, sidebar-item, workspace-panel, Command Center item, attachment-source, and
 slash-command IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
 The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
@@ -165,6 +165,29 @@ in your browser and crashes on a phone is the most common plugin bug. The rules:
 The scaffold's `tsconfig.json` omits the DOM library. Keep DOM globals out of cross-platform
 components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
 `layout.platform` carries the same value as React Native's `Platform.OS` for rendering decisions.
+
+### Play audio
+
+Call `client.playAudio({ base64, mimeType }): Promise<void>` to play an audio file on the
+current client (browser, Electron, iOS, or Android). Pass the base64 file returned by your
+plugin RPC; no browser globals or platform checks are needed.
+
+```ts
+const audio = await client.rpc(renderSpeech, { text: "Your agent needs you" });
+// renderSpeech returns { base64: string, mimeType: "audio/wav" }.
+await client.playAudio(audio);
+```
+
+The promise resolves when playback finishes and rejects if the file is invalid, playback
+fails, or the plugin unloads. Calls share Paseo's voice playback queue and play in order.
+Unloading a plugin cancels its active and queued audio. Voice playback controls can also
+interrupt that shared queue. Playback does not request microphone permission.
+
+Use PCM WAV or MP3 for portable files. Other codecs depend on the client's decoder.
+MIME parameters are accepted. Pass a complete audio file; raw PCM samples are not supported.
+Browsers require user interaction before allowing sound; handle rejection and offer a
+play button. The function plays on the device running the plugin client, not on the daemon,
+and does not promise delivery while the app is suspended or closed.
 
 ### External links and workspace browsers
 
@@ -263,7 +286,7 @@ for remote workspaces; `localhost` URLs refer to that desktop.
 | Target host/workspace is unknown or its workspace list has not loaded | Throws `Workspace is unavailable on the requested host.` before creating a tab |
 
 Use the [settings API](#settings-screens) for typed host-scoped persistence across clients.
-Use `openSettings`, `openSurface`, and `openPanel` for your own registered contributions.
+Use `openSettings`, `openScreen`, and `openPanel` for your own registered contributions.
 
 ### Server runtime
 
@@ -288,7 +311,10 @@ effects. Repeat `clientMessageId` on the live user timeline item and publish exa
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
 
 Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
-provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
+provider-private options under `ProviderSessionConfig.providerOptions` on `session.open`.
+This record includes configured defaults and per-agent overrides; validate and apply it in your
+provider. See [Provider options](/docs/sdk/provider-options) for configuration and merge semantics.
+Host tools arrive as MCP servers in the complete
 session config.
 
 Paseo refreshes an agent by closing its current provider session and opening it with current
@@ -304,6 +330,167 @@ external `href` or `xlink:href` references are rejected. Fragment references suc
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
+### Usage sources
+
+**Requires Paseo 0.11.** Register a source from your server entry with
+`server.registerUsageSource()`. Import its contract and helpers from
+`@getpaseo/plugin/server/usage`.
+
+A source implements two calls:
+
+```ts
+interface UsageAccount {
+  key: string;
+  label?: string;
+  input: JsonValue;
+}
+
+type UsageScope =
+  | { kind: "global" }
+  | { kind: "session"; provider: string; model?: string; env: Record<string, string> };
+
+interface UsageSourceRegistration {
+  id: string;
+  label: string;
+  icon?: string;
+  input: ZodType;
+  discover(scope: UsageScope): Promise<UsageAccount[]>;
+  fetch(input: unknown): Promise<UsageReport>;
+}
+
+type UsageReport =
+  | {
+      status: "available";
+      planLabel?: string;
+      windows: UsageWindow[];
+      balances?: UsageBalance[];
+      details?: UsageDetail[];
+    }
+  | { status: "unavailable"; problem: UsageProblem }
+  | { status: "error"; error: string };
+
+type UsageProblem =
+  | { kind: "expired"; expiresAt: string; refreshedBy?: string }
+  | { kind: "rejected"; status: number; refreshedBy?: string }
+  | { kind: "no_quota"; detail: string };
+```
+
+`discover({ kind: "global" })` queries machine login stores, including expired logins. Session
+scope queries only the login stores selected by that harness's resolved launch environment.
+Return `[]` when no login exists or the session does not use your source. Never scan default stores
+from session discovery or scan agents from global discovery. Discovery is a query, with no agent
+lifecycle hooks. Closed agents have no session scope until resumed.
+
+Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
+input against your schema before calling `fetch()`. The same key in any scope is the same report;
+agents sharing an account share the fetch cache. Fetches have a 20-second deadline.
+
+Built-in session routes:
+
+| Source        | Session                                       | Login store                                                                                    |
+| ------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claude        | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
+| Claude        | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
+| Codex         | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
+| Codex         | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Other sources | Any                                           | No session discovery                                                                           |
+
+Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
+with `OPENAI_BASE_URL` set.
+
+Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
+organization whose quota is metered and survives token rotation. Never use a credential or raw
+email as the key. Use `hashAccountKey()` for sensitive stable identities or a store locator when
+account metadata is unavailable. Labels can name accounts without becoming their identity.
+
+Return logins in preference order. Several entries with the same key become one card, with their
+inputs tried in order until a report is `available`. An unavailable report, error report, or thrown
+fetch falls through to the next input. If none succeeds, the card carries the last report.
+Discovery failures are logged by the daemon and produce no card.
+
+Window names must come from provider data: an explicit duration, a named API field such as
+`five_hour` or `weekly`, or the provider's own period name. Response slots and reset countdowns
+do not establish duration. When the provider omits it, use a neutral name such as “Rolling” or
+“Primary limit” and explain the missing metadata next to the adapter.
+
+For numeric durations, use `windowFromReportedDuration()` from
+`@getpaseo/plugin/server/usage` (Paseo 0.11+). Pass the reported seconds or `null`, a neutral
+`unknown` identity and name, and an optional stable quota `scope`. The helper derives the ID,
+label, and short label together; it accepts no duration-label override. For named API periods,
+use `windowFromUsedPct()` with names justified by that field.
+
+A window ID identifies a quota scope and period, never its response position, utilization, or
+reset instant. Scope model-specific quotas by the provider's stable feature ID, falling back to
+the reported limit name when no ID exists. Preserve IDs across slot moves and display-name
+changes. Do not alias an old ambiguous ID to a different period: saved pins match source and
+window IDs across all accounts, so users must select the corrected window again.
+
+`summary: true` selects source defaults until the user customizes pins. The app computes one
+effective selection for cards, the sidebar, and toggles. The first edit snapshots those defaults;
+an explicit empty selection stays empty.
+
+Re-read the selected store in `fetch()` so the CLI's token rotations take effect. Never redeem
+refresh tokens or write credential stores: refreshing elsewhere can invalidate the CLI's copy,
+and rewriting parsed files can discard fields you do not model. If the store disappeared after
+discovery, throw; the card shows the error until the next discovery removes it.
+
+Use `unavailable(problem)` to explain why an existing login cannot supply quota. It requires a
+problem; there is no zero-argument form. `expiresAt` is an ISO timestamp. A rejected login carries
+the upstream HTTP status. `refreshedBy` is a CLI name, such as `claude`, `codex`, `opencode`, `omp`, or
+`pi`. Paseo owns the remedy sentence. Do not put instructions or user-facing sentences in that
+field. For `no_quota`, `detail` is displayed verbatim.
+
+```ts
+import { z } from "zod";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { hashAccountKey, unavailable } from "@getpaseo/plugin/server/usage";
+import { findLoginStores, readLogin, readQuota } from "./server/logins";
+
+const input = z.object({ path: z.string() }).strict();
+
+export default function contribute(server: PluginServerContext) {
+  server.registerUsageSource({
+    id: "example-usage",
+    label: "Example",
+    icon: "icon.svg",
+    input,
+    discover: async () =>
+      (await findLoginStores()).map((path) => ({
+        key: hashAccountKey(path),
+        input: { path },
+      })),
+    fetch: async (value) => {
+      const { path } = input.parse(value);
+      const login = await readLogin(path);
+      if (login.expiresAt <= Date.now())
+        return unavailable({
+          kind: "expired",
+          expiresAt: new Date(login.expiresAt).toISOString(),
+          refreshedBy: "example",
+        });
+      return readQuota(login);
+    },
+  });
+  return () => {};
+}
+```
+
+Built-in Claude discovery prefers the macOS Keychain login and uses the Claude Code credential
+file only when Keychain is empty. `CLAUDE_CONFIG_DIR` selects that file's directory. Fresh tokens
+use the OAuth profile's account and organization IDs; expired or rejected profiles use a locator
+hash. Codex prefers Codex CLI, OpenCode, Pi, then OMP and groups by the ChatGPT account ID from stored
+metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP requires
+`node:sqlite`.
+
+`usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
+accounts without rediscovering identity. If a store switches accounts, the existing card shows the
+new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
+bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Clients gate the feature
+on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
+for 0.10 clients and renders problems into its `error` string.
+
+The source icon follows the provider SVG restrictions above.
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries
@@ -315,7 +502,7 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Main } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("main", Main);
+  client.addScreen({ id: "main", title: "My plugin", Component: Main });
   return () => {};
 }
 ```
@@ -512,6 +699,7 @@ plans, and mode changes; requesting permission does not end the turn.
 | Name                         | Event fields                             | Trigger                                            |
 | ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
 | `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
+| `agent.closed`               | `agent`                                  | A live agent runtime closes                        |
 | `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
 | `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
 | `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
@@ -521,6 +709,8 @@ plans, and mode changes; requesting permission does not end the turn.
 | `workspace.archived`         | `workspace`                              | Archive state is saved                             |
 
 Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
+closing an agent that is already closed does not emit another `agent.closed` event.
+During daemon shutdown, pending event hooks have up to five seconds to finish before plugins stop.
 `workspace.created` is not a setup barrier before agent startup.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
@@ -572,7 +762,7 @@ type PluginTurnOutcome =
 | `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
 | `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
 | `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Provider-specific validated options                                        |
+| `providerOptions`                             | Opaque provider-specific options                                           |
 | `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
 | `cwd`                                         | Cannot change                                                              |
 | `internal`                                    | Daemon-owned; cannot change through this hook                              |
@@ -645,18 +835,19 @@ saved; environment overrides are not persisted with it.
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 
-## Surfaces and sidebar items
+## Screens and sidebar items
 
-Register a component, then point a sidebar item at its surface ID:
+A screen is a full page of plugin UI. A sidebar item is a component Paseo renders in the sidebar
+header or footer; it decides what a press does. Register the screen, then an item that opens it:
 
 `client/main.tsx`:
 
 ```tsx
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
-export function Main({ theme, host, layout }: PluginSurfaceProps) {
+export function Main({ theme, host, layout }: PluginScreenProps) {
   const styles = useMemo(
     () => ({
       screen: {
@@ -680,32 +871,180 @@ export function Main({ theme, host, layout }: PluginSurfaceProps) {
 
 `index.client.tsx`:
 
-```ts
-import type { PluginClientContext } from "@getpaseo/plugin/client";
+```tsx
+import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Main } from "./client/main";
 
+function MainItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  return (
+    <SidebarRow
+      icon="Blocks"
+      active={currentScreen?.screenId === "main"}
+      onPress={() => openScreen({ screenId: "main" })}
+    />
+  );
+}
+
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("main", Main);
-  client.addSidebarItem({
-    id: "main",
-    title: "My plugin",
-    icon: "Blocks",
-    surface: "main",
-  });
+  client.addScreen({ id: "main", title: "My plugin", Component: Main });
+  client.addSidebarHeaderItem({ id: "main", title: "My plugin", Component: MainItem });
   return () => {};
 }
 ```
 
-`PluginSurfaceProps` contains:
+`PluginScreenProps` contains:
 
 | Field        | Meaning                                                                                                                                                                                                                                                                                                                           |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                      |
 | `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                           |
 | `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
+| `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                 |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
-Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
+Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
+
+`addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
+string, or a function that takes the screen's params and returns one, so a bot screen can show the
+bot's name. The function runs again when the params change. Registration throws on an empty title
+or one that is neither a string nor a function. A title function that throws or returns an empty
+string shows the screen ID instead; the screen still renders.
+
+`openScreen({ screenId, params })` opens a screen with params, such as the bot a bot screen shows.
+Params live in the screen's URL query, so a reload, back and forward, and a link to the screen keep
+them. Any string key works; values must be strings, and anything else throws. Opening the same
+screen with other params shows the new params.
+
+### Sidebar items
+
+`addSidebarHeaderItem` adds a row to the list at the top of the sidebar. `addSidebarFooterItem`
+adds a row to the footer, between **Add project** and the footer's icon row. The icon row is fixed;
+plugins can't add to it. Both take `{ id, title, Component }`. `title` labels the item in
+Settings > Sidebar, where users reorder and hide items, and is the default label and accessibility
+label of `SidebarRow`. Settings shows a generic plugin icon for these items; a row from the
+deprecated `addSidebarItem` keeps its registered icon.
+
+With the plugin on several hosts, an item renders from the host of the screen the app shows. Off a
+host's screens, it uses the host last picked in one of the plugin's screens or last opened from one
+of its items, else the first host.
+
+`Component` receives `PluginSidebarItemProps`:
+
+| Field                     | Meaning                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| `theme`, `host`, `layout` | As in `PluginScreenProps`.                                                                    |
+| `currentScreen`           | `{ screenId, params }` of this plugin's screen open on the item's host, or `null`.            |
+| `openScreen(input)`       | Opens one of this plugin's screens: `{ screenId, params? }`. Unknown screen IDs throw.        |
+| `openPopover(Content)`    | Opens `Content` anchored to the pressed row on wide layouts and as a bottom sheet on compact. |
+
+`Content` receives `theme`, `host`, `layout`, `close()`, and `openScreen(input)`. Opening a screen
+closes the popover.
+
+Render the item with the sidebar kit from `@getpaseo/plugin/client/ui`:
+
+| Component          | Props and behavior                                                                                                                                                                                                                                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SidebarRow`       | Required `onPress`; optional `icon` (Lucide name or `{ size, color }` component), `label`, `active`, `trailing`, `id`. A full-width row. `trailing` renders beside the row's pressable, so a button in it presses on its own; a press elsewhere in it presses the row. `id` tells rows of one item apart in test IDs. |
+| `SidebarSeparator` | No props. The sidebar's separator line, between groups of rows.                                                                                                                                                                                                                                                       |
+
+A popover anchors to the row that was pressed, whether the press landed on the row or on its
+`trailing` content, so a per-row "More" button opens its popover next to its own row.
+
+```tsx
+import type { PluginSidebarItemProps, PluginPopoverProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import { Pressable, Text } from "react-native";
+
+function SyncDetails({ theme, close, openScreen }: PluginPopoverProps) {
+  return (
+    <Pressable onPress={() => openScreen({ screenId: "sync" })}>
+      <Text style={{ color: theme.colors.foreground }}>Open sync history</Text>
+    </Pressable>
+  );
+}
+
+function SyncItem({ openPopover }: PluginSidebarItemProps) {
+  return <SidebarRow icon="RefreshCw" onPress={() => openPopover(SyncDetails)} />;
+}
+
+client.addSidebarFooterItem({ id: "sync", title: "Sync", Component: SyncItem });
+```
+
+An item that throws renders nothing; the rest of the sidebar keeps working.
+
+#### Several rows in one item
+
+An item's `Component` may return a fragment, an array, or `null`, so one item can render a list
+that changes at runtime. Settings lists the item once, and it moves and hides as one block. This
+item shows a row per bot and opens the bot's screen with its ID as a param:
+
+```tsx
+import type {
+  PluginClientContext,
+  PluginScreenProps,
+  PluginSidebarItemProps,
+} from "@getpaseo/plugin/client";
+import { SidebarRow, SidebarSeparator } from "@getpaseo/plugin/client/ui";
+import { Text } from "react-native";
+import { botName, useBots } from "./client/bots";
+
+function BotScreen({ theme, params }: PluginScreenProps) {
+  return <Text style={{ color: theme.colors.foreground }}>Bot {params.botId}</Text>;
+}
+
+function BotsItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  const bots = useBots();
+  const openBotId = currentScreen?.screenId === "bot" ? currentScreen.params.botId : null;
+  return (
+    <>
+      <SidebarSeparator />
+      {bots.map((bot) => (
+        <SidebarRow
+          key={bot.id}
+          id={bot.id}
+          icon="Bot"
+          label={bot.name}
+          active={bot.id === openBotId}
+          onPress={() => openScreen({ screenId: "bot", params: { botId: bot.id } })}
+        />
+      ))}
+    </>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addScreen({
+    id: "bot",
+    title: (params) => botName(params.botId) ?? "Bot",
+    Component: BotScreen,
+  });
+  client.addSidebarHeaderItem({ id: "bots", title: "Bots", Component: BotsItem });
+  return () => {};
+}
+```
+
+#### Add and remove items at runtime
+
+`addSidebarHeaderItem` and `addSidebarFooterItem` work after the entry returns. Each returns a
+remover; the item appears and disappears without a reload:
+
+```tsx
+let removeAlerts: (() => void) | null = null;
+
+function showAlerts(client: PluginClientContext) {
+  removeAlerts ??= client.addSidebarFooterItem({
+    id: "alerts",
+    title: "Alerts",
+    Component: AlertsItem,
+  });
+}
+
+function hideAlerts() {
+  removeAlerts?.();
+  removeAlerts = null;
+}
+```
 
 ## Host UI
 
@@ -1368,12 +1707,12 @@ Every callback receives:
 | `context`                 | All                 | Matching discriminator.                                                                                         |
 | `paseo`                   | All                 | Selected host's existing `PaseoApi`.                                                                            |
 | `rpc(contract, input)`    | All                 | Typed call to this installation's daemon-side plugin handler.                                                   |
-| `openSurface(id)`         | All                 | Opens one of this plugin's registered global surfaces.                                                          |
+| `openScreen(input)`       | All                 | Opens one of this plugin's registered screens: `{ screenId, params? }`.                                         |
 | `workspace`               | Workspace and agent | Synchronous workspace snapshot.                                                                                 |
 | `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
 
-An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
+An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown screen and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 
 ## Slash commands
 
@@ -1578,6 +1917,27 @@ your subscriptions, timers, and other resources.
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
 
+`usePaseo()` is your plugin's one Paseo client, the same `client.paseo` your setup receives, in
+every surface. Release what you subscribe to in your cleanup; when the plugin is disabled, reloaded,
+or removed, or its host goes away, Paseo disposes the client and ends every subscription still open.
+
+```tsx
+import { usePaseo } from "@getpaseo/plugin/client";
+import { useEffect, useState } from "react";
+import { Text } from "react-native";
+
+function ProjectChanges() {
+  const paseo = usePaseo();
+  const [changes, setChanges] = useState(0);
+  useEffect(() => {
+    const observation = paseo.observeEvents(["project.update"]);
+    observation.subscribe({ snapshot() {}, update: () => setChanges((count) => count + 1) });
+    return () => void observation.release();
+  }, [paseo]);
+  return <Text>{changes} project changes</Text>;
+}
+```
+
 ```tsx
 import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin/client";
 import { Pressable, Text } from "react-native";
@@ -1737,7 +2097,7 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingButton } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("main", GreetingButton);
+  client.addScreen({ id: "main", title: "Greeting", Component: GreetingButton });
   return () => {};
 }
 ```
@@ -1927,6 +2287,11 @@ Paseo resolves an identifier in this order:
 6. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
 
+Plugin registry installs are off by default. When the daemon enables them with
+`pluginRegistryEnabled: true` or `PASEO_PLUGIN_REGISTRY_ENABLED=1`, bare `owner/slug` and
+`host/owner/slug` resolve through the plugin registry instead of GitHub, the registry record owns
+the revision and plugin path, and GitHub shorthand requires `github:`.
+
 Directory lookup happens on the daemon host. The app uses the `paseo-plugin.json` ID; the CLI
 accepts `--id <runtime-id>` to override it. An existing installation ID is rejected without changing
 its enabled state or files.
@@ -2049,16 +2414,16 @@ The switch is the root `pluginsEnabled` field in `config.json`. After changing i
 
 Use `paseo plugin ls` to read the current status and error.
 
-| Symptom                                                               | Check                                                                                                                                   |
-| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/migration).                                      |
-| `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
-| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/`. Move the work behind an RPC and import its contract from `shared/`.                                      |
-| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/`. Register that contribution from `index.client.tsx` instead.                                              |
-| `Node module cannot be imported into the plugin client bundle`        | Client code imports `node:*`. Move the operation to `server/` and call it through an RPC.                                               |
-| Sidebar item is missing                                               | The plugin is `running`, the item references an existing surface, the icon name is valid, and the client is on the installation's host. |
-| Client module is unavailable                                          | Import only the host-provided client modules listed above.                                                                              |
-| RPC rejects                                                           | Check both Zod schemas and the daemon-side handler error.                                                                               |
-| Edited code does not appear                                           | Run `npm run typecheck`, then `paseo plugin reload <id>`.                                                                               |
-| Reload fails                                                          | Read `paseo plugin ls` and `paseo plugin logs <id>`, fix the source error, then reload; Paseo does not restore the previous bundle.     |
-| Plugin exits unexpectedly                                             | Read `paseo plugin logs <id>` for retained initialization, cleanup, stderr, and final crash output.                                     |
+| Symptom                                                               | Check                                                                                                                                              |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/migration).                                                 |
+| `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                                      |
+| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/`. Move the work behind an RPC and import its contract from `shared/`.                                                 |
+| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/`. Register that contribution from `index.client.tsx` instead.                                                         |
+| `Node module cannot be imported into the plugin client bundle`        | Client code imports `node:*`. Move the operation to `server/` and call it through an RPC.                                                          |
+| Sidebar item is missing                                               | The plugin is `running`, the item is not hidden in Settings > Sidebar, its component does not throw, and the client is on the installation's host. |
+| Client module is unavailable                                          | Import only the host-provided client modules listed above.                                                                                         |
+| RPC rejects                                                           | Check both Zod schemas and the daemon-side handler error.                                                                                          |
+| Edited code does not appear                                           | Run `npm run typecheck`, then `paseo plugin reload <id>`.                                                                                          |
+| Reload fails                                                          | Read `paseo plugin ls` and `paseo plugin logs <id>`, fix the source error, then reload; Paseo does not restore the previous bundle.                |
+| Plugin exits unexpectedly                                             | Read `paseo plugin logs <id>` for retained initialization, cleanup, stderr, and final crash output.                                                |

@@ -425,6 +425,11 @@ interface NotifySafelyOptions {
   permissionRequest?: AgentPermissionRequest;
 }
 
+// A caller waits on a child through one armed notification. Arming again, such as a
+// follow-up prompt while the child still runs, replaces the earlier one so the child's
+// next finish reaches the caller once.
+const armedFinishNotifications = new WeakMap<AgentManager, Map<string, () => void>>();
+
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
   const {
     agentManager,
@@ -440,10 +445,19 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   let unsubscribe: (() => void) | null = null;
   let notificationQueue = Promise.resolve();
 
+  const armedByManager = armedFinishNotifications.get(agentManager) ?? new Map();
+  armedFinishNotifications.set(agentManager, armedByManager);
+  const armedKey = JSON.stringify([childAgentId, callerAgentId]);
+  armedByManager.get(armedKey)?.();
+  armedByManager.set(armedKey, stop);
+
   function stop(): void {
     if (stopped) return;
     stopped = true;
     unsubscribe?.();
+    if (armedByManager.get(armedKey) === stop) {
+      armedByManager.delete(armedKey);
+    }
   }
 
   async function notify(

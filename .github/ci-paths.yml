@@ -34,6 +34,7 @@ hub:
   - "packages/server/src/server/hub/**"
 
 server:
+  - "plugins/**"
   - "packages/server/**"
   - "packages/app/e2e/support/fixtures/recording.*"
 

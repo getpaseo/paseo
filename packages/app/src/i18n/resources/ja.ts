@@ -27,6 +27,7 @@ export const ja: TranslationResources = {
     total: "{{total}} 件の一致",
   },
   common: {
+    bottomSheetBackdrop: "ボトムシートの背景",
     back: "戻る",
     loading: "読み込み中...",
     actions: {
@@ -444,7 +445,9 @@ export const ja: TranslationResources = {
       recovery: {
         archivedTitle: "ワークスペースはアーカイブ済みです",
         restoreDescription:
-          "{{workspaceName}} はアーカイブされ、worktree が削除されました。ブランチ {{branch}} を復元して再度開きます。",
+          "{{workspaceName}} を復元してエージェントに戻ります。worktree ではブランチ {{branch}} を使用します。",
+        restoreWithoutBranchDescription:
+          "{{workspaceName}} を復元してエージェントに戻ります。保存されたベース、またはリポジトリのデフォルトブランチから新しいブランチを作成します。",
         unarchiveDescription:
           "{{workspaceName}} はアーカイブされています。再度開くにはアーカイブを解除してください。",
         restoreAction: "復元",
@@ -1159,6 +1162,9 @@ export const ja: TranslationResources = {
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
     },
+    footer: {
+      usage: "使用状況",
+    },
     help: {
       trigger: "ヘルプとサポート",
       sectionHelp: "ヘルプ",
@@ -1539,6 +1545,8 @@ export const ja: TranslationResources = {
     noFiles: "ファイルまたはディレクトリが見つかりません",
     noCommands: "コマンドが見つかりません",
     failedToLoad: "読み込みに失敗しました",
+    chooseProjectForCommands: "コマンドを表示するにはプロジェクトを選択してください",
+    chooseModelForCommands: "コマンドを表示するにはモデルを選択してください",
   },
   loadOlderHistory: {
     failed: "古い履歴を読み込めませんでした",
@@ -1630,6 +1638,21 @@ export const ja: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}} のパスワード",
+      label: "ホストのパスワード",
+    },
+    hostConfirmation: {
+      title: "このホストに接続しますか？",
+      description:
+        "このホストはこのアプリ内でコードを実行し、接続中の他のホストにアクセスできるようになります。心当たりがある場合のみ接続してください。",
+      descriptionChanged:
+        "このリンクはこのホストへの接続方法を変更します。ホストはこのアプリ内でコードを実行し、接続中の他のホストにアクセスできるようになります。心当たりがある場合のみ接続してください。",
+      hostLabel: "ホスト",
+      fingerprintLabel: "鍵のフィンガープリント",
+      relayLabel: "リレー",
+      connect: "接続",
+    },
     connectionMethods: {
       title: "接続を追加",
       direct: {
@@ -1696,6 +1719,12 @@ export const ja: TranslationResources = {
       helper: "リモートホストで動作する Paseo デーモンに接続します。",
       fields: {
         target: "SSH ホスト",
+        password: "デーモンのパスワード",
+        optional: "任意",
+      },
+      passwordVisibility: {
+        show: "パスワードを表示",
+        hide: "パスワードを非表示",
       },
       actions: {
         cancel: "キャンセル",
@@ -1928,6 +1957,8 @@ export const ja: TranslationResources = {
     dismiss: "閉じる",
   },
   contextWindow: {
+    noData: "コンテキストデータがありません",
+    accessibilityNoData: "コンテキストウィンドウ：コンテキストデータがありません",
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",
@@ -1969,8 +2000,11 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      chat: "チャット",
       appearance: "外観",
-      layout: en.settings.sections.layout,
+      sidebar: "サイドバー",
+      terminal: "ターミナル",
+      browser: "ブラウザ",
       editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -2029,6 +2063,7 @@ export const ja: TranslationResources = {
     },
     general: {
       title: "一般",
+      sending: "送信",
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
@@ -2055,8 +2090,6 @@ export const ja: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "サービスURL",
-        description: "実行中のスクリプトからURLを開く場所",
         options: {
           ask: "確認する",
           inApp: "Paseoで",
@@ -2075,7 +2108,6 @@ export const ja: TranslationResources = {
       toolCallDetail: {
         label: "ツール呼び出しの表示",
         description: "タイムラインでのツール呼び出しの表示方法",
-        accessibilityLabel: "ツール呼び出しの表示を選択（{{value}}）",
         options: {
           overview: "要約",
           detailed: "すべての詳細",
@@ -2178,8 +2210,15 @@ export const ja: TranslationResources = {
         description: "プロンプト間を移動するためのアウトラインを表示します",
       },
       sidebar: {
-        title: "サイドバー",
-        description: "サイドバー上部に表示する項目とその順序を選択します",
+        header: {
+          title: "ヘッダー",
+          description: "サイドバー上部に表示する項目とその順序を選択します",
+        },
+        footer: {
+          title: "フッター",
+          description:
+            "サイドバー下部に表示する行とその順序を選択します。プロジェクトを追加とアイコンの行は常に表示されます",
+        },
         moveUp: "上に移動",
         moveDown: "下に移動",
       },
@@ -2203,6 +2242,14 @@ export const ja: TranslationResources = {
         codeSize: "コードサイズ",
         codeSizeHint: "コード、差分、ターミナル出力に使用されます",
         codeSizeAccessibility: "コードフォントサイズ",
+      },
+      layout: {
+        title: "レイアウト",
+        contentWidth: "コンテンツ幅",
+        contentWidthHint: "ワイド画面でのチャットと Markdown ファイルの最大幅",
+        contentWidthAccessibility: "コンテンツ幅 (ピクセル)",
+        reset: "リセット",
+        resetAccessibility: "コンテンツ幅をデフォルトに戻す",
       },
       syntax: {
         title: "構文ハイライト",
@@ -2315,6 +2362,10 @@ export const ja: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance:
+          "このホストを削除し、このデーモンが求めるパスワードを入力して追加し直してください。",
+      },
       appearance: {
         title: "外観",
         name: {

@@ -1,13 +1,19 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import * as React from "react";
 import {
   ArrowRight,
+  Blocks,
   Bot,
   BookOpen,
   Braces,
   Coffee,
+  Compass,
   ExternalLink,
+  Gem,
   GitFork,
   Laptop,
+  Lock,
+  Merge,
   Monitor,
   Puzzle,
   Smartphone,
@@ -68,14 +74,17 @@ import { isMobilePlatform } from "~/platform";
 import { useRelease, useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
 import {
+  AntigravityIcon,
   ClaudeCodeIcon,
   CodexIcon,
   CursorIcon,
+  MuseCodeIcon,
+  OmpIcon,
   OpenCodeIcon,
   PiIcon,
 } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
-import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
+import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
 import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
@@ -124,6 +133,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <AutomationSection />
             <ExtensibleSection />
             <FAQ />
+            <PhilosophySection />
             <SponsorSection />
             <SponsorsSection />
           </div>
@@ -153,14 +163,18 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.Rea
   );
 }
 
-const CLAUDE_CODE_BADGE_ICON = <ClaudeCodeIcon className="h-6 w-6" />;
-const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
-const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
-const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
-const CURSOR_BADGE_ICON = <CursorIcon className="h-6 w-6" />;
+const FEATURED_AGENTS = [
+  { name: "Claude Code", Icon: ClaudeCodeIcon },
+  { name: "Codex", Icon: CodexIcon },
+  { name: "OpenCode", Icon: OpenCodeIcon },
+  { name: "Pi", Icon: PiIcon },
+  { name: "OMP", Icon: OmpIcon },
+  { name: "Cursor", Icon: CursorIcon },
+  { name: "Muse Code", Icon: MuseCodeIcon },
+  { name: "Antigravity", Icon: AntigravityIcon },
+] as const;
 
-const FEATURED_AGENT_COUNT = 5;
-const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENT_COUNT;
+const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENTS.length;
 
 const SOCIAL_PROOF_TWEETS = [
   {
@@ -244,7 +258,7 @@ const SOCIAL_PROOF_ROWS = [
 
 type SocialProofTweet = (typeof SOCIAL_PROOF_TWEETS)[number];
 
-function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
+function AgentBadge({ name, Icon }: (typeof FEATURED_AGENTS)[number]) {
   const [hovered, setHovered] = React.useState(false);
   const handleMouseEnter = React.useCallback(() => setHovered(true), []);
   const handleMouseLeave = React.useCallback(() => setHovered(false), []);
@@ -255,7 +269,7 @@ function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {icon}
+      <Icon className="h-6 w-6" />
       <AnimatePresence>
         {hovered && (
           <motion.span
@@ -419,30 +433,22 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
   );
 }
 
-const PROVIDER_ICON_CLASS = "h-5 w-5 sm:h-7 sm:w-7";
-
 function MultiProviderSection() {
-  const providers = [
-    { name: "Claude Code", icon: <ClaudeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Codex", icon: <CodexIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "OpenCode", icon: <OpenCodeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Pi", icon: <PiIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Cursor", icon: <CursorIcon className={PROVIDER_ICON_CLASS} /> },
-  ];
-
   return (
     <FeatureSection
       title="Works with your tools"
       description="Bring your subscriptions, skills and configuration"
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
-        {providers.map((p) => (
+        {FEATURED_AGENTS.map((agent) => (
           <div
-            key={p.name}
+            key={agent.name}
             className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:gap-3 sm:px-5 sm:py-4"
           >
-            <span className="shrink-0 text-white/80">{p.icon}</span>
-            <span className="truncate text-sm font-medium sm:text-base">{p.name}</span>
+            <span className="shrink-0 text-white/80">
+              <agent.Icon className="h-5 w-5 sm:h-7 sm:w-7" />
+            </span>
+            <span className="truncate text-sm font-medium sm:text-base">{agent.name}</span>
           </div>
         ))}
         <a
@@ -817,13 +823,15 @@ interface ExtensibleCardLink {
 
 const PLUGIN_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
   { href: "/docs/plugins", label: "Plugin documentation", icon: BookOpen },
-  {
-    href: "https://paseo.cafe",
-    label: "Community plugins",
-    icon: Coffee,
-    external: true,
-    accent: true,
-  },
+  PLUGINS_LINKED
+    ? { href: "/plugins", label: "Community plugins", icon: Blocks, accent: true }
+    : {
+        href: "https://paseo.cafe",
+        label: "Community plugins",
+        icon: Coffee,
+        external: true,
+        accent: true,
+      },
 ];
 
 const FORK_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
@@ -875,6 +883,64 @@ function ExtensibleCard({
   );
 }
 
+const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: string }> = [
+  {
+    icon: Lock,
+    title: "Private",
+    description: "No telemetry, tracking, or forced login. Code stays on your machine.",
+  },
+  {
+    icon: Compass,
+    title: "Independent",
+    description: "Paseo doesn't answer to investors. Its users guide what gets built.",
+  },
+  {
+    icon: Gem,
+    title: "Polished",
+    description: "Install the app and start working. No need to know what a daemon is.",
+  },
+  {
+    icon: Merge,
+    title: "Unified",
+    description:
+      "Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, and more, all used the same way.",
+  },
+  {
+    icon: Blocks,
+    title: "Composable",
+    description: "Run agents on your laptop or a server, and connect from any device.",
+  },
+  {
+    icon: Puzzle,
+    title: "Extensible",
+    description: "If Paseo doesn't fit how you work, change it with a plugin or fork.",
+  },
+];
+
+function PhilosophySection() {
+  return (
+    <FeatureSection
+      title="Philosophy"
+      description="What Paseo stands for, and what every feature is built on"
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        {PRINCIPLES.map((principle) => (
+          <div
+            key={principle.title}
+            className="rounded-xl border border-white/10 bg-white/[0.025] p-6"
+          >
+            <div className="mb-8 text-extra-muted-foreground">
+              <principle.icon className="h-6 w-6" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-lg font-medium text-white/85">{principle.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-white/45">{principle.description}</p>
+          </div>
+        ))}
+      </div>
+    </FeatureSection>
+  );
+}
+
 function GetStarted() {
   const platform = useVisitorPlatform();
   return (
@@ -896,11 +962,9 @@ function GetStarted() {
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pt-6">
         <span className="text-xs text-muted-foreground">Supports</span>
         <div className="flex items-center gap-1">
-          <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
-          <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
-          <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
-          <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
-          <AgentBadge name="Cursor" icon={CURSOR_BADGE_ICON} />
+          {FEATURED_AGENTS.map((agent) => (
+            <AgentBadge key={agent.name} name={agent.name} Icon={agent.Icon} />
+          ))}
         </div>
         <a
           href="/agents"
@@ -922,7 +986,7 @@ function DesktopDownloadButton({ platform }: { platform: DesktopPlatform }) {
   const download = getDesktopDownload(useRelease(), platform);
   const Icon = download.icon;
   return (
-    <a href={download.href} target="_blank" rel="noopener noreferrer" className={PRIMARY_CTA_CLASS}>
+    <a href={download.href} className={PRIMARY_CTA_CLASS}>
       <Icon className="h-4 w-4" />
       Download for {download.label}
     </a>
@@ -1144,9 +1208,14 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="What agents does it support?">
           Paseo supports many providers. It has custom implementations for Claude, Codex, OpenCode,
-          Pi, and OMP, and supports many more via ACP. See the full list here:{" "}
+          Pi, OMP, Antigravity, and Muse Code, and supports many more via ACP. See the full list
+          here:{" "}
           <a href="/agents" className="underline hover:text-white/80">
             all supported providers
+          </a>
+          . See{" "}
+          <a href="/docs/muse-code" className="underline hover:text-white/80">
+            Muse Code setup and limitations
           </a>
           .
         </FAQItem>
