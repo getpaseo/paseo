@@ -308,8 +308,11 @@ describe("daemon E2E (real OMP)", () => {
             expect.objectContaining({ type: "compaction", status: "completed", trigger: "manual" }),
           ]),
         );
-        expect(await contextWindowUsedTokens(harness.client, agent.id)).toBeLessThan(
-          usedBefore ?? 0,
+        await harness.client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) =>
+            (snapshot.lastUsage?.contextWindowUsedTokens ?? Infinity) < (usedBefore ?? 0),
+          60_000,
         );
       } finally {
         await closeHarness(harness);

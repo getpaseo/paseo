@@ -215,6 +215,28 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
+  test("failed manual compact closes its progress row and shows the error", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const events = await omp.compact({}, new Error("compaction refused"));
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      }),
+      expect.objectContaining({
+        item: { type: "compaction", status: "completed", trigger: "manual" },
+      }),
+      expect.objectContaining({
+        item: {
+          type: "assistant_message",
+          text: "[Error] Failed to compact context: compaction refused",
+        },
+      }),
+    ]);
+  });
+
   test("manual compact shows its progress and publishes the compacted context usage", async () => {
     const omp = new OmpHarness();
     await omp.start();

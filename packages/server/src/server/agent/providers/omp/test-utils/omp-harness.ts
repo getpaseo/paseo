@@ -174,13 +174,14 @@ export class OmpHarness {
     return events;
   }
 
-  async compact(statsAfter: OmpSessionStats): Promise<AgentStreamEvent[]> {
+  async compact(statsAfter: OmpSessionStats, error?: Error): Promise<AgentStreamEvent[]> {
     const handler = this.requireSession().tryHandleOutOfBand("/compact");
     if (!handler) throw new Error("OMP session did not handle /compact out-of-band");
     const runtime = this.omp.latestSession();
     const sessionEventCount = this.events.length;
     const emitted: AgentStreamEvent[] = [];
     runtime.stats = statsAfter;
+    runtime.compactError = error ?? null;
     await handler.run({ emit: (event) => emitted.push(event) });
     return [...emitted, ...this.events.slice(sessionEventCount)];
   }

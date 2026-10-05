@@ -1436,7 +1436,7 @@ export class OmpAgentSession implements AgentSession {
       this.manualCompactionRunning = false;
     }
     emitCompaction("completed");
-    await this.usagePoller.completeTurn();
+    await this.usagePoller.refresh();
   }
 
   private async executeAutoCompactCommand(
