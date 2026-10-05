@@ -51,6 +51,10 @@ const entries = [
 // Files read at runtime via fs APIs rather than `require`. nft only
 // traces the module graph; data files have to be listed explicitly.
 const additionalInputs = [
+  // The CLI and desktop locate the daemon runner with
+  // require.resolve("@getpaseo/server"). nft does not retain this resolution
+  // anchor because neither caller imports it.
+  "packages/server/dist/server/server/exports.js",
   // Agent orchestration skill catalog loaded through filesystem paths
   "packages/server/dist/server/skills/**",
   "packages/server/dist/server/builtin-plugins/**",
@@ -83,10 +87,6 @@ const additionalInputs = [
         // resolveExternalCliEntrypoint() looks up the workspace through this
         // link at runtime; nft traces the target files but not the link.
         "node_modules/@getpaseo/cli",
-        // runtime-paths.js locates the server package root with
-        // require.resolve("@getpaseo/server"), which needs the package's main
-        // export to exist even though the desktop never loads it.
-        "packages/server/dist/server/server/exports.js",
       ]
     : []),
 ];
