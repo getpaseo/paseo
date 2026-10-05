@@ -255,6 +255,12 @@ describe("OpenCode v2 session lifecycle", () => {
 
       await expect.poll(() => terminalEvents(events)).toHaveLength(1);
       expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });
+
+      await session.startTurn("next message");
+      await expect.poll(() => harness.prompts).toHaveLength(2);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      expect(terminalEvents(events)[1]).toMatchObject({ type: "turn_completed" });
     } finally {
       await session.close();
     }
