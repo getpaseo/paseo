@@ -75,7 +75,7 @@ with a different request fails.
 `GET /api/v1/runs/{runId}` distinguishes workflow completion from worker cleanup.
 An interrupt or archive acknowledgement does not prove that the provider stopped.
 For supported Codex workers on Unix, `process_exited` means the daemon observed
-the provider process group exit. Unsupported workers remain `unconfirmed`.
+the provider process group exit. Unsupported workers do not report `process_exited`.
 
 To clean up a timed-out or completed run, use `args: { "cleanupTerminal": true }`
 on a cancellation command. This preserves the original workflow outcome and
