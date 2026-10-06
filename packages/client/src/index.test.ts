@@ -1842,6 +1842,17 @@ const SHELL_ITEM = {
   startedAt: "2026-10-06T10:00:00.000Z",
 };
 
+function answerBackgroundWorkList(ws: FakeWebSocket, items: unknown[]): void {
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "agent.background_work.list.request", agentId: "agent-a" });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: { requestId: request.requestId, agentId: "agent-a", items, error: null },
+    }),
+  );
+}
+
 test("agent handles list background work", async () => {
   const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
 
@@ -1876,6 +1887,8 @@ test("agent handles follow only their own background work", async () => {
     events: ["agent.background_work.update"],
   });
   acknowledgeObservation(ws, "background-work-sdk");
+  answerBackgroundWorkList(ws, []);
+  await vi.waitFor(() => expect(received).toEqual([[]]));
 
   ws.message(
     sessionMessage({
@@ -1889,7 +1902,7 @@ test("agent handles follow only their own background work", async () => {
       payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [SHELL_ITEM] },
     }),
   );
-  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM]]));
+  await vi.waitFor(() => expect(received).toEqual([[], [SHELL_ITEM]]));
 
   unsubscribe();
   ws.message(
@@ -1898,7 +1911,82 @@ test("agent handles follow only their own background work", async () => {
       payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
     }),
   );
-  expect(received).toEqual([[SHELL_ITEM]]);
+  expect(received).toEqual([[], [SHELL_ITEM]]);
+  await client.close();
+});
+
+test("background work subscriptions list the current work again after a reconnect", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items));
+  acknowledgeObservation(ws, "background-work-first");
+  answerBackgroundWorkList(ws, [SHELL_ITEM]);
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM]]));
+
+  ws.readyState = 3;
+  ws.onclose?.({ code: 1006, reason: "Connection lost" });
+  const reconnecting = client.connect();
+  const next = FakeWebSocket.instances[1];
+  next.open();
+  next.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv_sdk_test",
+        hostname: null,
+        version: null,
+        features: BACKGROUND_WORK_FEATURES,
+      },
+    }),
+  );
+  await reconnecting;
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(next.sent.at(-1))).toMatchObject({
+      type: "session.events.set_subscription.request",
+    }),
+  );
+  acknowledgeObservation(next, "background-work-second");
+  answerBackgroundWorkList(next, []);
+
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM], []]));
+  await client.close();
+});
+
+test("background work subscriptions keep an update that overtakes their list", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items));
+  acknowledgeObservation(ws, "background-work-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.background_work.list.request",
+    }),
+  );
+  const listRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: {
+        requestId: listRequest.requestId,
+        agentId: "agent-a",
+        items: [SHELL_ITEM],
+        error: null,
+      },
+    }),
+  );
+
+  await vi.waitFor(() => expect(received).toEqual([[]]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(received).toEqual([[]]);
   await client.close();
 });
 

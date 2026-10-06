@@ -351,9 +351,9 @@ export interface PaseoAgentBackgroundWorkHandle {
   /** Reads the agent's current background work once. */
   list(options?: { requestId?: string; timeout?: number }): Promise<PaseoAgentBackgroundWorkItem[]>;
   /**
-   * Calls `listener` with the agent's full list each time it changes. Subscribe before calling
-   * `list()` so no change is missed, and prefer the latest update over an older `list()` result.
-   * Returns the unsubscribe function.
+   * Calls `listener` with the agent's current list once the subscription is established, again
+   * after each reconnect, then with the full list each time it changes. Returns the unsubscribe
+   * function.
    */
   subscribe(listener: (items: PaseoAgentBackgroundWorkItem[]) => void): () => void;
 }
@@ -965,15 +965,29 @@ function createAgentHandleFactory(
         list: (options) => daemonClient.listAgentBackgroundWork(id, options),
         subscribe: (listener) => {
           const observation = observeBackgroundWork();
+          // Bumped by every delivery so a list answered after a newer update is dropped.
+          let sequence = 0;
+          let released = false;
           observation.subscribe({
-            snapshot: () => {},
+            snapshot: () => {
+              const listed = ++sequence;
+              void daemonClient
+                .listAgentBackgroundWork(id)
+                .then((items) => {
+                  if (!released && listed === sequence) listener(items);
+                  return undefined;
+                })
+                .catch((error) => console.error("Background work list failed", error));
+            },
             update: (message) => {
               if (message.type !== "agent.background_work.update") return;
               if (message.payload.agentId !== id) return;
+              sequence++;
               listener(message.payload.items);
             },
           });
           return () => {
+            released = true;
             void observation
               .release()
               .catch((error) =>
