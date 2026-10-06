@@ -5,7 +5,7 @@ import {
 } from "@getpaseo/protocol/plugin-registry";
 import { getBlockingColdCache, type WebsiteCacheContext } from "../github-cache";
 import { CATEGORIES } from "./categories";
-import { type InstallCounts, readInstallCounts, recordInstall } from "./installs";
+import { type InstallCounts, readInstallCounts, recordClientInstall } from "./installs";
 export interface RegistryEnvironment {
   PLUGINS_REGISTRY_URL?: string;
   WEBSITE_CACHE?: KVNamespace;
@@ -111,7 +111,12 @@ export async function handlePluginRegistryRequest(
     url.searchParams.get("intent") === "install"
   ) {
     const cache = context.cache;
-    if (cache) context.waitUntil(recordInstall(cache, id, new Date()).catch(() => undefined));
+    if (cache)
+      context.waitUntil(
+        recordClientInstall({ cache, id, ip: request.headers.get("CF-Connecting-IP") }).catch(
+          () => undefined,
+        ),
+      );
   }
   return Response.json(plugin);
 }
