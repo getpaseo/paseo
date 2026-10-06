@@ -1,9 +1,12 @@
+import path from "node:path";
+import { expandUserPath } from "../../classify.js";
 import { createInterface } from "node:readline/promises";
 import { reviewPluginUpdates, type UpdateOutcome } from "./update.js";
 import { Command } from "commander";
 import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
 import {
   formatPluginSourceReference,
+  parsePluginSourceReference,
   formatPluginIdentity,
 } from "@getpaseo/protocol/plugin-source-reference";
 import type { CommandOptions, ListResult, OutputSchema, SingleResult } from "../../output/index.js";
@@ -125,7 +128,15 @@ export async function runPluginInstallCommand(
   process.stderr.write(
     "Trusting plugin code: server code and preparation commands run unsandboxed on the daemon host; client code runs inside Paseo. Dependencies and future updates are part of the codebase you trust.\n",
   );
-  const sourceReference = formatPluginSourceReference(source, options.path);
+  const reference = parsePluginSourceReference(source);
+  const resolvedSource =
+    reference.kind === "directory"
+      ? formatPluginSourceReference(
+          path.resolve(expandUserPath(reference.source)),
+          reference.pluginPath,
+        )
+      : source;
+  const sourceReference = formatPluginSourceReference(resolvedSource, options.path);
   const data = await withPluginSourceClient(options.daemonTarget, (client) =>
     client.installPluginSource({
       source: sourceReference,

@@ -2258,8 +2258,11 @@ failures stay inside the plugin error boundary.
 
 Paste one of these source identifiers into **Settings → Plugins**, or pass it to
 `paseo plugin install`. `paseo plugin add <source>` and `paseo plugin install <source>` are aliases.
-Absolute host paths are recommended because relative paths resolve against the daemon's working
-directory. The daemon expands `~` to its home directory.
+The CLI resolves relative directory paths from your current working directory and expands `~`
+to your local home directory, preserving any `:plugin/path` suffix. With `--host`, use an absolute
+path that exists on the daemon host; plugin files are read there and are never uploaded by the CLI.
+Paths entered in Settings resolve relative to the daemon's working directory, and `~` expands to
+the daemon's home directory.
 
 | Source                     | Accepted form                                                              | Example                                       |
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |

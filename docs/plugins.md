@@ -152,8 +152,9 @@ and ask for approval. `ls` reports the installed commit without contacting the r
 ## Managed source ownership
 
 The [public source reference](../public-docs/plugins/reference.md#plugin-sources) owns identifier
-syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. Both clients send the source unchanged
-through `installPluginSource`; only the daemon resolves host paths and acquires sources.
+syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. The CLI resolves directory sources before
+calling `installPluginSource`; see the public source reference for CLI and app path semantics.
+Only the daemon reads plugin files and acquires sources.
 
 `ManagedPluginSources` owns acquisition and offline source description. Config stores the active
 directory; sources.json stores managed kind and the Git acquisition remote. The remote is needed

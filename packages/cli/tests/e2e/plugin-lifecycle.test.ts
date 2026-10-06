@@ -8,11 +8,13 @@ import {
 } from "../../../../scripts/test-support/npm-registry.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { once } from "node:events";
+import { WebSocket, WebSocketServer } from "ws";
 import { connectToDaemon } from "../../src/utils/client.ts";
 import { createE2ETestContext } from "../helpers/test-daemon.ts";
 
@@ -44,6 +46,71 @@ async function main(): Promise<void> {
       JSON.stringify({ id: "cli-e2e", requirements: { paseo: `>=${resolveCliVersion()}` } }),
     );
     await writeFile(path.join(directory, "index.server.ts"), pluginSource);
+
+    // Observe real CLI requests while forwarding them to the isolated daemon.
+    const proxy = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const sources: string[] = [];
+    proxy.on("connection", (socket, request) => {
+      const upstream = new WebSocket(`ws://127.0.0.1:${context.port}${request.url}`, {
+        headers: { authorization: request.headers.authorization ?? "" },
+      });
+      const ready = once(upstream, "open");
+      socket.on("message", async (data, isBinary) => {
+        const message = JSON.parse(data.toString());
+        if (
+          message.type === "session" &&
+          message.message.type === "plugin.source.install.request"
+        ) {
+          sources.push(message.message.source);
+        }
+        await ready;
+        upstream.send(data, { binary: isBinary });
+      });
+      upstream.on("message", (data, isBinary) => socket.send(data, { binary: isBinary }));
+      socket.on("close", () => upstream.close());
+      upstream.on("close", () => socket.close());
+    });
+    await once(proxy, "listening");
+    const address = proxy.address();
+    assert.ok(address && typeof address !== "string");
+    const sibling = path.join(context.workDir, "x");
+    const caller = path.join(context.workDir, "caller");
+    await mkdir(caller);
+    await mkdir(path.join(sibling, "sub"), { recursive: true });
+    for (const target of [caller, path.join(sibling, "sub"), context.paseoHome]) {
+      await writeFile(
+        path.join(target, "paseo-plugin.json"),
+        JSON.stringify({
+          id: "relative-cli",
+          requirements: { paseo: `>=${resolveCliVersion()}` },
+        }),
+      );
+      await writeFile(path.join(target, "index.server.ts"), pluginSource);
+    }
+    assert.notEqual(caller, process.cwd()); // The daemon inherits the test runner's cwd.
+    try {
+      for (const [source, expectedSource, expectedDirectory, extraArgs] of [
+        [".", caller, caller, []],
+        ["../x:sub", `${sibling}:sub`, path.join(sibling, "sub"), []],
+        ["../x", `${sibling}:sub`, path.join(sibling, "sub"), ["--path", "sub"]],
+        ["~", context.paseoHome, context.paseoHome, []],
+        ["~/.:.", `${context.paseoHome}:.`, context.paseoHome, []],
+      ] as const) {
+        sources.length = 0;
+        const result = await context.paseo(
+          ["plugin", "add", source, ...extraArgs, "--host", `127.0.0.1:${address.port}`, "--json"],
+          { cwd: caller },
+        );
+        assert.deepEqual(sources, [expectedSource]);
+        assert.equal(result.exitCode, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).path, expectedDirectory);
+        const removed = await context.paseo(["plugin", "remove", "relative-cli", "--json"]);
+        assert.equal(removed.exitCode, 0, removed.stderr);
+      }
+    } finally {
+      for (const socket of proxy.clients) socket.close();
+      await promisify(proxy.close.bind(proxy))();
+    }
 
     const install = await context.paseo(["plugin", "install", directory, "--json"]);
     assert.equal(install.exitCode, 0, install.stderr);
