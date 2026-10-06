@@ -187,10 +187,13 @@ export class AgentStreamCoalescer {
     const existing = existingIndex !== undefined ? buffer.entries[existingIndex] : undefined;
     // Merge rather than replace, so an update that carries less (an unknown detail after a
     // labeled one) cannot erase what the timeline would have kept had both been flushed.
+    let item = event.item;
+    if (existing?.kind === "tool_call") {
+      item = mergeToolCallItems(existing.item, event.item);
+    }
     const entry: PendingToolCallEntry = {
       kind: "tool_call",
-      item:
-        existing?.kind === "tool_call" ? mergeToolCallItems(existing.item, event.item) : event.item,
+      item,
       provider: event.provider,
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
     };
