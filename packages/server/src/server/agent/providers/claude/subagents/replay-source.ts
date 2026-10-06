@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
+import { isClaudeInterruptPlaceholderText } from "../interrupt-placeholder.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle, type ClaudeSubagentUsage } from "./presentation.js";
@@ -139,8 +140,11 @@ export interface ClaudeReplayParentFacts {
   /** Task `tool_use` id -> identity declared in the parent's tool input. */
   toolCalls: ReadonlyMap<string, { title?: string; description?: string }>;
   /** agentId -> tool call, recovered by scraping tool-result text. Legacy fallback only. */
-  linksByAgentId: ReadonlyMap<string, { toolCallId: string; failed: boolean }>;
-  /** Task `tool_use` id -> outcome. Usable once meta.json supplies the link directly. */
+  linksByAgentId: ReadonlyMap<string, { toolCallId: string }>;
+  /**
+   * Task `tool_use` id -> outcome, whichever way the child was linked. A background launch has
+   * none: its immediate result only says the child started.
+   */
   outcomesByToolCallId: ReadonlyMap<string, { failed: boolean }>;
 }
 
@@ -177,27 +181,16 @@ function resolveParentLink(
   parent: ClaudeReplayParentFacts,
 ): ParentLink | null {
   const metaToolUseId = subagent.meta?.toolUseId?.trim();
-  if (metaToolUseId && parent.toolCalls.has(metaToolUseId)) {
-    const outcome = parent.outcomesByToolCallId.get(metaToolUseId);
-    let status: ProviderSubagentStatus | null = null;
-    if (outcome) status = outcome.failed ? "failed" : "completed";
-    return {
-      id: metaToolUseId,
-      toolCallId: metaToolUseId,
-      status,
-    };
-  }
+  const toolCallId =
+    metaToolUseId && parent.toolCalls.has(metaToolUseId)
+      ? metaToolUseId
+      : parent.linksByAgentId.get(subagent.agentId)?.toolCallId;
+  if (!toolCallId || !parent.toolCalls.has(toolCallId)) return null;
 
-  const scraped = parent.linksByAgentId.get(subagent.agentId);
-  if (scraped && parent.toolCalls.has(scraped.toolCallId)) {
-    return {
-      id: scraped.toolCallId,
-      toolCallId: scraped.toolCallId,
-      status: scraped.failed ? "failed" : "completed",
-    };
-  }
-
-  return null;
+  const outcome = parent.outcomesByToolCallId.get(toolCallId);
+  let status: ProviderSubagentStatus | null = null;
+  if (outcome) status = outcome.failed ? "failed" : "completed";
+  return { id: toolCallId, toolCallId, status };
 }
 
 /**
@@ -279,6 +272,11 @@ async function observeSubagent(
     if (entry.type === "assistant") {
       childTerminalStatus = entry.message?.stop_reason === "end_turn" ? "completed" : null;
     }
+    if (entry.type === "user" && readUserTexts(entry).length > 0) {
+      childTerminalStatus = readUserTexts(entry).some(isClaudeInterruptPlaceholderText)
+        ? "canceled"
+        : null;
+    }
     recordReplayToolOwners(toolOwners, entry, link.id);
     for (const item of await convertEntry(entry)) {
       timeline.push({ kind: "timeline", id: link.id, item, ...(timestamp ? { timestamp } : {}) });
@@ -306,6 +304,16 @@ async function observeSubagent(
     });
   }
   return observations;
+}
+
+/** Tool results carry no user text and do not change the child's terminal status. */
+function readUserTexts(entry: ClaudeReplayEntry): string[] {
+  const content = entry.message?.content;
+  if (typeof content === "string") return [content];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block: { type?: unknown; text?: unknown } | null) =>
+    block?.type === "text" && typeof block.text === "string" ? [block.text] : [],
+  );
 }
 
 function recordReplayToolOwners(

@@ -34,6 +34,7 @@ import {
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
 } from "./task-notification-tool-call.js";
+import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
   getClaudeContextWindowMaxTokens,
   getClaudeModelsWithSettings,
@@ -425,7 +426,6 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
   "usage",
 ]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
-const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const STEER_SUPERSEDED_PERMISSION_MESSAGE =
   "The user answered with a message instead of approving. Their message follows.";
@@ -787,11 +787,6 @@ function normalizeClaudeTranscriptText(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function isClaudeInterruptPlaceholderText(value: unknown): boolean {
-  const normalized = normalizeClaudeTranscriptText(value);
-  return normalized !== null && INTERRUPT_PLACEHOLDER_PATTERN.test(normalized);
 }
 
 function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
@@ -6262,7 +6257,7 @@ async function readClaudeReplayParentFacts(
   entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
 ): Promise<ClaudeReplayParentFacts> {
   const toolCalls = new Map<string, { title?: string; description?: string }>();
-  const linksByAgentId = new Map<string, { toolCallId: string; failed: boolean }>();
+  const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes = new Map<string, { failed: boolean }>();
   for await (const entry of entries) {
     const content = toObjectRecord(entry.message)?.content;
@@ -6283,12 +6278,12 @@ async function readClaudeReplayParentFacts(
         });
       }
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-      outcomes.set(block.tool_use_id, { failed: block.is_error === true });
+      if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
+        outcomes.set(block.tool_use_id, { failed: block.is_error === true });
       const agentId = readLegacyClaudeSubagentId(block.content);
       if (agentId)
         linksByAgentId.set(agentId, {
           toolCallId: block.tool_use_id,
-          failed: block.is_error === true,
         });
     }
   }
