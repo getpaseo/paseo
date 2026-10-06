@@ -58,7 +58,14 @@ import {
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
-let pendingUpdate: AbortController | null = null;
+let pendingUpdate: { controller: AbortController; senderId: number | undefined } | null = null;
+
+// Cancel belongs to the renderer that started the wait. A late Cancel from
+// another window must not stop an update it did not request.
+function cancelPendingUpdate(senderId: number | undefined): void {
+  if (pendingUpdate && pendingUpdate.senderId === senderId) pendingUpdate.controller.abort();
+}
+
 class AgentsBusyError extends Error {
   constructor() {
     super("Agents are busy.");
@@ -500,11 +507,11 @@ export function createDaemonCommandHandlers(deps?: {
         intent: parseAppUpdateCheckIntent(args),
       });
     },
-    install_app_update: async (args) => {
+    install_app_update: async (args, context) => {
       const currentVersion = resolveDesktopAppVersion();
       if (pendingUpdate) throw new Error("An update installation is already pending.");
       const controller = new AbortController();
-      pendingUpdate = controller;
+      pendingUpdate = { controller, senderId: context?.senderId };
       try {
         return await installAppUpdate(
           {
@@ -524,8 +531,8 @@ export function createDaemonCommandHandlers(deps?: {
         pendingUpdate = null;
       }
     },
-    cancel_app_update: () => {
-      pendingUpdate?.abort();
+    cancel_app_update: (_args, context) => {
+      cancelPendingUpdate(context?.senderId);
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
@@ -545,10 +552,13 @@ export function registerDaemonManager(): void {
       if (!handler) {
         throw new Error(`Unknown desktop command: ${command}`);
       }
-      if (command !== "install_app_update" || args?.whenIdle !== true) return await handler(args);
+      const context = { senderId: _event.sender.id };
+      if (command !== "install_app_update" || args?.whenIdle !== true) {
+        return await handler(args, context);
+      }
       // A one-time request belongs to its renderer. Reloading or closing it cancels
       // the wait so an invisible request cannot restart the app later.
-      const cancel = () => pendingUpdate?.abort();
+      const cancel = () => cancelPendingUpdate(context.senderId);
       const cancelOnNavigation = (
         _: Electron.Event,
         _url: string,
@@ -560,7 +570,7 @@ export function registerDaemonManager(): void {
       _event.sender.on("did-start-navigation", cancelOnNavigation);
       _event.sender.once("destroyed", cancel);
       try {
-        return await handler(args);
+        return await handler(args, context);
       } finally {
         _event.sender.removeListener("did-start-navigation", cancelOnNavigation);
         _event.sender.removeListener("destroyed", cancel);

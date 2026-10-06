@@ -278,4 +278,36 @@ describe("daemon-manager commands", () => {
       await handlers.stop_desktop_daemon().catch(() => undefined);
     }
   });
+
+  it("ignores a cancel from a window that did not start the update", async () => {
+    const runtime = new FakeAppUpdateRuntime();
+    const updateInfo = {
+      version: "1.2.4",
+      releaseDate: "2026-04-28T00:00:00.000Z",
+      rolloutHours: 24,
+    };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo });
+    const service = createAppUpdateService({
+      runtime,
+      isPackaged: () => true,
+      now: () => Date.parse("2026-04-28T12:00:00.000Z"),
+      bucket: async () => 0,
+    });
+    const handlers = createDaemonCommandHandlers({
+      installAppUpdate: service.downloadAndInstallUpdate,
+    });
+    const download = runtime.beginUpdateDownload(updateInfo, { announce: false });
+
+    const installing = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
+    await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+
+    handlers.cancel_app_update(undefined, { senderId: 2 });
+    expect(runtime.cancelCount).toBe(0);
+
+    handlers.cancel_app_update(undefined, { senderId: 1 });
+    await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(runtime.cancelCount).toBe(1);
+    expect(runtime.installedVersions).toEqual([]);
+    download.resolve();
+  });
 });
