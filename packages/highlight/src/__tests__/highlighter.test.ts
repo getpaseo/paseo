@@ -181,6 +181,19 @@ const title = "Hello";
     );
   });
 
+  it("highlights a Vue SFC that contains an empty interpolation", () => {
+    const code = ["<template>", "  <p>{{}} {{ count }}</p>", "</template>"].join("\n");
+
+    const tokens = highlightCode(code, "Empty.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "template", style: "tag" },
+        { text: "count", style: "variable" },
+      ]),
+    );
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");

@@ -103,7 +103,8 @@ function findExpressions(text: string): Range[] {
     if (text.charCodeAt(position + 1) !== 123) continue;
     const closing = findInterpolationEnd(text, position + 2);
     if (closing < 0) break;
-    ranges.push({ from: position + 2, to: closing });
+    // Lezer rejects empty inner ranges, so `{{}}` gets no nested parse.
+    if (closing > position + 2) ranges.push({ from: position + 2, to: closing });
     position = closing + 1;
   }
   return ranges;
