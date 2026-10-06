@@ -273,6 +273,14 @@ describe("translation resources", () => {
     }
   });
 
+  it("keeps Italian check count phrases correct for singular and plural counts", () => {
+    const count = italian.workspace.git.pr.checksOverview.count;
+    expect(count.failure).toBe("{{count}} con esito negativo");
+    expect(count.manual).toBe("{{count}} con esecuzione manuale");
+    expect(count.success).toBe("{{count}} con esito positivo");
+    expect(count.ignored).toBe("{{count}} senza esecuzione");
+  });
+
   it("keeps local connection fallback errors translated", () => {
     expect(findUntranslatedConnectionErrors()).toEqual([]);
   });
