@@ -3436,6 +3436,8 @@ interface ACPCloseInternals {
   child: ChildProcess | null;
   connection: unknown;
   sessionId: string | null;
+  activeForegroundTurnId: string | null;
+  agentCapabilities: { sessionCapabilities?: { close?: unknown } } | null;
 }
 
 async function startTerminal(
@@ -3500,6 +3502,38 @@ describe("ACPAgentSession close() tree-kill", () => {
 
     expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() terminates the provider when cancel and closeSession never settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminator = new FakeTerminator();
+      const session = createSession({ terminateProcess: terminator.terminate });
+      const child = createTerminalChildStub();
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      const unstableCloseSession = vi.fn(() => new Promise<void>(() => undefined));
+      const internals = asInternals<ACPCloseInternals>(session);
+      internals.child = child;
+      internals.sessionId = "session-1";
+      internals.activeForegroundTurnId = "turn-1";
+      internals.agentCapabilities = { sessionCapabilities: { close: {} } };
+      internals.connection = { cancel, unstable_closeSession: unstableCloseSession };
+
+      let settled = false;
+      const closing = (async () => {
+        await session.close();
+        settled = true;
+      })();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(settled).toBe(true);
+      expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(unstableCloseSession).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(terminator.terminated).toContain(child);
+      await closing;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("close() terminates running terminal child processes", async () => {
