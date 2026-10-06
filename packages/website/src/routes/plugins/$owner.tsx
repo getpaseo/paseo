@@ -1,3 +1,4 @@
+import { PluginContentLink } from "~/plugins/overview";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { useMemo } from "react";
@@ -64,21 +65,16 @@ function AuthorPage() {
           </p>
           <div className="flex items-center gap-4 pt-1">
             {authorNpmUrl(author) && (
-              <a
-                href={authorNpmUrl(author)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK_CLASS}
-              >
+              <PluginContentLink href={authorNpmUrl(author)} className={LINK_CLASS}>
                 npm
                 <ExternalLink className="h-3 w-3" />
-              </a>
+              </PluginContentLink>
             )}
             {github && (
-              <a href={github} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+              <PluginContentLink href={github} className={LINK_CLASS}>
                 GitHub
                 <ExternalLink className="h-3 w-3" />
-              </a>
+              </PluginContentLink>
             )}
           </div>
         </div>

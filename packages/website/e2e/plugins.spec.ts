@@ -1,3 +1,4 @@
+import securityPlugin from "./overview.fixture.json" with { type: "json" };
 import { expect, test, type Page, type Locator } from "playwright/test";
 import registry from "./registry.fixture.json" with { type: "json" };
 import { CATEGORIES } from "../src/plugins/categories";
@@ -35,7 +36,7 @@ test("browses from the directory into a category, a plugin, and its author", asy
   await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
   await expect(page.getByText("paseo plugin install omercnet/fresh-worktrees")).toHaveCount(1);
   await expect(
-    page.getByRole("heading", { level: 2, name: "Link to this section Behavior", exact: true }),
+    page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Copy to clipboard" }).click();
   await expect
@@ -168,7 +169,7 @@ test.describe("search engine visits without JavaScript", () => {
     expect(response?.headers()["x-robots-tag"]).toBeUndefined();
     await expect(page.getByText("paseo plugin install omercnet/fresh-worktrees")).toBeVisible();
     await expect(
-      page.getByRole("heading", { level: 2, name: "Link to this section Behavior", exact: true }),
+      page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
     ).toBeVisible();
     await expectPageMetadata(
       page,
@@ -365,4 +366,73 @@ async function expectThumbnailCard(card: Locator, source: string, id: string) {
   });
   expect(box.width).toBeGreaterThan(0);
   expect(box.width / box.height).toBeCloseTo(1.6, 2);
+}
+
+test("keeps author content inert through SSR and hydration", async ({
+  page,
+  request,
+}, testInfo) => {
+  await verifyPluginOverviewResponse(request);
+  await openUntrustedPlugin(page);
+  await expectPluginOverviewSafe(page);
+  await page.reload();
+  await expectPluginOverviewSafe(page);
+  await testInfo.attach("plugin-overview", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+});
+
+async function verifyPluginOverviewResponse(request: import("playwright/test").APIRequestContext) {
+  const response = await request.get("/plugins/security/overview");
+  expect(response.status()).toBe(200);
+  const html = await response.text();
+  expect(html).not.toContain("<script>globalThis.__overviewExecuted=1</script>");
+  expect(html).toContain("\\x3C/script>");
+}
+
+async function openUntrustedPlugin(page: Page) {
+  await page.goto("/plugins/security/overview");
+  await expect(page.getByRole("heading", { name: "Overview security", exact: true })).toBeVisible();
+}
+
+async function expectPluginOverviewSafe(page: Page) {
+  expect(
+    await page.evaluate(() => (globalThis as { __overviewExecuted?: number }).__overviewExecuted),
+  ).toBeUndefined();
+  // Security assertions inspect every emitted attribute, including inaccessible injected elements.
+  const violations = await page.locator(".docs-prose").evaluate((root) => {
+    const bad: string[] = [];
+    for (const element of root.querySelectorAll("*")) {
+      if (
+        ["SCRIPT", "IFRAME", "SVG", "FORM", "INPUT", "META", "BASE", "STYLE"].includes(
+          element.tagName,
+        )
+      )
+        bad.push(element.tagName);
+      for (const attr of element.attributes) {
+        if (/^on|^style$|^srcdoc$/i.test(attr.name)) bad.push(attr.name);
+        if (["href", "src"].includes(attr.name) && !attr.value.startsWith("https://"))
+          bad.push(attr.value);
+      }
+      if (
+        element.tagName === "A" &&
+        (element.getAttribute("rel") !== "noopener noreferrer nofollow" ||
+          element.getAttribute("target") !== "_blank")
+      )
+        bad.push("unsafe anchor");
+    }
+    return bad;
+  });
+  expect(violations).toEqual([]);
+  await expect(page.getByRole("link", { name: "Source", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("img", { name: /screenshot/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(securityPlugin.name);
+  await expect(
+    page.getByRole("link", { name: securityPlugin.author.name, exact: true }),
+  ).toHaveAttribute("href", "/plugins/security");
+  await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+    "content",
+    securityPlugin.description,
+  );
 }

@@ -1,3 +1,4 @@
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { Download } from "lucide-react";
 import { pluginCardScreenshot } from "./thumbnails";
 import { pluginHref } from "./links";
@@ -9,7 +10,7 @@ export const PLUGIN_GRID_CLASS =
 
 /** First screenshot, or the plugin tile on a quiet backdrop when there is none. */
 function PluginShot({ plugin }: { plugin: Plugin }) {
-  const url = plugin.screenshots[0];
+  const url = pluginOverviewUrl(plugin.screenshots[0]);
   return (
     <div
       aria-hidden
