@@ -1665,7 +1665,23 @@ export class ClaudeAgentClient implements AgentClient {
     const cached = this.importDescriptorCache.get(candidate.cacheKey);
     if (cached) return structuredClone(cached);
 
-    const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime, signal);
+    let descriptor: ImportableProviderSession | null;
+    try {
+      descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      const isFileError =
+        error instanceof Error &&
+        "syscall" in error &&
+        "code" in error &&
+        typeof error.code === "string";
+      if (!(error instanceof ClaudeImportRecordTooLargeError) && !isFileError) throw error;
+      this.logger.warn(
+        { err: error, path: candidate.path },
+        "Skipping Claude transcript with unreadable import metadata",
+      );
+      return null;
+    }
     if (descriptor) {
       const current = await fsPromises.stat(candidate.path).catch(() => null);
       signal.throwIfAborted();
@@ -6338,7 +6354,7 @@ class ClaudeImportRecordTooLargeError extends Error {
     readonly maxRecordBytes: number,
   ) {
     super(
-      `Cannot list Claude sessions: transcript ${filePath} record ${recordNumber} exceeds the ${maxRecordBytes}-byte import limit. Shorten or remove this record before retrying.`,
+      `Claude transcript ${filePath} record ${recordNumber} exceeds the ${maxRecordBytes}-byte import limit. Import metadata for this transcript was not loaded.`,
     );
     this.name = "ClaudeImportRecordTooLargeError";
   }
@@ -6398,12 +6414,6 @@ async function parseClaudeSessionDescriptor(
       }
     }
     if (recordBytes > 0) applyRecord();
-  } catch (error) {
-    signal.throwIfAborted();
-    if (error instanceof ClaudeImportRecordTooLargeError) throw error;
-    // Transcripts can disappear between candidate discovery and opening them.
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    throw error;
   } finally {
     stream.destroy();
   }

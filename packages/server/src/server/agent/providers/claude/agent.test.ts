@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
@@ -1815,7 +1816,7 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     }
   });
 
-  test("rejects a single record larger than the heap without allocating the full line", async () => {
+  test("skips a single record larger than the heap without allocating the full line", async () => {
     const configDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "paseo-claude-import-single-record-"),
     );
@@ -1841,22 +1842,20 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
           "--input-type=module",
           "--eval",
           `
-          import { rejects } from "node:assert";
+          import { deepStrictEqual } from "node:assert";
           import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
           import pino from ${JSON.stringify(import.meta.resolve("pino"))};
           const client = new ClaudeAgentClient({
             logger: pino({ level: "silent" }),
             runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
           });
-          await rejects(client.listImportableSessions({ limit: 1 }), {
-            name: "ClaudeImportRecordTooLargeError", recordNumber: 1, maxRecordBytes: 4194304,
-          });
-          console.log("Oversized record rejected");
+          deepStrictEqual(await client.listImportableSessions({ limit: 1 }), []);
+          console.log("Oversized transcript skipped");
         `,
         ],
         { timeout: 20_000 },
       );
-      expect(stdout.trim()).toEqual("Oversized record rejected");
+      expect(stdout.trim()).toEqual("Oversized transcript skipped");
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
@@ -1903,7 +1902,7 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     }
   });
 
-  test("fails explicitly on an oversized record without returning stale metadata", async () => {
+  test("logs and skips an oversized transcript while retaining healthy sessions", async () => {
     const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-record-"));
     try {
       const projectDir = path.join(configDir, "projects", "oversized");
@@ -1918,11 +1917,27 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
           message: { content: "First prompt" },
         })}\n`,
       );
+      const records: unknown[] = [];
       const client = new ClaudeAgentClient({
-        logger: createTestLogger(),
+        logger: pino(
+          { level: "warn" },
+          { write: (line: string) => records.push(JSON.parse(line)) },
+        ),
         runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
       });
       expect((await client.listImportableSessions({ limit: 1 }))[0]!.title).toEqual("First prompt");
+      const healthyFile = path.join(projectDir, "healthy.jsonl");
+      await fs.writeFile(
+        healthyFile,
+        JSON.stringify({
+          type: "user",
+          sessionId: "healthy-session",
+          cwd: "/healthy-project",
+          message: { content: "Healthy prompt" },
+        }),
+      );
+      const timestamp = new Date("2026-01-01T00:00:00Z");
+      await fs.utimes(healthyFile, timestamp, timestamp);
       // Metadata placed after the payload defeats prefix-only relevance checks.
       await fs.appendFile(
         sessionFile,
@@ -1932,12 +1947,29 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
           customTitle: "Latest title",
         }),
       );
-      await expect(client.listImportableSessions({ limit: 1 })).rejects.toMatchObject({
-        name: "ClaudeImportRecordTooLargeError",
-        filePath: sessionFile,
-        recordNumber: 2,
-        maxRecordBytes: 4 * 1024 * 1024,
-      });
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([
+        {
+          providerHandleId: "healthy-session",
+          cwd: "/healthy-project",
+          title: "Healthy prompt",
+          firstPromptPreview: "Healthy prompt",
+          lastPromptPreview: "Healthy prompt",
+          lastActivityAt: timestamp,
+        },
+      ]);
+      expect(records).toEqual([
+        expect.objectContaining({
+          level: pino.levels.values.warn,
+          path: sessionFile,
+          msg: "Skipping Claude transcript with unreadable import metadata",
+          err: expect.objectContaining({
+            type: "ClaudeImportRecordTooLargeError",
+            filePath: sessionFile,
+            recordNumber: 2,
+            maxRecordBytes: 4 * 1024 * 1024,
+          }),
+        }),
+      ]);
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
@@ -3787,7 +3819,7 @@ describe("Claude import descriptor scheduling", () => {
   test("cancelling the initiating listing keeps its other subscriber alive", async () => {
     const { scheduler, started, reads } = controlledReads();
     const initiator = new AbortController();
-    const first = scheduler(["shared", "unused"], initiator.signal);
+    const first = scheduler(["shared"], initiator.signal);
     const firstRejected = expect(first).rejects.toThrow("First picker closed");
     const second = scheduler(["shared"], new AbortController().signal);
     await vi.waitFor(() => expect(started).toEqual(["shared"]));
@@ -3822,29 +3854,70 @@ describe("Claude import descriptor scheduling", () => {
     expect(signals.get("shared")!.aborted).toEqual(true);
   });
 
-  test("gives a small later listing a turn before a large listing finishes", async () => {
-    const { scheduler, started, reads } = controlledReads();
-    const signal = new AbortController().signal;
+  test("runs four reads per listing and gives a later small listing a bounded turn", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const controller = new AbortController();
     const large = scheduler(
       Array.from({ length: 500 }, (_, index) => `large-${index}`),
-      signal,
+      controller.signal,
     );
-    await vi.waitFor(() => expect(started).toEqual(["large-0"]));
-    const small = scheduler(["small"], signal);
-    await vi.waitFor(() => expect(started).toEqual(["large-0", "small"]));
+    const largeRejected = expect(large).rejects.toThrow("Fairness check complete");
+    await vi.waitFor(() => expect(started).toEqual(["large-0", "large-1", "large-2", "large-3"]));
+    const small = scheduler(["small"], new AbortController().signal);
+    reads.get("large-0")!.resolve("first descriptor");
+    await vi.waitFor(() =>
+      expect(started).toEqual(["large-0", "large-1", "large-2", "large-3", "small"]),
+    );
     reads.get("small")!.resolve("small descriptor");
     await expect(small).resolves.toEqual(["small descriptor"]);
-    expect(started).toEqual(["large-0", "small"]);
-    // Cancel the large listing so this test does not need to service 499 reads.
-    reads.get("large-0")!.reject(new Error("Finished fairness check"));
-    await expect(large).rejects.toThrow("Finished fairness check");
+    controller.abort(new Error("Fairness check complete"));
+    await largeRejected;
+    expect(signals.get("large-1")!.aborted).toEqual(true);
+    expect(signals.get("large-2")!.aborted).toEqual(true);
+    expect(signals.get("large-3")!.aborted).toEqual(true);
+    expect(started.length).toBeLessThanOrEqual(6);
   });
 
-  test("bounds active reads and skips cancelled queued and remaining candidates", async () => {
+  test("refills four workers while retaining candidate order after out-of-order completions", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("3")!.resolve("descriptor-3");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4"]));
+    reads.get("2")!.resolve("descriptor-2");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4", "5"]));
+    reads.get("5")!.resolve("descriptor-5");
+    reads.get("4")!.resolve("descriptor-4");
+    reads.get("1")!.resolve("descriptor-1");
+    reads.get("0")!.resolve("descriptor-0");
+    await expect(listing).resolves.toEqual([
+      "descriptor-0",
+      "descriptor-1",
+      "descriptor-2",
+      "descriptor-3",
+      "descriptor-4",
+      "descriptor-5",
+    ]);
+  });
+
+  test("an unexpected read failure cancels sibling workers without starting remaining candidates", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    const rejected = expect(listing).rejects.toThrow("Unexpected read failure");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("0")!.reject(new TypeError("Unexpected read failure"));
+    await rejected;
+    expect(signals.get("1")!.aborted).toEqual(true);
+    expect(signals.get("2")!.aborted).toEqual(true);
+    expect(signals.get("3")!.aborted).toEqual(true);
+    expect(started).toEqual(["0", "1", "2", "3"]);
+  });
+
+  test("bounds global reads and skips cancelled queued candidates", async () => {
     const { scheduler, started, reads } = controlledReads();
     const controllers = Array.from({ length: 5 }, () => new AbortController());
     const listings = controllers.map((controller, index) =>
-      scheduler([`${index}-first`, `${index}-next`], controller.signal),
+      scheduler([`${index}-first`], controller.signal),
     );
     // Attach handlers before aborting any promises.
     function errorMessage(error: Error): string {
