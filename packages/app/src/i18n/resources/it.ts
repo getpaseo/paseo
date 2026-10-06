@@ -384,6 +384,9 @@ export const it: TranslationResources = {
         completed: "Completata",
       },
     },
+    turnFooter: {
+      workedFor: "Ha lavorato per {{duration}}",
+    },
     compaction: {
       loading: "Compattazione...",
       auto: "Contesto compattato automaticamente",
@@ -996,6 +999,47 @@ export const it: TranslationResources = {
         actions: {
           viewPullRequest: "Visualizza",
           openOn: "Apri su {{brand}}",
+          addToChat: "Aggiungi alla chat",
+          addAllToChat: "Aggiungi tutto alla chat",
+          addingToChat: "Aggiunta…",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "Alcuni controlli richiedono la tua attenzione",
+            failure: "Alcuni controlli non sono stati superati",
+            pending: "Alcuni controlli non sono ancora terminati",
+            success: "Tutti i controlli sono stati superati",
+            none: "Nessun controllo",
+          },
+          count: {
+            actionRequired: "{{count}} da esaminare",
+            warning: "{{count}} con avviso",
+            failure: "{{count}} non superati",
+            pending: "{{count}} in corso",
+            manual: "{{count}} manuali",
+            success: "{{count}} superati",
+            ignored: "{{count}} ignorati",
+          },
+          detailOne: "Controllo: {{parts}}",
+          detailMany: "Controlli: {{parts}}",
+          groupOne: {
+            actionRequired: "{{count}} controllo da esaminare",
+            warning: "{{count}} controllo con avviso",
+            failure: "{{count}} controllo non superato",
+            pending: "{{count}} controllo in corso",
+            manual: "{{count}} controllo manuale",
+            success: "{{count}} controllo superato",
+            ignored: "{{count}} controllo ignorato",
+          },
+          groupMany: {
+            actionRequired: "{{count}} controlli da esaminare",
+            warning: "{{count}} controlli con avvisi",
+            failure: "{{count}} controlli non superati",
+            pending: "{{count}} controlli in corso",
+            manual: "{{count}} controlli manuali",
+            success: "{{count}} controlli superati",
+            ignored: "{{count}} controlli ignorati",
+          },
         },
         checksSummary: {
           passedLabel: "superato",
@@ -1009,17 +1053,21 @@ export const it: TranslationResources = {
           checks: "Controlli",
           pipeline: "Pipeline",
           reviews: "Revisioni",
+          activity: "Attività",
         },
         empty: {
           noJobs: "Nessun job",
           loadingPipeline: "Caricamento della pipeline…",
           pipelineJobsLoadFailed: "Impossibile caricare i job della pipeline",
           allowedToFail: "errore consentito",
+          noActivity: "Ancora nessuna attività",
         },
         approvals: "{{given}} di {{required}} approvazioni",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          commentActions: "Azioni del commento",
+          threadActions: "Azioni della discussione",
           checkStatus: {
             passed: "Superato",
             failed: "Non superato",
@@ -1048,6 +1096,8 @@ export const it: TranslationResources = {
         },
         thread: {
           discussion: "Discussione",
+          resolved: "Risolta",
+          outdated: "Obsoleta",
         },
         errors: {
           statusLoadFailed: "Impossibile caricare lo stato della pull request",
@@ -1119,6 +1169,14 @@ export const it: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "Gruppo {{label}}",
+    statusBucket: {
+      needsInput: "Richiede intervento",
+      failed: "Non riuscito",
+      readyToReview: "Pronto per la revisione",
+      working: "In corso",
+      done: "Completato",
+    },
     display: {
       trigger: "Preferenze di visualizzazione",
       heading: "Visualizzazione",
@@ -1764,6 +1822,12 @@ export const it: TranslationResources = {
       helper: "Connettiti a un daemon Paseo in esecuzione sull'host remoto.",
       fields: {
         target: "Host SSH",
+        password: "Password del daemon",
+        optional: "Facoltativa",
+      },
+      passwordVisibility: {
+        show: "Mostra password",
+        hide: "Nascondi password",
       },
       actions: {
         cancel: "Annulla",
@@ -1996,6 +2060,8 @@ export const it: TranslationResources = {
     dismiss: "Ignora",
   },
   contextWindow: {
+    noData: "Nessun dato sul contesto",
+    accessibilityNoData: "Finestra di contesto: nessun dato sul contesto",
     title: "Finestra di contesto",
     used: "{{percentage}}% utilizzato",
     tokens: "{{used}} / {{max}} token",
@@ -2140,7 +2206,7 @@ export const it: TranslationResources = {
       globalTitle: "Attiva plugin",
       globalHint: "Interruttore globale per tutti i plugin configurati",
       sourceLabel: "Origine del plugin",
-      sourcePlaceholder: "Cartella, URL Git o pacchetto npm",
+      sourcePlaceholder: "owner/slug, cartella, URL Git o pacchetto npm",
       docs: "Documentazione",
       install: "Installa plugin",
       installing: "Installazione…",
