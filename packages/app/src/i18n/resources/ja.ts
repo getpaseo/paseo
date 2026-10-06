@@ -740,6 +740,7 @@ export const ja: TranslationResources = {
         pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
         recentlyClosed: "最近閉じたタブ",
+        recentlyClosedChats: "最近閉じたチャット",
         allTabs: "すべてのタブ ({{count}})",
         searchTabs: "タブを検索",
         noMatchingTabs: "一致するタブはありません",

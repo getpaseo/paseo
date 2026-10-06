@@ -2,6 +2,7 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useSessionStore } from "@/stores/session-store";
 import {
+  completedProviderSubagentIds,
   createArchiveFinishedSubagents,
   type ArchiveFinishedOutcome,
   type ArchiveFinishedState,
@@ -49,6 +50,12 @@ export function useArchiveFinishedSubagents({
   useEffect(() => {
     archiveFinished.setRows(rows);
   }, [archiveFinished, rows]);
+
+  useEffect(() => {
+    const completed = completedProviderSubagentIds(rows);
+    if (completed.length)
+      useProviderSubagentStore.getState().hideFromTrack(serverId, parentAgentId, completed);
+  }, [rows, serverId, parentAgentId]);
 
   return { ...state, archiveFinished: archiveFinished.archiveFinished };
 }

@@ -740,6 +740,7 @@ export const ru: TranslationResources = {
         pullRequest: "PR",
         terminalProfilesMenu: "Профили терминала",
         recentlyClosed: "Недавно закрытые",
+        recentlyClosedChats: "Недавно закрытые чаты",
         allTabs: "Все вкладки ({{count}})",
         searchTabs: "Поиск вкладок",
         noMatchingTabs: "Нет подходящих вкладок",

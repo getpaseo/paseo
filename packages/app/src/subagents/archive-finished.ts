@@ -39,6 +39,14 @@ export function isFinishedSubagent(row: SubagentRow): boolean {
   return row.status === "completed" || row.status === "failed" || row.status === "canceled";
 }
 
+export function completedProviderSubagentIds(rows: readonly SubagentRow[]): string[] {
+  return rows
+    .filter(
+      (row) => row.kind === "provider" && row.status === "completed" && !row.requiresAttention,
+    )
+    .map((row) => row.id);
+}
+
 function canArchiveManagedSubagent(
   agent: ManagedSubagentSnapshot | undefined,
   parentAgentId: string,

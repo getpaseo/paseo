@@ -740,6 +740,7 @@ export const fr: TranslationResources = {
         pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "Fermés récemment",
+        recentlyClosedChats: "Chats fermés récemment",
         allTabs: "Tous les onglets ({{count}})",
         searchTabs: "Rechercher des onglets",
         noMatchingTabs: "Aucun onglet correspondant",

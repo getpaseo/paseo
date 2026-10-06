@@ -738,6 +738,7 @@ export const ptBR: TranslationResources = {
         pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
         recentlyClosed: "Fechadas recentemente",
+        recentlyClosedChats: "Chats fechados recentemente",
         allTabs: "Todas as abas ({{count}})",
         searchTabs: "Buscar abas",
         noMatchingTabs: "Nenhuma aba corresponde",

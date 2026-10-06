@@ -738,6 +738,7 @@ export const en = {
         pullRequest: "Pull request",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "Recently closed",
+        recentlyClosedChats: "Recently closed chats",
         allTabs: "All tabs ({{count}})",
         searchTabs: "Search tabs",
         noMatchingTabs: "No matching tabs",

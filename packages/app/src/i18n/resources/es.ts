@@ -740,6 +740,7 @@ export const es: TranslationResources = {
         pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "Cerradas recientemente",
+        recentlyClosedChats: "Chats cerrados recientemente",
         allTabs: "Todas las pestañas ({{count}})",
         searchTabs: "Buscar pestañas",
         noMatchingTabs: "Ninguna pestaña coincide",

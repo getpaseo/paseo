@@ -69,7 +69,7 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "plugin-panels" | "terminal-profiles" | "recently-closed";
+  id: "tabs" | "plugin-panels" | "terminal-profiles" | "recently-closed" | "recently-closed-chats";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
@@ -331,30 +331,40 @@ export function useWorkspaceTabLaunchCatalog(input: {
         },
       });
     }
-    if (recentlyClosed.length > 0) {
+    const closedItem = (entry: (typeof recentlyClosed)[number]) => ({
+      id: `recently-closed:${entry.id}`,
+      label: closedTabLabel(entry, t, agents),
+      Icon: CLOSED_TAB_ICONS[entry.target.kind],
+      disabled: entry.target.kind === "terminal" && launcher.terminalDisabled,
+      panelKind: entry.target.kind,
+      toggleTarget: null,
+      launch: (destination: WorkspaceTabLaunchDestination) => {
+        if (launcher.workspaceKey) forgetClosed(launcher.workspaceKey, entry.id);
+        // Closing archived the session; bring it back like the Unarchive button does,
+        // or the tab opens on an archived, possibly empty session.
+        if (entry.target.kind === "agent") {
+          void getHostRuntimeStore()
+            .getClient(serverId)
+            ?.refreshAgent(entry.target.agentId)
+            .catch(() => undefined);
+        }
+        launcher.launch(reopenSelection(entry), destination);
+      },
+    });
+    const closedChats = recentlyClosed.filter((entry) => entry.target.kind === "agent");
+    const closedTabs = recentlyClosed.filter((entry) => entry.target.kind !== "agent");
+    if (closedChats.length > 0) {
+      groups.push({
+        id: "recently-closed-chats",
+        label: t("workspace.tabs.actions.recentlyClosedChats"),
+        items: closedChats.map(closedItem),
+      });
+    }
+    if (closedTabs.length > 0) {
       groups.push({
         id: "recently-closed",
         label: t("workspace.tabs.actions.recentlyClosed"),
-        items: recentlyClosed.map((entry) => ({
-          id: `recently-closed:${entry.id}`,
-          label: closedTabLabel(entry, t, agents),
-          Icon: CLOSED_TAB_ICONS[entry.target.kind],
-          disabled: entry.target.kind === "terminal" && launcher.terminalDisabled,
-          panelKind: entry.target.kind,
-          toggleTarget: null,
-          launch: (destination: WorkspaceTabLaunchDestination) => {
-            if (launcher.workspaceKey) forgetClosed(launcher.workspaceKey, entry.id);
-            // Closing archived the session; bring it back like the Unarchive button does,
-            // or the tab opens on an archived, possibly empty session.
-            if (entry.target.kind === "agent") {
-              void getHostRuntimeStore()
-                .getClient(serverId)
-                ?.refreshAgent(entry.target.agentId)
-                .catch(() => undefined);
-            }
-            launcher.launch(reopenSelection(entry), destination);
-          },
-        })),
+        items: closedTabs.map(closedItem),
       });
     }
     return groups;

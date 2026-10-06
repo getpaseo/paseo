@@ -735,6 +735,7 @@ export const ko: TranslationResources = {
         pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
         recentlyClosed: "최근에 닫은 탭",
+        recentlyClosedChats: "최근에 닫은 채팅",
         allTabs: "모든 탭 ({{count}})",
         searchTabs: "탭 검색",
         noMatchingTabs: "일치하는 탭이 없습니다",

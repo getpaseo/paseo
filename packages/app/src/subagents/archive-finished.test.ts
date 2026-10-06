@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createArchiveFinishedSubagents, type ManagedSubagentSnapshot } from "./archive-finished";
+import {
+  completedProviderSubagentIds,
+  createArchiveFinishedSubagents,
+  type ManagedSubagentSnapshot,
+} from "./archive-finished";
 import type { PaseoSubagentRow, ProviderSubagentRow } from "./select";
 
 function paseo(id: string, status: PaseoSubagentRow["status"] = "idle"): PaseoSubagentRow {
@@ -428,5 +432,20 @@ describe("createArchiveFinishedSubagents", () => {
     expect(dismissed).toEqual([["finished"]]);
     expect(descriptors.get("finished")).toBe(finished);
     expect(descriptors.get("running")).toBe(running);
+  });
+});
+
+describe("completedProviderSubagentIds", () => {
+  it("only picks provider subagents that completed without needing attention", () => {
+    const needsAttention = { ...provider("p-attention"), requiresAttention: true };
+    expect(
+      completedProviderSubagentIds([
+        provider("p-done", "completed"),
+        provider("p-running", "running"),
+        provider("p-failed", "failed"),
+        needsAttention,
+        paseo("m-idle", "idle"),
+      ]),
+    ).toEqual(["p-done"]);
   });
 });

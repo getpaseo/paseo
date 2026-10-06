@@ -52,6 +52,15 @@ function agentTitle(agentId: string): string | undefined {
   return undefined;
 }
 
+function capPerGroup(entries: ClosedTabEntry[]): ClosedTabEntry[] {
+  const counts = { chats: 0, tabs: 0 };
+  return entries.filter((entry) => {
+    const group = entry.target.kind === "agent" ? "chats" : "tabs";
+    counts[group] += 1;
+    return counts[group] <= MAX_CLOSED_PER_WORKSPACE;
+  });
+}
+
 function entryFor(target: ReopenableTabTarget): ClosedTabEntry {
   const closedAt = Date.now();
   if (target.kind === "agent") {
@@ -104,7 +113,7 @@ export const useRecentlyClosedTabsStore = create<RecentlyClosedTabsState>()(
           return {
             byWorkspace: {
               ...state.byWorkspace,
-              [workspaceKey]: [entryFor(target), ...previous].slice(0, MAX_CLOSED_PER_WORKSPACE),
+              [workspaceKey]: capPerGroup([entryFor(target), ...previous]),
             },
           };
         });

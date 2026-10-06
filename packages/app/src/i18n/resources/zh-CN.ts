@@ -732,6 +732,7 @@ export const zhCN: TranslationResources = {
         pullRequest: "拉取请求",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "最近关闭",
+        recentlyClosedChats: "最近关闭的聊天",
         allTabs: "所有标签页 ({{count}})",
         searchTabs: "搜索标签页",
         noMatchingTabs: "没有匹配的标签页",

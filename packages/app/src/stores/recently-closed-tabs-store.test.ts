@@ -21,6 +21,16 @@ describe("recently closed tabs", () => {
     expect(useRecentlyClosedTabsStore.getState().byWorkspace["srv:wks_b"]).toHaveLength(1);
   });
 
+  it("keeps a closed chat when many browser tabs are closed after it", () => {
+    const { record } = useRecentlyClosedTabsStore.getState();
+    record("srv:wks_a", { kind: "agent", agentId: "chat" });
+    for (let index = 0; index < 12; index += 1)
+      record("srv:wks_a", { kind: "browser", browserId: `b${index}` });
+    const closed = useRecentlyClosedTabsStore.getState().byWorkspace["srv:wks_a"] ?? [];
+    expect(closed.filter((entry) => entry.target.kind === "browser")).toHaveLength(8);
+    expect(closed.filter((entry) => entry.target.kind === "agent")).toHaveLength(1);
+  });
+
   it("remembers a browser tab's page, since the tab itself is gone", () => {
     const { browserId } = createWorkspaceBrowser({ initialUrl: "https://example.org/docs" });
     useBrowserStore.getState().removeBrowser(browserId);
