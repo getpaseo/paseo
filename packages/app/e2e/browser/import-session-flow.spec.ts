@@ -357,6 +357,11 @@ test("an active-writer conflict shows specific guidance instead of a generic fai
   page,
 }, testInfo) => {
   const gate = await installDaemonWebSocketGate(page);
+  const originalAgentIds = new Set(
+    (await client.fetchAgents({ filter: { includeArchived: true } })).entries.map(
+      (entry) => entry.agent.id,
+    ),
+  );
   try {
     const flow = new ImportSessionFlow(page);
     await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
@@ -377,7 +382,15 @@ test("an active-writer conflict shows specific guidance instead of a generic fai
     await capture(page, testInfo, "13-mobile-active-writer-guidance.png");
   } finally {
     gate.restore();
+    const createdAgents = (
+      await client.fetchAgents({ filter: { includeArchived: true } })
+    ).entries.filter((entry) => !originalAgentIds.has(entry.agent.id));
+    await Promise.all(createdAgents.map((entry) => client.deleteAgent(entry.agent.id)));
   }
+  const remainingAgentIds = (
+    await client.fetchAgents({ filter: { includeArchived: true } })
+  ).entries.map((entry) => entry.agent.id);
+  expect(remainingAgentIds.sort()).toEqual([...originalAgentIds].sort());
 });
 
 test("an import failure keeps generic copy visible and permits retry after recovery", async ({
