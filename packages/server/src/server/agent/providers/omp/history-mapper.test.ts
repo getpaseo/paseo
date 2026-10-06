@@ -252,6 +252,90 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("replays a rule-violation run with the same rows the live timeline showed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-rule-reminder-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root" },
+        {
+          type: "message",
+          id: "prompt",
+          parentId: "root",
+          message: {
+            role: "user",
+            content: "Read @notes.md, then write tiny.ts",
+          },
+        },
+        {
+          type: "message",
+          id: "mention",
+          parentId: "prompt",
+          message: {
+            role: "fileMention",
+            files: [
+              {
+                path: "notes.md",
+                content: "[notes.md#468D]\n1:# notes",
+                lineCount: 1,
+              },
+            ],
+          },
+        },
+        {
+          type: "ttsr_injection",
+          id: "injection",
+          parentId: "mention",
+          injectedRules: ["ts-no-tiny-functions"],
+        },
+        {
+          type: "message",
+          id: "rule-reminder",
+          parentId: "injection",
+          message: {
+            role: "developer",
+            content: [
+              {
+                type: "text",
+                text: '<system-reminder reason="rule_violation" rule="ts-no-tiny-functions" path="builtin-defaults:ts-no-tiny-functions">\nAvoid tiny functions.\n</system-reminder>',
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          id: "answer",
+          parentId: "rule-reminder",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "FINAL_ANSWER" }],
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({
+      sessionFile,
+      provider: "omp",
+    }))
+      events.push(event);
+    expect(events.map((event) => event.item)).toEqual([
+      {
+        type: "user_message",
+        text: "Read @notes.md, then write tiny.ts",
+        messageId: "prompt",
+      },
+      {
+        type: "assistant_message",
+        text: "FINAL_ANSWER",
+        messageId: "omp-history-assistant-1",
+      },
+    ]);
+  });
+
   test("coalesces replayed subagent poll calls by target set", async () => {
     const events = await collectHistory([
       {

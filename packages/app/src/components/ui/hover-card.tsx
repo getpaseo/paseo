@@ -82,6 +82,8 @@ function WebHoverCard({
   const contentRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Read when focus arrives: by focusout the element losing focus no longer matches :focus-visible.
+  const keyboardFocusedRef = useRef(false);
 
   const clearGraceTimer = useCallback(() => {
     if (graceTimerRef.current) {
@@ -176,16 +178,20 @@ function WebHoverCard({
       setOpen(false);
     };
     const focusEntered = (event: FocusEvent) => {
-      const target = event.target as Node;
+      const target = event.target as Element;
+      keyboardFocusedRef.current = target.matches(":focus-visible");
       if (trigger.contains(target)) {
         openNow();
       } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
         clearGraceTimer();
       }
     };
+    // Only keyboard focus keeps the card open, so only losing keyboard focus closes it. A button
+    // that disables itself on press drops pointer focus while the pointer is still on the card.
     const focusLeft = (event: FocusEvent) => {
       const next = event.relatedTarget as Node | null;
       if (
+        keyboardFocusedRef.current &&
         !trigger.contains(next) &&
         !(contentRef.current as unknown as HTMLElement | null)?.contains(next)
       ) {

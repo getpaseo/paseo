@@ -360,8 +360,7 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
         content.length === 1 &&
         content[0]?.type === "text" &&
         typeof content[0].text === "string" &&
-        content[0].text.trimStart().startsWith("<system-reminder>") &&
-        content[0].text.trimEnd().endsWith("</system-reminder>")
+        isSystemReminder(content[0].text)
       ) {
         return null;
       }
@@ -369,6 +368,19 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     }
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {
       return message as unknown as OmpAgentMessage;
+    }
+    // OMP roles the live timeline does not render either, such as the fileMention that carries
+    // an @-mentioned file's content.
+    if (
+      [
+        "pythonExecution",
+        "hookMessage",
+        "branchSummary",
+        "compactionSummary",
+        "fileMention",
+      ].includes(message.role)
+    ) {
+      return null;
     }
     return visibleFallback(message.role, message);
   }
@@ -399,6 +411,13 @@ function mapCustomMessageEntry(entry: OmpSessionEntry): OmpAgentMessage | null {
   } as OmpAgentMessage;
 }
 
+// OMP's rule-violation reminder carries attributes: <system-reminder reason="rule_violation" ...>
+function isSystemReminder(text: string): boolean {
+  return (
+    /^<system-reminder[\s>]/.test(text.trimStart()) && text.trimEnd().endsWith("</system-reminder>")
+  );
+}
+
 function isControlEntryType(type: string): boolean {
   return (
     type === "session" ||
@@ -410,6 +429,7 @@ function isControlEntryType(type: string): boolean {
     type === "system_prompt" ||
     type === "model_change" ||
     type === "thinking_level_change" ||
+    type === "ttsr_injection" ||
     type === "tool_execution" ||
     type.startsWith("tool_execution_")
   );

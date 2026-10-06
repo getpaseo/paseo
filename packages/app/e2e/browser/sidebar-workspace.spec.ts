@@ -429,7 +429,7 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
-  test("workspace hover card stays open for a keyboard-focused row", async ({ page }) => {
+  test("workspace hover card follows keyboard focus on a row", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-keyboard-" });
 
     try {
@@ -444,6 +444,11 @@ test.describe("Sidebar workspace list", () => {
       await movePointerAwayFromWorkspaceHoverCard(page);
       await expectWorkspaceHoverCardStaysOpen(page);
       await page.keyboard.press("Escape");
+      await expectWorkspaceHoverCardClosed(page);
+
+      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await page.keyboard.press("Tab");
       await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
