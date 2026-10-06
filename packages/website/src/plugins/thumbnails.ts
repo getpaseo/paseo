@@ -5,7 +5,15 @@ const CARD_WIDTH = 592;
 const WIDTHS = new Set([CARD_WIDTH, CARD_WIDTH * 2]);
 const SOURCE_HOSTS = new Set(["cdn.jsdelivr.net", "raw.githubusercontent.com"]);
 
-export function pluginThumbnailUrl(id: string, source: string, scale: 1 | 2): string {
+export function pluginCardScreenshot(id: string, source: string): { src: string; srcSet?: string } {
+  if (!parseSource(source)) return { src: source };
+  return {
+    src: pluginThumbnailUrl(id, source, 1),
+    srcSet: `${pluginThumbnailUrl(id, source, 1)} 1x, ${pluginThumbnailUrl(id, source, 2)} 2x`,
+  };
+}
+
+function pluginThumbnailUrl(id: string, source: string, scale: 1 | 2): string {
   return `/plugins/thumb/${CARD_WIDTH * scale}/${encodeURIComponent(source)}?plugin=${encodeURIComponent(id)}`;
 }
 
@@ -20,7 +28,13 @@ export async function handlePluginThumbnailRequest(
   if (!match || !WIDTHS.has(Number(match[1])))
     return new Response("Invalid thumbnail width or source", { status: 400 });
 
-  const source = parseSource(match[2]);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(match[2]);
+  } catch {
+    return new Response("Invalid thumbnail source", { status: 400 });
+  }
+  const source = parseSource(decoded);
   if (!source) return new Response("Invalid thumbnail source", { status: 400 });
 
   const plugin = plugins.find((entry) => entry.id === url.searchParams.get("plugin"));
@@ -53,6 +67,9 @@ export async function handlePluginThumbnailRequest(
       "content-type": response.headers.get("content-type")!,
       "cache-control": "public, max-age=31536000, immutable",
       vary: "Accept",
+      // Originals can be SVGs. Keep direct navigation from executing them on our origin.
+      "content-security-policy": "sandbox",
+      "x-content-type-options": "nosniff",
     },
   });
 }
@@ -68,9 +85,8 @@ function unavailableImage(): Response {
   });
 }
 
-function parseSource(encoded: string): string | null {
+function parseSource(source: string): string | null {
   try {
-    const source = decodeURIComponent(encoded);
     const url = new URL(source);
     if (
       url.protocol !== "https:" ||
@@ -88,7 +104,15 @@ function parseSource(encoded: string): string | null {
 
 function negotiatedFormat(accept: string): "avif" | "webp" | undefined {
   // The Worker API requires explicit negotiation; only the URL API accepts format=auto.
-  if (accept.includes("image/avif")) return "avif";
-  if (accept.includes("image/webp")) return "webp";
-  return undefined;
+  const accepted = new Map(
+    accept
+      .toLowerCase()
+      .split(",")
+      .map((range) => {
+        const [type, ...parameters] = range.split(";").map((part) => part.trim());
+        const quality = parameters.find((parameter) => parameter.startsWith("q="));
+        return [type, quality === undefined ? 1 : Number(quality.slice(2))] as const;
+      }),
+  );
+  return (["avif", "webp"] as const).find((format) => (accepted.get(`image/${format}`) ?? 0) > 0);
 }

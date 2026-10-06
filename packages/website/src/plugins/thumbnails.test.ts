@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { handlePluginThumbnailRequest, pluginThumbnailUrl } from "./thumbnails";
+import { handlePluginThumbnailRequest, pluginCardScreenshot } from "./thumbnails";
 import { NewPluginCard, PluginCard } from "./plugin-card";
 import type { Plugin } from "./registry";
 
@@ -29,6 +29,15 @@ const plugin: Plugin = {
 };
 
 describe("plugin card thumbnails", () => {
+  it("keeps a screenshot on an unsupported host visible at its original URL", () => {
+    const screenshot = "https://example.com/preview.png";
+    const html = renderToStaticMarkup(
+      createElement(PluginCard, { plugin: { ...plugin, screenshots: [screenshot] } }),
+    );
+    expect(html).toContain(`src="${screenshot}"`);
+    expect(html).not.toContain("/plugins/thumb/");
+  });
+
   it.each([PluginCard, NewPluginCard])(
     "renders a thumbnail instead of downloading the original screenshot (%s)",
     (Card) => {
@@ -75,8 +84,27 @@ function imageFetch(...responses: (Response | Error)[]) {
 }
 
 describe("thumbnail route", () => {
+  it("sandboxes an SVG fallback when opened as a document on the website origin", async () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.domain)</script></svg>';
+    const upstream = imageFetch(
+      new Response("unsupported", { status: 415 }),
+      imageResponse(svg, { "content-type": "image/svg+xml" }),
+    );
+    const response = await handlePluginThumbnailRequest(
+      thumbnailRequest(),
+      [plugin],
+      upstream.fetchImage,
+    );
+    expect(await response.text()).toBe(svg);
+    expect(response.headers.get("content-security-policy")).toBe("sandbox");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
   it.each([
     [592, source, "image/avif,image/webp", "avif"],
+    [592, source, "image/avif;q=0,image/webp", "webp"],
+    [592, source, "image/avif;q=0,image/webp;q=0", undefined],
     [
       1184,
       "https://raw.githubusercontent.com/acme/example/abc123/preview.png",
@@ -192,7 +220,9 @@ describe("thumbnail route", () => {
   it("round-trips screenshot URL punctuation through the card URL", async () => {
     const screenshot = source + "?name=a&other=b#preview";
     const upstream = imageFetch(imageResponse("thumbnail"));
-    const request = new Request("https://paseo.sh" + pluginThumbnailUrl(plugin.id, screenshot, 2));
+    const request = new Request(
+      "https://paseo.sh" + pluginCardScreenshot(plugin.id, screenshot).src,
+    );
     const response = await handlePluginThumbnailRequest(
       request,
       [{ ...plugin, screenshots: [screenshot] }],

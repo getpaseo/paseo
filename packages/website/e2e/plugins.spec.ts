@@ -351,6 +351,14 @@ async function expectThumbnailCard(card: Locator, source: string, id: string) {
   await expect(image).toHaveAttribute("srcset", `${path(592)} 1x, ${path(1184)} 2x`);
   await expect(image).toHaveAttribute("loading", "lazy");
   await expect(image).toHaveAttribute("decoding", "async");
+  await image.scrollIntoViewIfNeeded();
+  await expect
+    .poll(
+      () =>
+        image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   const box = await image.evaluate((element) => {
     const rect = element.parentElement!.getBoundingClientRect();
     return { width: rect.width, height: rect.height };
