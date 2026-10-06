@@ -1006,6 +1006,9 @@ export const es: TranslationResources = {
         actions: {
           viewPullRequest: "Ver",
           openOn: "Abrir en {{brand}}",
+          addToChat: "Añadir al chat",
+          addAllToChat: "Añadir todo al chat",
+          addingToChat: "Añadiendo...",
         },
         checksOverview: {
           headline: {
@@ -1057,17 +1060,21 @@ export const es: TranslationResources = {
           checks: "cheques",
           pipeline: "Pipeline",
           reviews: "Reseñas",
+          activity: "Actividad",
         },
         empty: {
           noJobs: "Sin trabajos",
           loadingPipeline: "Cargando pipeline...",
           pipelineJobsLoadFailed: "No se pudieron cargar los trabajos del pipeline",
           allowedToFail: "permitido fallar",
+          noActivity: "Aún no hay actividad",
         },
         approvals: "{{given}} de {{required}} aprobaciones",
         accessibility: {
           pullRequest: "Solicitud de extracción n.°{{number}}",
           pullRequest_mr: "Solicitud de fusión !{{number}}",
+          commentActions: "Acciones del comentario",
+          threadActions: "Acciones del hilo",
           checkStatus: {
             passed: "Superado",
             failed: "Fallido",
@@ -1165,6 +1172,7 @@ export const es: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       needsInput: "Necesita datos",
       failed: "Con error",

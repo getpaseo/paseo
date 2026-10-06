@@ -981,6 +981,9 @@ export const en = {
         actions: {
           viewPullRequest: "View",
           openOn: "Open on {{brand}}",
+          addToChat: "Add to chat",
+          addAllToChat: "Add all to chat",
+          addingToChat: "Adding...",
         },
         checksOverview: {
           headline: {
@@ -1032,17 +1035,21 @@ export const en = {
           checks: "Checks",
           pipeline: "Pipeline",
           reviews: "Reviews",
+          activity: "Activity",
         },
         empty: {
           noJobs: "No jobs",
           loadingPipeline: "Loading pipeline…",
           pipelineJobsLoadFailed: "Could not load pipeline jobs",
           allowedToFail: "allowed to fail",
+          noActivity: "No activity yet",
         },
         approvals: "{{given}} of {{required}} approvals",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          commentActions: "Comment actions",
+          threadActions: "Thread actions",
           checkStatus: {
             passed: "Passed",
             failed: "Failed",
@@ -1137,6 +1144,7 @@ export const en = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} group",
     statusBucket: {
       needsInput: "Needs input",
       failed: "Failed",

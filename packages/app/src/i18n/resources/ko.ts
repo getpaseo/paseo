@@ -980,6 +980,9 @@ export const ko: TranslationResources = {
         actions: {
           viewPullRequest: "보기",
           openOn: "{{brand}}에서 열기",
+          addToChat: "채팅에 추가",
+          addAllToChat: "모두 채팅에 추가",
+          addingToChat: "추가 중...",
         },
         checksOverview: {
           headline: {
@@ -1031,17 +1034,21 @@ export const ko: TranslationResources = {
           checks: "검사",
           pipeline: "파이프라인",
           reviews: "리뷰",
+          activity: "활동",
         },
         empty: {
           noJobs: "작업 없음",
           loadingPipeline: "파이프라인 로드 중…",
           pipelineJobsLoadFailed: "파이프라인 작업을 로드할 수 없습니다.",
           allowedToFail: "실패가 허용됨",
+          noActivity: "아직 활동이 없습니다",
         },
         approvals: "{{required}} 중 {{given}} 승인",
         accessibility: {
           pullRequest: "풀 리퀘스트 #{{number}}",
           pullRequest_mr: "병합 요청 !{{number}}",
+          commentActions: "댓글 작업",
+          threadActions: "스레드 작업",
           checkStatus: {
             passed: "통과",
             failed: "실패",
@@ -1136,6 +1143,7 @@ export const ko: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} 그룹",
     statusBucket: {
       needsInput: "입력 필요",
       failed: "실패",

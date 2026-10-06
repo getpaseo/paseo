@@ -74,6 +74,34 @@ const untranslatedLocalFallbacks = [
   "Unable to save desktop settings.",
 ] as const;
 
+const pullRequestPanelSources = [
+  "git/pull-request-panel/pane.tsx",
+  "git/pull-request-panel/checks-section.tsx",
+  "components/sidebar/sidebar-status-list.tsx",
+] as const;
+const untranslatedPullRequestPanelLabels = [
+  "Activity",
+  "No activity yet",
+  "Add all to chat",
+  "Add to chat",
+  "Adding...",
+  "Comment actions",
+  "Thread actions",
+] as const;
+
+function findUntranslatedPullRequestPanelLabels(): string[] {
+  return pullRequestPanelSources.flatMap((source) => {
+    const contents = readFileSync(join(appSourceRoot, source), "utf8");
+    const matches: string[] = untranslatedPullRequestPanelLabels.filter(
+      (text) => contents.includes(`"${text}"`) || new RegExp(`>\\s*${text}\\s*<`).test(contents),
+    );
+    if (contents.includes("} group`")) {
+      matches.push("group");
+    }
+    return matches.length === 0 ? [] : [`${source}: ${matches.join(", ")}`];
+  });
+}
+
 function collectSourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -202,6 +230,10 @@ describe("translation resources", () => {
 
   it("labels the immediate add-to-chat action without an ellipsis", () => {
     expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
+  });
+
+  it("keeps pull request panel and sidebar status group labels translated", () => {
+    expect(findUntranslatedPullRequestPanelLabels()).toEqual([]);
   });
 
   it("keeps local connection fallback errors translated", () => {

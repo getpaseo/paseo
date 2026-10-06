@@ -973,6 +973,9 @@ export const ar: TranslationResources = {
         actions: {
           viewPullRequest: "عرض",
           openOn: "فتح على {{brand}}",
+          addToChat: "إضافة إلى الدردشة",
+          addAllToChat: "إضافة الكل إلى الدردشة",
+          addingToChat: "جارٍ الإضافة...",
         },
         checksOverview: {
           headline: {
@@ -1024,17 +1027,21 @@ export const ar: TranslationResources = {
           checks: "الشيكات",
           pipeline: "خط المعالجة",
           reviews: "التعليقات",
+          activity: "النشاط",
         },
         empty: {
           noJobs: "لا توجد مهام",
           loadingPipeline: "جارٍ تحميل خط المعالجة...",
           pipelineJobsLoadFailed: "تعذر تحميل مهام خط المعالجة",
           allowedToFail: "مسموح بالفشل",
+          noActivity: "لا يوجد نشاط بعد",
         },
         approvals: "{{given}} من {{required}} موافقات",
         accessibility: {
           pullRequest: "سحب الطلب #{{number}}",
           pullRequest_mr: "طلب دمج !{{number}}",
+          commentActions: "إجراءات التعليق",
+          threadActions: "إجراءات سلسلة النقاش",
           checkStatus: {
             passed: "ناجح",
             failed: "فاشل",
@@ -1129,6 +1136,7 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "مجموعة {{label}}",
     statusBucket: {
       needsInput: "تحتاج إدخالاً",
       failed: "فشل",

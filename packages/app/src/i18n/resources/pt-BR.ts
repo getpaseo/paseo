@@ -996,6 +996,9 @@ export const ptBR: TranslationResources = {
         actions: {
           viewPullRequest: "Ver",
           openOn: "Abrir no {{brand}}",
+          addToChat: "Adicionar ao chat",
+          addAllToChat: "Adicionar tudo ao chat",
+          addingToChat: "Adicionando...",
         },
         checksOverview: {
           headline: {
@@ -1047,17 +1050,21 @@ export const ptBR: TranslationResources = {
           checks: "Verificações",
           pipeline: "Pipeline",
           reviews: "Revisões",
+          activity: "Atividade",
         },
         empty: {
           noJobs: "Sem jobs",
           loadingPipeline: "Carregando pipeline...",
           pipelineJobsLoadFailed: "Não foi possível carregar os jobs do pipeline",
           allowedToFail: "permitido falhar",
+          noActivity: "Nenhuma atividade ainda",
         },
         approvals: "{{given}} de {{required}} aprovações",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          commentActions: "Ações do comentário",
+          threadActions: "Ações da conversa",
           checkStatus: {
             passed: "Aprovado",
             failed: "Falhou",
@@ -1155,6 +1162,7 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       needsInput: "Precisa de resposta",
       failed: "Com falha",

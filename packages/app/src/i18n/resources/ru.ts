@@ -990,6 +990,9 @@ export const ru: TranslationResources = {
         actions: {
           viewPullRequest: "Просмотреть",
           openOn: "Открыть на {{brand}}",
+          addToChat: "Добавить в чат",
+          addAllToChat: "Добавить всё в чат",
+          addingToChat: "Добавление...",
         },
         checksOverview: {
           headline: {
@@ -1041,17 +1044,21 @@ export const ru: TranslationResources = {
           checks: "Проверки",
           pipeline: "Пайплайн",
           reviews: "Ревью",
+          activity: "Активность",
         },
         empty: {
           noJobs: "Нет заданий",
           loadingPipeline: "Загрузка пайплайна...",
           pipelineJobsLoadFailed: "Не удалось загрузить задания пайплайна",
           allowedToFail: "допускается сбой",
+          noActivity: "Активности пока нет",
         },
         approvals: "Одобрено: {{given}} из {{required}}",
         accessibility: {
           pullRequest: "PR #{{number}}",
           pullRequest_mr: "MR !{{number}}",
+          commentActions: "Действия с комментарием",
+          threadActions: "Действия с обсуждением",
           checkStatus: {
             passed: "Успешно",
             failed: "Ошибка",
@@ -1146,6 +1153,7 @@ export const ru: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "Группа «{{label}}»",
     statusBucket: {
       needsInput: "Ожидает ввода",
       failed: "Ошибка",

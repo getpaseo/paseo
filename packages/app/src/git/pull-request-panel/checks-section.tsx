@@ -189,6 +189,7 @@ function CheckRow({
   isAddingLogsToChat: boolean;
   onAddLogsToChat: (check: PrPaneCheck) => void;
 }) {
+  const { t } = useTranslation();
   const handlePress = useCallback(() => {
     void openExternalUrl(check.url);
   }, [check.url]);
@@ -220,7 +221,9 @@ function CheckRow({
             onPress={handleAddLogsToChat}
             style={styles.addButton}
           >
-            {isAddingLogsToChat ? "Adding..." : "Add to chat"}
+            {isAddingLogsToChat
+              ? t("workspace.git.pr.actions.addingToChat")
+              : t("workspace.git.pr.actions.addToChat")}
           </Button>
         ) : null}
         {check.timing && <Text style={sectionKitStyles.checkDuration}>{check.timing}</Text>}

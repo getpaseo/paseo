@@ -965,6 +965,9 @@ export const zhCN: TranslationResources = {
         actions: {
           viewPullRequest: "查看",
           openOn: "在 {{brand}} 上打开",
+          addToChat: "添加到聊天",
+          addAllToChat: "全部添加到聊天",
+          addingToChat: "正在添加...",
         },
         checksOverview: {
           headline: {
@@ -1016,17 +1019,21 @@ export const zhCN: TranslationResources = {
           checks: "Checks",
           pipeline: "流水线",
           reviews: "Reviews",
+          activity: "动态",
         },
         empty: {
           noJobs: "无作业",
           loadingPipeline: "正在加载流水线...",
           pipelineJobsLoadFailed: "无法加载流水线作业",
           allowedToFail: "允许失败",
+          noActivity: "暂无动态",
         },
         approvals: "{{given}} / {{required}} 批准",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "合并请求 !{{number}}",
+          commentActions: "评论操作",
+          threadActions: "讨论串操作",
           checkStatus: {
             passed: "成功",
             failed: "失败",
@@ -1121,6 +1128,7 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} 分组",
     statusBucket: {
       needsInput: "需要输入",
       failed: "失败",
