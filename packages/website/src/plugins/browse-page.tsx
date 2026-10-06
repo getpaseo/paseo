@@ -3,6 +3,7 @@ import { SiteShell } from "~/components/site-shell";
 import { ContributeLinks } from "./contribute-links";
 import type { InstallCounts } from "./installs";
 import { type BrowseQuery, browseHref } from "./links";
+import { InstallCount } from "./install-count";
 import { PLUGIN_GRID_CLASS, PluginCard } from "./plugin-card";
 import { PluginSearch } from "./plugin-search";
 import { PluginSection } from "./section";
@@ -93,13 +94,13 @@ export function BrowsePage({
               <div className={PLUGIN_GRID_CLASS}>
                 {results.map((plugin) =>
                   query.sort === "new" ? (
-                    <PluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
+                    <PluginCard key={plugin.id} plugin={plugin}>
+                      {addedAgo(plugin, now)}
+                    </PluginCard>
                   ) : (
-                    <PluginCard
-                      key={plugin.id}
-                      plugin={plugin}
-                      installs={installs[plugin.id]?.[query.window] ?? 0}
-                    />
+                    <PluginCard key={plugin.id} plugin={plugin}>
+                      <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />
+                    </PluginCard>
                   ),
                 )}
               </div>

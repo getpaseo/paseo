@@ -26,8 +26,10 @@ import {
   type InstallWindow,
   mostInstalled,
   newestFirst,
+  pluginOwner,
 } from "~/plugins";
 import { ContributeSection } from "~/plugins/contribute-links";
+import { PluginsHero } from "~/plugins/hero";
 import {
   type BrowseQuery,
   browseHref,
@@ -37,10 +39,9 @@ import {
   parseSearchTerm,
   parseSort,
   parseWindow,
-  SUBMIT_URL,
 } from "~/plugins/links";
+import { InstallCount } from "~/plugins/install-count";
 import { NewPluginCard, PluginRankRow } from "~/plugins/plugin-card";
-import { PluginSearch } from "~/plugins/plugin-search";
 import { PluginSection, PluginSectionHeader, PluginSectionTitle } from "~/plugins/section";
 import { WindowSwitch } from "~/plugins/window-switch";
 import "~/styles.css";
@@ -60,7 +61,6 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   utils: Wrench,
 };
 
-const SUBMIT_CLASS = "text-sm text-muted-foreground transition-colors hover:text-foreground";
 // What's new and Featured cards: a swipeable row on phones, a grid from `sm` up.
 const CARD_ROW_CLASS =
   "-mx-6 flex gap-4 overflow-x-auto px-6 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 lg:grid-cols-4";
@@ -110,31 +110,23 @@ function PluginsPage() {
     [],
   );
   const searchScope = useMemo<BrowseQuery>(() => ({ sort: "installs", window }), [window]);
+  const authorCount = new Set(plugins.map(pluginOwner)).size;
 
   return (
     <SiteShell width="default">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-3xl font-medium tracking-tight">
-          Plugins
-          <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
-            {plugins.length}
-          </span>
-        </h1>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-          <a href={SUBMIT_URL} className={SUBMIT_CLASS}>
-            Submit a plugin
-          </a>
-          <PluginSearch scope={searchScope} className="w-full sm:w-56" />
-        </div>
-      </div>
+      <PluginsHero
+        pluginCount={plugins.length}
+        authorCount={authorCount}
+        searchScope={searchScope}
+      />
 
-      <div className="mt-10 flex flex-col gap-14">
+      <div className="mt-16 flex flex-col gap-14">
         {featured.length > 0 && (
           <PluginSection labelledBy="featured">
             <PluginSectionHeader>
               <div>
                 <PluginSectionTitle id="featured">Featured</PluginSectionTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   A selection of hand picked plugins
                 </p>
               </div>
@@ -142,13 +134,15 @@ function PluginsPage() {
                 href={browseHref({ sort: "installs", window: DEFAULT_WINDOW })}
                 className={SEE_ALL_CLASS}
               >
-                See all plugins
+                See all
                 <ChevronRight className="h-3.5 w-3.5" />
               </a>
             </PluginSectionHeader>
             <div className={CARD_ROW_CLASS}>
               {featured.map((plugin) => (
-                <NewPluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
+                <NewPluginCard key={plugin.id} plugin={plugin}>
+                  <InstallCount count={installs[plugin.id]?.all ?? 0} />
+                </NewPluginCard>
               ))}
             </div>
           </PluginSection>
@@ -164,7 +158,9 @@ function PluginsPage() {
           </PluginSectionHeader>
           <div className={CARD_ROW_CLASS}>
             {newest.map((plugin) => (
-              <NewPluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
+              <NewPluginCard key={plugin.id} plugin={plugin}>
+                {addedAgo(plugin, now)}
+              </NewPluginCard>
             ))}
           </div>
         </PluginSection>

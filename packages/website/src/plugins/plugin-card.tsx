@@ -1,8 +1,10 @@
-import { Download } from "lucide-react";
+import type { ReactNode } from "react";
+import { AuthorAvatar } from "./author-link";
+import { InstallCount } from "./install-count";
 import { pluginCardScreenshot } from "./thumbnails";
 import { pluginHref } from "./links";
 import { PluginTile } from "./plugin-tile";
-import { firstMediaImage, formatInstalls, getCategory, type Plugin } from "./registry";
+import { firstMediaImage, getAuthor, getCategory, type Plugin } from "./registry";
 
 export const PLUGIN_GRID_CLASS =
   "grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
@@ -32,57 +34,49 @@ function PluginShot({ plugin }: { plugin: Plugin }) {
   );
 }
 
-/** What's new card: screenshot, name, and when it was added. */
-export function NewPluginCard({ plugin, added }: { plugin: Plugin; added: string }) {
+/**
+ * What's new and Featured card, in three rows under the screenshot: tile and name, description,
+ * then author and `children`, such as when the plugin was added or its install count.
+ */
+export function NewPluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
+  const author = getAuthor(plugin);
   return (
     <a href={pluginHref(plugin.id)} className="group block w-[70%] flex-shrink-0 sm:w-auto">
       <PluginShot plugin={plugin} />
-      <div className="mt-3 flex items-center gap-2.5">
-        <PluginTile plugin={plugin} size="sm" />
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-white">{plugin.name}</p>
-          <p className="truncate text-xs text-extra-muted-foreground">Added {added}</p>
-        </div>
+      <div className="mt-3 flex items-center gap-2">
+        <PluginTile plugin={plugin} size="xs" />
+        <p className="min-w-0 truncate text-sm font-medium text-white">{plugin.name}</p>
       </div>
+      <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+        {plugin.description}
+      </p>
+      <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-extra-muted-foreground">
+        <AuthorAvatar author={author} size="xs" />
+        <span className="truncate">{author.name}</span>
+        {children !== undefined && (
+          <>
+            <span aria-hidden>·</span>
+            <span className="flex-shrink-0">{children}</span>
+          </>
+        )}
+      </p>
     </a>
   );
 }
 
-/** Grid card: screenshot, name, one muted stat, and a two-line description. */
-export function PluginCard({
-  plugin,
-  installs,
-  added,
-}: {
-  plugin: Plugin;
-  /** Shown with a download icon; otherwise `added` is shown. */
-  installs?: number;
-  added?: string;
-}) {
+/** Grid card: screenshot; tile, name, and `children` such as an install count; description. */
+export function PluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
   return (
     <a href={pluginHref(plugin.id)} className="group block">
       <PluginShot plugin={plugin} />
-      <div className="mt-3 flex items-start gap-2.5">
-        <PluginTile plugin={plugin} size="sm" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="truncate text-sm font-medium text-white">{plugin.name}</p>
-            <span className="inline-flex flex-shrink-0 items-center gap-1 text-xs tabular-nums text-extra-muted-foreground">
-              {installs === undefined ? (
-                added
-              ) : (
-                <>
-                  <Download className="h-3 w-3" />
-                  {formatInstalls(installs)}
-                </>
-              )}
-            </span>
-          </div>
-          <p className="mt-0.5 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
-            {plugin.description}
-          </p>
-        </div>
+      <div className="mt-3 flex items-center gap-2">
+        <PluginTile plugin={plugin} size="xs" />
+        <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">{plugin.name}</p>
+        <span className="flex-shrink-0 text-xs text-extra-muted-foreground">{children}</span>
       </div>
+      <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+        {plugin.description}
+      </p>
     </a>
   );
 }
@@ -110,7 +104,9 @@ export function PluginRankRow({
           {getCategory(plugin.categories[0])?.label}
         </p>
       </div>
-      <span className="text-xs tabular-nums text-muted-foreground">{formatInstalls(installs)}</span>
+      <span className="text-xs text-muted-foreground">
+        <InstallCount count={installs} />
+      </span>
     </a>
   );
 }

@@ -16,6 +16,7 @@ import {
 } from "~/plugins";
 import { AuthorAvatar } from "~/plugins/author-link";
 import { PluginsNotFound } from "~/plugins/not-found";
+import { InstallCount } from "~/plugins/install-count";
 import { PluginCard } from "~/plugins/plugin-card";
 import "~/styles.css";
 
@@ -82,7 +83,9 @@ function AuthorPage() {
 
       <div className="mt-12 grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
         {plugins.map((plugin) => (
-          <PluginCard key={plugin.id} plugin={plugin} installs={installs[plugin.id]?.all ?? 0} />
+          <PluginCard key={plugin.id} plugin={plugin}>
+            <InstallCount count={installs[plugin.id]?.all ?? 0} />
+          </PluginCard>
         ))}
       </div>
     </SiteShell>

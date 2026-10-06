@@ -2,6 +2,7 @@ import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import type { Plugin } from "./registry";
 
 const SIZE_CLASS = {
+  xs: "h-6 w-6 rounded-md text-xs",
   sm: "h-9 w-9 rounded-lg text-sm",
   lg: "h-14 w-14 rounded-xl text-xl",
 } as const;
