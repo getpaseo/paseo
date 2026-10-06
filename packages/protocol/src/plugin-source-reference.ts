@@ -7,14 +7,14 @@ export interface PluginSourceReference {
 }
 
 export function parsePluginSourceReference(reference: string): PluginSourceReference {
-  if (/^(\.\.?\/|\/|~)/.test(reference)) {
-    return { kind: "directory", ...splitPluginPath(reference, { scp: false }) };
-  }
-  if (parsePluginRegistryReference(reference))
-    return { kind: "managed", source: reference, pluginPath: undefined };
   const prefix = /^(npm:|github:|git:(?!\/\/))/.exec(reference)?.[0];
   const source = prefix ? reference.slice(prefix.length) : reference;
   const parsed = splitPluginPath(source, { scp: prefix !== "npm:" });
+  if (!prefix && /^(\.\.?(?:[/\\]|$)|\/|~|[A-Za-z]:[/\\]|\\\\)/.test(parsed.source)) {
+    return { kind: "directory", ...parsed };
+  }
+  if (parsePluginRegistryReference(reference))
+    return { kind: "managed", source: reference, pluginPath: undefined };
   return { kind: "managed", ...parsed, source: `${prefix ?? ""}${parsed.source}` };
 }
 

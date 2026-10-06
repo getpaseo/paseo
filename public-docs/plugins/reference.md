@@ -2284,7 +2284,7 @@ The package registry validates the selected version, tag, or range.
 
 Paseo resolves an identifier in this order:
 
-1. A bare `owner/slug` is a registry id; local directories start with `./`, `../`, `/`, or `~`.
+1. A bare `owner/slug` is a registry id; local directory sources are `.` or `..`, or start with `./`, `../`, `.\`, `..\`, `/`, `~`, a Windows drive (`C:\` or `C:/`), or a UNC (`\\server\share`) prefix.
 2. Otherwise, recognize `npm:`, `github:`, or `git:` before interpreting a subdirectory suffix.
    `git://` is a Git URL scheme. An explicit prefix selects acquisition of that kind.
 3. Recognize a final `:relative/plugin/path` only when its suffix contains no empty, `.` or `..`

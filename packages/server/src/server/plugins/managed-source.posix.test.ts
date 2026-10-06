@@ -309,7 +309,7 @@ describe("registry plugin sources", () => {
     }
   });
 
-  it("explains explicit GitHub spelling when a registry ID is missing", async () => {
+  it("explains explicit local and GitHub sources when a registry ID is missing", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-missing-home-"));
     roots.push(home);
     const requests: Array<string | undefined> = [];
@@ -325,7 +325,7 @@ describe("registry plugin sources", () => {
         defaultUrl: `http://127.0.0.1:${address.port}`,
       });
       await expect(sources.prepareInstall({ source: "fixture/missing" })).rejects.toThrow(
-        "If you intended a GitHub source, use git:fixture/missing",
+        "If you intended a local directory, use ./fixture/missing. If you intended a GitHub source, use git:fixture/missing, or a full Git URL for another Git host.",
       );
       expect(requests).toEqual(["/plugins/fixture/missing.json"]);
     } finally {

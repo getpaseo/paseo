@@ -43,7 +43,7 @@ export async function resolveRegistryPlugin(
   }
   if (response.status === 404) {
     const guidance = install
-      ? `If you intended a GitHub source, use git:${identity.id}, or a full Git URL for another Git host.`
+      ? `If you intended a local directory, use ./${identity.id}. If you intended a GitHub source, use git:${identity.id}, or a full Git URL for another Git host.`
       : "Check that the installed plugin is still published in this registry before updating.";
     throw new Error(`Plugin ${identity.id} was not found in registry ${base.host}. ${guidance}`);
   }
