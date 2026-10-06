@@ -1,4 +1,5 @@
 import { Download } from "lucide-react";
+import { pluginThumbnailUrl } from "./thumbnails";
 import { pluginHref } from "./links";
 import { PluginTile } from "./plugin-tile";
 import { formatInstalls, getCategory, type Plugin } from "./registry";
@@ -16,9 +17,11 @@ function PluginShot({ plugin }: { plugin: Plugin }) {
     >
       {url ? (
         <img
-          src={url}
+          src={pluginThumbnailUrl(plugin.id, url, 1)}
+          srcSet={`${pluginThumbnailUrl(plugin.id, url, 1)} 1x, ${pluginThumbnailUrl(plugin.id, url, 2)} 2x`}
           alt=""
           loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover object-left-top"
         />
       ) : (

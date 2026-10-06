@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "playwright/test";
+import { expect, test, type Page, type Locator } from "playwright/test";
+import registry from "./registry.fixture.json" with { type: "json" };
 import { CATEGORIES } from "../src/plugins/categories";
 
 async function openPlugins(page: Page) {
@@ -306,6 +307,26 @@ test("keeps the directory unlinked until the coordinated announcement", async ({
 test.describe("registry fixture layout", () => {
   test.skip(Boolean(process.env.WEBSITE_TEST_URL), "Requires the local registry fixture");
 
+  test("uses density-aware card thumbnails and keeps detail screenshots original", async ({
+    page,
+  }) => {
+    const plugin = registry.plugins.find((entry) => entry.id === "alhassanaraouf/base2tone")!;
+    const source = plugin.screenshots[0];
+    await openPlugins(page);
+    await expectThumbnailCard(
+      page.getByRole("region", { name: "What’s new" }).getByRole("link", { name: /Base2Tone/ }),
+      source,
+      plugin.id,
+    );
+    await page.goto("/plugins/all");
+    const card = page.getByRole("main").getByRole("link", { name: /Base2Tone/ });
+    await expectThumbnailCard(card, source, plugin.id);
+    await card.click();
+    await expect(
+      page.getByRole("img", { name: "Base2Tone screenshot 1", exact: true }),
+    ).toHaveAttribute("src", source);
+  });
+
   test("lists the nine categories in order with counts, and the newest plugins first", async ({
     page,
   }) => {
@@ -320,3 +341,20 @@ test.describe("registry fixture layout", () => {
     ).toHaveText([/Base2Tone/, /Sayr/, /PromptKit/, /Defer/]);
   });
 });
+
+async function expectThumbnailCard(card: Locator, source: string, id: string) {
+  // Card screenshots are decorative and hidden from the accessibility tree.
+  const image = card.locator("img").first();
+  const path = (width: number) =>
+    `/plugins/thumb/${width}/${encodeURIComponent(source)}?plugin=${encodeURIComponent(id)}`;
+  await expect(image).toHaveAttribute("src", path(592));
+  await expect(image).toHaveAttribute("srcset", `${path(592)} 1x, ${path(1184)} 2x`);
+  await expect(image).toHaveAttribute("loading", "lazy");
+  await expect(image).toHaveAttribute("decoding", "async");
+  const box = await image.evaluate((element) => {
+    const rect = element.parentElement!.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  });
+  expect(box.width).toBeGreaterThan(0);
+  expect(box.width / box.height).toBeCloseTo(1.6, 2);
+}

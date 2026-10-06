@@ -4,6 +4,7 @@ import {
   PublishedPluginDetailSchema,
 } from "@getpaseo/protocol/plugin-registry";
 import { getBlockingColdCache, type WebsiteCacheContext } from "../github-cache";
+import { handlePluginThumbnailRequest } from "./thumbnails";
 import { CATEGORIES } from "./categories";
 import { type InstallCounts, readInstallCounts, recordClientInstall } from "./installs";
 export interface RegistryEnvironment {
@@ -63,6 +64,10 @@ export async function handlePluginRegistryRequest(
   const url = new URL(request.url);
   if (request.method !== "GET") return null;
   const base = env.PLUGINS_REGISTRY_URL ?? "https://getpaseo.github.io/plugins";
+  if (url.pathname.startsWith("/plugins/thumb/")) {
+    const index = await loadRegistryIndex(base, context);
+    return handlePluginThumbnailRequest(request, index.plugins);
+  }
   if (url.hostname === "plugins.paseo.sh" && url.pathname === "/index.json")
     return Response.json(await loadRegistryIndex(base, context));
   if (url.pathname === "/sitemap-plugins.xml") {
