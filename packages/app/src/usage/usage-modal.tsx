@@ -30,8 +30,15 @@ export function UsageModal(props: UsageModalProps) {
       </UsageModalFrame>
     );
   }
+  // Keyed by host so a refresh in flight on one host never shows on another's cards.
   return (
-    <HostUsageModal {...props} serverId={serverId} hosts={connectedHosts} onSelectHost={select} />
+    <HostUsageModal
+      key={serverId}
+      {...props}
+      serverId={serverId}
+      hosts={connectedHosts}
+      onSelectHost={select}
+    />
   );
 }
 

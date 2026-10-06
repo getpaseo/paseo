@@ -141,7 +141,11 @@ test.describe("Usage item", () => {
     }
   });
 
-  for (const [size, viewport] of Object.entries({ desktop: WIDE, compact: COMPACT })) {
+  const layouts = {
+    desktop: { viewport: WIDE, showSidebar: async (_page: Page) => {} },
+    compact: { viewport: COMPACT, showSidebar: openCompactSidebar },
+  };
+  for (const [size, { viewport, showSidebar }] of Object.entries(layouts)) {
     test(`long usage reports scroll to the final window on ${size}`, async ({ page }) => {
       test.setTimeout(120_000);
       const source = await installTallUsageSource();
@@ -149,7 +153,7 @@ test.describe("Usage item", () => {
         await page.setViewportSize(viewport);
         await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
         await gotoAppShell(page);
-        if (viewport === COMPACT) await openCompactSidebar(page);
+        await showSidebar(page);
         await expect(usageItem(page)).toBeInViewport();
         await openUsageFromItem(page);
         const content = usageModal(page);
