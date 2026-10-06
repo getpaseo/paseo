@@ -150,10 +150,9 @@ function rejectOnSpawnError(child: ChildProcess, stderrChunks: string[]): Promis
   });
 }
 
-async function pathExists(target: string): Promise<boolean> {
+async function isDirectory(target: string): Promise<boolean> {
   try {
-    await fs.stat(target);
-    return true;
+    return (await fs.stat(target)).isDirectory();
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -2794,7 +2793,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // may have been removed with its worktree. session/load still names the original
   // directory; only the process starts from the home directory.
   private async resolveProcessCwd(): Promise<string> {
-    if (this.resumePurpose !== "history" || (await pathExists(this.config.cwd))) {
+    if (this.resumePurpose !== "history" || (await isDirectory(this.config.cwd))) {
       return this.config.cwd;
     }
     return homedir();

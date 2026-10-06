@@ -32,6 +32,28 @@ describe("GenericACPAgentClient archived history", () => {
     });
   });
 
+  test("replays an archived session whose working directory path is now a file", async () => {
+    await withFakeACPAgent(async ({ command, removedCwd }) => {
+      await writeFile(removedCwd, "not a directory", "utf8");
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+
+      const session = await client.resumeSession(
+        { provider: "acp", sessionId: "archived-session", metadata: { cwd: removedCwd } },
+        undefined,
+        undefined,
+        { purpose: "history" },
+      );
+      try {
+        expect(await collectTimelineText(session.streamHistory())).toEqual([
+          "user_message:What is in the README?",
+          "assistant_message:It describes the project.",
+        ]);
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
   test("still requires the working directory to resume a session that will run", async () => {
     await withFakeACPAgent(async ({ command, removedCwd }) => {
       const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
