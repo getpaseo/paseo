@@ -1,11 +1,12 @@
 import type { UsageInput } from "../shared/input.js";
-import { existsSync, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
   toneFromUsedPct,
-  unavailableUsage,
+  unavailable,
+  type UsageAccount,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -89,18 +90,18 @@ function durationFrom(value: unknown): number | null {
   return Number.isFinite(duration) && duration > 0 ? duration : null;
 }
 
-function durationLabel(duration: number, timeUnit: string | undefined): string | null {
-  if (!timeUnit) return null;
+function durationLabel(duration: number | null, timeUnit: string | undefined): string | null {
+  if (duration === null || !timeUnit) return null;
 
   const normalizedUnit = timeUnit.replace(/^TIME_UNIT_/i, "").toUpperCase();
-  if (normalizedUnit.includes("MINUTE")) {
+  if (normalizedUnit === "MINUTE") {
     if (duration % 60 === 0) return `${duration / 60}-hour limit`;
     return `${duration}-minute limit`;
   }
-  if (normalizedUnit.includes("HOUR")) return `${duration}-hour limit`;
-  if (normalizedUnit.includes("DAY")) return `${duration}-day limit`;
-  if (normalizedUnit.includes("WEEK")) return `${duration}-week limit`;
-  if (normalizedUnit.includes("SECOND")) return `${duration}-second limit`;
+  if (normalizedUnit === "HOUR") return `${duration}-hour limit`;
+  if (normalizedUnit === "DAY") return `${duration}-day limit`;
+  if (normalizedUnit === "WEEK") return `${duration}-week limit`;
+  if (normalizedUnit === "SECOND") return `${duration}-second limit`;
   return null;
 }
 
@@ -200,7 +201,11 @@ function kimiUsageWindowsFromPayload(payload: unknown): UsageWindow[] {
     windows.push(
       windowFromFields({
         id: uniqueWindowId("coding_usage", seenWindowIds),
-        label: explicitUsageLabel(usage) ?? "Weekly limit",
+        // Top-level usage reports no period unless it supplies duration metadata.
+        label:
+          explicitUsageLabel(usage) ??
+          durationLabel(durationFrom(usage.duration), usage.timeUnit) ??
+          "Usage limit",
         fields: usage,
       }),
     );
@@ -251,9 +256,6 @@ export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  void input;
-  const homeDir = homedir();
-
   async function callUsageApi(token: string): Promise<Response> {
     return fetchApi(KIMI_USAGE_URL, {
       signal: AbortSignal.timeout(15_000),
@@ -264,55 +266,21 @@ export async function fetchUsage(
     });
   }
 
-  async function readCredentials(): Promise<KimiCredentials | null> {
-    const environmentToken = process.env["KIMI_TOKEN"] || process.env["KIMI_API_KEY"];
-    if (environmentToken) {
-      return { access_token: environmentToken };
-    }
-
-    for (const path of credentialPaths()) {
-      const credentials = await readCredentialFile(path);
-      if (credentials?.access_token) {
-        return { ...credentials, access_token: credentials.access_token };
-      }
-    }
-    return null;
-  }
-
-  function credentialPaths(): string[] {
-    const home = homeDir;
-    return [
-      join(
-        process.env["KIMI_CODE_HOME"] || join(home, ".kimi-code"),
-        "credentials",
-        "kimi-code.json",
-      ),
-      join(home, ".kimi", "credentials", "kimi-code.json"),
-    ];
-  }
-
-  async function readCredentialFile(path: string): Promise<KimiAuth | null> {
-    if (!existsSync(path)) return null;
-    try {
-      return KimiAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-    } catch {
-      return null;
-    }
-  }
-
-  const credentials = await readCredentials();
-  if (!credentials) return unavailableUsage();
+  const credentials = await readCredentials(input);
+  if (!credentials) throw new Error("Kimi login store no longer exists");
+  if (credentials.expires_at != null && credentials.expires_at * 1000 <= Date.now())
+    return unavailable({
+      kind: "expired",
+      expiresAt: new Date(credentials.expires_at * 1000).toISOString(),
+    });
 
   const res = await callUsageApi(credentials.access_token);
 
-  if (!res.ok) {
-    // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
-
-    return unavailableUsage();
-  }
+  if (res.status === 401 || res.status === 403)
+    return unavailable({ kind: "rejected", status: res.status });
+  if (!res.ok) throw new Error(`Kimi usage API returned ${res.status}`);
 
   const windows = kimiUsageWindowsFromPayload(await res.json());
-  if (windows[0]) windows[0].headline = true;
 
   return {
     status: "available",
@@ -323,24 +291,36 @@ export async function fetchUsage(
   };
 }
 
-export async function identify() {
-  if (process.env["KIMI_TOKEN"] || process.env["KIMI_API_KEY"]) return { key: "default" };
-  const home = homedir();
-  const paths = [
-    join(
-      process.env["KIMI_CODE_HOME"] || join(home, ".kimi-code"),
-      "credentials",
-      "kimi-code.json",
-    ),
-    join(home, ".kimi", "credentials", "kimi-code.json"),
-  ];
-  for (const path of paths) {
-    try {
-      const auth = KimiAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-      if (auth.access_token) return { key: "default" };
-    } catch {
-      continue;
-    }
+async function readCredentials(input: UsageInput): Promise<KimiCredentials | undefined> {
+  if (input.store === "env") {
+    const token = process.env[input.locator];
+    return token ? { access_token: token } : undefined;
   }
-  return null;
+  try {
+    const credentials = KimiAuthSchema.parse(JSON.parse(await fs.readFile(input.locator, "utf8")));
+    return credentials.access_token
+      ? { ...credentials, access_token: credentials.access_token }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export async function discover(): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = ["KIMI_TOKEN", "KIMI_API_KEY"].map((locator) => ({
+    store: "env",
+    locator,
+  }));
+  candidates.push(
+    ...[
+      join(
+        process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
+        "credentials",
+        "kimi-code.json",
+      ),
+      join(homedir(), ".kimi", "credentials", "kimi-code.json"),
+    ].map((locator) => ({ store: "file" as const, locator })),
+  );
+  for (const input of candidates)
+    if (await readCredentials(input)) return [{ key: "default", input }];
+  return [];
 }

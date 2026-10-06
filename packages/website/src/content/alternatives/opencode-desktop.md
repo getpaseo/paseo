@@ -29,7 +29,7 @@ OpenCode Desktop is the desktop app for OpenCode. OpenCode is available as a ter
 
 OpenCode is a multi-model coding agent. It can connect to many LLM providers through its own provider system, including OpenCode Zen, local models, and API providers.
 
-Paseo is multi-provider at the agent harness layer. It runs OpenCode, Claude Code, Codex, and Pi natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
+Paseo is multi-provider at the agent harness layer. It runs OpenCode, Claude Code, Codex, Pi, Antigravity, and Muse Code natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
 
 ## Application plugins
 
@@ -94,23 +94,23 @@ Paseo supports dictation and realtime voice mode. Speech-to-text and text-to-spe
 
 ## Comparison
 
-|                              | Paseo                                                           | OpenCode Desktop                |
-| ---------------------------- | --------------------------------------------------------------- | ------------------------------- |
-| License                      | Open source (Apache-2.0)                                        | Open source (MIT)               |
-| Desktop platforms            | macOS, Linux, Windows                                           | macOS, Linux, Windows           |
-| Native mobile                | iOS, Android                                                    | No                              |
-| Agent harnesses              | Claude Code, Codex, OpenCode, Pi + 30+ via ACP catalog + custom | OpenCode                        |
-| Multi-model support          | Through supported agent harnesses                               | Through OpenCode providers      |
-| Git worktrees                | Yes                                                             | No built-in worktree manager    |
-| Per-worktree dev server URLs | Yes                                                             | No                              |
-| Split panes and tabs         | Yes                                                             | Desktop sessions                |
-| In-app terminal              | Yes                                                             | OpenCode terminal workflow      |
-| In-app browser               | Yes                                                             | No                              |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                        | GitHub integration              |
-| CLI                          | Run, `--host`, ls, send, schedule, loop                         | OpenCode CLI                    |
-| MCP server for orchestration | Yes                                                             | MCP support inside OpenCode     |
-| Application plugins          | Server code and native client components                        | No                              |
-| Local voice                  | Yes                                                             | No                              |
-| Self-hosted daemon           | Yes                                                             | OpenCode server / local runtime |
+|                              | Paseo                                                                                   | OpenCode Desktop                |
+| ---------------------------- | --------------------------------------------------------------------------------------- | ------------------------------- |
+| License                      | Open source (Apache-2.0)                                                                | Open source (MIT)               |
+| Desktop platforms            | macOS, Linux, Windows                                                                   | macOS, Linux, Windows           |
+| Native mobile                | iOS, Android                                                                            | No                              |
+| Agent harnesses              | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code + 30+ via ACP catalog + custom | OpenCode                        |
+| Multi-model support          | Through supported agent harnesses                                                       | Through OpenCode providers      |
+| Git worktrees                | Yes                                                                                     | No built-in worktree manager    |
+| Per-worktree dev server URLs | Yes                                                                                     | No                              |
+| Split panes and tabs         | Yes                                                                                     | Desktop sessions                |
+| In-app terminal              | Yes                                                                                     | OpenCode terminal workflow      |
+| In-app browser               | Yes                                                                                     | No                              |
+| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                                | GitHub integration              |
+| CLI                          | Run, `--host`, ls, send, schedule, loop                                                 | OpenCode CLI                    |
+| MCP server for orchestration | Yes                                                                                     | MCP support inside OpenCode     |
+| Application plugins          | Server code and native client components                                                | No                              |
+| Local voice                  | Yes                                                                                     | No                              |
+| Self-hosted daemon           | Yes                                                                                     | OpenCode server / local runtime |
 
 See also: [Paseo vs Codex App](/alternatives/codex-app), [Paseo vs Claude Desktop](/alternatives/claude-desktop), [Paseo vs OpenChamber](/alternatives/openchamber).

@@ -1,16 +1,22 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
 
 interface SiteFooterProps {
-  width?: "default" | "prose";
+  width?: "default" | "prose" | "wide";
 }
 
+const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
+  prose: "max-w-prose p-6 md:p-12 md:pt-0",
+  default: "max-w-5xl p-6 md:p-20 md:pt-0",
+  wide: "max-w-7xl p-6 md:p-20 md:pt-0",
+};
+
 export function SiteFooter({ width = "default" }: SiteFooterProps) {
-  const widthClasses =
-    width === "prose" ? "max-w-prose p-6 md:p-12 md:pt-0" : "max-w-5xl p-6 md:p-20 md:pt-0";
+  const widthClasses = WIDTH_CLASSES[width];
   const alternatives = getAlternativePages();
   return (
-    <footer className={`${widthClasses} mx-auto`}>
+    <footer className={`${widthClasses} mx-auto mt-12 md:mt-16`}>
       <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
         <div className="space-y-3">
           <p className="text-white/60 font-medium">Product</p>
@@ -27,6 +33,14 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
             >
               Docs
             </a>
+            {PLUGINS_LINKED && (
+              <a
+                href="/plugins"
+                className="block text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Plugins
+              </a>
+            )}
             <a
               href="/changelog"
               className="block text-muted-foreground hover:text-foreground transition-colors"
@@ -85,6 +99,18 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               OpenCode
+            </a>
+            <a
+              href="/antigravity"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Antigravity
+            </a>
+            <a
+              href="/muse-code"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Muse Code
             </a>
             <a
               href="/agents"

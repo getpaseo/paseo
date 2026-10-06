@@ -8,6 +8,7 @@ import {
   downloadUrls,
   appStoreUrl,
   playStoreUrl,
+  thanksPageHref,
   webAppUrl,
   AppleIcon,
   AndroidIcon,
@@ -88,8 +89,8 @@ function Download() {
           <PlatformRow icon={AppleIcon} label="macOS">
             <div className="flex flex-col items-start gap-2 sm:items-end">
               <PillGroup>
-                <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
-                <DownloadPill href={urls.macIntel} label="Intel" />
+                <DownloadPill href={thanksPageHref(urls.macAppleSilicon)} label="Apple Silicon" />
+                <DownloadPill href={thanksPageHref(urls.macIntel)} label="Intel" />
               </PillGroup>
               <span className="text-xs text-muted-foreground">Requires macOS 13 or newer</span>
             </div>
@@ -104,18 +105,20 @@ function Download() {
           <PlatformRow icon={WindowsIcon} label="Windows">
             <PillGroup>
               <DownloadPill
-                href={urls.windowsExeX64}
+                href={thanksPageHref(urls.windowsExeX64)}
                 label={urls.windowsExeArm64 ? "Intel / x64" : "Download"}
               />
-              {urls.windowsExeArm64 && <DownloadPill href={urls.windowsExeArm64} label="ARM64" />}
+              {urls.windowsExeArm64 && (
+                <DownloadPill href={thanksPageHref(urls.windowsExeArm64)} label="ARM64" />
+              )}
             </PillGroup>
           </PlatformRow>
 
           <PlatformRow icon={LinuxIcon} label="Linux">
             <PillGroup>
-              <DownloadPill href={urls.linuxAppImage} label="AppImage" />
-              <DownloadPill href={urls.linuxDeb} label="DEB" />
-              <DownloadPill href={urls.linuxRpm} label="RPM" />
+              <DownloadPill href={thanksPageHref(urls.linuxAppImage)} label="AppImage" />
+              <DownloadPill href={thanksPageHref(urls.linuxDeb)} label="DEB" />
+              <DownloadPill href={thanksPageHref(urls.linuxRpm)} label="RPM" />
             </PillGroup>
           </PlatformRow>
         </div>
@@ -132,7 +135,7 @@ function Download() {
           <PlatformRow icon={AndroidIcon} label="Android">
             <PillGroup>
               {!onBeta && <DownloadPill href={playStoreUrl} label="Play Store" external />}
-              <DownloadPill href={urls.androidApk} label="APK" />
+              <DownloadPill href={thanksPageHref(urls.androidApk)} label="APK" />
             </PillGroup>
           </PlatformRow>
 
@@ -304,8 +307,7 @@ function DownloadPill({
   return (
     <a
       href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors"
     >
       {label}

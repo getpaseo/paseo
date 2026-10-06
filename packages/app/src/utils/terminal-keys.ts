@@ -135,6 +135,51 @@ export function shouldInterceptDomTerminalKey(args: {
   return false;
 }
 
+interface MacTerminalEditingShortcutInput {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}
+
+// macOS terminals translate these editing chords instead of forwarding raw modified
+// keys: Terminal.app and iTerm2 ("Natural Text Editing") send ^A/^E for cmd+arrows,
+// ESC b / ESC f for option+arrows, and ^U for cmd+backspace. xterm ignores meta+arrow
+// entirely, and 6.x dropped the 5.x macOS conversion of option+arrow to ESC b/f, so
+// without this the shell receives nothing or an `ESC[1;3C`-style sequence it can't
+// parse (which zsh renders as a stray "C"/"D" plus a bell).
+export function resolveMacTerminalEditingShortcut(
+  args: MacTerminalEditingShortcutInput,
+): string | null {
+  if (args.ctrlKey || args.shiftKey) {
+    return null;
+  }
+  if (args.metaKey && !args.altKey) {
+    switch (args.key) {
+      case "ArrowLeft":
+        return "\x01";
+      case "ArrowRight":
+        return "\x05";
+      case "Backspace":
+        return "\x15";
+      default:
+        return null;
+    }
+  }
+  if (args.altKey && !args.metaKey) {
+    switch (args.key) {
+      case "ArrowLeft":
+        return "\x1bb";
+      case "ArrowRight":
+        return "\x1bf";
+      default:
+        return null;
+    }
+  }
+  return null;
+}
+
 export function mergeTerminalModifiers(args: {
   pendingModifiers: PendingTerminalModifiers;
   ctrlKey: boolean;

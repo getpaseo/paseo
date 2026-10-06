@@ -7,6 +7,7 @@ on:
       - "CHANGELOG.md"
       - "public-docs/**"
       - "packages/website/**"
+      - "packages/protocol/**"
       - "package.json"
       - "package-lock.json"
       - "patches/**"
@@ -29,7 +30,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci --workspace=@getpaseo/website --include-workspace-root
+        run: node scripts/npm-retry.mjs ci --workspace=@getpaseo/website --workspace=@getpaseo/protocol --include-workspace-root
+
+      - name: Build protocol
+        run: npm run build:protocol
 
       - name: Typecheck
         run: npm run typecheck --workspace=@getpaseo/website

@@ -1,10 +1,11 @@
-import type { ModelInfo, SessionMessageInfo } from "@opencode/client";
+import type { FormInfo, ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
+import type { V2Api } from "./api.js";
 
 function terminalEvents(events: AgentStreamEvent[]) {
   return events.filter(
@@ -190,6 +191,172 @@ describe("OpenCode v2 session lifecycle", () => {
       harness.active = false;
       // Shutdown does not project an idle outcome; the preceding run's outcome can remain.
       harness.info.outcome = "succeeded";
+      harness.push({
+        id: "shutdown",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect", created: 4, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.startExecution();
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("ends the turn when the user dismisses a question", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    let form: FormInfo | null = null;
+    harness.api.session.form.list = async () => (form ? [form] : []);
+    harness.api.session.form.cancel = async () => {
+      form = null;
+      harness.active = false;
+      // OpenCode 2.0.20 reports a dismissed question as an interruption without a user reason.
+      harness.push({
+        id: "dismissed",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("ask me something");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      form = {
+        id: "question",
+        sessionID: "session",
+        title: "Color",
+        fields: [{ key: "color", type: "string", options: [{ label: "Red", value: "red" }] }],
+      };
+      harness.push({
+        id: "form",
+        created: 2,
+        type: "form.created",
+        data: { form },
+      });
+      await expect.poll(() => session.getPendingPermissions()).toHaveLength(1);
+
+      await session.respondToPermission("question", { behavior: "deny" });
+
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });
+
+      await session.startTurn("next message");
+      await expect.poll(() => harness.prompts).toHaveLength(2);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      expect(terminalEvents(events)[1]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("ends the turn when the user denies a tool permission", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    let permission: Awaited<ReturnType<V2Api["permission"]["list"]>>[number] | null = null;
+    harness.api.permission.list = async () => (permission ? [permission] : []);
+    harness.api.permission.reply = async () => {
+      permission = null;
+      harness.active = false;
+      // OpenCode 2.0.20 reports a denied tool call as an interruption without a user reason.
+      harness.push({
+        id: "denied",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("run printf");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      permission = {
+        id: "approval",
+        sessionID: "session",
+        action: "shell",
+        resources: ["printf TOOL_PERMISSION_QA"],
+      };
+      harness.push({
+        id: "asked",
+        created: 2,
+        type: "permission.asked",
+        data: permission,
+      });
+      await expect.poll(() => session.getPendingPermissions()).toHaveLength(1);
+
+      await session.respondToPermission("approval", { behavior: "deny" });
+
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });
+
+      await session.startTurn("next message");
+      await expect.poll(() => harness.prompts).toHaveLength(2);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      expect(terminalEvents(events)[1]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps the turn resumable after the user denies a child session's permission", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const child = { ...harness.info, id: "child", parentID: "session" };
+    harness.api.session.list = async (input) => ({
+      data: input?.parentID === "session" ? [child] : [],
+      cursor: {},
+    });
+    let permission: Awaited<ReturnType<V2Api["permission"]["list"]>>[number] | null = {
+      id: "child-approval",
+      sessionID: "child",
+      action: "shell",
+      resources: ["pwd"],
+    };
+    harness.api.permission.list = async (input) =>
+      permission && input.sessionID === "child" ? [permission] : [];
+    harness.api.permission.reply = async () => {
+      permission = null;
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("delegate work");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+
+      await session.respondToPermission("child-approval", { behavior: "deny" });
+
+      harness.active = false;
       harness.push({
         id: "shutdown",
         created: 3,

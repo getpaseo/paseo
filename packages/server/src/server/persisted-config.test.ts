@@ -413,19 +413,23 @@ describe("provider overrides (new format)", () => {
     expect(parsed.agents?.providers?.claude?.order).toBe(1);
   });
 
-  test("new provider without extends → error", () => {
-    const result = PersistedConfigSchema.safeParse({
-      agents: {
-        providers: {
-          zai: {
-            label: "ZAI",
-          },
-        },
-      },
+  test("accepts a plugin override before plugin registration", () => {
+    const override = { enabled: false, command: ["/opt/agent"], env: { LOGIN: "yes" } };
+    const parsed = PersistedConfigSchema.parse({
+      agents: { providers: { "plugin-agent": override } },
     });
-
-    expect(result.success).toBe(false);
+    expect(parsed.agents?.providers?.["plugin-agent"]).toEqual(override);
   });
+
+  test.each(["plugin.agent", "plugin_agent"])(
+    "keeps %s outside the config provider ID alphabet",
+    (id) => {
+      expect(
+        PersistedConfigSchema.safeParse({ agents: { providers: { [id]: { enabled: false } } } })
+          .success,
+      ).toBe(false);
+    },
+  );
 
   test("new provider without label → error", () => {
     const result = PersistedConfigSchema.safeParse({

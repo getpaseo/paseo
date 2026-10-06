@@ -403,100 +403,6 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     },
   );
 
-  test("usage reference follows the active OpenCode model and OAuth account", async () => {
-    const cwd = tmpCwd();
-    const runtime = new TestOpenCodeHarness();
-    const openCode = new TestOpenCodeClient();
-    runtime.enqueueClient(openCode);
-    const client = new OpenCodeAgentClient(
-      logger,
-      {
-        env: {
-          OPENCODE_AUTH_CONTENT: JSON.stringify({
-            openai: { type: "oauth", access: "oauth-token", accountId: "acct-1" },
-            "opencode-go": { type: "api", key: "go-key" },
-          }),
-        },
-      },
-      { serverManager: runtime, createClient: runtime.createClient },
-    );
-    const session = await client.createSession(buildConfig(cwd));
-    await session.setModel?.("openai/gpt-5");
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "codex",
-      input: { accessToken: "oauth-token", accountId: "acct-1" },
-    });
-    await session.setModel?.("opencode-go/qwen");
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "opencode-go",
-      input: { apiKey: "go-key" },
-    });
-    await session.setModel?.("other/model");
-    expect(await session.getUsageReference?.()).toBeNull();
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-    const sessionId = (await session.getRuntimeInfo()).sessionId;
-    openCode.emitEvent({
-      type: "message.updated",
-      properties: {
-        info: {
-          id: "msg_changed_model",
-          sessionID: sessionId,
-          role: "user",
-          model: { providerID: "openai", modelID: "gpt-5" },
-        },
-      },
-    } as OpenCodeEvent);
-    await vi.waitFor(async () =>
-      expect(await session.getUsageReference?.()).toEqual({
-        source: "codex",
-        input: { accessToken: "oauth-token", accountId: "acct-1" },
-      }),
-    );
-    expect(events).toContainEqual({
-      type: "model_changed",
-      provider: "opencode",
-      runtimeInfo: {
-        provider: "opencode",
-        sessionId,
-        model: "openai/gpt-5",
-        modeId: null,
-        thinkingOptionId: null,
-      },
-    });
-    await session.close();
-    rmSync(cwd, { recursive: true, force: true });
-  });
-
-  test("usage reference ignores another auth entry with a different type", async () => {
-    const cwd = tmpCwd();
-    const runtime = new TestOpenCodeHarness();
-    runtime.enqueueClient(new TestOpenCodeClient());
-    const client = new OpenCodeAgentClient(
-      logger,
-      {
-        env: {
-          OPENCODE_AUTH_CONTENT: JSON.stringify({
-            openai: { type: "api", key: "other-key" },
-            "opencode-go": { type: "api", key: "go-key" },
-          }),
-        },
-      },
-      { serverManager: runtime, createClient: runtime.createClient },
-    );
-    const session = await client.createSession(buildConfig(cwd));
-    try {
-      await session.setModel?.("opencode-go/qwen");
-      expect(await session.getUsageReference?.()).toEqual({
-        source: "opencode-go",
-        input: { apiKey: "go-key" },
-      });
-    } finally {
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -1712,6 +1618,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1822,6 +1729,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1906,6 +1814,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1947,6 +1856,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       undefined,
       undefined,
@@ -1975,6 +1885,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     await session.close();
@@ -1999,6 +1910,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       events,
     );
@@ -2071,6 +1983,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2161,6 +2074,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2213,6 +2127,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2326,6 +2241,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2441,6 +2357,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const events: AgentStreamEvent[] = [];
@@ -3240,6 +3157,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       sdkClient,
       "ses_sync_abort_failure",
       createTestLogger(),
+      {},
     );
 
     try {
@@ -3838,7 +3756,10 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       await session.startTurn("first");
       await session.interrupt();
+      const descriptor = session.usageSession?.();
       openCode.emitEvent({ type: "server-exited", error: new Error("OpenCode exited") });
+      expect(session.usageSession?.()).toEqual(descriptor);
+      expect(descriptor).not.toBeNull();
       await vi.advanceTimersByTimeAsync(0);
 
       openCode.sessionPromptAsyncEvents = [
@@ -3893,6 +3814,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_timeout",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => new Promise<void>(() => undefined),
@@ -3946,6 +3868,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_slow_stream",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => streamReady.promise,
@@ -3978,6 +3901,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_retry",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => streamReady.promise,
@@ -5656,6 +5580,7 @@ describe("OpenCode provider subagent contract", () => {
       fakeClient,
       "ses_parent",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -5814,6 +5739,7 @@ describe("OpenCode provider subagent contract", () => {
       fakeClient,
       "ses_parent",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -7070,9 +6996,14 @@ describe("OpenCode session permission rules", () => {
         metadata: { cwd },
       });
       try {
+        expect(session.usageSession?.()).toMatchObject({
+          provider: "opencode",
+          sessionKey: expect.any(String),
+        });
         expect(openCode.calls.sessionUpdate).toEqual([]);
       } finally {
         await session.close();
+        expect(session.usageSession?.()).toBeNull();
       }
     } finally {
       rmSync(cwd, { recursive: true, force: true });

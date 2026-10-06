@@ -1,3 +1,8 @@
+import {
+  PluginRegistryIdentitySchema,
+  parsePluginRegistryReference,
+} from "@getpaseo/protocol/plugin-registry";
+import { resolveRegistryPlugin, type RegistryOptions } from "./managed-source/registry.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, realpath, rename, rm } from "node:fs/promises";
@@ -23,8 +28,12 @@ const GIT_TIMEOUT_MS = 120_000;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0" } as const;
 // COMPAT(plugin-source-record): v0.8.0; accept and strip pre-correction selector/revision/root copies until daemon floor supports artifact-derived metadata.
 const ManagedPluginRecordSchema = z.union([
-  z.object({ kind: z.literal("git").default("git"), remote: z.string().min(1) }),
-  z.object({ kind: z.literal("npm") }),
+  z.object({
+    kind: z.literal("git").default("git"),
+    remote: z.string().min(1),
+    registry: PluginRegistryIdentitySchema.optional(),
+  }),
+  z.object({ kind: z.literal("npm"), registry: PluginRegistryIdentitySchema.optional() }),
 ]);
 export type ManagedPluginRecord = z.infer<typeof ManagedPluginRecordSchema>;
 export interface ManagedPluginCandidate {
@@ -33,6 +42,7 @@ export interface ManagedPluginCandidate {
   directory: string;
   record: ManagedPluginRecord;
   versionRoot: string;
+  target?: PluginUpdateTarget;
 }
 interface InstallInput {
   source: string;
@@ -49,7 +59,10 @@ export class ManagedPluginSources {
   private readonly root: string;
   private readonly metadataPath: string;
   private readonly records: Record<string, ManagedPluginRecord>;
-  constructor(paseoHome: string) {
+  constructor(
+    paseoHome: string,
+    private readonly registryOptions: RegistryOptions = {},
+  ) {
     this.root = path.resolve(paseoHome, "plugins");
     this.metadataPath = path.join(this.root, "sources.json");
     this.records = existsSync(this.metadataPath)
@@ -85,6 +98,7 @@ export class ManagedPluginSources {
         sourceRoot: path.join(versionRoot, "checkout"),
         identity: {
           kind: "git",
+          ...(record.registry ? { registry: record.registry } : {}),
           remote: redactRemoteCredentials(record.remote),
           pluginPath: parts.slice(2).join("/") || ".",
         },
@@ -100,6 +114,7 @@ export class ManagedPluginSources {
       sourceRoot: path.join(versionRoot, "node_modules", packageName),
       identity: {
         kind: "npm",
+        ...(record.registry ? { registry: record.registry } : {}),
         packageName,
         pluginPath: parts.slice(2 + packageParts).join("/") || ".",
       },
@@ -132,6 +147,16 @@ export class ManagedPluginSources {
     input: InstallInput,
     target?: PluginUpdateTarget,
   ): Promise<ManagedPluginCandidate> {
+    const registry = this.registryOptions.enabled
+      ? parsePluginRegistryReference(input.source, this.registryOptions.defaultUrl)
+      : null;
+    if (registry) {
+      if (input.ref || input.pluginPath)
+        throw new Error("Registry sources use their reviewed artifact path and revision");
+      const resolved = await resolveRegistryPlugin(registry, this.registryOptions, true);
+      const candidate = await this.prepareInstall(resolved.input, resolved.target);
+      return { ...candidate, record: { ...candidate.record, registry } };
+    }
     const pluginPath = normalizePluginPath(input.pluginPath);
     const versionRoot = await this.createStagingRoot();
     try {
@@ -150,7 +175,7 @@ export class ManagedPluginSources {
         sourceRoot = path.join(versionRoot, "node_modules", artifact.packageName);
         record = { kind: "npm" };
       } else {
-        const remote = normalizeGitSource(input.source);
+        const remote = normalizeGitSource(input.source, !this.registryOptions.enabled);
         sourceRoot = path.join(versionRoot, "checkout");
         await clone(remote, sourceRoot);
         const commit = await resolveRequestedRef(sourceRoot, input.ref);
@@ -163,7 +188,7 @@ export class ManagedPluginSources {
       assertPluginPath(sourceRoot, directory);
       await assertRealContainment(sourceRoot, directory);
       const { id: defaultId, build } = await readPluginManifest(directory);
-      return { build, defaultId, directory, record, versionRoot };
+      return { build, defaultId, directory, record, versionRoot, ...(target ? { target } : {}) };
     } catch (error) {
       await rm(versionRoot, { recursive: true, force: true });
       throw error;
@@ -202,7 +227,18 @@ export class ManagedPluginSources {
     const location = this.locate(pluginId, configuredPath);
     let target: PluginUpdateTarget;
     let outcome: PluginUpdatePreview["outcome"];
-    if (current.identity.kind === "npm") {
+    if (this.registryOptions.enabled && current.identity.registry) {
+      if (selection) throw new Error("Registry updates use only the reviewed registry pin");
+      const resolved = await resolveRegistryPlugin(
+        current.identity.registry,
+        this.registryOptions,
+        false,
+      );
+      assertRegistryArtifactIdentity(current.identity, resolved.artifact);
+      target = resolved.target;
+      const revision = target.kind === "npm" ? target.version : target.commit;
+      outcome = revision === current.currentRevision ? "current" : "update";
+    } else if (current.identity.kind === "npm") {
       target = {
         kind: "npm",
         ...(await resolveNpm(
@@ -211,10 +247,7 @@ export class ManagedPluginSources {
           this.root,
         )),
       };
-      const comparison = compareVersions(target.version, current.currentRevision);
-      if (comparison === 0) outcome = "current";
-      else if (comparison < 0 && !selection) outcome = "installed-newer";
-      else outcome = "update";
+      outcome = npmUpdateOutcome(target.version, current.currentRevision, selection);
     } else {
       const record = this.records[pluginId];
       if (record?.kind !== "git") throw new Error("Git source is no longer configured");
@@ -271,6 +304,14 @@ export class ManagedPluginSources {
     await this.assertCurrent(proposal, configuredPath);
     const identity = this.locate(proposal.id, configuredPath).identity;
     const record = this.records[proposal.id];
+    if (this.registryOptions.enabled && identity.kind !== "directory" && identity.registry) {
+      const resolved = await resolveRegistryPlugin(identity.registry, this.registryOptions, false);
+      assertRegistryArtifactIdentity(identity, resolved.artifact);
+      if (!isDeepStrictEqual(resolved.target, proposal.target))
+        throw new Error("Registry pin changed since review; check again");
+      const candidate = await this.prepareInstall(resolved.input, proposal.target);
+      return { ...candidate, record: { ...candidate.record, registry: identity.registry } };
+    }
     if (identity.kind === "git" && record?.kind === "git" && proposal.target.kind === "git")
       return this.prepareInstall(
         {
@@ -296,6 +337,7 @@ export class ManagedPluginSources {
     candidate: ManagedPluginCandidate,
     target?: PluginUpdateTarget,
   ): Promise<void> {
+    target ??= candidate.target;
     const location = this.locate(pluginId, candidate.directory, candidate.record);
     const revision = await this.revision(location, candidate.directory);
     if (target?.kind === "git" && revision !== target.commit)
@@ -394,7 +436,10 @@ function reviewLinks(current: PluginInstallation, target: PluginUpdateTarget): s
   }
   return [];
 }
-function normalizeGitSource(source: string): string {
+/** Bare owner/repo is GitHub shorthand unless registry references own that syntax. */
+function normalizeGitSource(source: string, bareGitHubShorthand: boolean): string {
+  const expandsShorthand =
+    bareGitHubShorthand || source.startsWith("github:") || source.startsWith("git:");
   if (source.startsWith("github:")) {
     const shorthand = source.slice(7);
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(shorthand)) {
@@ -405,7 +450,7 @@ function normalizeGitSource(source: string): string {
     source = source.slice(4);
   }
   const github = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(source);
-  if (github) {
+  if (github && expandsShorthand) {
     const repository = github[2].replace(/\.git$/, "");
     return `https://github.com/${github[1]}/${repository}.git`;
   }
@@ -577,4 +622,30 @@ async function refExists(cwd: string, ref: string): Promise<boolean> {
 async function revParse(cwd: string, ref: string): Promise<string> {
   const { stdout } = await runGitCommand(["rev-parse", "--verify", ref], { cwd });
   return stdout.trim();
+}
+
+function assertRegistryArtifactIdentity(
+  identity: Exclude<PluginInstallation["identity"], { kind: "directory" }>,
+  artifact: Awaited<ReturnType<typeof resolveRegistryPlugin>>["artifact"],
+): void {
+  const matches =
+    identity.kind === "npm" && artifact.kind === "npm"
+      ? identity.packageName === artifact.package && identity.pluginPath === "."
+      : identity.kind === "git" &&
+        artifact.kind === "git" &&
+        identity.remote === redactRemoteCredentials(artifact.remote) &&
+        identity.pluginPath === (artifact.pluginPath ?? ".");
+  if (!matches)
+    throw new Error("Registry artifact source changed; reinstall to approve the new source");
+}
+
+function npmUpdateOutcome(
+  version: string,
+  current: string,
+  selection: PluginUpdateSelection | undefined,
+): PluginUpdatePreview["outcome"] {
+  const comparison = compareVersions(version, current);
+  if (comparison === 0) return "current";
+  if (comparison < 0 && !selection) return "installed-newer";
+  return "update";
 }

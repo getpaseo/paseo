@@ -29,11 +29,13 @@ export interface OpenCodeEventConsumerTiming {
 export interface OpenCodeEventConsumerOptions {
   serverUrl: string;
   processExit: Promise<Error>;
+  listening?: Promise<void>;
   logger: Pick<Logger, "debug" | "warn">;
   createClient?: (baseUrl: string) => OpencodeClient;
   timing?: OpenCodeEventConsumerTiming;
 }
 
+const FIRST_RECORD_WATCHDOG_MS = 5_000;
 const WATCHDOG_MS = 30_000;
 const MAX_BACKOFF_MS = 5_000;
 const FAILURE_WARNING_ATTEMPT = 4;
@@ -98,7 +100,7 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
       this.rejectReady = reject;
     });
     void this.readyPromise.catch(() => undefined);
-    this.connectionTask = this.consume(options.processExit);
+    this.connectionTask = this.consume(options.processExit, options.listening);
     void this.connectionTask.catch(() => undefined);
   }
 
@@ -131,8 +133,23 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
     await this.connectionTask.catch(() => undefined);
   }
 
-  private async consume(processExit: Promise<Error>): Promise<void> {
+  private async consume(processExit: Promise<Error>, listening?: Promise<void>): Promise<void> {
     void processExit.then((error) => this.exit(error));
+    if (listening) {
+      const signal = this.connectionAbort.signal;
+      let stopWaiting!: () => void;
+      const stopped = new Promise<void>((resolve) => {
+        stopWaiting = resolve;
+      });
+      signal.addEventListener("abort", stopWaiting, { once: true });
+      try {
+        await Promise.race([listening, stopped]);
+      } catch {
+        return;
+      } finally {
+        signal.removeEventListener("abort", stopWaiting);
+      }
+    }
     let reconnectAttempt = 0;
     while (!this.closed) {
       this.attempt += 1;
@@ -150,62 +167,83 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
 
   private async consumeConnection(signal: AbortSignal): Promise<OpenCodeConnectionResult> {
     const requestAbort = new AbortController();
-    const abortRequest = () => requestAbort.abort(signal.reason);
+    const attemptToken = { active: true };
+    let resolveAbandoned!: (result: OpenCodeConnectionResult) => void;
+    const abandoned = new Promise<OpenCodeConnectionResult>((resolve) => {
+      resolveAbandoned = resolve;
+    });
+    const abortRequest = () => {
+      attemptToken.active = false;
+      resolveAbandoned({ delivered, phase, outcome: "ended" });
+      requestAbort.abort(signal.reason);
+    };
     signal.addEventListener("abort", abortRequest, { once: true });
     let cancelWatchdog: () => void = () => undefined;
     let delivered = false;
     let phase: OpenCodeEventStreamPhase = "first-record";
-    let watchdogPhase: OpenCodeEventStreamPhase | null = null;
     let sseError: unknown;
     const armWatchdog = () => {
       cancelWatchdog();
-      cancelWatchdog = this.timing.arm(WATCHDOG_MS, () => {
-        watchdogPhase = phase;
-        requestAbort.abort(new Error(`OpenCode event stream ${phase} watchdog expired`));
-      });
-    };
-    try {
-      const result = await this.client.global.event({
-        signal: requestAbort.signal,
-        sseMaxRetryAttempts: 0,
-        onSseError: (error) => {
-          sseError = error;
+      cancelWatchdog = this.timing.arm(
+        this.connected ? WATCHDOG_MS : FIRST_RECORD_WATCHDOG_MS,
+        () => {
+          const error = new Error(`OpenCode event stream ${phase} watchdog expired`);
+          // Abandon a stalled request even when fetch ignores abort, for example during OpenCode startup.
+          attemptToken.active = false;
+          resolveAbandoned({ delivered, phase, outcome: "watchdog", error });
+          requestAbort.abort(error);
         },
-      });
-      armWatchdog();
-      for await (const event of result.stream) {
-        if (this.closed) {
-          return { delivered, phase, outcome: "ended" };
+      );
+    };
+    const consumeStream = async (): Promise<OpenCodeConnectionResult> => {
+      try {
+        const result = await this.client.global.event({
+          signal: requestAbort.signal,
+          sseMaxRetryAttempts: 0,
+          onSseError: (error) => {
+            sseError = error;
+          },
+        });
+        for await (const event of result.stream) {
+          // Ignore late records from abandoned requests, for example a delayed server.connected event.
+          if (this.closed || !attemptToken.active) {
+            return { delivered, phase, outcome: "ended" };
+          }
+          delivered = true;
+          phase = "stream";
+          this.phase = phase;
+          if (!this.connected && event.payload.type === "server.connected") {
+            this.connected = true;
+            this.resolveReady();
+            armWatchdog();
+            continue;
+          }
+          armWatchdog();
+          this.logPluginFailure(event);
+          this.publish(event);
         }
-        armWatchdog();
-        delivered = true;
-        phase = "stream";
-        this.phase = phase;
-        if (!this.connected && event.payload.type === "server.connected") {
-          this.connected = true;
-          this.resolveReady();
-          continue;
-        }
-        this.logPluginFailure(event);
-        this.publish(event);
+        let outcome: OpenCodeConnectionOutcome = "ended";
+        if (sseError !== undefined) outcome = "error";
+        return {
+          delivered,
+          phase,
+          outcome,
+          ...(sseError === undefined ? {} : { error: sseError }),
+        };
+      } catch (error) {
+        return {
+          delivered,
+          phase,
+          outcome: "error",
+          error,
+        };
       }
-      let outcome: OpenCodeConnectionOutcome = "ended";
-      if (watchdogPhase) outcome = "watchdog";
-      else if (sseError !== undefined) outcome = "error";
-      return {
-        delivered,
-        phase: watchdogPhase ?? phase,
-        outcome,
-        ...(sseError === undefined ? {} : { error: sseError }),
-      };
-    } catch (error) {
-      return {
-        delivered,
-        phase: watchdogPhase ?? phase,
-        outcome: watchdogPhase ? "watchdog" : "error",
-        error,
-      };
+    };
+    armWatchdog();
+    try {
+      return await Promise.race([consumeStream(), abandoned]);
     } finally {
+      attemptToken.active = false;
       cancelWatchdog();
       signal.removeEventListener("abort", abortRequest);
       requestAbort.abort();
@@ -285,5 +323,5 @@ function containsPluginError(error: unknown): boolean {
 }
 
 export type OpenCodeEventConsumerFactory = (
-  options: Pick<OpenCodeEventConsumerOptions, "serverUrl" | "processExit" | "logger">,
+  options: Pick<OpenCodeEventConsumerOptions, "serverUrl" | "processExit" | "logger" | "listening">,
 ) => OpenCodeEventConsumer;

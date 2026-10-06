@@ -1,4 +1,5 @@
 import { formatTokenCount } from "@/components/context-window-meter.utils";
+import type { UsageDisplayAs } from "./preferences";
 import type { UsageBalanceUnit } from "./types";
 
 export function clampPct(value: number): number {
@@ -7,6 +8,11 @@ export function clampPct(value: number): number {
 
 export function formatPct(value: number): string {
   return `${Math.round(clampPct(value))}%`;
+}
+
+/** "31%" of the window used, or "69% left" of it. */
+export function formatDisplayPct(value: number, displayAs: UsageDisplayAs): string {
+  return displayAs === "used" ? formatPct(value) : `${formatPct(value)} left`;
 }
 
 function relativeDuration(iso: string): string | null {
@@ -28,13 +34,14 @@ export function formatResetLabel(iso: string | null | undefined): string | null 
   return rel === "now" ? "resetting now" : `resets ${rel}`;
 }
 
-export function formatAmount(value: number, unit: UsageBalanceUnit): string {
+/** A balance amount as the app's language writes it: "$1,234.50", "12,345". */
+export function formatAmount(value: number, unit: UsageBalanceUnit, locale: string): string {
   switch (unit) {
     case "usd":
-      return `$${value.toFixed(2)}`;
+      return new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(value);
     case "tokens":
       return formatTokenCount(value);
     default:
-      return value.toLocaleString();
+      return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
   }
 }

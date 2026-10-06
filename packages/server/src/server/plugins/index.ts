@@ -26,14 +26,18 @@ import { PluginRuntime } from "./runtime.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
-import { UsageSourceRegistry } from "./usage-sources/index.js";
+import {
+  type AgentUsageLookup,
+  type ListUsageReportsOptions,
+  UsageSourceRegistry,
+} from "./usage-sources/index.js";
 import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
-import type { UsageReference } from "../agent/agent-sdk-types.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
   emit?: PluginLifecycle["emit"];
+  drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
@@ -41,11 +45,11 @@ interface PluginRuntimePort {
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[];
-  identifyUsage: PluginRuntime["identifyUsage"];
   fetchUsage: PluginRuntime["fetchUsage"];
   discoverUsage: PluginRuntime["discoverUsage"];
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
+  getProviderStatus?: PluginRuntime["getProviderStatus"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -56,6 +60,7 @@ interface PluginRuntimePort {
 }
 
 interface PluginServiceDependencies {
+  usageAgents?: AgentUsageLookup;
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
@@ -80,7 +85,7 @@ export class PluginService {
   private readonly errors = new Map<string, string>();
   private readonly listeners = new Set<(pluginId: string) => void>();
   private readonly providers = new Map<string, ProviderRegistration>();
-  private readonly usageSources = new UsageSourceRegistry();
+  private readonly usageSources: UsageSourceRegistry;
   private readonly usageSourceIdsByPlugin = new Map<string, string[]>();
   private readonly providerIdsByPlugin = new Map<string, readonly string[]>();
   private readonly providerListeners = new Set<() => void>();
@@ -96,6 +101,12 @@ export class PluginService {
     private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
+    this.usageSources = new UsageSourceRegistry(
+      Date.now,
+      300_000,
+      this.logger,
+      dependencies.usageAgents,
+    );
     this.runtime =
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {
@@ -118,6 +129,10 @@ export class PluginService {
   readonly emit: PluginLifecycle["emit"] = (name, event) => {
     this.runtime.emit?.(name, event);
   };
+
+  async drainEvents(): Promise<void> {
+    await this.runtime.drainEvents?.();
+  }
 
   readonly before: PluginLifecycle["before"] = async (name, request) => {
     if (this.runtime.before) {
@@ -144,16 +159,8 @@ export class PluginService {
     return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  listUsageReports(options?: {
-    forceRefresh?: boolean;
-    reportIds?: string[];
-    references?: UsageReference[];
-  }) {
+  listUsageReports(options?: ListUsageReportsOptions) {
     return this.usageSources.listReports(options);
-  }
-
-  resolveUsageReference(reference: UsageReference) {
-    return this.usageSources.resolveReference(reference);
   }
 
   listLegacyUsage() {
@@ -576,18 +583,12 @@ export class PluginService {
           id: source.id,
           label: source.label,
           icon: source.icon,
-          discover: async () => {
-            if (!source.discover) return [];
-            const result = await this.runtime.discoverUsage(pluginId, source.id);
+          discover: async (scope) => {
+            const result = await this.runtime.discoverUsage(pluginId, source.id, scope);
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;
           },
-          identify: (input) =>
-            this.runtime.identifyUsage(pluginId, source.id, input) as Promise<{
-              key: string;
-              label?: string;
-            } | null>,
           fetch: (input) => {
             return this.runtime.fetchUsage(pluginId, source.id, input);
           },
@@ -612,15 +613,9 @@ export class PluginService {
     pluginDirectory: string,
   ): Promise<void> {
     const metadata = this.runtime.getProviderRegistrations?.(pluginId) ?? [];
-    const configuredIds = new Set(Object.keys(this.configStore.get().providers));
     for (const provider of metadata) {
       if (BUILTIN_PROVIDER_ID_SET.has(provider.id)) {
         throw new Error(`Plugin ${pluginId} cannot register builtin provider ID "${provider.id}"`);
-      }
-      if (configuredIds.has(provider.id)) {
-        throw new Error(
-          `Plugin ${pluginId} cannot register configured provider ID "${provider.id}"`,
-        );
       }
       if (this.providers.has(provider.id)) {
         throw new Error(`Plugin ${pluginId} cannot register provider ID "${provider.id}" twice`);
@@ -632,6 +627,14 @@ export class PluginService {
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          command: provider.command,
+          status: provider.hasStatus
+            ? (request) => {
+                if (!this.runtime.getProviderStatus)
+                  throw new Error("Plugin runtime cannot resolve provider status");
+                return this.runtime.getProviderStatus(pluginId, provider.id, request);
+              }
+            : undefined,
           getCatalogCacheKey: provider.hasCatalogCacheKey
             ? (options) => {
                 if (!this.runtime.getProviderCatalogCacheKey)

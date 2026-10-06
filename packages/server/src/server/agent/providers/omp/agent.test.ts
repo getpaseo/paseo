@@ -1,17 +1,15 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import path, { join } from "node:path";
+import path from "node:path";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
-import { resolveOmpProviderParams } from "./provider-config.js";
+import { resolveOmpProviderOptions } from "./provider-config.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
@@ -42,11 +40,11 @@ const ABORTED_TERMINAL_RESPONSE: OmpAgentMessage = {
 };
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
-  expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
+  expect(resolveOmpProviderOptions({}).runtimeOptions).toMatchObject({
     readyTimeoutMs: 20_000,
     rpcTimeoutMs: 60_000,
   });
-  expect(resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams).toMatchObject({
+  expect(resolveOmpProviderOptions({ rpcTimeoutMs: 90_000 }).runtimeOptions).toMatchObject({
     readyTimeoutMs: 90_000,
     rpcTimeoutMs: 90_000,
   });
@@ -71,6 +69,51 @@ test("OMP import uses the runtime's custom agent directory without a configured 
     expect.objectContaining({ providerHandleId: sessionFile }),
   ]);
 });
+test("OMP resumes a session whose model was removed on the model OMP falls back to", async () => {
+  const runtime = new FakeOmp();
+  runtime.removeModel("9router/deepseek-v4-flash");
+  runtime.queueSessionSetup((session) => {
+    session.state = { ...session.state, model: { provider: "openrouter", id: "fallback" } };
+  });
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+
+  const session = await client.resumeSession({
+    provider: "omp",
+    sessionId: "omp-session-1",
+    nativeHandle: "/tmp/omp-session.jsonl",
+    metadata: { cwd: "/workspace/project", model: "9router/deepseek-v4-flash" },
+  });
+  onTestFinished(() => session.close());
+
+  await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "openrouter/fallback" });
+  expect(session.describePersistence()?.metadata?.model).toBe("openrouter/fallback");
+});
+
+test("OMP resumes a session on the requested model when it differs from the session's", async () => {
+  const runtime = new FakeOmp();
+  const requestedModel = { provider: "openrouter", id: "requested" };
+  runtime.queueSessionSetup((session) => {
+    session.state = { ...session.state, model: { provider: "openrouter", id: "recorded" } };
+    session.models = [requestedModel];
+    session.setModelResult = requestedModel;
+  });
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+
+  const session = await client.resumeSession({
+    provider: "omp",
+    sessionId: "omp-session-1",
+    nativeHandle: "/tmp/omp-session.jsonl",
+    metadata: { cwd: "/workspace/project", model: "openrouter/requested" },
+  });
+  onTestFinished(() => session.close());
+
+  expect(runtime.latestSession().setModelRequests).toEqual([
+    { provider: "openrouter", modelId: "requested" },
+  ]);
+  await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "openrouter/requested" });
+  expect(session.describePersistence()?.metadata?.model).toBe("openrouter/requested");
+});
+
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -172,79 +215,6 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
-  test("usage reference reads current get_state provider and account on each call", async () => {
-    const home = mkdtempSync(join(tmpdir(), "paseo-omp-reference-"));
-    const agentDir = join(home, "agent");
-    mkdirSync(agentDir);
-    // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:576-581,711-724.
-    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
-      DatabaseSync: new (path: string) => {
-        exec(sql: string): void;
-        prepare(sql: string): { run(...args: unknown[]): void };
-        close(): void;
-      };
-    };
-    const db = new DatabaseSync(join(agentDir, "agent.db"));
-    db.exec(`
-      CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE INDEX idx_cache_expires ON cache(expires_at);
-      CREATE TABLE auth_credentials (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        provider TEXT NOT NULL,
-        credential_type TEXT NOT NULL,
-        data TEXT NOT NULL,
-        disabled_cause TEXT DEFAULT NULL,
-        identity_key TEXT DEFAULT NULL,
-        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-      );
-    `);
-    const insert = db.prepare(
-      "INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, 'oauth', ?)",
-    );
-    insert.run(
-      "openai-codex",
-      JSON.stringify({
-        access: "codex-fixture",
-        accountId: "codex-account",
-        expires: Date.now() + 60_000,
-      }),
-    );
-    insert.run(
-      "anthropic",
-      JSON.stringify({
-        access: "claude-fixture",
-        accountId: "claude-account",
-        expires: Date.now() + 60_000,
-      }),
-    );
-    db.close();
-    try {
-      const omp = new OmpHarness();
-      await omp.start({}, undefined, {
-        OMP_PROFILE: "",
-        PI_CODING_AGENT_DIR: agentDir,
-        XDG_DATA_HOME: "",
-      });
-      const runtime = omp.runtime();
-      runtime.state = { ...runtime.state, model: { provider: "openai-codex", id: "codex-model" } };
-      const requestsBefore = runtime.getStateRequestCount;
-      expect(await omp.getUsageReference()).toEqual({
-        source: "codex",
-        input: { accessToken: "codex-fixture", accountId: "codex-account" },
-      });
-      expect(runtime.getStateRequestCount).toBe(requestsBefore + 1);
-      runtime.state = { ...runtime.state, model: { provider: "anthropic", id: "claude-model" } };
-      expect(await omp.getUsageReference()).toEqual({
-        source: "claude",
-        input: { accessToken: "claude-fixture" },
-      });
-      expect(runtime.getStateRequestCount).toBe(requestsBefore + 2);
-      await omp.close();
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" }, createToolCatalog());
@@ -692,6 +662,46 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("keeps custom context in separate tools while a turn continues", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("Explain the project");
+    omp.runtime().beginTurn();
+    for (const display of [true, false, true]) {
+      omp.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "project-context",
+          content: [{ type: "text", text: "Project instructions" }],
+          details: { project: "example" },
+          display,
+        },
+      });
+    }
+    const items = omp.timeline();
+    expect(items).toEqual(
+      [1, 2].map(() => ({
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: {
+          synthetic: true,
+          customType: "project-context",
+          details: { project: "example" },
+        },
+        error: null,
+      })),
+    );
+    expect(new Set(items.map((item) => item.type === "tool_call" && item.callId)).size).toBe(2);
+    expect(omp.completedTurnCount()).toBe(0);
+    omp.runtime().finishTurn();
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -735,11 +745,19 @@ describe("OMP agent client and session", () => {
         message: "Background job DocsSmokeTwo completed",
       },
     ]);
-    // Non-notice custom messages still fall through as assistant messages with
-    // their own id so the stream coalescer never glues them onto the open reply.
-    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
+    expect(
+      omp.timeline().filter((item) => item.type !== "notification" && item.type !== "user_message"),
+    ).toEqual([
       { type: "assistant_message", text: "done", messageId: "omp-assistant-1" },
-      { type: "assistant_message", text: "plain custom status text", messageId: "omp-custom-1" },
+      {
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "custom-message",
+        status: "completed",
+        detail: { type: "plain_text", text: "plain custom status text" },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
   });
 
@@ -909,6 +927,24 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test.each(["result after ack", "result before ack"] as const)(
+    "fails a prompt OMP rejects before its agent runs (%s)",
+    async (order) => {
+      const omp = new OmpHarness();
+      await omp.start();
+
+      await expect(
+        omp.runPromptRejectedBeforeAgentRuns(
+          "Reply with ok.",
+          "No API key found for anthropic.",
+          order,
+        ),
+      ).rejects.toThrow("No API key found for anthropic.");
+      expect(omp.turnFailures()).toEqual(["No API key found for anthropic."]);
+      expect(omp.completedTurnCount()).toBe(0);
+    },
+  );
+
   test("completes a no-turn notify with one notification and no assistant text", async () => {
     const scheduler = new ManualNoTurnScheduler();
     const omp = new OmpHarness({ noTurnScheduler: scheduler });
@@ -1033,6 +1069,9 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
+    await omp.close();
+    expect(omp.usageSession()).toBeNull();
   });
 
   test("maps permissions and sends the selected OMP response", async () => {
@@ -1195,6 +1234,25 @@ describe("OMP agent client and session", () => {
     await omp.startTurn("continue");
     expect(omp.runtimeLaunches()).toHaveLength(2);
     expect(omp.runtime().prompts).toEqual([{ message: "continue", imageCount: 0 }]);
+  });
+
+  test("ignores a prompt rejection a previous OMP process left for a reused request id", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "prompt_result",
+      id: "req_1",
+      agentInvoked: false,
+      status: "error",
+      error: { message: "No API key found for anthropic." },
+    });
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+
+    await omp.runPromptWithoutTurnOnNextRuntime("/session", "req_1");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.turnFailures()).toEqual(["OMP RPC process exited with code 1 and signal null"]);
+    expect(omp.completedTurnCount()).toBe(1);
   });
 
   test("reports an immediate relaunch failure without retrying in a loop", async () => {

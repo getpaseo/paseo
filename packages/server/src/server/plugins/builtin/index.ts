@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const builtinPlugins = [
+  "antigravity-provider",
   "claude-usage-source",
   "codex-usage-source",
   "copilot-usage-source",
@@ -10,12 +11,19 @@ export const builtinPlugins = [
   "grok-usage-source",
   "kimi-usage-source",
   "minimax-usage-source",
+  "muse-provider",
   "opencode-go-usage-source",
   "zai-usage-source",
 ] as const;
 
 export function resolveBuiltinPluginsRoot(moduleUrl: string | URL = import.meta.url): string {
   const moduleDir = path.dirname(fileURLToPath(moduleUrl));
+  const archiveSegment = `${path.sep}app.asar${path.sep}`;
+  const archiveIndex = moduleDir.indexOf(archiveSegment);
+  if (archiveIndex !== -1) {
+    // esbuild runs outside Electron's filesystem shim and cannot read archive entries.
+    return path.join(moduleDir.slice(0, archiveIndex), "builtin-plugins");
+  }
   const candidates = [
     path.resolve(moduleDir, "..", "..", "..", "builtin-plugins"),
     path.resolve(moduleDir, "..", "..", "..", "..", "..", "..", "plugins"),

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { Pressable, ScrollView, Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, MessageSquarePlus } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -71,7 +72,8 @@ export function ChecksSection({
   loadingCheckKeys,
   onAddLogsToChat,
 }: ChecksSectionProps) {
-  const summary = useMemo(() => summarizeChecks(checks), [checks]);
+  const { t } = useTranslation();
+  const summary = useMemo(() => summarizeChecks(checks, t), [checks, t]);
   const { collapsedGroups, toggle: handleToggleGroup } = useCheckGroupState();
 
   return (
@@ -91,13 +93,14 @@ export function ChecksSection({
           </Text>
           {summary.parts.length > 0 ? (
             <Text style={styles.detail} numberOfLines={1} testID="pr-pane-check-summary">
+              {summary.detailLead}
               {summary.parts.map((part, index) => (
                 <Text key={part.status}>
                   {index > 0 ? ", " : ""}
                   <Text testID={PART_TEST_ID[part.status]}>{part.text}</Text>
                 </Text>
               ))}
-              {` ${summary.countNoun}`}
+              {summary.detailTrail}
             </Text>
           ) : null}
         </View>
