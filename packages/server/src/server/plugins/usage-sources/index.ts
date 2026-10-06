@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentUsageSession } from "../../agent/agent-sdk-types.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
@@ -18,9 +19,14 @@ export interface UsageSource {
   fetch(input: unknown): Promise<unknown>;
 }
 
+interface Login {
+  input: unknown;
+  harness: string;
+}
+
 interface KnownReport {
   source: UsageSource;
-  inputs: [unknown, ...unknown[]];
+  logins: [Login, ...Login[]];
   label?: string;
 }
 
@@ -75,6 +81,7 @@ export class UsageSourceRegistry {
     }
     for (const key of this.known.keys()) if (key.startsWith(`${id}:`)) this.known.delete(key);
     for (const key of this.cache.keys()) if (key.startsWith(`${id}:`)) this.cache.delete(key);
+    for (const key of this.pending.keys()) if (key.startsWith(`${id}:`)) this.pending.delete(key);
   }
 
   async listReports(options: ListUsageReportsOptions = {}): Promise<UsageReportEntry[]> {
@@ -82,8 +89,10 @@ export class UsageSourceRegistry {
       throw new Error("agentId and reportIds cannot be combined");
     this.pruneAgents();
     let ids: string[];
+    let reports = this.known;
     if (options.agentId !== undefined) {
       ids = await this.discoverAgent(options.agentId);
+      reports = this.byAgent.get(options.agentId)?.reports ?? new Map();
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
@@ -93,7 +102,7 @@ export class UsageSourceRegistry {
     }
     return Promise.all(
       [...new Set(ids)].flatMap((id) => {
-        const known = this.known.get(id);
+        const known = reports.get(id);
         if (!known) return [];
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
@@ -149,8 +158,14 @@ export class UsageSourceRegistry {
       for (const [id, report] of reports) {
         if (this.sources.get(report.source.id) !== report.source) continue;
         const known = this.known.get(id);
-        if (known) known.inputs.push(...report.inputs);
-        else this.known.set(id, { ...report, inputs: [...report.inputs] });
+        if (!known) {
+          this.known.set(id, { ...report, logins: [...report.logins] });
+          continue;
+        }
+        for (const login of report.logins) {
+          if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
+            known.logins.push(login);
+        }
       }
     }
   }
@@ -165,6 +180,7 @@ export class UsageSourceRegistry {
               z.object({
                 key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
                 label: z.string().optional(),
+                harness: z.string().min(1).optional(),
                 input: z.json(),
               }),
             )
@@ -172,8 +188,12 @@ export class UsageSourceRegistry {
           for (const account of accounts) {
             const id = `${source.id}:${account.key}`;
             const known = reports.get(id);
-            if (known) known.inputs.push(account.input);
-            else reports.set(id, { source, inputs: [account.input], label: account.label });
+            // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
+            const login = { input: account.input, harness: account.harness ?? source.label };
+            if (known) {
+              if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
+                known.logins.push(login);
+            } else reports.set(id, { source, logins: [login], label: account.label });
           }
         } catch (error) {
           this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
@@ -214,10 +234,14 @@ export class UsageSourceRegistry {
   }
 
   private fetchId(id: string, known: KnownReport, forceRefresh = false): Promise<UsageReportEntry> {
-    const cached = this.cache.get(id);
+    // Account identity groups cards; the ordered login set identifies a fetch result.
+    const cacheKey = `${id}:${createHash("sha256")
+      .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
+      .digest("hex")}`;
+    const cached = this.cache.get(cacheKey);
     if (!forceRefresh && cached && this.now() - cached.at < this.ttlMs)
       return Promise.resolve(cached.entry);
-    const pending = this.pending.get(id);
+    const pending = this.pending.get(cacheKey);
     if (pending) return pending;
     const request = (async () => {
       const entry: UsageReportEntry = {
@@ -227,14 +251,14 @@ export class UsageSourceRegistry {
         icon: known.source.icon,
         account: { label: known.label },
         fetchedAt: new Date(this.now()).toISOString(),
-        report: await this.fetchBeforeDeadline(known),
+        ...(await this.fetchWithFallback(known)),
       };
-      this.writeCache(id, entry);
+      if (this.sources.get(known.source.id) === known.source) this.writeCache(cacheKey, entry);
       return entry;
     })();
-    this.pending.set(id, request);
+    this.pending.set(cacheKey, request);
     void request.finally(() => {
-      if (this.pending.get(id) === request) this.pending.delete(id);
+      if (this.pending.get(cacheKey) === request) this.pending.delete(cacheKey);
     });
     return request;
   }
@@ -247,7 +271,7 @@ export class UsageSourceRegistry {
     this.cache.set(id, { at, entry });
   }
 
-  private async fetchBeforeDeadline(known: KnownReport): Promise<UsageReport> {
+  private async fetchBeforeDeadline(source: UsageSource, input: unknown): Promise<UsageReport> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<UsageReport>((resolve) => {
       timer = setTimeout(
@@ -256,25 +280,36 @@ export class UsageSourceRegistry {
       );
     });
     try {
-      return await Promise.race([this.fetchWithFallback(known), deadline]);
+      return await Promise.race([this.fetchLogin(source, input), deadline]);
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async fetchWithFallback(known: KnownReport): Promise<UsageReport> {
-    let report = await this.fetchLogin(known.source, known.inputs[0]);
-    for (const input of known.inputs.slice(1)) {
-      if (report.status === "available") break;
-      report = await this.fetchLogin(known.source, input);
+  private async fetchWithFallback(
+    known: KnownReport,
+  ): Promise<Pick<UsageReportEntry, "report" | "loginErrors">> {
+    // Start each login within the same deadline window, then prefer discovery order.
+    // Sequential deadlines can exceed the client's RPC timeout before all errors arrive.
+    const attempts = known.logins.map((login) =>
+      this.fetchBeforeDeadline(known.source, login.input),
+    );
+    const loginErrors: NonNullable<UsageReportEntry["loginErrors"]> = [];
+    for (const [index, login] of known.logins.entries()) {
+      const report = await attempts[index]!;
+      if (report.status === "available") return { report };
+      loginErrors.push({ harness: login.harness, report });
     }
-    return report;
+    // COMPAT(usageLoginErrors): added in v0.11.0, remove after 2027-04-05 once app floor >= v0.11.0.
+    // Keep the final single report so older apps still parse and display failed accounts.
+    return { report: loginErrors[loginErrors.length - 1]!.report, loginErrors };
   }
 
   private async fetchLogin(source: UsageSource, input: unknown): Promise<UsageReport> {
     try {
       return UsageReportSchema.parse(await source.fetch(input));
     } catch (error) {
+      this.logger.warn({ sourceId: source.id, err: error }, "Usage fetch failed");
       return { status: "error", error: error instanceof Error ? error.message : String(error) };
     }
   }
@@ -301,4 +336,13 @@ function legacyError(report: UsageReport, now: number): string | null {
   if (report.status === "error") return report.error;
   if (report.status === "unavailable") return legacyProblem(report.problem, now);
   return null;
+}
+
+// Inputs are opaque JSON locators. Canonical equality deduplicates discovery across scopes.
+function loginKey(login: Login): string {
+  return JSON.stringify(login, (_key, value) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value,
+  );
 }

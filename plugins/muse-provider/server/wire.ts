@@ -87,7 +87,7 @@ export const notificationSchema = z.object({
 });
 export const frameSchema = z.object({
   jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number()]).optional(),
+  id: z.union([z.string(), z.number()]).nullable().optional(),
   method: z.string().optional(),
   params: z.unknown().optional(),
   result: z.unknown().optional(),
@@ -115,16 +115,20 @@ export const catalogSchema = z.object({
       contextLimit: z.number().nullable(),
       isDefault: z.boolean(),
       defaultReasoningEffort: effortSchema.nullable().optional(),
-      reasoningEffortVariants: z.union([z.array(effortSchema), z.literal("unknown")]).default([]),
-      variants: z.array(effortSchema).default([]),
+      // Validate consumed fields only. Muse's described subset (reasoningEffortVariants)
+      // is presentation metadata; its shape must not gate catalog discovery or session startup.
+      variants: z
+        .union([z.array(effortSchema), z.literal("unknown")])
+        .transform((variants) => (variants === "unknown" ? [] : variants))
+        .default([]),
     }),
   ),
 });
 export const sessionSchema = z.object({
   session: z.object({
     sessionId: z.string(),
-    modelId: z.string(),
-    providerId: z.string(),
+    modelId: z.string().nullable(),
+    providerId: z.string().nullable(),
     approvalMode: z.object({ mode: approvalModeSchema }).optional(),
   }),
   viewCursor: z.string(),
@@ -139,11 +143,14 @@ export const sessionSchema = z.object({
 });
 export const persistenceSchema = z.object({
   sessionId: z.string(),
-  cursor: z.string().optional(),
   model: z.string().optional(),
   thinkingOption: effortSchema.optional(),
 });
-export const deltaSchema = z.object({ itemId: z.string(), field: z.string(), delta: z.string() });
+export const deltaSchema = z.object({
+  itemId: z.string(),
+  field: z.string().default("text"),
+  delta: z.string(),
+});
 export const turnSchema = z.object({
   turnId: z.string(),
   commandId: z.string().optional(),
@@ -241,7 +248,7 @@ export const sessionListSchema = z.object({
       workspaceRoot: z.string().nullable(),
       title: z.string().optional(),
       updatedAt: z.string(),
-      modelId: z.string(),
+      modelId: z.string().nullable(),
     }),
   ),
 });

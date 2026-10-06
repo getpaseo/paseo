@@ -19,6 +19,7 @@ import {
   addedAgo,
   CATEGORIES,
   type CategorySlug,
+  featuredPlugins,
   getCategory,
   getPluginsInCategory,
   getRegistry,
@@ -26,7 +27,7 @@ import {
   mostInstalled,
   newestFirst,
 } from "~/plugins";
-import { ContributeLinks } from "~/plugins/contribute-links";
+import { ContributeSection } from "~/plugins/contribute-links";
 import {
   type BrowseQuery,
   browseHref,
@@ -36,9 +37,11 @@ import {
   parseSearchTerm,
   parseSort,
   parseWindow,
+  SUBMIT_URL,
 } from "~/plugins/links";
 import { NewPluginCard, PluginRankRow } from "~/plugins/plugin-card";
 import { PluginSearch } from "~/plugins/plugin-search";
+import { PluginSection, PluginSectionHeader, PluginSectionTitle } from "~/plugins/section";
 import { WindowSwitch } from "~/plugins/window-switch";
 import "~/styles.css";
 
@@ -57,6 +60,10 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   utils: Wrench,
 };
 
+const SUBMIT_CLASS = "text-sm text-muted-foreground transition-colors hover:text-foreground";
+// What's new and Featured cards: a swipeable row on phones, a grid from `sm` up.
+const CARD_ROW_CLASS =
+  "-mx-6 flex gap-4 overflow-x-auto px-6 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 lg:grid-cols-4";
 const SEE_ALL_CLASS =
   "inline-flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
 
@@ -89,8 +96,9 @@ export const Route = createFileRoute("/plugins/")({
 });
 
 function PluginsPage() {
-  const { plugins, installs, now } = Route.useLoaderData();
+  const { plugins, featured: featuredIds, installs, now } = Route.useLoaderData();
   const window = Route.useSearch().window ?? DEFAULT_WINDOW;
+  const featured = featuredPlugins(plugins, featuredIds);
   const newest = newestFirst(plugins).slice(0, NEW_COUNT);
   const top = mostInstalled(plugins, installs, window).slice(0, TOP_COUNT);
   const windowHrefs = useMemo(
@@ -113,82 +121,98 @@ function PluginsPage() {
           </span>
         </h1>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+          <a href={SUBMIT_URL} className={SUBMIT_CLASS}>
+            Submit a plugin
+          </a>
           <PluginSearch scope={searchScope} className="w-full sm:w-56" />
-          <ContributeLinks />
         </div>
       </div>
 
-      <section aria-labelledby="whats-new" className="mt-10">
-        <div className="mb-4 flex items-baseline justify-between gap-4">
-          <h2 id="whats-new" className="text-lg font-medium">
-            What’s new
-          </h2>
-          <a href={browseHref({ sort: "new", window: DEFAULT_WINDOW })} className={SEE_ALL_CLASS}>
-            See all
-            <ChevronRight className="h-3.5 w-3.5" />
-          </a>
-        </div>
-        <div className="-mx-6 flex gap-4 overflow-x-auto px-6 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 lg:grid-cols-4">
-          {newest.map((plugin) => (
-            <NewPluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
-          ))}
-        </div>
-      </section>
+      <div className="mt-10 flex flex-col gap-14">
+        {featured.length > 0 && (
+          <PluginSection labelledBy="featured">
+            <div>
+              <PluginSectionTitle id="featured">Featured</PluginSectionTitle>
+              <p className="mt-1 text-sm text-muted-foreground">Hand-picked plugins that show what is possible</p>
+            </div>
+            <div className={CARD_ROW_CLASS}>
+              {featured.map((plugin) => (
+                <NewPluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
+              ))}
+            </div>
+          </PluginSection>
+        )}
 
-      <section aria-labelledby="categories" className="mt-14">
-        <h2 id="categories" className="mb-4 text-lg font-medium">
-          Categories
-        </h2>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {CATEGORIES.map((category) => {
-            const Icon = CATEGORY_ICONS[category.slug];
-            return (
-              <a
-                key={category.slug}
-                href={categoryHref(category.slug)}
-                className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3.5 transition-colors hover:border-white/20 hover:bg-white/[0.05] sm:px-4"
-              >
-                <Icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 text-sm leading-tight text-white">
-                  {category.label}
-                </span>
-                <span className="text-xs tabular-nums text-extra-muted-foreground">
-                  {getPluginsInCategory(plugins, category.slug).length}
-                </span>
-              </a>
-            );
-          })}
-        </div>
-      </section>
-
-      <section
-        id="most-installed"
-        aria-labelledby="most-installed-title"
-        className="mt-14 scroll-mt-8"
-      >
-        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-          <h2 id="most-installed-title" className="text-lg font-medium">
-            <a
-              href={browseHref({ sort: "installs", window })}
-              className="group inline-flex items-center gap-1"
-            >
-              Most installed
-              <ChevronRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+        <PluginSection labelledBy="whats-new">
+          <PluginSectionHeader>
+            <PluginSectionTitle id="whats-new">What’s new</PluginSectionTitle>
+            <a href={browseHref({ sort: "new", window: DEFAULT_WINDOW })} className={SEE_ALL_CLASS}>
+              See all
+              <ChevronRight className="h-3.5 w-3.5" />
             </a>
-          </h2>
-          <WindowSwitch current={window} hrefs={windowHrefs} />
-        </div>
-        <div className="-mx-2 grid gap-x-8 md:grid-cols-2">
-          {top.map((plugin, index) => (
-            <PluginRankRow
-              key={plugin.id}
-              plugin={plugin}
-              rank={index + 1}
-              installs={installs[plugin.id]?.[window] ?? 0}
-            />
-          ))}
-        </div>
-      </section>
+          </PluginSectionHeader>
+          <div className={CARD_ROW_CLASS}>
+            {newest.map((plugin) => (
+              <NewPluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
+            ))}
+          </div>
+        </PluginSection>
+
+        <PluginSection labelledBy="categories">
+          <PluginSectionTitle id="categories">Categories</PluginSectionTitle>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {CATEGORIES.map((category) => {
+              const Icon = CATEGORY_ICONS[category.slug];
+              return (
+                <a
+                  key={category.slug}
+                  href={categoryHref(category.slug)}
+                  className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3.5 transition-colors hover:border-white/20 hover:bg-white/[0.05] sm:px-4"
+                >
+                  <Icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 text-sm leading-tight text-white">
+                    {category.label}
+                  </span>
+                  <span className="text-xs tabular-nums text-extra-muted-foreground">
+                    {getPluginsInCategory(plugins, category.slug).length}
+                  </span>
+                </a>
+              );
+            })}
+          </div>
+        </PluginSection>
+
+        <PluginSection
+          id="most-installed"
+          labelledBy="most-installed-title"
+          className="scroll-mt-8"
+        >
+          <PluginSectionHeader>
+            <PluginSectionTitle id="most-installed-title">
+              <a
+                href={browseHref({ sort: "installs", window })}
+                className="group inline-flex items-center gap-1"
+              >
+                Most installed
+                <ChevronRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+              </a>
+            </PluginSectionTitle>
+            <WindowSwitch current={window} hrefs={windowHrefs} />
+          </PluginSectionHeader>
+          <div className="-mx-4 grid gap-x-8 md:grid-cols-2">
+            {top.map((plugin, index) => (
+              <PluginRankRow
+                key={plugin.id}
+                plugin={plugin}
+                rank={index + 1}
+                installs={installs[plugin.id]?.[window] ?? 0}
+              />
+            ))}
+          </div>
+        </PluginSection>
+      </div>
+
+      <ContributeSection />
     </SiteShell>
   );
 }

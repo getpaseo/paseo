@@ -27,7 +27,12 @@ export function AgentUsage({
     <>
       <View style={styles.divider} />
       {view.kind === "ready" ? (
-        <AgentUsageCards serverId={serverId} reports={view.reports} refreshable={refreshable} />
+        <AgentUsageCards
+          serverId={serverId}
+          agentId={agentId}
+          reports={view.reports}
+          refreshable={refreshable}
+        />
       ) : (
         <Text style={styles.message}>
           {view.kind === "loading" ? usageCopy.loading : view.message}
@@ -39,10 +44,12 @@ export function AgentUsage({
 
 function AgentUsageCards({
   serverId,
+  agentId,
   reports,
   refreshable,
 }: {
   serverId: string;
+  agentId: string;
   reports: readonly UsageReportEntry[];
   refreshable: boolean;
 }) {
@@ -51,6 +58,7 @@ function AgentUsageCards({
     <UsageCard
       key={entry.id}
       serverId={serverId}
+      agentId={agentId}
       entry={entry}
       display={display}
       compact

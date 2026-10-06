@@ -386,6 +386,9 @@ export const ru: TranslationResources = {
         completed: "Завершена",
       },
     },
+    turnFooter: {
+      workedFor: "Время работы: {{duration}}",
+    },
     compaction: {
       loading: "Сжатие контекста...",
       auto: "Контекст сжат автоматически",
@@ -1015,6 +1018,47 @@ export const ru: TranslationResources = {
         actions: {
           viewPullRequest: "Просмотреть",
           openOn: "Открыть на {{brand}}",
+          addToChat: "Добавить в чат",
+          addAllToChat: "Добавить всё в чат",
+          addingToChat: "Добавление...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "Некоторые проверки требуют внимания",
+            failure: "Некоторые проверки не пройдены",
+            pending: "Некоторые проверки ещё не завершены",
+            success: "Все проверки пройдены",
+            none: "Нет проверок",
+          },
+          count: {
+            actionRequired: "требует действий: {{count}}",
+            warning: "с предупреждением: {{count}}",
+            failure: "не пройдено: {{count}}",
+            pending: "выполняется: {{count}}",
+            manual: "вручную: {{count}}",
+            success: "пройдено: {{count}}",
+            ignored: "пропущено: {{count}}",
+          },
+          detailOne: "Проверка ({{parts}})",
+          detailMany: "Проверки ({{parts}})",
+          groupOne: {
+            actionRequired: "Требует действий: {{count}}",
+            warning: "С предупреждением: {{count}}",
+            failure: "Не пройдена: {{count}}",
+            pending: "Выполняется: {{count}}",
+            manual: "Ручная: {{count}}",
+            success: "Пройдена: {{count}}",
+            ignored: "Пропущена: {{count}}",
+          },
+          groupMany: {
+            actionRequired: "Требуют действий: {{count}}",
+            warning: "С предупреждением: {{count}}",
+            failure: "Не пройдены: {{count}}",
+            pending: "Выполняются: {{count}}",
+            manual: "Ручные: {{count}}",
+            success: "Пройдены: {{count}}",
+            ignored: "Пропущены: {{count}}",
+          },
         },
         checksSummary: {
           passedLabel: "успешно",
@@ -1028,17 +1072,21 @@ export const ru: TranslationResources = {
           checks: "Проверки",
           pipeline: "Пайплайн",
           reviews: "Ревью",
+          activity: "Активность",
         },
         empty: {
           noJobs: "Нет заданий",
           loadingPipeline: "Загрузка пайплайна...",
           pipelineJobsLoadFailed: "Не удалось загрузить задания пайплайна",
           allowedToFail: "допускается сбой",
+          noActivity: "Активности пока нет",
         },
         approvals: "Одобрено: {{given}} из {{required}}",
         accessibility: {
           pullRequest: "PR #{{number}}",
           pullRequest_mr: "MR !{{number}}",
+          commentActions: "Действия с комментарием",
+          threadActions: "Действия с обсуждением",
           checkStatus: {
             passed: "Успешно",
             failed: "Ошибка",
@@ -1067,6 +1115,8 @@ export const ru: TranslationResources = {
         },
         thread: {
           discussion: "Ветка обсуждения",
+          resolved: "Решено",
+          outdated: "Устарело",
         },
         errors: {
           statusLoadFailed: "Не удалось загрузить статус PR",
@@ -1133,6 +1183,14 @@ export const ru: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "Группа «{{label}}»",
+    statusBucket: {
+      needsInput: "Ожидает ввода",
+      failed: "Ошибка",
+      readyToReview: "На проверку",
+      working: "В работе",
+      done: "Готово",
+    },
     display: {
       trigger: "Настройки отображения",
       heading: "Отображение",
@@ -1760,6 +1818,12 @@ export const ru: TranslationResources = {
       helper: "Подключитесь к демону Paseo на удалённом хосте.",
       fields: {
         target: "Хост SSH",
+        password: "Пароль демона",
+        optional: "Необязательно",
+      },
+      passwordVisibility: {
+        show: "Показать пароль",
+        hide: "Скрыть пароль",
       },
       actions: {
         cancel: "Отмена",
@@ -1992,6 +2056,8 @@ export const ru: TranslationResources = {
     dismiss: "Закрыть",
   },
   contextWindow: {
+    noData: "Нет данных о контексте",
+    accessibilityNoData: "Контекстное окно: нет данных о контексте",
     title: "Контекстное окно",
     used: "Использовано: {{percentage}}%",
     tokens: "Токены: {{used}} / {{max}}",

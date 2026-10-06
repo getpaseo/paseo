@@ -113,7 +113,7 @@ export function SidebarHelpMenu() {
             >
               {({ hovered }) => (
                 <ThemedCircleHelp
-                  size={isCompact ? ICON_SIZE.xl : ICON_SIZE.md}
+                  size={isCompact ? ICON_SIZE.lg : ICON_SIZE.md}
                   uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
                 />
               )}

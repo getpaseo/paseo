@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execCommand } from "@getpaseo/plugin/server";
 
 interface SignalOptions {
   platform: NodeJS.Platform;
@@ -10,8 +9,6 @@ interface SignalOptions {
 type SignalPlan =
   | { type: "group"; pid: number; signal: NodeJS.Signals }
   | { type: "tree"; command: "taskkill"; args: string[] };
-
-const executeFile = promisify(execFile);
 
 export function signalPlan(options: SignalOptions): SignalPlan {
   if (options.platform === "win32") {
@@ -32,7 +29,7 @@ export function signalProcess(options: SignalOptions): void | Promise<void> {
 
 async function killTree(plan: Extract<SignalPlan, { type: "tree" }>): Promise<void> {
   try {
-    await executeFile(plan.command, plan.args, { windowsHide: true });
+    await execCommand(plan.command, plan.args, { shell: false });
   } catch (error) {
     // taskkill reports an already-exited PID with exit code 128.
     if (!(error instanceof Error && "code" in error && error.code === 128)) throw error;

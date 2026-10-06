@@ -154,6 +154,28 @@ describe("JsonlRpcProcess", () => {
     }
   });
 
+  test("publishes unmatched responses without publishing the response that settles a request", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const messages: Record<string, unknown>[] = [];
+    transport.onMessage((message) => messages.push(message));
+
+    try {
+      const { id, promise } = transport.startRequest({ type: "prompt" });
+      const response = { id, type: "response", command: "prompt" };
+      const rejection = { ...response, success: false, error: "rejected after acknowledgement" };
+      const unknownResponse = { ...response, id: "unknown-request", success: true };
+      child.stdout.write(`${JSON.stringify({ ...response, success: true })}\n`);
+      child.stdout.write(`${JSON.stringify(rejection)}\n`);
+      child.stdout.write(`${JSON.stringify(unknownResponse)}\n`);
+
+      await expect(promise).resolves.toBeUndefined();
+      expect(messages).toEqual([rejection, unknownResponse]);
+    } finally {
+      await transport.close();
+    }
+  });
+
   test("rejects unsuccessful responses", async () => {
     const transport = startProcess();
 
