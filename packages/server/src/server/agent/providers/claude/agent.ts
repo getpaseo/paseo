@@ -4,9 +4,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { LRUCache } from "lru-cache";
-import pLimit from "p-limit";
+import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -1509,12 +1508,9 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly rewindSdk: ClaudeRewindSdk;
-  // Share the limit across overlapping picker requests, not just within each listing.
-  private readonly importDescriptorLimit = pLimit(4);
-  private readonly importDescriptorReads = new Map<
-    string,
-    Promise<ImportableProviderSession | null>
-  >();
+  private readonly scheduleImportDescriptors = createImportDescriptorScheduler(
+    (candidate: ClaudeSessionCandidate, signal) => this.readImportDescriptor(candidate, signal),
+  );
   private readonly importDescriptorCache = new LRUCache<string, ImportableProviderSession>({
     max: 500,
     maxSize: 8 * 1024 * 1024,
@@ -1636,52 +1632,47 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async listImportableSessions(
-    options?: ListImportableSessionsOptions,
+    options?: ListImportableSessionsOptions & { signal?: AbortSignal },
   ): Promise<ImportableProviderSession[]> {
+    // Leave time to deliver the provider error before the client RPC expires at 60 seconds.
+    const deadline = AbortSignal.timeout(45_000);
+    const signal = options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+    signal.throwIfAborted();
     const configDir = claudeConfigDir(this.buildProviderEnv());
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
       : path.join(configDir, "projects");
-    if (!(await pathExists(sessionsRoot))) {
-      return [];
-    }
+    const rootExists = await pathExists(sessionsRoot);
+    signal.throwIfAborted();
+    if (!rootExists) return [];
     const limit = options?.limit ?? 20;
     const scanLimit = Math.min(options?.scanLimit ?? limit * 3, 500);
     const candidates = await collectRecentClaudeSessions(sessionsRoot, scanLimit, {
       rootIsProjectDir: Boolean(options?.cwd),
     });
-    const parsed = await Promise.all(
-      candidates.map((candidate) => this.readImportDescriptor(candidate)),
-    );
+    const parsed = await this.scheduleImportDescriptors(candidates, signal);
     return parsed
       .filter((session): session is ImportableProviderSession => session !== null)
-      .slice(0, limit);
+      .slice(0, limit)
+      .map((session) => structuredClone(session));
   }
 
   private async readImportDescriptor(
     candidate: ClaudeSessionCandidate,
+    signal: AbortSignal,
   ): Promise<ImportableProviderSession | null> {
+    signal.throwIfAborted();
     const cached = this.importDescriptorCache.get(candidate.cacheKey);
     if (cached) return structuredClone(cached);
 
-    let pending = this.importDescriptorReads.get(candidate.cacheKey);
-    if (!pending) {
-      pending = this.importDescriptorLimit(async () => {
-        const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime);
-        if (descriptor) {
-          const current = await fsPromises.stat(candidate.path).catch(() => null);
-          if (current && claudeSessionCacheKey(candidate.path, current) === candidate.cacheKey) {
-            // Copy the small descriptor so preview slices cannot retain a large transcript line.
-            this.importDescriptorCache.set(candidate.cacheKey, structuredClone(descriptor));
-          }
-        }
-        return descriptor;
-      }).finally(() => {
-        this.importDescriptorReads.delete(candidate.cacheKey);
-      });
-      this.importDescriptorReads.set(candidate.cacheKey, pending);
+    const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime, signal);
+    if (descriptor) {
+      const current = await fsPromises.stat(candidate.path).catch(() => null);
+      signal.throwIfAborted();
+      if (current && claudeSessionCacheKey(candidate.path, current) === candidate.cacheKey) {
+        this.importDescriptorCache.set(candidate.cacheKey, structuredClone(descriptor));
+      }
     }
-    const descriptor = await pending;
     return descriptor ? structuredClone(descriptor) : null;
   }
 
@@ -6340,9 +6331,23 @@ function applyClaudeSessionEntryToAccumulator(
   }
 }
 
+class ClaudeImportRecordTooLargeError extends Error {
+  constructor(
+    readonly filePath: string,
+    readonly recordNumber: number,
+    readonly maxRecordBytes: number,
+  ) {
+    super(
+      `Cannot list Claude sessions: transcript ${filePath} record ${recordNumber} exceeds the ${maxRecordBytes}-byte import limit. Shorten or remove this record before retrying.`,
+    );
+    this.name = "ClaudeImportRecordTooLargeError";
+  }
+}
+
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
+  signal: AbortSignal,
 ): Promise<ImportableProviderSession | null> {
   const acc: ClaudeSessionDescriptorAccumulator = {
     sessionId: null,
@@ -6354,23 +6359,52 @@ async function parseClaudeSessionDescriptor(
     lastPromptPreview: null,
   };
 
-  const stream = fs.createReadStream(filePath, { encoding: "utf8" });
-  const lines = createInterface({ input: stream, crlfDelay: Infinity });
-  try {
-    for await (const line of lines) {
-      if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) continue;
-      let entry: unknown;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      applyClaudeSessionEntryToAccumulator(entry, acc);
+  // Reject rather than skip: type/cwd/title can occur after a huge payload, so a
+  // prefix cannot establish that dropping the record preserves the descriptor.
+  const maxRecordBytes = 4 * 1024 * 1024;
+  const record = Buffer.allocUnsafe(maxRecordBytes);
+  let recordBytes = 0;
+  let recordNumber = 1;
+  const stream = fs.createReadStream(filePath, { highWaterMark: 64 * 1024, signal });
+  function applyRecord(): void {
+    const line = record.toString("utf8", 0, recordBytes);
+    if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) return;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return;
     }
-  } catch {
-    return null;
+    applyClaudeSessionEntryToAccumulator(entry, acc);
+  }
+  try {
+    for await (const chunk of stream) {
+      signal.throwIfAborted();
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(10, start);
+        const end = newline === -1 ? chunk.length : newline;
+        const length = end - start;
+        if (recordBytes + length > maxRecordBytes) {
+          throw new ClaudeImportRecordTooLargeError(filePath, recordNumber, maxRecordBytes);
+        }
+        chunk.copy(record, recordBytes, start, end);
+        recordBytes += length;
+        if (newline === -1) break;
+        applyRecord();
+        recordBytes = 0;
+        recordNumber += 1;
+        start = newline + 1;
+      }
+    }
+    if (recordBytes > 0) applyRecord();
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof ClaudeImportRecordTooLargeError) throw error;
+    // Transcripts can disappear between candidate discovery and opening them.
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
   } finally {
-    lines.close();
     stream.destroy();
   }
 

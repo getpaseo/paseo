@@ -17,6 +17,7 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
@@ -1707,6 +1708,13 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
         ],
       );
 
+      repeated[0]![0]!.title = "Changed by overlapping caller";
+      repeated[0]![0]!.lastActivityAt.setTime(0);
+      expect([repeated[1]![0]!.title, repeated[1]![0]!.lastActivityAt]).toEqual([
+        "First title",
+        timestamp,
+      ]);
+
       await fs.appendFile(sessionFile, title("After append"));
       expect(
         (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
@@ -1805,6 +1813,143 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
+  });
+
+  test("rejects a single record larger than the heap without allocating the full line", async () => {
+    const configDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "paseo-claude-import-single-record-"),
+    );
+    try {
+      const projectDir = path.join(configDir, "projects", "single-record");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "single-record.jsonl");
+      const transcript = await fs.open(sessionFile, "w");
+      try {
+        await transcript.writeFile('{"payload":"');
+        const block = "x".repeat(1024 * 1024);
+        for (let index = 0; index < 128; index += 1) await transcript.writeFile(block);
+        await transcript.writeFile('","type":"custom-title","customTitle":"Latest title"}');
+      } finally {
+        await transcript.close();
+      }
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          "--max-old-space-size=96",
+          "--import",
+          import.meta.resolve("tsx"),
+          "--input-type=module",
+          "--eval",
+          `
+          import { rejects } from "node:assert";
+          import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+          import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+          const client = new ClaudeAgentClient({
+            logger: pino({ level: "silent" }),
+            runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
+          });
+          await rejects(client.listImportableSessions({ limit: 1 }), {
+            name: "ClaudeImportRecordTooLargeError", recordNumber: 1, maxRecordBytes: 4194304,
+          });
+          console.log("Oversized record rejected");
+        `,
+        ],
+        { timeout: 20_000 },
+      );
+      expect(stdout.trim()).toEqual("Oversized record rejected");
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps metadata and UTF-8 in a record exactly at the byte limit", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-limit-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "boundary");
+      await fs.mkdir(projectDir, { recursive: true });
+      const prefix = '{"padding":"';
+      // Split the four-byte turtle across a 64 KiB input chunk boundary.
+      const padding = "x".repeat(64 * 1024 - Buffer.byteLength(prefix) - 1);
+      const suffix =
+        '","type":"user","sessionId":"boundary-session","cwd":"/boundary","message":{"content":"Hello 🐢"}}';
+      const remaining = 4 * 1024 * 1024 - Buffer.byteLength(prefix + padding + "🐢" + suffix);
+      await fs.writeFile(
+        path.join(projectDir, "boundary.jsonl"),
+        prefix + padding + "🐢" + "x".repeat(remaining) + suffix,
+      );
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => ({
+          providerHandleId: session.providerHandleId,
+          cwd: session.cwd,
+          title: session.title,
+          firstPromptPreview: session.firstPromptPreview,
+          lastPromptPreview: session.lastPromptPreview,
+        })),
+      ).toEqual([
+        {
+          providerHandleId: "boundary-session",
+          cwd: "/boundary",
+          title: "Hello 🐢",
+          firstPromptPreview: "Hello 🐢",
+          lastPromptPreview: "Hello 🐢",
+        },
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("fails explicitly on an oversized record without returning stale metadata", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-record-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "oversized");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "oversized.jsonl");
+      await fs.writeFile(
+        sessionFile,
+        `${JSON.stringify({
+          type: "user",
+          sessionId: "oversized-session",
+          cwd: "/oversized-project",
+          message: { content: "First prompt" },
+        })}\n`,
+      );
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      expect((await client.listImportableSessions({ limit: 1 }))[0]!.title).toEqual("First prompt");
+      // Metadata placed after the payload defeats prefix-only relevance checks.
+      await fs.appendFile(
+        sessionFile,
+        JSON.stringify({
+          payload: "x".repeat(4 * 1024 * 1024),
+          type: "custom-title",
+          customTitle: "Latest title",
+        }),
+      );
+      await expect(client.listImportableSessions({ limit: 1 })).rejects.toMatchObject({
+        name: "ClaudeImportRecordTooLargeError",
+        filePath: sessionFile,
+        recordNumber: 2,
+        maxRecordBytes: 4 * 1024 * 1024,
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a cancelled listing before doing filesystem work", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Picker closed"));
+    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    await expect(client.listImportableSessions({ signal: controller.signal })).rejects.toThrow(
+      "Picker closed",
+    );
   });
 
   test("uses the latest native custom title and leaves fixture mtimes unchanged", async () => {
@@ -3589,5 +3734,145 @@ describe("Claude question permission notifications", () => {
 
     expect(request.title).toBeUndefined();
     expect(request.description).toBeUndefined();
+  });
+});
+
+describe("Claude import descriptor scheduling", () => {
+  function controlledReads() {
+    const started: string[] = [];
+    const reads = new Map<
+      string,
+      { resolve: (value: string) => void; reject: (reason: unknown) => void }
+    >();
+    const signals = new Map<string, AbortSignal>();
+    const sharedScheduler = createImportDescriptorScheduler(
+      (candidate: { cacheKey: string }, signal) => {
+        started.push(candidate.cacheKey);
+        signals.set(candidate.cacheKey, signal);
+        return new Promise<string>((resolve, reject) => {
+          reads.set(candidate.cacheKey, { resolve, reject });
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+    function scheduler(candidates: string[], signal: AbortSignal): Promise<string[]> {
+      return sharedScheduler(
+        candidates.map((cacheKey) => ({ cacheKey })),
+        signal,
+      );
+    }
+    return { scheduler, started, reads, signals };
+  }
+
+  test("shares a cold read across overlapping listings and leaves capacity for unrelated work", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const signal = new AbortController().signal;
+    const overlapping = Array.from({ length: 4 }, () => scheduler(["shared"], signal));
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    const unrelated = scheduler(["unrelated"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated"]));
+    reads.get("unrelated")!.resolve("unrelated descriptor");
+    await expect(unrelated).resolves.toEqual(["unrelated descriptor"]);
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(Promise.all(overlapping)).resolves.toEqual(
+      Array.from({ length: 4 }, () => ["shared descriptor"]),
+    );
+    // A settled entry must not become an accidental second cache.
+    const later = scheduler(["shared"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated", "shared"]));
+    reads.get("shared")!.resolve("updated descriptor");
+    await expect(later).resolves.toEqual(["updated descriptor"]);
+  });
+
+  test("cancelling the initiating listing keeps its other subscriber alive", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const initiator = new AbortController();
+    const first = scheduler(["shared", "unused"], initiator.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const second = scheduler(["shared"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    initiator.abort(new Error("First picker closed"));
+    await firstRejected;
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(second).resolves.toEqual(["shared descriptor"]);
+    expect(started).toEqual(["shared"]);
+  });
+
+  test("the final subscriber cancellation aborts the read and allows a fresh subscription", async () => {
+    const { scheduler, started, signals } = controlledReads();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = scheduler(["shared"], firstController.signal);
+    const second = scheduler(["shared"], secondController.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const secondRejected = expect(second).rejects.toThrow("Final picker closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    firstController.abort(new Error("First picker closed"));
+    await firstRejected;
+    expect(signals.get("shared")!.aborted).toEqual(false);
+    secondController.abort(new Error("Final picker closed"));
+    await secondRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+    const retryController = new AbortController();
+    const retry = scheduler(["shared"], retryController.signal);
+    const retryRejected = expect(retry).rejects.toThrow("Retry closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared", "shared"]));
+    retryController.abort(new Error("Retry closed"));
+    await retryRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+  });
+
+  test("gives a small later listing a turn before a large listing finishes", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const signal = new AbortController().signal;
+    const large = scheduler(
+      Array.from({ length: 500 }, (_, index) => `large-${index}`),
+      signal,
+    );
+    await vi.waitFor(() => expect(started).toEqual(["large-0"]));
+    const small = scheduler(["small"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["large-0", "small"]));
+    reads.get("small")!.resolve("small descriptor");
+    await expect(small).resolves.toEqual(["small descriptor"]);
+    expect(started).toEqual(["large-0", "small"]);
+    // Cancel the large listing so this test does not need to service 499 reads.
+    reads.get("large-0")!.reject(new Error("Finished fairness check"));
+    await expect(large).rejects.toThrow("Finished fairness check");
+  });
+
+  test("bounds active reads and skips cancelled queued and remaining candidates", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const controllers = Array.from({ length: 5 }, () => new AbortController());
+    const listings = controllers.map((controller, index) =>
+      scheduler([`${index}-first`, `${index}-next`], controller.signal),
+    );
+    // Attach handlers before aborting any promises.
+    function errorMessage(error: Error): string {
+      return error.message;
+    }
+    const settled = listings.map((listing) => listing.catch(errorMessage));
+    await vi.waitFor(() => expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]));
+    controllers[4]!.abort(new Error("Queued picker closed"));
+    await expect(settled[4]).resolves.toEqual("Queued picker closed");
+    controllers[0]!.abort(new Error("Active picker closed"));
+    await expect(settled[0]).resolves.toEqual("Active picker closed");
+    reads.get("1-first")!.reject(new Error("Stop 1"));
+    reads.get("2-first")!.reject(new Error("Stop 2"));
+    reads.get("3-first")!.reject(new Error("Stop 3"));
+    await expect(Promise.all(settled)).resolves.toEqual([
+      "Active picker closed",
+      "Stop 1",
+      "Stop 2",
+      "Stop 3",
+      "Queued picker closed",
+    ]);
+    expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]);
+    // A cancelled queue entry must not consume a later listing's read slot.
+    const later = scheduler(["later"], new AbortController().signal);
+    await vi.waitFor(() =>
+      expect(started).toEqual(["0-first", "1-first", "2-first", "3-first", "later"]),
+    );
+    reads.get("later")!.resolve("later descriptor");
+    await expect(later).resolves.toEqual(["later descriptor"]);
   });
 });
