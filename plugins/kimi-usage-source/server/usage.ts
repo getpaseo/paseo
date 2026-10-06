@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   toneFromUsedPct,
   unavailable,
   type UsageAccount,
@@ -254,7 +255,7 @@ type KimiCredentials = KimiAuth & { access_token: string };
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   async function callUsageApi(token: string): Promise<Response> {
     return fetchApi(KIMI_USAGE_URL, {

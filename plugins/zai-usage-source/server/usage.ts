@@ -1,6 +1,7 @@
 import type { UsageInput } from "../shared/input.js";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   unavailable,
   type UsageAccount,
   type UsageReport,
@@ -27,7 +28,7 @@ const ZaiUsageResponseSchema = z.object({
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   const token = process.env[input.locator];
   if (!token) throw new Error("Z.ai login store no longer exists");
