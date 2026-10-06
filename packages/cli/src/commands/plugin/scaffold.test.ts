@@ -38,22 +38,44 @@ describe("plugin scaffold", () => {
 
       const overview = await readFile(path.join(directory, "OVERVIEW.md"), "utf8");
       const comments = overview.match(/<!--[\s\S]*?-->/g) ?? [];
-      expect(comments).toHaveLength(3);
+      expect(comments).toHaveLength(4);
       expect(overview.replace(/<!--[\s\S]*?-->/g, "").trim()).toBe("");
-      expect(comments[0]).toContain("Opening paragraph");
+      expect(comments[0]).toContain("what your plugin is and does");
       expect(comments[0]).toContain("README");
       expect(comments[0]).toContain("choosing a plugin in Paseo");
-      expect(comments[0]).toContain("80–250 words");
-      expect(comments[1]).toContain("Requirements");
-      expect(comments[1]).toContain("daemon version");
-      expect(comments[2]).toContain("Considerations");
-      expect(comments[2]).toContain("permissions");
-      expect(comments[2]).toContain("known limits");
+      expect(comments[0]).toContain("Length follows complexity");
+      expect(comments[1]).toContain("only when it is not obvious");
+      expect(comments[2]).toContain("Setup, when needed");
+      expect(comments[2]).toContain("tokens");
+      expect(comments[3]).toContain("permissions");
+      expect(comments[3]).toContain("known limits");
+      expect(overview).not.toContain("This overview was generated");
       const packageJson = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
       expect(packageJson.files).toContain("OVERVIEW.md");
       expect(await readdir(directory)).toContain("paseo-plugin.json");
     },
   );
+
+  it("includes the author overview in the packed npm artifact", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
+    directories.push(parent);
+    const directory = path.join(parent, "packed-plugin");
+    await scaffoldPluginDirectory(directory);
+
+    const npmCliPath = process.env.npm_execpath;
+    if (!npmCliPath) {
+      throw new Error("Run the scaffold tests through npm or npx to locate the npm CLI.");
+    }
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [npmCliPath, "pack", "--dry-run", "--ignore-scripts", "--json"],
+      { cwd: directory },
+    );
+    const [artifact] = JSON.parse(stdout) as { files: { path: string }[] }[];
+    expect(artifact.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining(["OVERVIEW.md", "paseo-plugin.json"]),
+    );
+  });
 
   it(
     "creates a standalone split-runtime project that typechecks",

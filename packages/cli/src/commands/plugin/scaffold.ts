@@ -4,25 +4,35 @@ import { PluginIdSchema } from "@getpaseo/protocol/messages";
 import { resolveCliVersion } from "../../version.js";
 
 const OVERVIEW = `<!--
-Opening paragraph: describe what your plugin does and the workflow it supports.
-README is for people browsing your project on GitHub. This overview is for people
-choosing a plugin in Paseo. Replace these comments with 80–250 words in sentence
-case and plain factual language: an opening paragraph, requirements, then
-considerations. Omit install instructions (the listing page has the command),
-badges, changelog, contributing sections, and marketing. Describe only behavior
-your plugin implements.
+Start with what your plugin is and does in plain terms, in 1–2 short paragraphs.
+README assumes people are browsing GitHub and often includes installation
+instructions, technical details, and badges. Long, AI-generated READMEs leave
+people reading past that material to understand the plugin. This overview is for
+people choosing a plugin in Paseo, where the install command is already at the
+top of the plugin page. Replace these comments with useful facts about your plugin.
+Length follows complexity; a theme can take a paragraph. Use sentence case, no
+em dashes, and only claims supported by your plugin's behavior. Choose headings
+only if they help. Omit installation commands, badges, changelog, contributing or
+license sections, marketing, and implementation filler such as empty cleanup
+functions, theme-token field lists, or lists of absent features.
 -->
 
 <!--
-Requirements: state the required Paseo daemon version, operating systems,
-providers, accounts, other plugins, and external tools. Include only requirements
-that apply to your plugin.
+Explain how it works only when it is not obvious from what the plugin does.
+Keep the explanation useful to someone deciding whether to install it.
 -->
 
 <!--
-Considerations: explain permissions, what the plugin reads, what it sends and
-where it sends it, and known limits. Describe the actual behavior so people can
-decide whether to use it.
+Setup, when needed: explain required settings, accounts, tokens, providers,
+external tools, or other plugins. State applicable daemon version and operating
+system requirements. Setup guidance belongs here; the page already provides the
+installation command.
+-->
+
+<!--
+Explain capabilities and settings worth understanding, including what each option
+does, what the plugin reads or sends and where, permissions, and known limits.
+Include only details that help someone choose the plugin.
 -->
 `;
 

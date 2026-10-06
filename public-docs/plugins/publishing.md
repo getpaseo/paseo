@@ -139,10 +139,15 @@ In the app, enter only the source identifier.
 
 ## Your listing page
 
-Write `OVERVIEW.md` beside `paseo-plugin.json` for people choosing your plugin in Paseo.
-Your README serves people browsing the project on GitHub. The scaffold creates an overview
-with comments to guide you; replace them with the listing text before publishing. Include the
-file in your published artifact. The scaffold's npm `files` list includes it.
+Write `OVERVIEW.md` beside `paseo-plugin.json` for the plugin page inside Paseo.
+It helps someone decide whether to install your plugin; the install command is already at
+the top of that page. A README assumes a GitHub audience and carries installation
+instructions, technical details, and badges. Long, AI-generated READMEs make people read
+past that material to understand what a plugin does.
+
+Replace the scaffold's guidance comments with useful facts about your plugin before
+publishing. Include the overview in your published artifact; the scaffold's npm `files`
+list includes it.
 
 The registry resolves listing content in this order, using the reviewed artifact:
 
@@ -155,16 +160,30 @@ The registry resolves listing content in this order, using the reviewed artifact
 The registry copy is an import-time stopgap. On the version bump that ships the author's
 `OVERVIEW.md`, the reviewer removes the registry copy.
 
-Author overviews and registry stopgaps follow the same content contract: 80–250 words,
-sentence case, and plain factual language, in this order:
+Author overviews and registry stopgaps follow the same content contract, in this order.
+Choose headings only when they help; length follows complexity. A theme can take a paragraph.
 
-- **Opening paragraph:** what the plugin does and the workflow it supports.
-- **Requirements:** required daemon version, operating systems, providers, accounts, other
-  plugins, and external tools. State only requirements that apply.
-- **Considerations:** permissions, what it reads, what it sends and where, and known limits.
+1. Explain what the plugin is and does in plain terms, in 1–2 short paragraphs.
+2. Explain how it works only when that is not obvious.
+3. Explain setup when needed: settings, accounts, tokens, providers, external tools, or other
+   plugins. Include applicable daemon version and operating system requirements. Setup
+   guidance is allowed; installation instructions are not.
+4. Explain capabilities and settings worth understanding, what each option does, what the
+   plugin reads or sends and where, permissions, and known limits.
 
-Omit install instructions (the listing page has the command), badges, changelog,
-contributing sections, and marketing. Describe only behavior the plugin implements.
+Use sentence case and plain factual language, with no em dashes. Omit installation commands,
+badges, changelog, contributing or license sections, marketing, and unsupported claims.
+Avoid implementation filler such as empty cleanup functions, catalogs of theme-token fields,
+or lists of absent features. Keep only what helps someone choose the plugin.
+
+Every migration-written registry stopgap ends with this exact italic credit:
+
+```text
+*This overview was generated from the plugin's [paseo.cafe listing](https://paseo.cafe/plugins/<cafe-slug>).*
+```
+
+Replace `<cafe-slug>` with the migration assignment's `cafeFile` minus `.json`.
+Do not add this credit to author-owned artifact overviews.
 
 ## Share through GitHub or Git
 
