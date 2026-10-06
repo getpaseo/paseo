@@ -424,6 +424,61 @@ test.describe("registry fixture layout", () => {
     await expect(viewer).toBeHidden();
   });
 
+  test("peeks the next gallery tile at the strip's edge, and fills the row with two", async ({
+    page,
+  }) => {
+    // Wide screens show two tiles and part of the third; phones show one and part of the second.
+    for (const [width, expected] of [
+      [1280, [1, 1, "peeks"]],
+      [375, [1, "peeks", 0]],
+    ] as const) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.goto("/plugins/omercnet/dracula");
+      const three = page.getByRole("link", { name: /^Dracula (screenshot|video) \d$/ });
+      const shares = await three.evaluateAll(visibleShares);
+      expect(shares.map((share) => (share > 0.1 && share < 0.5 ? "peeks" : share))).toEqual(
+        expected,
+      );
+    }
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto("/plugins/gpambrozio/herald");
+    const two = page.getByRole("link", { name: /^Herald screenshot \d$/ });
+    expect(await two.evaluateAll(visibleShares)).toEqual([1, 1]);
+  });
+
+  test("steps through the viewer with arrow keys and buttons, wrapping at the ends", async ({
+    page,
+  }) => {
+    await page.goto("/plugins/omercnet/dracula");
+    const tiles = page.getByRole("link", { name: /^Dracula (screenshot|video) \d$/ });
+    const viewer = page.getByRole("dialog");
+    const shows = (name: string) =>
+      expect(
+        viewer.getByRole("img", { name, exact: true }).or(viewer.getByLabel(name, { exact: true })),
+      ).toBeVisible();
+
+    await tiles.nth(1).click();
+    await expect.poll(() => viewer.getByLabel("Dracula video 2").evaluate(isPaused)).toBe(false);
+    await page.keyboard.press("ArrowRight");
+    await shows("Dracula screenshot 3");
+    await expect(page.locator("dialog video")).toHaveCount(0);
+    await page.keyboard.press("ArrowRight");
+    await shows("Dracula screenshot 1");
+    await viewer.getByRole("img").click();
+    await page.keyboard.press("ArrowLeft");
+    await shows("Dracula screenshot 3");
+
+    await viewer.getByRole("button", { name: "Previous" }).click();
+    await shows("Dracula video 2");
+    await viewer.getByRole("button", { name: "Next" }).click();
+    await shows("Dracula screenshot 3");
+    await viewer.getByRole("button", { name: "Next" }).click();
+    await shows("Dracula screenshot 1");
+    await page.keyboard.press("Escape");
+    await expect(viewer).toBeHidden();
+  });
+
   test("keeps a video that fails to load visible in the viewer", async ({ page }) => {
     const plugin = registry.plugins.find((entry) => entry.id === "gpambrozio/launchd-jobs")!;
     await page.route(plugin.media[0], (route) => route.abort());
@@ -432,6 +487,7 @@ test.describe("registry fixture layout", () => {
     const video = page.getByRole("dialog").getByLabel("launchd Jobs video 1");
     await expect(video).toBeVisible();
     await expect(video).toHaveCSS("opacity", "1");
+    await expect(page.getByRole("button", { name: "Next" })).toHaveCount(0);
   });
 
   test("shows the plugin tile on cards when its media has no image", async ({ page }) => {
@@ -479,6 +535,16 @@ function galleryTiles(links: Element[]) {
     href: link.getAttribute("href"),
     size: `${link.clientWidth}x${link.clientHeight}`,
   }));
+}
+
+/** How much of each tile's width the gallery strip shows, rounded to hundredths. */
+function visibleShares(links: Element[]) {
+  const strip = links[0].parentElement!.getBoundingClientRect();
+  return links.map((link) => {
+    const tile = link.getBoundingClientRect();
+    const shown = Math.min(tile.right, strip.right) - Math.max(tile.left, strip.left);
+    return Math.round((Math.max(shown, 0) / tile.width) * 100) / 100;
+  });
 }
 
 /** The share of the viewer's room the media fills along its limiting axis; 1 fills it. */
