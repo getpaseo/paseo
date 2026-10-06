@@ -101,15 +101,17 @@ export const de: TranslationResources = {
       groupByProject: "Nach Projekt gruppieren",
       groupByStatus: "Nach Status gruppieren",
       modelGroupLabel: "Model",
-      modelSearchKeywords: "switch model change model set model select model",
+      modelSearchKeywords:
+        "Modell wechseln ändern auswählen festlegen switch model change model set model select model",
       thinkingGroupLabel: "Denken",
-      thinkingSearchKeywords: "reasoning effort thinking think",
+      thinkingSearchKeywords: "Denken Denkmodus Nachdenken reasoning effort thinking think",
       modeGroupLabel: "Modus",
-      modeSearchKeywords: "access permission approval mode",
+      modeSearchKeywords:
+        "Modus ändern Zugriff Berechtigung Genehmigung access permission approval mode",
       planModeGroupLabel: "Plan-Modus",
-      planModeSearchKeywords: "plan planning plan mode",
+      planModeSearchKeywords: "Plan planen Planmodus plan planning plan mode",
       fastModeGroupLabel: "Schnell",
-      fastModeSearchKeywords: "fast speed low latency",
+      fastModeSearchKeywords: "schnell Geschwindigkeit geringe Latenz fast speed low latency",
       settingOn: "An",
       settingOff: "Aus",
     },
@@ -2094,7 +2096,45 @@ export const de: TranslationResources = {
       diagnostics: "Diagnose",
       about: "Über",
     },
-    layout: en.settings.layout,
+    layout: {
+      openInSidePane: {
+        title: "Öffnungsort",
+        destinations: {
+          main: "Hauptbereich",
+          side: "Daneben",
+          explorer: "Explorer-Seitenleiste",
+        },
+        sources: {
+          explorerFiles: {
+            label: "Klick auf eine Datei in der Explorer-Seitenleiste",
+            description: "Dateien aus der Explorer-Seitenleiste neben deiner Arbeit öffnen",
+          },
+          diffs: {
+            label: "Klick auf eine Änderung in der Explorer-Seitenleiste oder einem Chat",
+            description: "Diffs aus Explorer und Agent-Gesprächen neben deiner Arbeit öffnen",
+          },
+          chatFiles: {
+            label: "Klick auf eine Datei in einem Agent-Chat",
+            description: "Dateilinks und Tool-Aufruf-Dateien neben dem Gespräch öffnen",
+          },
+          diffFiles: {
+            label: "Klick auf eine Datei in einem Diff",
+            description: "Quelldateien aus einem Diff daneben öffnen",
+          },
+          subagents: {
+            label: "Klick auf einen Subagent in einem Agent-Chat",
+            description: "Subagents neben ihrem übergeordneten Agent öffnen",
+          },
+          pullRequests: {
+            label: "Klick auf einen Pull Request in der Explorer-Seitenleiste",
+            description: "Pull-Request-Details neben Änderungen öffnen",
+          },
+          serviceUrls: {
+            label: "Klick auf die Service-URL eines Skripts",
+          },
+        },
+      },
+    },
     editor: {
       title: "Editor",
       vimKeybindings: "Vim-Tastaturbelegung",
