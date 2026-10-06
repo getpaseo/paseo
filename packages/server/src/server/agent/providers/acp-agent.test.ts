@@ -1,8 +1,10 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -4253,4 +4255,90 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       mcpServers: [],
     });
   });
+});
+
+const SILENT_CLOSE_ACP_AGENT = `
+import { readFileSync, writeFileSync } from "node:fs";
+import { Readable, Writable } from "node:stream";
+const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
+writeFileSync(process.env.ACP_PID_FILE, String(process.pid));
+new AgentSideConnection(
+  () => ({
+    async initialize() {
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { sessionCapabilities: { close: {} } },
+      };
+    },
+    async newSession() {
+      return { sessionId: "silent-close-session" };
+    },
+    async authenticate() {},
+    async cancel() {},
+    unstable_closeSession() {
+      return new Promise(() => {});
+    },
+  }),
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
+`;
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe("ACPAgentSession close() with an unresponsive provider", () => {
+  test("terminates a provider that never answers session/close", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-silent-close-"));
+    const agentScript = path.join(dir, "agent.mjs");
+    const pidFile = path.join(dir, "agent.pid");
+    await writeFile(agentScript, SILENT_CLOSE_ACP_AGENT);
+    const session = new ACPAgentSession(
+      { provider: "silent-close-acp", cwd: dir },
+      {
+        provider: "silent-close-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, agentScript],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        launchEnv: {
+          ACP_SDK_URL: pathToFileURL(
+            createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+          ).href,
+          ACP_PID_FILE: pidFile,
+        },
+      },
+    );
+    let pid: number | null = null;
+    try {
+      await session.initializeNewSession();
+      pid = Number(await readFile(pidFile, "utf8"));
+      expect(isProcessAlive(pid)).toBe(true);
+
+      const closed = await Promise.race([
+        session.close().then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 8_000)),
+      ]);
+
+      expect(closed).toBe(true);
+      expect(isProcessAlive(pid)).toBe(false);
+    } finally {
+      if (pid !== null && isProcessAlive(pid)) {
+        process.kill(pid, "SIGKILL");
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
