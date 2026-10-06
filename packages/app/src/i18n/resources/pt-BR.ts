@@ -1093,6 +1093,8 @@ export const ptBR: TranslationResources = {
         },
         thread: {
           discussion: "Tópico de discussão",
+          resolved: "Resolvido",
+          outdated: "Desatualizado",
         },
         errors: {
           statusLoadFailed: "Não foi possível carregar o status da pull request",

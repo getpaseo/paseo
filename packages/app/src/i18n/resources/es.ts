@@ -1103,6 +1103,8 @@ export const es: TranslationResources = {
         },
         thread: {
           discussion: "Hilo de discusión",
+          resolved: "Resuelto",
+          outdated: "Desactualizado",
         },
         errors: {
           statusLoadFailed: "No se puede cargar el estado de la solicitud de extracción",

@@ -1070,6 +1070,8 @@ export const ar: TranslationResources = {
         },
         thread: {
           discussion: "سلسلة المناقشة",
+          resolved: "تم الحل",
+          outdated: "قديم",
         },
         errors: {
           statusLoadFailed: "غير قادر على تحميل حالة طلب السحب",

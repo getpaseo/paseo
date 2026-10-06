@@ -1062,6 +1062,8 @@ export const zhCN: TranslationResources = {
         },
         thread: {
           discussion: "讨论主题",
+          resolved: "已解决",
+          outdated: "已过时",
         },
         errors: {
           statusLoadFailed: "无法加载 Pull Request 状态",

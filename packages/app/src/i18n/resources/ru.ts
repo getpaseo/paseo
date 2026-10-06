@@ -1087,6 +1087,8 @@ export const ru: TranslationResources = {
         },
         thread: {
           discussion: "Ветка обсуждения",
+          resolved: "Решено",
+          outdated: "Устарело",
         },
         errors: {
           statusLoadFailed: "Не удалось загрузить статус PR",

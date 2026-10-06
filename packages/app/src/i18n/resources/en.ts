@@ -1078,6 +1078,8 @@ export const en = {
         },
         thread: {
           discussion: "Discussion thread",
+          resolved: "Resolved",
+          outdated: "Outdated",
         },
         errors: {
           statusLoadFailed: "Unable to load pull request status",

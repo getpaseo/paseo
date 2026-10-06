@@ -76,6 +76,7 @@ const untranslatedLocalFallbacks = [
 
 const pullRequestPanelSources = [
   "git/pull-request-panel/pane.tsx",
+  "git/pull-request-panel/data.ts",
   "git/pull-request-panel/checks-section.tsx",
   "components/sidebar/sidebar-status-list.tsx",
 ] as const;
@@ -87,6 +88,16 @@ const untranslatedPullRequestPanelLabels = [
   "Adding...",
   "Comment actions",
   "Thread actions",
+  "Commented",
+  "Approved",
+  "Requested changes",
+  "Reviewed",
+  "Draft",
+  "Merged",
+  "Closed",
+  "Open",
+  "Resolved",
+  "Outdated",
 ] as const;
 
 function findUntranslatedPullRequestPanelLabels(): string[] {
@@ -244,6 +255,10 @@ describe("translation resources", () => {
       expect(pr.actions.addingToChat).not.toBe(englishPr.actions.addingToChat);
       expect(pr.accessibility.commentActions).not.toBe(englishPr.accessibility.commentActions);
       expect(pr.accessibility.threadActions).not.toBe(englishPr.accessibility.threadActions);
+      expect(pr.activity).not.toEqual(englishPr.activity);
+      expect(pr.states).not.toEqual(englishPr.states);
+      expect(pr.thread.resolved).not.toBe(englishPr.thread.resolved);
+      expect(pr.thread.outdated).not.toBe(englishPr.thread.outdated);
       expect(resource.sidebar.statusGroupAccessibility).not.toBe(
         en.sidebar.statusGroupAccessibility,
       );

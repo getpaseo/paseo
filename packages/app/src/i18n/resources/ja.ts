@@ -1083,6 +1083,8 @@ export const ja: TranslationResources = {
         },
         thread: {
           discussion: "ディスカッションスレッド",
+          resolved: "解決済み",
+          outdated: "古い",
         },
         errors: {
           statusLoadFailed: "プルリクエストのステータスを読み込めません",

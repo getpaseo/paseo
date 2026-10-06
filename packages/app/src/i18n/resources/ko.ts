@@ -1077,6 +1077,8 @@ export const ko: TranslationResources = {
         },
         thread: {
           discussion: "토론 스레드",
+          resolved: "해결됨",
+          outdated: "오래됨",
         },
         errors: {
           statusLoadFailed: "풀 리퀘스트 상태를 불러올 수 없습니다",
