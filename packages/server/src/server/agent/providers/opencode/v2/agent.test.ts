@@ -5,6 +5,7 @@ import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
+import type { V2Api } from "./api.js";
 
 function terminalEvents(events: AgentStreamEvent[]) {
   return events.filter(
@@ -252,6 +253,62 @@ describe("OpenCode v2 session lifecycle", () => {
       await expect.poll(() => session.getPendingPermissions()).toHaveLength(1);
 
       await session.respondToPermission("question", { behavior: "deny" });
+
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });
+
+      await session.startTurn("next message");
+      await expect.poll(() => harness.prompts).toHaveLength(2);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      expect(terminalEvents(events)[1]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("ends the turn when the user denies a tool permission", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    let permission: Awaited<ReturnType<V2Api["permission"]["list"]>>[number] | null = null;
+    harness.api.permission.list = async () => (permission ? [permission] : []);
+    harness.api.permission.reply = async () => {
+      permission = null;
+      harness.active = false;
+      // OpenCode 2.0.20 reports a denied tool call as an interruption without a user reason.
+      harness.push({
+        id: "denied",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("run printf");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      permission = {
+        id: "approval",
+        sessionID: "session",
+        action: "shell",
+        resources: ["printf TOOL_PERMISSION_QA"],
+      };
+      harness.push({
+        id: "asked",
+        created: 2,
+        type: "permission.asked",
+        data: permission,
+      });
+      await expect.poll(() => session.getPendingPermissions()).toHaveLength(1);
+
+      await session.respondToPermission("approval", { behavior: "deny" });
 
       await expect.poll(() => terminalEvents(events)).toHaveLength(1);
       expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });

@@ -60,7 +60,7 @@ interface Turn {
   completion: Promise<void>;
   settle(): void;
   accepted: boolean;
-  questionDismissed: boolean;
+  requestDenied: boolean;
 }
 
 export class SessionTurns {
@@ -113,7 +113,7 @@ export class SessionTurns {
       settle,
       accepted,
       output,
-      questionDismissed: false,
+      requestDenied: false,
     };
     this.turn = turn;
     this.execution = null;
@@ -164,11 +164,11 @@ export class SessionTurns {
     this.sequence = event.durable.seq;
     this.requestReconciliation();
   }
-  // OpenCode ends the execution when the user dismisses its question, but reports the
-  // interruption as "shutdown", the same reason as an execution it will resume.
-  questionDismissed() {
+  // OpenCode ends the execution when the user denies its permission or dismisses its question,
+  // but reports the interruption as "shutdown", the same reason as an execution it will resume.
+  requestDenied() {
     if (!this.turn) return;
-    this.turn.questionDismissed = true;
+    this.turn.requestDenied = true;
     this.requestReconciliation();
   }
   private requestReconciliation() {
@@ -227,7 +227,7 @@ export class SessionTurns {
       execution.type === "session.execution.started" ||
       (execution.type === "session.execution.interrupted" &&
         execution.data.reason === "shutdown" &&
-        !turn.questionDismissed)
+        !turn.requestDenied)
     )
       return;
     // Read the final history only after observing idle. Never turn an observation transport error into an execution failure.
