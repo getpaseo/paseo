@@ -96,6 +96,37 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("toggles comments using each file language's tokens", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "file-comment-shortcut-" });
+    const sources = [
+      { filename: "comment.ts", content: "const value = 1;", commented: "// const value = 1;" },
+      { filename: "comment.py", content: "value = 1", commented: "# value = 1" },
+      { filename: "comment.css", content: "body {}", commented: "/* body {} */" },
+    ];
+    for (const source of sources) {
+      await writeFile(path.join(workspace.repoPath, source.filename), source.content, "utf8");
+    }
+    await workspace.navigateTo();
+    for (const source of sources) {
+      await openWorkspaceFile(page, source.filename);
+      await editor(page).click();
+      await editor(page).press("ControlOrMeta+/");
+      await expect(editor(page)).toHaveText(source.commented);
+      await expect
+        .poll(() => readFile(path.join(workspace.repoPath, source.filename), "utf8"))
+        .toBe(source.commented);
+      await editor(page).press("ControlOrMeta+/");
+      await expect(editor(page)).toHaveText(source.content);
+      await expect
+        .poll(() => readFile(path.join(workspace.repoPath, source.filename), "utf8"))
+        .toBe(source.content);
+    }
+    await test.info().attach("comment-shortcut", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  });
+
   test("jumps to each relative reference to the same file", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "relative-reference-qa-",
