@@ -6045,3 +6045,96 @@ test("a failing direct source observes fire-and-forget file replies without unha
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("answers an agent background work list request", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ id: "agent-a" })),
+      listAgentBackgroundWork: vi.fn(() => [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ]),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-1",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-1",
+      agentId: "agent-a",
+      items: [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ],
+      error: null,
+    },
+  });
+});
+
+test("pushes background work only to clients that subscribed to it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const forward = (event: AgentManagerEvent) => {
+    for (const listener of agentEventListeners) listener(event);
+  };
+  const event: AgentManagerEvent = {
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  };
+
+  // Subscribe to an unrelated event so the manager listener is installed, then prove
+  // a client that did not ask for background work never receives it.
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-1",
+    events: ["agent.provider_subagents.update"],
+  });
+  if (agentEventListeners.length === 0) throw new Error("Agent event listener was not installed");
+  forward(event);
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-2",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+
+  forward(event);
+
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "agent.background_work.update",
+      payload: expect.objectContaining({ agentId: "agent-a", items: event.items }),
+    }),
+  );
+});

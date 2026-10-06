@@ -1716,7 +1716,8 @@ export class Session {
       this.wantsEvent("agent_attention_required") ||
       this.wantsEvent("agent_permission_request") ||
       this.wantsEvent("agent_permission_resolved") ||
-      this.wantsEvent("agent.provider_subagents.update");
+      this.wantsEvent("agent.provider_subagents.update") ||
+      this.wantsEvent("agent.background_work.update");
     if (agents && !this.unsubscribeAgentEvents) this.subscribeToAgentEvents();
     if (!agents) {
       this.unsubscribeAgentEvents?.();
@@ -2020,6 +2021,10 @@ export class Session {
         }
 
         if (event.type === "background_work") {
+          this.emit({
+            type: "agent.background_work.update",
+            payload: { agentId: event.agentId, items: event.items },
+          });
           return;
         }
 
@@ -2799,6 +2804,8 @@ export class Session {
         return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
+      case "agent.background_work.list.request":
+        return this.handleAgentBackgroundWorkListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
       case "session.events.set_subscription.request": {
@@ -8086,6 +8093,37 @@ export class Session {
     }
   }
 
+  private async handleAgentBackgroundWorkListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_work.list.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      this.emit({
+        type: "agent.background_work.list.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          items: this.agentManager.listAgentBackgroundWork(msg.agentId),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.background_work.list.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          items: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
   private async handleProviderSubagentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.timeline.get.request" }>,
     source?: object,
@@ -8807,6 +8845,7 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "script_status_update":
     case "workspace_setup_progress":
     case "agent.provider_subagents.update":
+    case "agent.background_work.update":
     case "terminal_attention_required":
     case "activity_log":
     case "hub.execution.agent.update":
@@ -8845,6 +8884,9 @@ function legacyWantsEvent(
       return !capabilities.has(CLIENT_CAPS.explicitEventSubscriptions);
     case "agent.provider_subagents.update":
       return capabilities.has(CLIENT_CAPS.providerSubagents);
+    // Old apps parse outbound messages strictly and do not know this type.
+    case "agent.background_work.update":
+      return false;
     default:
       return true;
   }
