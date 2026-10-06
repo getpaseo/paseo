@@ -98,7 +98,9 @@ export function createAssistantSelectionClipboardContent(
  * A drag that starts in the gap below an image anchors at the start of the image's
  * rendered internals, ahead of the hidden `img`, while only the text after it is
  * highlighted. Pressing on the image itself opens it instead of starting a selection,
- * so a selection that starts inside an image and ends past it starts after the image.
+ * so a selection that starts inside an image, before any of its text, and ends past it
+ * starts after the image. A failed image shows its error as text, and a selection
+ * starting in that text keeps the image.
  */
 function startAfterImageFrame(range: Range): Range {
   const start =
@@ -107,6 +109,11 @@ function startAfterImageFrame(range: Range): Range {
       : range.startContainer.parentElement;
   const frame = start?.closest(IMAGE_FRAME_SELECTOR);
   if (!frame || frame.contains(range.endContainer)) {
+    return range;
+  }
+  const insideFrame = range.cloneRange();
+  insideFrame.setEnd(frame, frame.childNodes.length);
+  if (insideFrame.toString()) {
     return range;
   }
   const afterFrame = range.cloneRange();

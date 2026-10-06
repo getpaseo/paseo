@@ -168,6 +168,27 @@ describe("assistant selection copy ranges", () => {
     expect(copiedMarkdown(selection)).toBe("After the");
   });
 
+  it("keeps a failed image when the selection starts in its error text", () => {
+    const transcript = mountTranscript([
+      {
+        messageId: "message-1",
+        blocks: [
+          '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><div>Image failed to load</div></div>',
+          "After the image.",
+        ],
+      },
+    ]);
+    const frame = fixtureElement(transcript, '[data-paseo-markdown-tag="img"]');
+    const selection = selectRange(
+      frame.firstElementChild!,
+      6,
+      fixtureElement(transcript, '[data-paseo-markdown-tag="p"]', 1),
+      9,
+    );
+
+    expect(copiedMarkdown(selection)).toBe("![chart](https://example.test/chart.png)\n\nAfter the");
+  });
+
   it("does not replace the browser clipboard for a selection reaching a second message", () => {
     const transcript = mountTranscript([
       { messageId: "message-1", blocks: ["First paragraph.", "Second paragraph."] },
