@@ -12641,8 +12641,15 @@ test("does not deliver an internal agent's background work to global subscribers
   });
   const events: AgentManagerEvent[] = [];
   manager.subscribe((event) => events.push(event), { replayState: false });
-  await manager.createAgent({ provider: "codex", cwd: workdir, internal: true }, undefined, {
-    workspaceId: undefined,
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const agentEvents: AgentManagerEvent[] = [];
+  manager.subscribe((event) => agentEvents.push(event), {
+    agentId: agent.id,
+    replayState: false,
   });
 
   activeSession?.pushEvent({
@@ -12650,7 +12657,12 @@ test("does not deliver an internal agent's background work to global subscribers
     provider: "codex",
     items: [{ id: "bash-1", kind: "shell", description: null }],
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The per-agent subscriber proves the event was emitted before the global one is checked.
+  await vi.waitFor(() =>
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({ type: "background_work", agentId: agent.id }),
+    ),
+  );
 
   expect(events.some((event) => event.type === "background_work")).toBe(false);
 });
