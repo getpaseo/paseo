@@ -323,6 +323,60 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("keeps the turn resumable after the user denies a child session's permission", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const child = { ...harness.info, id: "child", parentID: "session" };
+    harness.api.session.list = async (input) => ({
+      data: input?.parentID === "session" ? [child] : [],
+      cursor: {},
+    });
+    let permission: Awaited<ReturnType<V2Api["permission"]["list"]>>[number] | null = {
+      id: "child-approval",
+      sessionID: "child",
+      action: "shell",
+      resources: ["pwd"],
+    };
+    harness.api.permission.list = async (input) =>
+      permission && input.sessionID === "child" ? [permission] : [];
+    harness.api.permission.reply = async () => {
+      permission = null;
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("delegate work");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+
+      await session.respondToPermission("child-approval", { behavior: "deny" });
+
+      harness.active = false;
+      harness.push({
+        id: "shutdown",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect", created: 4, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      harness.startExecution();
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("recovers the latest execution from the durable log when shutdown and resume events were missed", async () => {
     const harness = new V2Harness();
     harness.autoComplete = false;
