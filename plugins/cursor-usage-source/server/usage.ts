@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   toneFromUsedPct,
   usedPctOf,
   unavailable,
@@ -150,7 +151,7 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   const token = await readToken(input);
   if (!token) throw new Error("Cursor login store no longer exists");
