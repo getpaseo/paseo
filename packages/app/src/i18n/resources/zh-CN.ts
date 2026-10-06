@@ -2133,6 +2133,7 @@ export const zhCN: TranslationResources = {
         options: {
           system: "系统",
           ar: "العربية",
+          de: "德语",
           en: "English",
           es: "Español",
           fr: "Français",

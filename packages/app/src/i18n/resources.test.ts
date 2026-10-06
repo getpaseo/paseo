@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ar } from "./resources/ar";
+import { de } from "./resources/de";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
@@ -146,6 +147,7 @@ describe("translation resources", () => {
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
+    expect(flattenKeys(de).sort()).toEqual(englishKeys);
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
     expect(flattenKeys(ja).sort()).toEqual(englishKeys);
@@ -159,6 +161,7 @@ describe("translation resources", () => {
     const totalStrings = Object.keys(flattenStrings(en)).length;
     const maxFallbackStrings = Math.floor(totalStrings * 0.25);
     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(de)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
@@ -169,7 +172,7 @@ describe("translation resources", () => {
   });
 
   it("localizes the pull request empty state in every supported language", () => {
-    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+    for (const resource of [ar, de, es, fr, ja, ko, ptBR, ru, zhCN]) {
       expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
       expect(resource.panels.pullRequest.emptyDescription).not.toBe(
         en.panels.pullRequest.emptyDescription,
@@ -179,6 +182,7 @@ describe("translation resources", () => {
 
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
+    expect(findInterpolationMismatches(de)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
     expect(findInterpolationMismatches(ja)).toEqual([]);
@@ -208,6 +212,7 @@ describe("translation resources", () => {
     expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
     expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
+    expect(de.modelSelector.modelCountPlural).toBe("{{count}} Modelle");
     expect(ar.settings.providers.models.many).toBe("{{count}} نماذج");
     expect(es.settings.providers.models.many).toBe("{{count}} modelos");
     expect(fr.settings.providers.models.many).toBe("{{count}} modèles");
@@ -215,6 +220,7 @@ describe("translation resources", () => {
     expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
+    expect(de.settings.providers.models.many).toBe("{{count}} Models");
   });
 
   it("preserves reviewed Korean status labels", () => {
@@ -245,7 +251,7 @@ describe("translation resources", () => {
 
   it("keeps pull request panel and sidebar status group labels translated", () => {
     expect(findUntranslatedPullRequestPanelLabels()).toEqual([]);
-    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+    for (const resource of [ar, de, es, fr, ja, ko, ptBR, ru, zhCN]) {
       const pr = resource.workspace.git.pr;
       const englishPr = en.workspace.git.pr;
       expect(pr.sections.activity).not.toBe(englishPr.sections.activity);

@@ -9,12 +9,14 @@ import {
 describe("parseAppLanguage", () => {
   it("accepts system and all supported language locales", () => {
     expect(
-      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
-    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+      ["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(
+        parseAppLanguage,
+      ),
+    ).toEqual(["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
   });
 
   it("returns null for unknown values", () => {
-    expect(parseAppLanguage("de")).toBeNull();
+    expect(parseAppLanguage("de")).toBe("de");
     expect(parseAppLanguage(null)).toBeNull();
   });
 
@@ -22,6 +24,7 @@ describe("parseAppLanguage", () => {
     expect(LANGUAGE_OPTIONS.map((option) => option.value)).toEqual([
       "system",
       "ar",
+      "de",
       "en",
       "es",
       "fr",
@@ -94,6 +97,7 @@ describe("formatLanguageOptionLabel", () => {
 describe("resolveSupportedLocale", () => {
   it("respects explicit language choices", () => {
     expect(resolveSupportedLocale("ar", ["en-US"])).toBe("ar");
+    expect(resolveSupportedLocale("de", ["en-US"])).toBe("de");
     expect(resolveSupportedLocale("en", ["zh-CN"])).toBe("en");
     expect(resolveSupportedLocale("es", ["en-US"])).toBe("es");
     expect(resolveSupportedLocale("fr", ["en-US"])).toBe("fr");
@@ -106,6 +110,7 @@ describe("resolveSupportedLocale", () => {
 
   it("maps supported system locales", () => {
     expect(resolveSupportedLocale("system", ["ar-EG"])).toBe("ar");
+    expect(resolveSupportedLocale("system", ["de-DE"])).toBe("de");
     expect(resolveSupportedLocale("system", ["en-US"])).toBe("en");
     expect(resolveSupportedLocale("system", ["es-MX"])).toBe("es");
     expect(resolveSupportedLocale("system", ["fr-CA"])).toBe("fr");
@@ -144,7 +149,7 @@ describe("resolveSupportedLocale", () => {
   });
 
   it("maps unsupported or missing system locales to English", () => {
-    expect(resolveSupportedLocale("system", ["de-DE"])).toBe("en");
+    expect(resolveSupportedLocale("system", ["it-IT"])).toBe("en");
     expect(resolveSupportedLocale("system", [])).toBe("en");
   });
 });

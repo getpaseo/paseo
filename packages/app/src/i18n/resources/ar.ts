@@ -2158,6 +2158,7 @@ export const ar: TranslationResources = {
         options: {
           system: "نظام",
           ar: "العربية",
+          de: "الألمانية",
           en: "English",
           es: "Español",
           fr: "Français",
