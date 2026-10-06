@@ -145,25 +145,23 @@ the top of that page. A README assumes a GitHub audience and carries installatio
 instructions, technical details, and badges. Long, AI-generated READMEs make people read
 past that material to understand what a plugin does.
 
-Replace the scaffold's guidance comments with useful facts about your plugin before
-publishing. Include the overview in your published artifact; the scaffold's npm `files`
-list includes it.
+`OVERVIEW.md` is required to list your plugin in the registry. Commit it beside
+`paseo-plugin.json` in the source repository at the pinned commit. The registry resolves it
+relative to the manifest, under `pluginPath` for monorepos. Include it in the published npm
+package too; the scaffold's `files` list includes it. Replace the scaffold's guidance comment
+with useful facts before publishing.
 
-The registry resolves listing content in this order, using the reviewed artifact:
-
-1. The `readme` path in the artifact's `paseo-listing.json`, if set.
-2. `OVERVIEW.md` beside the artifact's manifest, under `pluginPath` for monorepos.
-3. `plugins/<owner>/<slug>.md` in the registry repository.
-4. The artifact's `README.md`.
-5. The artifact's `readme.md`.
-
-The registry copy is an import-time stopgap. On the version bump that ships the author's
-`OVERVIEW.md`, the reviewer removes the registry copy.
+The repository overview takes precedence over a registry import stopgap. Online validation
+fails when the pinned commit has no `OVERVIEW.md`, except for unchanged imported records
+that already carry `plugins/<owner>/<slug>.md` in the registry repository. Every version bump
+requires a repository overview and removes the stopgap in the same PR. A bump without the
+repository overview fails validation. Neither README files nor a `paseo-listing.json`
+`readme` override supplies the overview.
 
 Author overviews and registry stopgaps follow the same content contract, in this order.
-Choose headings only when they help; length follows complexity. A theme can take a paragraph.
+Choose headings only when they help; length follows complexity. A theme needs one paragraph.
 
-1. Explain what the plugin is and does in plain terms, in 1–2 short paragraphs.
+1. Explain what the plugin is and does in plain terms first.
 2. Explain how it works only when that is not obvious.
 3. Explain setup when needed: settings, accounts, tokens, providers, external tools, or other
    plugins. Include applicable daemon version and operating system requirements. Setup
@@ -179,7 +177,7 @@ or lists of absent features. Keep only what helps someone choose the plugin.
 Every migration-written registry stopgap ends with this exact italic credit:
 
 ```text
-*This overview was generated from the plugin's [paseo.cafe listing](https://paseo.cafe/plugins/<cafe-slug>).*
+*This plugin entry was imported from [paseo.cafe](https://paseo.cafe/plugins/<cafe-slug>).*
 ```
 
 Replace `<cafe-slug>` with the migration assignment's `cafeFile` minus `.json`.

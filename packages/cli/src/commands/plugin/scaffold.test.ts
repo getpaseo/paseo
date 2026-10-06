@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -9,6 +9,7 @@ import { scaffoldPluginDirectory } from "./scaffold.js";
 
 const directories: string[] = [];
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 const tscPath = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 
 async function typecheckPlugin(directory: string): Promise<void> {
@@ -38,18 +39,19 @@ describe("plugin scaffold", () => {
 
       const overview = await readFile(path.join(directory, "OVERVIEW.md"), "utf8");
       const comments = overview.match(/<!--[\s\S]*?-->/g) ?? [];
-      expect(comments).toHaveLength(4);
+      expect(comments).toHaveLength(1);
       expect(overview.replace(/<!--[\s\S]*?-->/g, "").trim()).toBe("");
-      expect(comments[0]).toContain("what your plugin is and does");
-      expect(comments[0]).toContain("README");
-      expect(comments[0]).toContain("choosing a plugin in Paseo");
-      expect(comments[0]).toContain("Length follows complexity");
-      expect(comments[1]).toContain("only when it is not obvious");
-      expect(comments[2]).toContain("Setup, when needed");
-      expect(comments[2]).toContain("tokens");
-      expect(comments[3]).toContain("permissions");
-      expect(comments[3]).toContain("known limits");
-      expect(overview).not.toContain("This overview was generated");
+      expect(overview).toContain("required to list");
+      expect(overview).toContain("README");
+      expect(overview).toContain("choosing a plugin in Paseo");
+      expect(overview).toContain("Length follows complexity");
+      expect(overview).toContain("1. Describe what your plugin is and does");
+      expect(overview).toContain("2. Explain how it works only when it is not obvious");
+      expect(overview).toContain("3. Explain setup when needed");
+      expect(overview).toContain("4. Explain capabilities and settings");
+      expect(overview).toContain("permissions");
+      expect(overview).toContain("known limits");
+      expect(overview).not.toContain("This plugin entry was imported");
       const packageJson = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
       expect(packageJson.files).toContain("OVERVIEW.md");
       expect(await readdir(directory)).toContain("paseo-plugin.json");
@@ -62,15 +64,9 @@ describe("plugin scaffold", () => {
     const directory = path.join(parent, "packed-plugin");
     await scaffoldPluginDirectory(directory);
 
-    const npmCliPath = process.env.npm_execpath;
-    if (!npmCliPath) {
-      throw new Error("Run the scaffold tests through npm or npx to locate the npm CLI.");
-    }
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [npmCliPath, "pack", "--dry-run", "--ignore-scripts", "--json"],
-      { cwd: directory },
-    );
+    const { stdout } = await execAsync("npm pack --dry-run --ignore-scripts --json", {
+      cwd: directory,
+    });
     const [artifact] = JSON.parse(stdout) as { files: { path: string }[] }[];
     expect(artifact.files.map((file) => file.path)).toEqual(
       expect.arrayContaining(["OVERVIEW.md", "paseo-plugin.json"]),

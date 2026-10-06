@@ -4,35 +4,30 @@ import { PluginIdSchema } from "@getpaseo/protocol/messages";
 import { resolveCliVersion } from "../../version.js";
 
 const OVERVIEW = `<!--
-Start with what your plugin is and does in plain terms, in 1–2 short paragraphs.
-README assumes people are browsing GitHub and often includes installation
-instructions, technical details, and badges. Long, AI-generated READMEs leave
-people reading past that material to understand the plugin. This overview is for
-people choosing a plugin in Paseo, where the install command is already at the
-top of the plugin page. Replace these comments with useful facts about your plugin.
-Length follows complexity; a theme can take a paragraph. Use sentence case, no
-em dashes, and only claims supported by your plugin's behavior. Choose headings
-only if they help. Omit installation commands, badges, changelog, contributing or
-license sections, marketing, and implementation filler such as empty cleanup
-functions, theme-token field lists, or lists of absent features.
--->
+OVERVIEW.md is required to list your plugin in the registry. Keep it beside
+paseo-plugin.json in your repository at the pinned commit and in your npm package.
+Replace this comment with useful facts before publishing.
 
-<!--
-Explain how it works only when it is not obvious from what the plugin does.
-Keep the explanation useful to someone deciding whether to install it.
--->
+This overview is for people choosing a plugin in Paseo, on the plugin page under
+its install command. README assumes a GitHub audience and includes technical
+details, installation instructions, and badges. Long, AI-generated READMEs leave
+people reading past that material to understand what the plugin does.
 
-<!--
-Setup, when needed: explain required settings, accounts, tokens, providers,
-external tools, or other plugins. State applicable daemon version and operating
-system requirements. Setup guidance belongs here; the page already provides the
-installation command.
--->
+Write these parts in order, including only what helps someone decide to install:
 
-<!--
-Explain capabilities and settings worth understanding, including what each option
-does, what the plugin reads or sends and where, permissions, and known limits.
-Include only details that help someone choose the plugin.
+1. Describe what your plugin is and does in plain terms first.
+2. Explain how it works only when it is not obvious.
+3. Explain setup when needed: settings, accounts, tokens, providers, tools, or
+   other plugins. Include applicable daemon version and operating system
+   requirements. Setup guidance is allowed; installation instructions are not.
+4. Explain capabilities and settings worth understanding, what each option does,
+   what the plugin reads or sends and where, permissions, and known limits.
+
+Length follows complexity; a theme needs one paragraph. Choose headings only
+when they help. Use sentence case and plain factual language, with no em dashes.
+Omit installation commands, badges, changelog, contributing or license sections,
+marketing, and unsupported claims. Avoid implementation filler such as empty
+cleanup functions, theme-token field lists, or lists of absent features.
 -->
 `;
 
