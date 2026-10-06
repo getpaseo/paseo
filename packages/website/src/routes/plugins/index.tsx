@@ -126,9 +126,7 @@ function PluginsPage() {
             <PluginSectionHeader>
               <div>
                 <PluginSectionTitle id="featured">Featured</PluginSectionTitle>
-                <p className="text-sm text-muted-foreground">
-                  A selection of hand picked plugins
-                </p>
+                <p className="text-sm text-muted-foreground">A selection of hand picked plugins</p>
               </div>
               <a
                 href={browseHref({ sort: "installs", window: DEFAULT_WINDOW })}
