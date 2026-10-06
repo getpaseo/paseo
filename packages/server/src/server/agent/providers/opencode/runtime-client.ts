@@ -95,6 +95,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
     return new OpenCodeV2AgentClient({
       logger: this.logger,
       settings: this.settings,
+      resolvedLaunch: launch,
       managedProcesses: this.options.managedProcesses,
       bridge: this.options.bridge,
     });

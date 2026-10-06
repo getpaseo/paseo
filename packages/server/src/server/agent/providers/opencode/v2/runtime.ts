@@ -10,6 +10,7 @@ import { terminateWithTreeKill } from "../../../../../utils/tree-kill.js";
 import {
   createProviderEnvSpec,
   resolveProviderLaunch,
+  type ResolvedProviderLaunch,
   type ProviderRuntimeSettings,
 } from "../../../provider-launch-config.js";
 import type { ManagedProcessRegistry } from "../../../../managed-processes/managed-processes.js";
@@ -32,6 +33,7 @@ interface Generation {
 export interface V2RuntimeOptions {
   logger: Logger;
   settings?: ProviderRuntimeSettings;
+  resolvedLaunch?: ResolvedProviderLaunch;
   managedProcesses?: ManagedProcessRegistry;
   decorateEnv?: (env: Record<string, string>) => Promise<Record<string, string>>;
 }
@@ -147,10 +149,12 @@ export class V2Runtime {
 
   private async start(env: Record<string, string> = {}): Promise<Generation> {
     const { settings, managedProcesses, logger } = this.options;
-    const launch = await resolveProviderLaunch({
-      commandConfig: settings?.command,
-      defaultBinary: "opencode",
-    });
+    const launch =
+      this.options.resolvedLaunch ??
+      (await resolveProviderLaunch({
+        commandConfig: settings?.command,
+        defaultBinary: "opencode",
+      }));
     const cwd = resolveOpenCodeHomeDir();
     await mkdir(cwd, { recursive: true });
     const password = randomBytes(32).toString("base64url");
