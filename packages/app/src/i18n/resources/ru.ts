@@ -1994,6 +1994,7 @@ export const ru: TranslationResources = {
   providerUsage: {
     title: "Использование плана",
     refresh: "Обновить",
+    refreshAll: "Обновить всё",
     refreshing: "Обновление...",
     loading: "Загрузка данных об использовании...",
     empty: "Нет данных об использовании",

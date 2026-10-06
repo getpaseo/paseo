@@ -2009,6 +2009,7 @@ export const es: TranslationResources = {
   providerUsage: {
     title: "Uso del plan",
     refresh: "Actualizar",
+    refreshAll: "Actualizar todo",
     refreshing: "Actualizando...",
     loading: "Cargando uso...",
     empty: "No hay datos de uso",

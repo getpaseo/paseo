@@ -1961,6 +1961,7 @@ export const ar: TranslationResources = {
   providerUsage: {
     title: "استخدام الخطة",
     refresh: "تحديث",
+    refreshAll: "تحديث الكل",
     refreshing: "جارٍ التحديث...",
     loading: "جارٍ تحميل بيانات الاستخدام...",
     empty: "لا توجد بيانات استخدام",

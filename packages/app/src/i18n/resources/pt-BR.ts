@@ -1994,6 +1994,7 @@ export const ptBR: TranslationResources = {
   providerUsage: {
     title: "Uso do plano",
     refresh: "Atualizar",
+    refreshAll: "Atualizar tudo",
     refreshing: "Atualizando...",
     loading: "Carregando uso...",
     empty: "Sem dados de uso",

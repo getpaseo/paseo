@@ -2014,6 +2014,7 @@ export const fr: TranslationResources = {
   providerUsage: {
     title: "Utilisation du forfait",
     refresh: "Actualiser",
+    refreshAll: "Tout actualiser",
     refreshing: "Actualisation...",
     loading: "Chargement de l’utilisation...",
     empty: "Aucune donnée d’utilisation",

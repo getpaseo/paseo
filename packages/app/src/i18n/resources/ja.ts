@@ -1981,6 +1981,7 @@ export const ja: TranslationResources = {
   providerUsage: {
     title: "プラン使用量",
     refresh: "更新",
+    refreshAll: "すべて更新",
     refreshing: "更新中...",
     loading: "使用状況を読み込み中...",
     empty: "使用状況データがありません",

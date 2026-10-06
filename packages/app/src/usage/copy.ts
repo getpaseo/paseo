@@ -25,7 +25,7 @@ export const usageCopy = {
     return i18n.t("providerUsage.refresh");
   },
   get refreshAll() {
-    return i18n.t("providerUsage.refresh");
+    return i18n.t("providerUsage.refreshAll");
   },
   get refreshing() {
     return i18n.t("providerUsage.refreshing");

@@ -1939,6 +1939,7 @@ export const zhCN: TranslationResources = {
   providerUsage: {
     title: "套餐用量",
     refresh: "刷新",
+    refreshAll: "全部刷新",
     refreshing: "刷新中...",
     loading: "正在加载用量...",
     empty: "暂无用量数据",

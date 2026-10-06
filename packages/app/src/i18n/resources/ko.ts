@@ -1971,6 +1971,7 @@ export const ko: TranslationResources = {
   providerUsage: {
     title: "플랜 사용량",
     refresh: "새로 고침",
+    refreshAll: "모두 새로 고침",
     refreshing: "새로 고치는 중...",
     loading: "사용량 불러오는 중...",
     empty: "사용량 데이터가 없습니다",

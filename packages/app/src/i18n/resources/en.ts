@@ -1986,6 +1986,7 @@ export const en = {
   providerUsage: {
     title: "Plan usage",
     refresh: "Refresh",
+    refreshAll: "Refresh all",
     refreshing: "Refreshing...",
     loading: "Loading usage...",
     empty: "No usage data",
