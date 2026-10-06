@@ -1,19 +1,5 @@
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { openCodeMajorVersion } from "./runtime-client.js";
-
-const { defaultProbeOutput } = vi.hoisted(() => ({
-  defaultProbeOutput: { value: null as string | null },
-}));
-vi.mock("../../../../utils/spawn.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../../utils/spawn.js")>();
-  return {
-    ...actual,
-    execCommand: (command: string, args: string[], options?: { timeout?: number }) =>
-      options?.timeout === 30_000 && args.at(-1) === "--version" && defaultProbeOutput.value
-        ? Promise.resolve({ stdout: defaultProbeOutput.value, stderr: "" })
-        : actual.execCommand(command, args, options),
-  };
-});
 
 test.each([
   ["1.14.46", 1],
@@ -224,7 +210,7 @@ test.each([
   10000,
 );
 
-test("uses a 30-second timeout for default OpenCode version probes", async () => {
+test("waits for a slow default OpenCode version probe", async () => {
   const { chmod, mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { delimiter, join } = await import("node:path");
@@ -240,14 +226,35 @@ test("uses a 30-second timeout for default OpenCode version probes", async () =>
   const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
   const previousPath = process.env[pathKey];
   process.env[pathKey] = [root, previousPath].filter(Boolean).join(delimiter);
-  defaultProbeOutput.value = "opencode v2.0.22";
-  const client = new OpenCodeRuntimeClient(createTestLogger());
+  let startProbe!: () => void;
+  let finishProbe!: (result: { stdout: string; stderr: string }) => void;
+  const probeStarted = new Promise<void>((resolve) => (startProbe = resolve));
+  const delayedResult = new Promise<{ stdout: string; stderr: string }>(
+    (resolve) => (finishProbe = resolve),
+  );
+  let timeout: number | undefined;
+  let probeArgs: string[] = [];
+  const client = new OpenCodeRuntimeClient(createTestLogger(), undefined, {
+    runVersionProbe: async (_command, args, options) => {
+      probeArgs = args;
+      timeout = options?.timeout;
+      startProbe();
+      return delayedResult;
+    },
+  });
   try {
-    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
-      "Auto-accept",
-    );
+    const features = client.listFeatures({ provider: "opencode", cwd: root });
+    await Promise.race([
+      probeStarted,
+      features.then(() => {
+        throw new Error("OpenCode selection completed before its version probe");
+      }),
+    ]);
+    finishProbe({ stdout: "opencode v2.0.22", stderr: "" });
+    expect(probeArgs.at(-1)).toBe("--version");
+    expect(timeout).toBe(30_000);
+    expect((await features)[0]?.label).toBe("Auto-accept");
   } finally {
-    defaultProbeOutput.value = null;
     await client.shutdown();
     if (previousPath === undefined) delete process.env[pathKey];
     else process.env[pathKey] = previousPath;

@@ -50,7 +50,7 @@ export function openCodeMajorVersion(output: string): 1 | 2 {
 
 export type OpenCodeRuntimeClientOptions = NonNullable<
   ConstructorParameters<typeof OpenCodeAgentClient>[2]
->;
+> & { runVersionProbe?: typeof execCommand };
 
 // Selection belongs to the configured client, which provider reload replaces.
 export class OpenCodeRuntimeClient implements AgentClient {
@@ -61,11 +61,13 @@ export class OpenCodeRuntimeClient implements AgentClient {
   private selected: Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> | null = null;
   private legacySelected = false;
   private readonly legacy: OpenCodeAgentClient;
+  private readonly runVersionProbe: typeof execCommand;
   constructor(
     private readonly logger: Logger,
     private readonly settings?: ProviderRuntimeSettings,
     private readonly options: OpenCodeRuntimeClientOptions = {},
   ) {
+    this.runVersionProbe = options.runVersionProbe ?? execCommand;
     this.legacy = new OpenCodeAgentClient(logger, settings, options);
     this.capabilities = this.legacy.capabilities;
     this.resolveCreateConfig = this.legacy.resolveCreateConfig;
@@ -125,10 +127,14 @@ export class OpenCodeRuntimeClient implements AgentClient {
       launch.source === "override" ? CUSTOM_COMMAND_PROBE_TIMEOUT_MS : VERSION_PROBE_TIMEOUT_MS;
     let output: string;
     try {
-      ({ stdout: output } = await execCommand(launch.command, [...launch.args, "--version"], {
-        ...createProviderEnvSpec({ runtimeSettings: this.settings }),
-        timeout: timeoutMs,
-      }));
+      ({ stdout: output } = await this.runVersionProbe(
+        launch.command,
+        [...launch.args, "--version"],
+        {
+          ...createProviderEnvSpec({ runtimeSettings: this.settings }),
+          timeout: timeoutMs,
+        },
+      ));
     } catch (error) {
       if ((error as NodeJS.ErrnoException & { killed?: boolean }).killed) {
         if (launch.source === "override") {
