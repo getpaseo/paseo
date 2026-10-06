@@ -169,6 +169,9 @@ Declare your display name, icon, screenshots, and demo videos in `paseo-plugin.j
 
 All three fields are optional. `name` gives the registry and website a display name without
 changing the installation ID. When omitted, the registry falls back to a humanized ID.
+Registry and website display requires the registry builder to read these fields from the pinned
+manifest. That update is a separate follow-up; until it lands, these fields are exposed only
+through the daemon's installed-plugin list.
 `icon` must point to a PNG inside the plugin package. `media` accepts paths to images and videos
 inside the package or HTTPS URLs, in display order. Paths are relative to the manifest; use
 forward slashes and keep them inside the package. See the [manifest reference](/docs/plugins/reference#project-files)
@@ -176,8 +179,8 @@ for validation rules.
 
 Commit local assets alongside the manifest at the pinned revision. For npm, add their directory
 (for example, `assets/`) to `package.json`'s `files` list and verify it with `npm pack --dry-run`.
-The scaffold documents these fields in its manifest's `$comment`; replace the display name and
-add your own assets before publishing.
+The scaffold documents these fields in its manifest's `$comment`; add your display name and
+assets before publishing.
 
 Manifests using these fields fail to install on daemons before 0.11.0. Set
 `requirements.paseo` to `>=0.11.0` or a narrower supported range.

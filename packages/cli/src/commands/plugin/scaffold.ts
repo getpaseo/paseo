@@ -209,9 +209,8 @@ export async function scaffoldPluginDirectory(
       `${JSON.stringify(
         {
           id,
-          name: id,
           $comment:
-            'Set name to your display name. Add "icon": "assets/icon.png" for a PNG inside the package. Add image or video paths (relative to this manifest) or HTTPS URLs to media. Include local assets in package.json files.',
+            'Add "name": "My plugin" to set a display name. Add "icon": "assets/icon.png" for a PNG inside the package. Add image or video paths (relative to this manifest) or HTTPS URLs to media. Include local assets in package.json files.',
           media: [],
           requirements: { paseo: `>=${version}` },
         },

@@ -93,7 +93,6 @@ describe("plugin scaffold", () => {
       expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
         {
           id: "hello-plugin",
-          name: "hello-plugin",
           $comment: expect.stringContaining('"icon": "assets/icon.png"'),
           media: [],
           requirements: { paseo: `>=${cliPackageJson.version}` },
