@@ -48,22 +48,16 @@ Background work is what an agent left running after its tool call returned: a Cl
 
 ```ts
 const agent = client.agents.ref(agentId);
-let latest: PaseoAgentBackgroundWorkItem[] | null = null;
 
-const unsubscribe = agent.backgroundWork.subscribe((items) => {
-  latest = items;
-  render(items);
-});
-const initial = await agent.backgroundWork.list();
-if (latest === null) render(initial);
+const unsubscribe = agent.backgroundWork.subscribe((items) => render(items));
 
 // When this view closes:
 unsubscribe();
 ```
 
-Each update carries the agent's whole list. Subscribe before calling `list()`, and keep an update that arrived first: it is newer. Each item has `id`, `kind` (`"shell"`, `"monitor"` or `"other"`; treat any other value as `"other"`), `description` (or `null`) and `startedAt`. The list empties when the provider process restarts or the agent closes. Nothing survives a daemon restart.
+`subscribe()` calls the listener with the current list once the subscription is established, again after each reconnect, then with the whole list on every change. Use `list()` for a one-shot read, such as automation that waits for the list to empty. Each item has `id`, `kind` (`"shell"` for shells and Claude `Monitor` watches, `"other"` otherwise; treat any unknown value as `"other"`), `description` (or `null`) and `startedAt`. The list empties when the provider process restarts or the agent closes. Nothing survives a daemon restart.
 
-Both calls throw when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host.
+`list()` rejects and `subscribe()` throws when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host.
 
 ## Follow timeline events
 
