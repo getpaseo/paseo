@@ -189,23 +189,20 @@ export async function ensureSherpaOnnxModel(
         );
       }
 
+      logger.info(
+        {
+          modelId: options.modelId,
+          archivePath,
+        },
+        "Finalizing model artifacts",
+      );
+      // A retained archive marks the model as not installed, so remove it before the model
+      // is moved into place. If removal fails, nothing at modelDir looks installed.
       await rm(modelDir, { recursive: true, force: true });
+      await rm(archivePath, { force: true, maxRetries: 3 });
       await rename(extractedModelDir, modelDir);
     } finally {
       await rm(extractionDir, { recursive: true, force: true });
-    }
-
-    logger.info(
-      {
-        modelId: options.modelId,
-        archivePath,
-      },
-      "Finalizing model artifacts",
-    );
-    try {
-      await rm(archivePath, { force: true });
-    } catch {
-      // ignore
     }
 
     logger.info({ modelDir }, "Model download completed");
