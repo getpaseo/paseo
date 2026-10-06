@@ -414,6 +414,10 @@ interface ClaudeAgentClientOptions {
   rewindSdk?: ClaudeRewindSdk;
 }
 
+type ClaudeImportDescriptorResult =
+  | { type: "parsed"; descriptor: ImportableProviderSession | null }
+  | { type: "unreadable"; error: Error };
+
 interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
@@ -1649,9 +1653,20 @@ export class ClaudeAgentClient implements AgentClient {
     const scanLimit = Math.min(options?.scanLimit ?? limit * 3, 500);
     const candidates = await collectRecentClaudeSessions(sessionsRoot, scanLimit, {
       rootIsProjectDir: Boolean(options?.cwd),
+      logger: this.logger,
     });
-    const parsed = await this.scheduleImportDescriptors(candidates, signal);
+    const results = await this.scheduleImportDescriptors(candidates, signal);
+    const failures = results.filter((result) => result.type === "unreadable");
+    if (failures.length > 0 && failures.length === results.length) {
+      const errors = failures.map((result) => result.error);
+      throw new AggregateError(
+        errors,
+        `Cannot list Claude sessions: all ${failures.length} candidate transcripts have unreadable import metadata. ${errors[0]!.message}`,
+      );
+    }
+    const parsed = results.filter((result) => result.type === "parsed");
     return parsed
+      .map((result) => result.descriptor)
       .filter((session): session is ImportableProviderSession => session !== null)
       .slice(0, limit)
       .map((session) => structuredClone(session));
@@ -1660,36 +1675,36 @@ export class ClaudeAgentClient implements AgentClient {
   private async readImportDescriptor(
     candidate: ClaudeSessionCandidate,
     signal: AbortSignal,
-  ): Promise<ImportableProviderSession | null> {
+  ): Promise<ClaudeImportDescriptorResult> {
     signal.throwIfAborted();
     const cached = this.importDescriptorCache.get(candidate.cacheKey);
-    if (cached) return structuredClone(cached);
+    if (cached) return { type: "parsed", descriptor: structuredClone(cached) };
 
     let descriptor: ImportableProviderSession | null;
     try {
       descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime, signal);
     } catch (error) {
       signal.throwIfAborted();
-      const isFileError =
-        error instanceof Error &&
-        "syscall" in error &&
-        "code" in error &&
-        typeof error.code === "string";
-      if (!(error instanceof ClaudeImportRecordTooLargeError) && !isFileError) throw error;
+      const isExpectedError =
+        error instanceof ClaudeImportRecordTooLargeError || isExpectedClaudeImportFileError(error);
+      if (!(error instanceof Error) || !isExpectedError) throw error;
       this.logger.warn(
         { err: error, path: candidate.path },
         "Skipping Claude transcript with unreadable import metadata",
       );
-      return null;
+      return { type: "unreadable", error };
     }
     if (descriptor) {
-      const current = await fsPromises.stat(candidate.path).catch(() => null);
+      const current = await fsPromises.stat(candidate.path).catch((error: unknown) => {
+        if (!isExpectedClaudeImportFileError(error)) throw error;
+        return null;
+      });
       signal.throwIfAborted();
       if (current && claudeSessionCacheKey(candidate.path, current) === candidate.cacheKey) {
         this.importDescriptorCache.set(candidate.cacheKey, structuredClone(descriptor));
       }
     }
-    return descriptor ? structuredClone(descriptor) : null;
+    return { type: "parsed", descriptor: descriptor ? structuredClone(descriptor) : null };
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
@@ -6222,27 +6237,62 @@ function claudeSessionCacheKey(filePath: string, stats: fs.Stats): string {
   return `${filePath}\0${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
+function isMissingClaudeImportFile(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
+
+function isExpectedClaudeImportFileError(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return (
+    error.code === "ENOENT" ||
+    error.code === "ENOTDIR" ||
+    error.code === "EACCES" ||
+    error.code === "EPERM"
+  );
+}
+
 async function pathExists(target: string): Promise<boolean> {
   try {
     await fsPromises.access(target);
     return true;
-  } catch {
+  } catch (error) {
+    if (!isMissingClaudeImportFile(error)) throw error;
     return false;
   }
+}
+
+interface ClaudeSessionDiscoveryOptions {
+  rootIsProjectDir: boolean;
+  logger: Logger;
 }
 
 async function collectRecentClaudeSessions(
   root: string,
   limit: number,
-  options?: { rootIsProjectDir?: boolean },
+  options: ClaudeSessionDiscoveryOptions,
 ): Promise<ClaudeSessionCandidate[]> {
+  const permissionErrors: Error[] = [];
+  function recordDiscoveryFailure(error: unknown, targetPath: string): void {
+    if (isMissingClaudeImportFile(error)) return;
+    if (!(error instanceof Error) || !isExpectedClaudeImportFileError(error)) throw error;
+    permissionErrors.push(error);
+    options.logger.warn(
+      { err: error, path: targetPath },
+      "Skipping Claude session discovery path with denied access",
+    );
+  }
   let rootEntries: string[];
   try {
     rootEntries = await fsPromises.readdir(root);
-  } catch {
+  } catch (error) {
+    if (!isMissingClaudeImportFile(error)) throw error;
     return [];
   }
-  const fileEntries = options?.rootIsProjectDir
+  const fileEntries = options.rootIsProjectDir
     ? rootEntries.filter((file) => file.endsWith(".jsonl")).map((file) => path.join(root, file))
     : (
         await Promise.all(
@@ -6255,7 +6305,8 @@ async function collectRecentClaudeSessions(
               return files
                 .filter((file) => file.endsWith(".jsonl"))
                 .map((file) => path.join(projectPath, file));
-            } catch {
+            } catch (error) {
+              recordDiscoveryFailure(error, projectPath);
               return [] as string[];
             }
           }),
@@ -6271,7 +6322,8 @@ async function collectRecentClaudeSessions(
           mtime: fileStats.mtime,
           cacheKey: claudeSessionCacheKey(fullPath, fileStats),
         };
-      } catch {
+      } catch (error) {
+        recordDiscoveryFailure(error, fullPath);
         return null;
       }
     }),
@@ -6279,6 +6331,12 @@ async function collectRecentClaudeSessions(
   const candidates: ClaudeSessionCandidate[] = statResults.filter(
     (entry): entry is ClaudeSessionCandidate => entry !== null,
   );
+  if (candidates.length === 0 && permissionErrors.length > 0) {
+    throw new AggregateError(
+      permissionErrors,
+      `Cannot discover Claude sessions: access was denied to ${permissionErrors.length} paths and no transcripts could be discovered. ${permissionErrors[0]!.message}`,
+    );
+  }
   return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
 }
 

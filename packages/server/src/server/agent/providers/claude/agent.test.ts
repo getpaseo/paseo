@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
+import nativeFs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +23,7 @@ import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.j
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
+  ImportableProviderSession,
   AgentPromptInput,
   AgentSession,
   AgentTimelineItem,
@@ -1670,6 +1672,261 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  async function descriptorFixture(count: number) {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-errors-"));
+    const projectDir = path.join(configDir, "projects", "errors");
+    await fs.mkdir(projectDir, { recursive: true });
+    const files: string[] = [];
+    const descriptors: ImportableProviderSession[] = [];
+    const logs: unknown[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const file = path.join(projectDir, `${index}.jsonl`);
+      const timestamp = new Date(Date.UTC(2026, 0, 1) + (count - index) * 1000);
+      await fs.writeFile(
+        file,
+        JSON.stringify({
+          type: "user",
+          sessionId: `session-${index}`,
+          cwd: "/errors",
+          message: { content: `Prompt ${index}` },
+        }),
+      );
+      await fs.utimes(file, timestamp, timestamp);
+      files.push(file);
+      descriptors.push({
+        providerHandleId: `session-${index}`,
+        cwd: "/errors",
+        title: `Prompt ${index}`,
+        firstPromptPreview: `Prompt ${index}`,
+        lastPromptPreview: `Prompt ${index}`,
+        lastActivityAt: timestamp,
+      });
+    }
+    const options = {
+      logger: pino({ level: "warn" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+    };
+    return {
+      files,
+      descriptors,
+      logs,
+      options,
+      cleanup: () => fs.rm(configDir, { recursive: true, force: true }),
+    };
+  }
+
+  function readError(code: string, filePath: string): Error {
+    return Object.assign(new Error(`${code}: cannot read ${filePath}`), {
+      code,
+      path: filePath,
+      syscall: "open",
+    });
+  }
+
+  test.each(["ENOENT", "ENOTDIR", "EPERM"])(
+    "isolates %s from one transcript while returning a healthy session",
+    async (code) => {
+      const fixture = await descriptorFixture(2);
+      const originalReadStream = nativeFs.createReadStream;
+      const error = readError(code, fixture.files[0]!);
+      const spy = vi.spyOn(nativeFs, "createReadStream").mockImplementation((file, options) => {
+        if (file === fixture.files[0]) throw error;
+        return originalReadStream(file, options);
+      });
+      try {
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+          fixture.descriptors[1],
+        ]);
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: fixture.files[0],
+            err: expect.objectContaining({ code }),
+            msg: "Skipping Claude transcript with unreadable import metadata",
+          }),
+        ]);
+      } finally {
+        spy.mockRestore();
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  const cannotEnforceFilePermissions = process.platform === "win32" || process.getuid?.() === 0;
+  const discoveryPermissionCases = [
+    { label: "project enumeration", mode: 0, deniedSuffix: "", existingSuffix: "" },
+    {
+      label: "candidate stat",
+      mode: 0o400,
+      deniedSuffix: "hidden.jsonl",
+      existingSuffix: "0.jsonl",
+    },
+  ];
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "logs denied $label while discovering a healthy project",
+    async ({ mode, deniedSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const projectsRoot = path.dirname(path.dirname(fixture.files[0]!));
+      const deniedProject = path.join(projectsRoot, "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual(
+          fixture.descriptors,
+        );
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: path.join(deniedProject, deniedSuffix),
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude session discovery path with denied access",
+          }),
+        ]);
+      } finally {
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "surfaces a provider error when $label denies discovery in every project",
+    async ({ mode, deniedSuffix, existingSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const existingProject = path.dirname(fixture.files[0]!);
+      const deniedProject = path.join(path.dirname(existingProject), "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(existingProject, mode);
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          message: expect.stringContaining("no transcripts could be discovered"),
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(existingProject, existingSuffix),
+            }),
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(deniedProject, deniedSuffix),
+            }),
+          ]),
+        });
+        expect(fixture.logs).toHaveLength(2);
+        expect(fixture.logs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: path.join(existingProject, existingSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+            expect.objectContaining({
+              path: path.join(deniedProject, deniedSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+          ]),
+        );
+      } finally {
+        await fs.chmod(existingProject, 0o700);
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "isolates an actual access-denied transcript while returning a healthy session",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await fs.chmod(fixture.files[0]!, 0);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+          fixture.descriptors[1],
+        ]);
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: fixture.files[0],
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude transcript with unreadable import metadata",
+          }),
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "surfaces a provider error when every actual candidate is access denied",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await Promise.all(fixture.files.map((file) => fs.chmod(file, 0)));
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          errors: fixture.files.map((file) =>
+            expect.objectContaining({ code: "EACCES", path: file }),
+          ),
+          message: expect.stringContaining(
+            "all 2 candidate transcripts have unreadable import metadata",
+          ),
+        });
+        expect(fixture.logs).toHaveLength(2);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test("returns an empty listing for readable transcripts without import metadata", async () => {
+    const fixture = await descriptorFixture(2);
+    try {
+      await Promise.all(fixture.files.map((file) => fs.writeFile(file, '{"type":"assistant"}')));
+      const client = new ClaudeAgentClient(fixture.options);
+      await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([]);
+      expect(fixture.logs).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test.each(["EMFILE", "ENFILE", "EIO", "ERR_INVALID_ARG_TYPE"])(
+    "propagates %s and cancels sibling streams instead of skipping transcripts",
+    async (code) => {
+      const fixture = await descriptorFixture(6);
+      const started: string[] = [];
+      const streams: nativeFs.ReadStream[] = [];
+      const originalReadStream = nativeFs.createReadStream;
+      const error = readError(code, fixture.files[0]!);
+      const spy = vi.spyOn(nativeFs, "createReadStream").mockImplementation((file, options) => {
+        started.push(String(file));
+        if (file === fixture.files[0]) throw error;
+        const stream = originalReadStream(file, options);
+        streams.push(stream);
+        return stream;
+      });
+      try {
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 6 })).rejects.toBe(error);
+        expect(started).toEqual(fixture.files.slice(0, 4));
+        expect(streams.map((stream) => stream.destroyed)).toEqual([true, true, true]);
+        function closedStates(): boolean[] {
+          return streams.map((stream) => stream.closed);
+        }
+        await vi.waitFor(() => expect(closedStates()).toEqual([true, true, true]));
+        expect(fixture.logs).toEqual([]);
+      } finally {
+        spy.mockRestore();
+        await fixture.cleanup();
+      }
+    },
+  );
+
   test("refreshes descriptors after append, rewrite, replacement, and deletion", async () => {
     const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-cache-"));
     try {
@@ -1816,7 +2073,7 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     }
   });
 
-  test("skips a single record larger than the heap without allocating the full line", async () => {
+  test("reports an unreadable single record larger than the heap without allocating the full line", async () => {
     const configDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "paseo-claude-import-single-record-"),
     );
@@ -1842,20 +2099,22 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
           "--input-type=module",
           "--eval",
           `
-          import { deepStrictEqual } from "node:assert";
+          import { rejects } from "node:assert";
           import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
           import pino from ${JSON.stringify(import.meta.resolve("pino"))};
           const client = new ClaudeAgentClient({
             logger: pino({ level: "silent" }),
             runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
           });
-          deepStrictEqual(await client.listImportableSessions({ limit: 1 }), []);
-          console.log("Oversized transcript skipped");
+          await rejects(client.listImportableSessions({ limit: 1 }), {
+            name: "AggregateError", message: /all 1 candidate transcripts have unreadable import metadata/,
+          });
+          console.log("Oversized transcript reported");
         `,
         ],
         { timeout: 20_000 },
       );
-      expect(stdout.trim()).toEqual("Oversized transcript skipped");
+      expect(stdout.trim()).toEqual("Oversized transcript reported");
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
