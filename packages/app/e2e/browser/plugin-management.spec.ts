@@ -557,7 +557,7 @@ async function retryGitInstallAndInspectRows(
 
   await installPlugin(page, missingSource);
   await expect(page.getByTestId("plugin-management-feedback")).toContainText(
-    "Plugin source is neither an existing directory nor a Git URL",
+    `Plugin directory does not exist: ${missingSource}`,
   );
   await expect(page.getByLabel("Plugin source")).toHaveValue(missingSource);
   await capturePluginInstallForm(page, testInfo, "compact-error");
