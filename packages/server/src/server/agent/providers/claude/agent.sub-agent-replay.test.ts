@@ -522,6 +522,27 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       });
     });
 
+    test("stays running when the child was given a new prompt after the interrupt", async () => {
+      writeSession({
+        parentLines: backgroundLaunch(),
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [
+          ...interruptedChild(),
+          JSON.stringify({
+            type: "user",
+            isSidechain: true,
+            agentId: AGENT_ID,
+            timestamp: "2026-07-26T06:29:00.000Z",
+            message: { role: "user", content: [{ type: "text", text: "Carry on with the task." }] },
+          }),
+        ],
+      });
+
+      const statuses = upserts(await replayDescriptors()).map(readStatus);
+      expect(statuses).not.toContain("canceled");
+      expect(statuses).toContain("running");
+    });
+
     test("stays running while the child has not finished", async () => {
       writeSession({
         parentLines: backgroundLaunch(),
