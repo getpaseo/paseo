@@ -35,7 +35,7 @@ export const Route = createFileRoute("/plugins/$owner_/$slug")({
       loaderData?.plugin ? `${loaderData.plugin.name} – Paseo plugin` : "Plugin not found – Paseo",
       loaderData?.plugin?.description ?? "Plugin not found.",
       `/plugins/${params.owner}/${params.slug}`,
-      pluginOverviewUrl(loaderData?.plugin.screenshots[0]),
+      loaderData?.plugin.screenshots.find(pluginOverviewUrl),
     ),
   component: PluginPage,
   notFoundComponent: () => (

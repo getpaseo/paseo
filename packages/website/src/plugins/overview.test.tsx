@@ -123,3 +123,16 @@ describe("registry images", () => {
     }
   });
 });
+
+it("uses the first HTTPS screenshot when an earlier screenshot is rejected", () => {
+  const source = "https://example.com/screenshot.png";
+  const plugin = {
+    ...registry.plugins[0],
+    icon: undefined,
+    screenshots: ["data:image/png;base64,AAAA", source],
+  } as Plugin;
+  const nodes = elements(renderToStaticMarkup(createElement(PluginCard, { plugin })));
+  expect(
+    nodes.filter((node) => node.tagName === "img").map((node) => attribute(node, "src")),
+  ).toEqual([source]);
+});
