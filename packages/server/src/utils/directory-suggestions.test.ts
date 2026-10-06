@@ -649,15 +649,19 @@ describe("absolute directory-path configuration", () => {
     ]);
   });
 
-  it.each(["~/projects/", "./projects/", "absolute"])(
-    "browses only the named directory for %s without a recursive scan budget",
-    async (query) => {
+  it.each([
+    { syntax: "~/projects/", createQuery: () => "~/projects/" },
+    { syntax: "./projects/", createQuery: () => "./projects/" },
+    { syntax: "absolute", createQuery: () => `${path.join(homeDir, "projects")}${path.sep}` },
+  ])(
+    "browses only the named directory for $syntax without a recursive scan budget",
+    async ({ createQuery }) => {
       mkdirSync(path.join(homeDir, "projects", "paseo", "nested"));
       mkdirSync(path.join(homeDir, "archive", "projects", "unrelated"), { recursive: true });
 
       const result = await searchAbsoluteDirectoryPaths({
         homeDir,
-        query: query === "absolute" ? `${path.join(homeDir, "projects")}${path.sep}` : query,
+        query: createQuery(),
         limit: 10,
         maxDirectoriesScanned: 1,
       });
