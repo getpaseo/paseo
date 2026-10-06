@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -7,6 +7,7 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type {
   AgentSession,
+  AgentSessionConfig,
   AgentStreamEvent,
   ToolCallTimelineItem,
 } from "../../agent-sdk-types.js";
@@ -151,6 +152,7 @@ async function createSession(params?: {
   cwdPrefix?: string;
   modeId?: string;
   title?: string;
+  config?: Partial<AgentSessionConfig>;
 }): Promise<{ cwd: string; session: AgentSession }> {
   const cwd = tmpCwd(params?.cwdPrefix ?? "claude-agent-integration-");
   const session = await client.createSession({
@@ -158,8 +160,82 @@ async function createSession(params?: {
     cwd,
     title: params?.title ?? "ClaudeAgentSession integration",
     modeId: params?.modeId ?? "acceptEdits",
+    ...params?.config,
   });
   return { cwd, session };
+}
+
+// One MCP tool without annotations, so Claude Code gates it. Every call that runs is logged.
+const QA_MCP_SERVER_SOURCE = `
+const { appendFileSync } = require("node:fs");
+const readline = require("node:readline");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  let message;
+  try { message = JSON.parse(line); } catch { return; }
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: {
+      protocolVersion: message.params?.protocolVersion ?? "2025-06-18",
+      capabilities: { tools: {} }, serverInfo: { name: "qa", version: "1.0.0" } } });
+  } else if (message.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [{
+      name: "search_docs",
+      description: "Read-only documentation search for research. It never modifies files or state.",
+      inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } }] } });
+  } else if (message.method === "tools/call") {
+    appendFileSync(process.env.QA_MCP_LOG, String(message.params?.arguments?.query ?? "") + "\\n");
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "QA search result" }] } });
+  } else if (message.id !== undefined) {
+    send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
+  }
+});
+`;
+
+const PLAN_RESEARCH_PROMPT = [
+  "I am planning a docs change.",
+  'As research for the plan, call the read-only mcp__qa__search_docs tool exactly once with query "plan-check" and show me its result.',
+  "Do not call any other tool.",
+].join(" ");
+
+function qaMcpServer(cwd: string): { config: AgentSessionConfig["mcpServers"]; calls(): string[] } {
+  const script = path.join(cwd, "qa-mcp-server.cjs");
+  const log = path.join(cwd, "qa-mcp-calls.log");
+  writeFileSync(script, QA_MCP_SERVER_SOURCE);
+  return {
+    config: {
+      qa: {
+        type: "stdio",
+        command: process.execPath,
+        args: [script],
+        env: { QA_MCP_LOG: log },
+        alwaysLoad: true,
+      },
+    },
+    calls: () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []),
+  };
+}
+
+async function createPlanningSessionWithQaTool(input: {
+  cwdPrefix: string;
+  modeId: string;
+  config?: Partial<AgentSessionConfig>;
+}): Promise<{ handle: { cwd: string; session: AgentSession }; calls(): string[] }> {
+  const cwd = tmpCwd(input.cwdPrefix);
+  const server = qaMcpServer(cwd);
+  const session = await client.createSession({
+    ...getRealProviderConfig("claude"),
+    cwd,
+    title: "ClaudeAgentSession Plan integration",
+    modeId: input.modeId,
+    mcpServers: server.config,
+    ...input.config,
+  });
+  await session.setFeature?.("plan_mode", true);
+  return { handle: { cwd, session }, calls: server.calls };
+}
+
+function permissionRequests(events: AgentStreamEvent[]) {
+  return events.flatMap((event) => (event.type === "permission_requested" ? [event.request] : []));
 }
 
 async function cleanupSession(handle: { cwd: string; session: AgentSession }): Promise<void> {
@@ -476,4 +552,80 @@ describe("ClaudeAgentSession integration", () => {
       await cleanupSession(handle);
     }
   }, 60_000);
+
+  test("Bypass plus Plan runs a permission-gated MCP tool without asking", async () => {
+    const { handle, calls } = await createPlanningSessionWithQaTool({
+      cwdPrefix: "claude-agent-bypass-plan-",
+      modeId: "bypassPermissions",
+    });
+
+    try {
+      const events = await collectUntilTerminal(
+        streamSession(handle.session, PLAN_RESEARCH_PROMPT),
+        {
+          timeoutMs: 90_000,
+        },
+      );
+
+      expect(permissionRequests(events)).toEqual([]);
+      expect(calls()).toEqual(["plan-check"]);
+      await expect(handle.session.getCurrentMode()).resolves.toBe("bypassPermissions");
+      expect(events.at(-1)).toMatchObject({ type: "turn_completed", provider: "claude" });
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 120_000);
+
+  test("Always Ask plus Plan still asks before the same MCP tool runs", async () => {
+    const { handle, calls } = await createPlanningSessionWithQaTool({
+      cwdPrefix: "claude-agent-default-plan-",
+      modeId: "default",
+    });
+
+    try {
+      const events = await collectUntilTerminal(
+        streamSession(handle.session, PLAN_RESEARCH_PROMPT),
+        {
+          timeoutMs: 90_000,
+          onEvent: async (event) => {
+            if (event.type === "permission_requested" && event.request.kind === "tool") {
+              await handle.session.respondToPermission(event.request.id, {
+                behavior: "deny",
+                message: "Denied by the Plan integration test",
+              });
+            }
+          },
+        },
+      );
+
+      expect(permissionRequests(events)).toEqual([
+        expect.objectContaining({ kind: "tool", name: "mcp__qa__search_docs" }),
+      ]);
+      expect(calls()).toEqual([]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 120_000);
+
+  test("Bypass plus Plan keeps a disallowed MCP tool blocked", async () => {
+    const { handle, calls } = await createPlanningSessionWithQaTool({
+      cwdPrefix: "claude-agent-bypass-plan-deny-",
+      modeId: "bypassPermissions",
+      config: { providerOptions: { disallowedTools: ["mcp__qa__search_docs"] } },
+    });
+
+    try {
+      const events = await collectUntilTerminal(
+        streamSession(handle.session, PLAN_RESEARCH_PROMPT),
+        {
+          timeoutMs: 90_000,
+        },
+      );
+
+      expect(permissionRequests(events)).toEqual([]);
+      expect(calls()).toEqual([]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 120_000);
 });

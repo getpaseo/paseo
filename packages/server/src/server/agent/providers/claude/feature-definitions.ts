@@ -10,6 +10,15 @@ export const CLAUDE_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   icon: "zap",
 };
 
+export const CLAUDE_PLAN_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
+  type: "toggle",
+  id: "plan_mode",
+  label: "Plan",
+  description: "Plan before making changes, keeping the selected permission mode",
+  tooltip: "Toggle plan mode",
+  icon: "list-todo",
+};
+
 export function claudeModelSupportsFastMode(modelId: string | null | undefined): boolean {
   return claudeManifestModelSupportsFastMode(modelId);
 }
@@ -17,15 +26,12 @@ export function claudeModelSupportsFastMode(modelId: string | null | undefined):
 export function buildClaudeFeatures(input: {
   modelId: string | null | undefined;
   fastModeEnabled: boolean;
+  planModeEnabled: boolean;
 }): AgentFeature[] {
-  if (!claudeModelSupportsFastMode(input.modelId)) {
-    return [];
+  const features: AgentFeature[] = [];
+  if (claudeModelSupportsFastMode(input.modelId)) {
+    features.push({ ...CLAUDE_FAST_MODE_FEATURE, value: input.fastModeEnabled });
   }
-
-  return [
-    {
-      ...CLAUDE_FAST_MODE_FEATURE,
-      value: input.fastModeEnabled,
-    },
-  ];
+  features.push({ ...CLAUDE_PLAN_MODE_FEATURE, value: input.planModeEnabled });
+  return features;
 }

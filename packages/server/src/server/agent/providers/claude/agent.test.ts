@@ -812,62 +812,27 @@ describe("ClaudeAgentSession features", () => {
 
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
+    // Plan is listed for every model, so only the Fast entry varies here.
+    const fastModeFeatures = async (model: string) =>
+      (await client.listFeatures({ provider: "claude", cwd: process.cwd(), model })).filter(
+        (feature) => feature.id === "fast_mode",
+      );
 
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-4-8",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-4-8[1m]",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-4-8-20260101",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-opus-5",
-      }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "openrouter/anthropic/claude-opus-4-8",
-      }),
-    ).resolves.toEqual([]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-sonnet-5",
-      }),
-    ).resolves.toEqual([]);
-
-    await expect(
-      client.listFeatures({
-        provider: "claude",
-        cwd: process.cwd(),
-        model: "claude-sonnet-4-6",
-      }),
-    ).resolves.toEqual([]);
+    await expect(fastModeFeatures("claude-opus-4-8")).resolves.toEqual([
+      expect.objectContaining({ id: "fast_mode", value: false }),
+    ]);
+    await expect(fastModeFeatures("claude-opus-4-8[1m]")).resolves.toEqual([
+      expect.objectContaining({ id: "fast_mode", value: false }),
+    ]);
+    await expect(fastModeFeatures("claude-opus-4-8-20260101")).resolves.toEqual([
+      expect.objectContaining({ id: "fast_mode", value: false }),
+    ]);
+    await expect(fastModeFeatures("claude-opus-5")).resolves.toEqual([
+      expect.objectContaining({ id: "fast_mode", value: false }),
+    ]);
+    await expect(fastModeFeatures("openrouter/anthropic/claude-opus-4-8")).resolves.toEqual([]);
+    await expect(fastModeFeatures("claude-sonnet-5")).resolves.toEqual([]);
+    await expect(fastModeFeatures("claude-sonnet-4-6")).resolves.toEqual([]);
   });
 
   test("passes initial fast mode through Claude flag settings", async () => {
@@ -3098,10 +3063,14 @@ describe("ClaudeAgentSession context window usage", () => {
     try {
       const events = await collectStreamEvents(session, "enter plan mode");
 
+      // Plan is the plan_mode feature beside the access mode, so the agent keeps Accept File Edits.
       expect(events).toContainEqual(
-        expect.objectContaining({ type: "mode_changed", currentModeId: "plan" }),
+        expect.objectContaining({ type: "mode_changed", currentModeId: "acceptEdits" }),
       );
-      expect(await session.getCurrentMode()).toBe("plan");
+      expect(await session.getCurrentMode()).toBe("acceptEdits");
+      expect(session.features).toContainEqual(
+        expect.objectContaining({ id: "plan_mode", value: true }),
+      );
     } finally {
       await session.close();
     }

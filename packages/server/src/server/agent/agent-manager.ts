@@ -4840,8 +4840,19 @@ export class AgentManager {
   }
 
   private syncFeaturesFromSession(agent: ManagedAgent): void {
-    if ("session" in agent && agent.session?.features) {
+    if (!("session" in agent) || !agent.session) {
+      return;
+    }
+    if (agent.session.features) {
       agent.features = agent.session.features;
+    }
+    // Like applyObservedMode: resume and reload start from config, so provider-side changes
+    // have to land there too.
+    if (agent.session.featureValues) {
+      agent.config.featureValues = {
+        ...agent.config.featureValues,
+        ...agent.session.featureValues,
+      };
     }
   }
 

@@ -62,7 +62,21 @@ import {
   parseClaudeWorkflowRun,
 } from "./subagents/workflow-replay-source.js";
 import { readClaudeWorkflowResultFile } from "./subagents/workflow-output.js";
-import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
+import {
+  buildClaudeFeatures,
+  CLAUDE_PLAN_MODE_FEATURE,
+  claudeModelSupportsFastMode,
+} from "./feature-definitions.js";
+import {
+  approveClaudePlan,
+  approvesPlanModeAsks,
+  reconcileClaudeSdkPermissionMode,
+  resolveClaudeExecutionMode,
+  selectClaudeMode,
+  toClaudeSdkPermissionMode,
+  type ClaudeAccessMode,
+  type ClaudeExecutionMode,
+} from "./execution-mode.js";
 import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
@@ -362,6 +376,8 @@ const DEFAULT_MODES: AgentMode[] = [
 ];
 
 const VALID_CLAUDE_MODES = new Set(DEFAULT_MODES.map((mode) => mode.id));
+// These callbacks carry the user's answer, so no permission mode can answer them for the user.
+const CLAUDE_USER_ANSWER_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
 const REWIND_COMMAND_NAME = "rewind";
 const REWIND_COMMAND: AgentSlashCommand = {
@@ -846,10 +862,15 @@ export function extractUserMessageText(content: unknown): string | null {
 
 interface PendingPermission {
   request: AgentPermissionRequest;
+  /** Bypass plus Plan would have answered this ask without showing it. */
+  approvableInPlan: boolean;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
   cleanup?: () => void;
 }
+
+/** Enough to absorb answers from clients that were offline when the session settled a card. */
+const SETTLED_PERMISSION_MEMORY = 200;
 
 type ToolUseClassification = "generic" | "command" | "file_change";
 interface ToolUseCacheEntry {
@@ -920,10 +941,6 @@ function isMcpServersRecord(value: unknown): value is Record<string, McpServerCo
   return true;
 }
 
-function isPermissionMode(value: string | undefined): value is PermissionMode {
-  return typeof value === "string" && VALID_CLAUDE_MODES.has(value);
-}
-
 function isTruthyEnvValue(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return (
@@ -961,7 +978,7 @@ function assertClaudeModeCanRun(mode: PermissionMode, env: NodeJS.ProcessEnv): v
 
 function claudeModeCatalog(env: NodeJS.ProcessEnv): {
   modes: AgentMode[];
-  defaultModeId: PermissionMode;
+  defaultModeId: ClaudeAccessMode;
 } {
   if (claudeAutoModeUnavailableOn(env)) {
     return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
@@ -1626,6 +1643,10 @@ export class ClaudeAgentClient implements AgentClient {
     return buildClaudeFeatures({
       modelId: claudeConfig.model,
       fastModeEnabled: claudeConfig.featureValues?.fast_mode === true,
+      planModeEnabled: resolveClaudeExecutionMode(
+        claudeConfig,
+        claudeModeCatalog(this.buildProviderEnv()).defaultModeId,
+      ).isPlanMode,
     });
   }
 
@@ -2079,14 +2100,17 @@ class ClaudeAgentSession implements AgentSession {
   private readonly permissionClearingSteerUuids = new Set<string>();
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
-  private currentMode: PermissionMode;
-  private planResumeMode: PermissionMode | null = null;
+  private executionMode: ClaudeExecutionMode;
+  /** Mode and Plan changes run one at a time, each from the state the previous one left. */
+  private executionModeChange: Promise<void> = Promise.resolve();
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
   private subagentHandbackIds = new Set<string>();
   private pendingPermissions = new Map<string, PendingPermission>();
+  /** Requests the session settled without the user: aborts, cancels, steers, Bypass plus Plan. */
+  private readonly settledPermissionIds = new Set<string>();
   private activeForegroundTurnId: string | null = null;
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -2175,10 +2199,14 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
+    this.executionMode = resolveClaudeExecutionMode(
+      config,
+      claudeModeCatalog(this.harnessEnvironment).defaultModeId,
+    );
+  }
+
+  private get sdkPermissionMode(): PermissionMode {
+    return toClaudeSdkPermissionMode(this.executionMode);
   }
 
   get id(): string | null {
@@ -2189,7 +2217,13 @@ class ClaudeAgentSession implements AgentSession {
     return buildClaudeFeatures({
       modelId: this.config.model,
       fastModeEnabled: this.config.featureValues?.fast_mode === true,
+      planModeEnabled: this.executionMode.isPlanMode,
     });
+  }
+
+  /** Plan approval and Claude's own EnterPlanMode change Plan without a setFeature call. */
+  get featureValues(): Readonly<Record<string, unknown>> {
+    return { [CLAUDE_PLAN_MODE_FEATURE.id]: this.executionMode.isPlanMode };
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -2200,7 +2234,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       sessionId: this.claudeSessionId,
       model: this.lastOptionsModel,
-      modeId: this.currentMode ?? null,
+      modeId: this.executionMode.accessMode,
       ...(this.lastRuntimeModel
         ? {
             extra: {
@@ -2227,7 +2261,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       sessionId: this.claudeSessionId,
       model: this.lastOptionsModel,
-      modeId: this.currentMode ?? null,
+      modeId: this.executionMode.accessMode,
     };
 
     if (!this.claudeSessionId) {
@@ -2425,8 +2459,9 @@ class ClaudeAgentSession implements AgentSession {
     return this.availableModes;
   }
 
+  /** The access mode stays the agent's mode while Plan is on; Plan is the plan_mode feature. */
   async getCurrentMode(): Promise<string | null> {
-    return this.currentMode ?? null;
+    return this.executionMode.accessMode;
   }
 
   async setMode(modeId: string): Promise<void> {
@@ -2438,19 +2473,57 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeModeCanRun(normalized, this.harnessEnvironment);
-    const previousMode = this.currentMode;
-    const activeQuery = await this.ensureQuery();
-    await activeQuery.setPermissionMode(normalized);
-    if (normalized === "plan") {
-      if (previousMode !== "plan") {
-        this.planResumeMode = previousMode;
-      }
-    } else {
-      this.planResumeMode = normalized;
+    await this.changeExecutionMode((current) => {
+      const next = selectClaudeMode(current, modeId);
+      assertClaudeModeCanRun(next.accessMode, this.harnessEnvironment);
+      return next;
+    });
+  }
+
+  private changeExecutionMode(
+    resolveNext: (current: ClaudeExecutionMode) => ClaudeExecutionMode,
+  ): Promise<void> {
+    return this.runExecutionModeChange(() =>
+      this.applyExecutionMode(resolveNext(this.executionMode)),
+    );
+  }
+
+  private runExecutionModeChange(change: () => Promise<void>): Promise<void> {
+    const run = this.executionModeChange.then(change);
+    // A failed change still reaches its caller; the next one starts from the state it left.
+    this.executionModeChange = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Returns to a state Paseo already left, even when Claude Code cannot be told right now. */
+  private async restoreExecutionMode(previous: ClaudeExecutionMode): Promise<void> {
+    try {
+      await this.applyExecutionMode(previous);
+    } catch (error) {
+      // The live query may still run in the abandoned mode. End its turn and retire it now, so
+      // nothing runs in that mode and the next query starts from the restored state.
+      this.executionMode = previous;
+      this.cachedRuntimeInfo = null;
+      this.failActiveTurns(
+        `Claude Code could not return to the mode before the withdrawn plan approval: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      await this.retireQuery();
+      throw error;
     }
-    this.currentMode = normalized;
+  }
+
+  private async applyExecutionMode(next: ClaudeExecutionMode): Promise<void> {
+    const sdkMode = toClaudeSdkPermissionMode(next);
+    if (sdkMode !== this.sdkPermissionMode) {
+      assertClaudeModeCanRun(sdkMode, this.harnessEnvironment);
+      const activeQuery = await this.ensureQuery();
+      await activeQuery.setPermissionMode(sdkMode);
+    }
+    this.executionMode = next;
+    this.cachedRuntimeInfo = null;
+    this.approvePendingPlanModeAsks();
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -2514,6 +2587,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId === CLAUDE_PLAN_MODE_FEATURE.id) {
+      await this.changeExecutionMode((current) => ({ ...current, isPlanMode: Boolean(value) }));
+      return;
+    }
     if (featureId !== "fast_mode") {
       throw new Error(`Unknown Claude feature: ${featureId}`);
     }
@@ -2603,9 +2680,42 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  private rememberSettledPermission(requestId: string): void {
+    this.settledPermissionIds.add(requestId);
+    for (const oldest of this.settledPermissionIds) {
+      if (this.settledPermissionIds.size <= SETTLED_PERMISSION_MEMORY) {
+        break;
+      }
+      this.settledPermissionIds.delete(oldest);
+    }
+  }
+
+  /** Entering Bypass plus Plan answers the tool cards it would not have shown in the first place. */
+  private approvePendingPlanModeAsks(): void {
+    if (!approvesPlanModeAsks(this.executionMode) || this.permissionClearingSteerUuids.size > 0) {
+      return;
+    }
+    for (const [requestId, pending] of this.pendingPermissions) {
+      if (!pending.approvableInPlan) {
+        continue;
+      }
+      this.pendingPermissions.delete(requestId);
+      this.rememberSettledPermission(requestId);
+      pending.cleanup?.();
+      pending.resolve({ behavior: "allow", updatedInput: pending.request.input ?? {} });
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: "claude",
+        requestId,
+        resolution: { behavior: "allow" },
+      });
+    }
+  }
+
   private denyPendingPermissionsSupersededBySteer(): void {
     for (const [requestId, pending] of this.pendingPermissions) {
       this.pendingPermissions.delete(requestId);
+      this.rememberSettledPermission(requestId);
       pending.cleanup?.();
       pending.resolve(
         this.resolveDeniedPermission(pending.request, {
@@ -2619,20 +2729,35 @@ class ClaudeAgentSession implements AgentSession {
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
+      // A card a client still shows after the session answered it; the agent has moved on.
+      if (this.settledPermissionIds.has(requestId)) {
+        return;
+      }
       throw new Error(`No pending permission request with id '${requestId}'`);
+    }
+    const selectedActionId = response.behavior === "allow" ? response.selectedActionId : undefined;
+    if (response.behavior === "allow" && pending.request.kind === "plan") {
+      // Leave Plan before taking the card down, so a failed mode change leaves it answerable.
+      // Claude can withdraw the card before or while Plan is left; then the approval changes nothing.
+      await this.runExecutionModeChange(async () => {
+        if (this.pendingPermissions.get(requestId) !== pending) {
+          return;
+        }
+        const previous = this.executionMode;
+        await this.applyExecutionMode(approveClaudePlan(previous, selectedActionId));
+        if (this.pendingPermissions.get(requestId) !== pending) {
+          await this.restoreExecutionMode(previous);
+        }
+      });
+      if (this.pendingPermissions.get(requestId) !== pending) {
+        return;
+      }
     }
     this.pendingPermissions.delete(requestId);
     pending.cleanup?.();
 
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
-        const selectedActionId = response.selectedActionId;
-        const shouldResumePriorMode =
-          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
-          ? "bypassPermissions"
-          : "acceptEdits";
-        await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
             name: "ExitPlanMode",
@@ -3128,43 +3253,50 @@ class ClaudeAgentSession implements AgentSession {
     return { kind: "fresh-session" };
   }
 
+  private async retireQuery(): Promise<void> {
+    const oldQuery = this.query;
+    if (!oldQuery) {
+      return;
+    }
+    const oldInput = this.input;
+    // Null out query/input BEFORE awaiting the old iterator's return so the
+    // old pump sees this.query !== activeQuery and skips failActiveTurns.
+    this.query = null;
+    this.input = null;
+    this.queryPumpPromise = null;
+    this.queryRestartNeeded = false;
+    // Ending the input retires the process on purpose. Detach first so its
+    // exit is not reported as a crash.
+    const retiredChild = this.childProcess;
+    this.childProcess = null;
+    if (retiredChild) this.failRunningRuntimeTasks();
+    oldInput?.end();
+    oldQuery.close?.();
+    try {
+      await oldQuery.return?.();
+    } catch {
+      /* ignore */
+    }
+    // Tree-kill the old process tree now that the SDK has cleaned up.
+    // If we skip this, MCP children of the previous claude process can
+    // survive as orphans when the session spawns a replacement query.
+    if (retiredChild) {
+      await terminateWithTreeKill(retiredChild, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }).catch(() => {
+        /* process may already be dead */
+      });
+    }
+  }
+
   private async ensureQuery(): Promise<Query> {
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
     }
 
     if (this.queryRestartNeeded && this.query) {
-      const oldQuery = this.query;
-      const oldInput = this.input;
-      // Null out query/input BEFORE awaiting the old iterator's return so the
-      // old pump sees this.query !== activeQuery and skips failActiveTurns.
-      this.query = null;
-      this.input = null;
-      this.queryPumpPromise = null;
-      this.queryRestartNeeded = false;
-      // Ending the input retires the process on purpose. Detach first so its
-      // exit is not reported as a crash.
-      const retiredChild = this.childProcess;
-      this.childProcess = null;
-      if (retiredChild) this.failRunningRuntimeTasks();
-      oldInput?.end();
-      oldQuery.close?.();
-      try {
-        await oldQuery.return?.();
-      } catch {
-        /* ignore */
-      }
-      // Tree-kill the old process tree now that the SDK has cleaned up.
-      // If we skip this, MCP children of the previous claude process can
-      // survive as orphans when the session spawns a replacement query.
-      if (retiredChild) {
-        await terminateWithTreeKill(retiredChild, {
-          gracefulTimeoutMs: 2_000,
-          forceTimeoutMs: 2_000,
-        }).catch(() => {
-          /* process may already be dead */
-        });
-      }
+      await this.retireQuery();
     }
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
@@ -3307,7 +3439,7 @@ class ClaudeAgentSession implements AgentSession {
     );
     const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
     const sdkEnv = this.harnessEnvironment;
-    assertClaudeModeCanRun(this.currentMode, sdkEnv);
+    assertClaudeModeCanRun(this.sdkPermissionMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(
@@ -3330,7 +3462,7 @@ class ClaudeAgentSession implements AgentSession {
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
-      permissionMode: this.currentMode,
+      permissionMode: this.sdkPermissionMode,
       // Dynamic mode switching can recreate the underlying Claude query. Keep the
       // bypass launch capability available so later setPermissionMode("bypassPermissions")
       // calls do not fail after a model/thinking/rewind-driven restart.
@@ -3704,6 +3836,9 @@ class ClaudeAgentSession implements AgentSession {
   private failActiveTurns(errorMessage: string): void {
     const failure = this.buildTurnFailedEvent(errorMessage);
     this.flushPendingToolCalls();
+    // The failed query can no longer take an answer, and the manager rebuilds its cards from
+    // this list, so a request left in it would come back as a card nobody can answer.
+    this.rejectAllPendingPermissions(new Error(errorMessage));
     if (this.activeForegroundTurnId) {
       this.finishForegroundTurn(failure);
       return;
@@ -4319,22 +4454,11 @@ class ClaudeAgentSession implements AgentSession {
           sessionId: sessionUpdate.threadStartedSessionId,
         });
       }
+      this.applyReportedPermissionMode(message.permissionMode, events);
       return;
     }
     if (message.subtype === "status") {
-      // Claude Code reports a mode it switched to on its own, such as entering
-      // plan mode with the EnterPlanMode tool, through the status message.
-      if (
-        isPermissionMode(message.permissionMode) &&
-        this.observePermissionMode(message.permissionMode)
-      ) {
-        events.push({
-          type: "mode_changed",
-          provider: "claude",
-          currentModeId: this.currentMode,
-          availableModes: this.availableModes,
-        });
-      }
+      this.applyReportedPermissionMode(toObjectRecord(message)?.permissionMode, events);
       const status = toObjectRecord(message)?.status;
       if (status === "compacting") {
         this.compacting = true;
@@ -4375,6 +4499,22 @@ class ClaudeAgentSession implements AgentSession {
     if (message.subtype === "task_progress") {
       return;
     }
+  }
+
+  private applyReportedPermissionMode(sdkMode: unknown, events: AgentStreamEvent[]): void {
+    const next = reconcileClaudeSdkPermissionMode(this.executionMode, sdkMode);
+    if (next === this.executionMode) {
+      return;
+    }
+    this.executionMode = next;
+    this.cachedRuntimeInfo = null;
+    // The manager only re-reads the mode and Plan feature when it is told the mode changed.
+    events.push({
+      type: "mode_changed",
+      provider: "claude",
+      currentModeId: next.accessMode,
+      availableModes: this.availableModes,
+    });
   }
 
   private appendTaskNotificationEvents(
@@ -4646,7 +4786,6 @@ class ClaudeAgentSession implements AgentSession {
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
     this.availableModes = DEFAULT_MODES;
-    this.observePermissionMode(message.permissionMode);
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
@@ -4663,16 +4802,6 @@ class ClaudeAgentSession implements AgentSession {
       this.cachedRuntimeInfo = null;
     }
     return { threadStartedSessionId, notice };
-  }
-
-  /** Records a mode Claude Code reports, returning whether it differs from the current one. */
-  private observePermissionMode(mode: PermissionMode): boolean {
-    const changed = this.currentMode !== mode;
-    this.currentMode = mode;
-    if (mode !== "plan") {
-      this.planResumeMode = mode;
-    }
-    return changed;
   }
 
   private readMissingResumedConversationError(message: SDKMessage): string | null {
@@ -4707,8 +4836,11 @@ class ClaudeAgentSession implements AgentSession {
     input,
     options,
   ): Promise<PermissionResult> => {
-    const requestId = `permission-${randomUUID()}`;
     const kind = resolvePermissionKind(toolName, input);
+    if (this.approvesWithoutPrompt(kind, toolName, options)) {
+      return { behavior: "allow", updatedInput: input };
+    }
+    const requestId = `permission-${randomUUID()}`;
     const requestInput = normalizeClaudeAskUserQuestionRequestInput(toolName, input);
     const metadata: AgentMetadata = {};
     if (options.toolUseID) {
@@ -4738,7 +4870,10 @@ class ClaudeAgentSession implements AgentSession {
       suggestions: options.suggestions?.map((suggestion) => ({
         ...suggestion,
       })),
-      actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
+      actions:
+        kind === "plan"
+          ? buildClaudePlanPermissionActions(this.executionMode.accessMode)
+          : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
@@ -4770,6 +4905,7 @@ class ClaudeAgentSession implements AgentSession {
 
       const abortHandler = () => {
         this.pendingPermissions.delete(requestId);
+        this.rememberSettledPermission(requestId);
         cleanup();
         this.pushEvent({
           type: "permission_resolved",
@@ -4791,12 +4927,41 @@ class ClaudeAgentSession implements AgentSession {
 
       this.pendingPermissions.set(requestId, {
         request,
+        approvableInPlan: this.isPlanModeAsk(kind, toolName, options),
         resolve,
         reject,
         cleanup,
       });
     });
   };
+
+  /** An ordinary tool ask that interactive Claude Code would approve in Bypass plus Plan. */
+  private isPlanModeAsk(
+    kind: AgentPermissionRequestKind,
+    toolName: string,
+    options: Parameters<CanUseTool>[2],
+  ): boolean {
+    return (
+      kind === "tool" &&
+      !CLAUDE_USER_ANSWER_TOOLS.has(toolName) &&
+      // A permissions.ask rule is the user asking to be prompted, so it outranks Bypass.
+      !options.matchedAskRule
+    );
+  }
+
+  private approvesWithoutPrompt(
+    kind: AgentPermissionRequestKind,
+    toolName: string,
+    options: Parameters<CanUseTool>[2],
+  ): boolean {
+    return (
+      this.isPlanModeAsk(kind, toolName, options) &&
+      approvesPlanModeAsks(this.executionMode) &&
+      // Tools from a turn a human steer superseded are denied until Claude reads the steer.
+      this.permissionClearingSteerUuids.size === 0 &&
+      !options.signal.aborted
+    );
+  }
 
   private enqueueTimeline(item: AgentTimelineItem) {
     this.pushEvent({ type: "timeline", item, provider: "claude" });
@@ -4917,6 +5082,7 @@ class ClaudeAgentSession implements AgentSession {
       pending.cleanup?.();
       pending.reject(error);
       this.pendingPermissions.delete(id);
+      this.rememberSettledPermission(id);
       this.pushEvent({
         type: "permission_resolved",
         provider: "claude",
