@@ -7,10 +7,12 @@ import {
 } from "@/utils/rich-clipboard";
 import {
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
+  MARKDOWN_COPY_ALT_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
+  MARKDOWN_COPY_SRC_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
@@ -293,7 +295,8 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
     return false;
   }
   const tag = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
-  if (tag === "p" || isTableStructure(tag)) {
+  // An image has no part to select, so touching it selects all of it.
+  if (tag === "p" || tag === "img" || isTableStructure(tag)) {
     return true;
   }
   const isSelectableSemantic = tag !== null && tag !== "li" && tag !== "ol" && tag !== "ul";
@@ -430,7 +433,7 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   if (fragment.textContent) {
     return true;
   }
-  const visibleVoidSelector = ["br", "hr"]
+  const visibleVoidSelector = ["br", "hr", "img"]
     .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
     .concat("img")
     .join(",");
@@ -526,8 +529,12 @@ function restoreMarkdownElements(container: HTMLElement): void {
       continue;
     }
     const semanticElement = document.createElement(tagName);
-    if (tagName !== "br") {
+    if (tagName !== "br" && tagName !== "img") {
       semanticElement.append(...element.childNodes);
+    }
+    if (tagName === "img") {
+      semanticElement.setAttribute("src", element.getAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE) ?? "");
+      semanticElement.setAttribute("alt", element.getAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE) ?? "");
     }
     if (tagName === "ol") {
       const start = element.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE);

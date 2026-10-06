@@ -1241,7 +1241,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     !liveAuxiliary;
 
   return (
-    <div style={viewportStyle}>
+    <div style={viewportStyle} data-window-content>
       <div
         ref={handleScrollContainerRef}
         data-testid="agent-chat-scroll"

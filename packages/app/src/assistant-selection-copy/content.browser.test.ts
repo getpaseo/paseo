@@ -411,6 +411,20 @@ describe("assistant selection copy ranges", () => {
     expect(content?.html).not.toContain("<pre>");
   });
 
+  it("copies an image as its Markdown when the selection stays inside the rendered image", () => {
+    const message = mountFixture();
+    const frame = document.createElement("div");
+    frame.setAttribute("data-paseo-markdown-tag", "img");
+    frame.setAttribute("data-paseo-markdown-src", "https://example.test/chart.png");
+    frame.setAttribute("data-paseo-markdown-alt", "chart");
+    frame.innerHTML = '<div><div><img src="blob:https://example.test/preview" alt=""></div></div>';
+    message.prepend(frame);
+
+    expect(copiedMarkdown(selectNodeContents(fixtureElement(frame, "img").parentElement!))).toBe(
+      "![chart](https://example.test/chart.png)",
+    );
+  });
+
   it("copies code without a fence when every character is selected inside the block", () => {
     const message = mountFixture();
     const blockCode = fixtureElement(
@@ -674,7 +688,9 @@ describe("assistant selection copy inside highlighted code", () => {
     const message = mountHighlighted();
     const image = document.createElement("div");
     image.setAttribute("data-paseo-markdown-tag", "p");
-    image.innerHTML = '<div><img src="https://example.test/chart.png" alt="chart"></div>';
+    // The rendered `img` shows a preview URL with no alt text; the frame carries the Markdown.
+    image.innerHTML =
+      '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><img src="blob:https://example.test/preview" alt=""></div>';
     message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(image);
     const before = tokenText(message, "Before the block.");
 

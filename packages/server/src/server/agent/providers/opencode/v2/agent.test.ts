@@ -1,4 +1,4 @@
-import type { ModelInfo, SessionMessageInfo } from "@opencode/client";
+import type { FormInfo, ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
@@ -205,6 +205,62 @@ describe("OpenCode v2 session lifecycle", () => {
       harness.finishExecution();
       await expect.poll(() => terminalEvents(events)).toHaveLength(1);
       expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("ends the turn when the user dismisses a question", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    let form: FormInfo | null = null;
+    harness.api.session.form.list = async () => (form ? [form] : []);
+    harness.api.session.form.cancel = async () => {
+      form = null;
+      harness.active = false;
+      // OpenCode 2.0.20 reports a dismissed question as an interruption without a user reason.
+      harness.push({
+        id: "dismissed",
+        created: 3,
+        type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 3, version: 1 },
+        data: { sessionID: "session", reason: "shutdown" },
+      });
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("ask me something");
+      await expect.poll(() => harness.prompts).toHaveLength(1);
+      form = {
+        id: "question",
+        sessionID: "session",
+        title: "Color",
+        fields: [{ key: "color", type: "string", options: [{ label: "Red", value: "red" }] }],
+      };
+      harness.push({
+        id: "form",
+        created: 2,
+        type: "form.created",
+        data: { form },
+      });
+      await expect.poll(() => session.getPendingPermissions()).toHaveLength(1);
+
+      await session.respondToPermission("question", { behavior: "deny" });
+
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });
+
+      await session.startTurn("next message");
+      await expect.poll(() => harness.prompts).toHaveLength(2);
+      harness.finishExecution();
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      expect(terminalEvents(events)[1]).toMatchObject({ type: "turn_completed" });
     } finally {
       await session.close();
     }
