@@ -408,7 +408,6 @@ export const zhCN: TranslationResources = {
       loading: "正在加载最近会话...",
       failedProvider: "无法加载 {{provider}} 的会话",
       failedImport: "无法导入所选会话。",
-      failedImportDetails: "无法导入所选会话。 {{message}}",
       codexSessionInUse:
         "此 Codex 会话正在被占用。请退出打开该会话的 Codex 终端或客户端，然后重试导入。",
     },

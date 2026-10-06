@@ -413,7 +413,6 @@ export const ja: TranslationResources = {
       loading: "最近のセッションを読み込み中...",
       failedProvider: "{{provider}} のセッションを読み込めませんでした",
       failedImport: "選択したセッションをインポートできませんでした。",
-      failedImportDetails: "選択したセッションをインポートできませんでした。 {{message}}",
       codexSessionInUse:
         "この Codex セッションは使用中です。このセッションを開いている Codex ターミナルまたはクライアントを終了してから、インポートを再試行してください。",
     },

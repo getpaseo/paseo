@@ -1,12 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import {
-  keepPreviousData,
-  useIsFetching,
-  useMutation,
-  useQueries,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
@@ -22,7 +16,7 @@ import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/com
 import { useProviderIcon, useProviderIcons } from "@/components/provider-icons";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useCachedQueryData } from "@/hooks/use-cached-query-data";
-import { useEmptySearch } from "@/hooks/use-empty-search";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostProjects } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
@@ -450,7 +444,6 @@ function useImportSessionSearch({
     [serverId, scopeCwd],
   );
   const cachedResponses = useCachedQueryData<RecentSessionsResponse>(sessionsQueryRoot);
-  const pendingSearches = useIsFetching({ queryKey: sessionsQueryRoot });
   const cachedEntries = useMemo(
     () =>
       aggregateSessionEntries(cachedResponses.map((data) => ({ data }))).filter((entry) =>
@@ -462,17 +455,15 @@ function useImportSessionSearch({
     () => filterSessionEntries(cachedEntries, query, selectedProvider),
     [cachedEntries, query, selectedProvider],
   );
-  const remoteSearch = useEmptySearch({
+  const remoteSearch = useDebouncedSearch({
     scope: JSON.stringify(sessionsQueryRoot),
     query,
-    hasMatches: visibleEntries.length > 0,
-    enabled: enabled && cachedResponses.length > 0 && pendingSearches === 0,
+    enabled,
   });
   return {
     sessionsQueryRoot,
     visibleEntries,
     ...remoteSearch,
-    isWaiting: remoteSearch.isWaiting || (pendingSearches > 0 && visibleEntries.length === 0),
   };
 }
 
@@ -705,6 +696,14 @@ export function ImportSessionSheet({
         refetchType: "none",
       });
     },
+    onError: (error, entry) => {
+      console.error("[ImportSessionSheet] Failed to import session", {
+        serverId,
+        providerId: entry.providerId,
+        providerHandleId: entry.providerHandleId,
+        error,
+      });
+    },
   });
 
   const importingSessionKey =
@@ -816,7 +815,7 @@ export function ImportSessionSheet({
     providerLabelById,
   });
   const showFilter = filterProviders.length > 1;
-  const showLoadMore = query === remoteQuery && hasMoreSessions(queries, pageLimit);
+  const showLoadMore = hasMoreSessions(queries, pageLimit);
 
   return (
     <AdaptiveModalSheet

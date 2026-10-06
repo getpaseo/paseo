@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-/** Keep the last remote query while edits can be answered by local filtering. */
-export function useEmptySearch(input: {
-  scope: string;
-  query: string;
-  hasMatches: boolean;
-  enabled: boolean;
-}) {
-  const { scope, query, hasMatches, enabled } = input;
+/** Cached matches are immediate; the host search still needs the complete candidate set. */
+export function useDebouncedSearch(input: { scope: string; query: string; enabled: boolean }) {
+  const { scope, query, enabled } = input;
   const [requested, setRequested] = useState({ scope, query: "" });
   const remoteQuery = query && requested.scope === scope ? requested.query : "";
-  const needsSearch = enabled && Boolean(query) && !hasMatches && remoteQuery !== query;
+  const needsSearch = enabled && Boolean(query) && remoteQuery !== query;
   useEffect(() => {
     if (!needsSearch) return;
     const timer = setTimeout(() => setRequested({ scope, query }), 400);

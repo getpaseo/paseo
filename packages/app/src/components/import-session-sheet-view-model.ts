@@ -12,7 +12,7 @@ export function getImportErrorMessage(error: unknown): string {
   if (isCodexSessionInUse) {
     return i18n.t("importSession.status.codexSessionInUse");
   }
-  return i18n.t("importSession.status.failedImportDetails", { message: error.message });
+  return i18n.t("importSession.status.failedImport");
 }
 
 export const PER_PROVIDER_LIMIT = 15;

@@ -497,12 +497,12 @@ describe("getImportErrorMessage", () => {
     );
   });
 
-  it("preserves other import failure details", () => {
+  it("keeps unrecognized provider diagnostics out of user-facing copy", () => {
     expect(getImportErrorMessage(new Error("Session not found"))).toBe(
-      "Could not import selected session. Session not found",
+      "Could not import selected session.",
     );
     expect(getImportErrorMessage(new Error("another provider already has an active writer"))).toBe(
-      "Could not import selected session. another provider already has an active writer",
+      "Could not import selected session.",
     );
   });
 

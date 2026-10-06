@@ -409,7 +409,6 @@ export const ko: TranslationResources = {
       loading: "최근 세션을 불러오는 중...",
       failedProvider: "{{provider}} 세션을 불러올 수 없습니다",
       failedImport: "선택한 세션을 가져올 수 없습니다.",
-      failedImportDetails: "선택한 세션을 가져올 수 없습니다. {{message}}",
       codexSessionInUse:
         "이 Codex 세션은 사용 중입니다. 이 세션을 열고 있는 Codex 터미널 또는 클라이언트를 종료한 후 가져오기를 다시 시도하세요.",
     },
