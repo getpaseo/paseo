@@ -3,6 +3,7 @@ import { providerSnapshotIcons } from "@/data/provider-icons";
 import { Bot } from "lucide-react-native";
 import { createElement, useCallback, type ComponentType } from "react";
 import { SvgXml } from "react-native-svg";
+import { AntigravityIcon } from "@/components/icons/antigravity-icon";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
 import { CodexIcon } from "@/components/icons/codex-icon";
 import { CopilotIcon } from "@/components/icons/copilot-icon";
@@ -22,6 +23,7 @@ export interface ProviderIconProps {
 export type ProviderIconComponent = ComponentType<ProviderIconProps>;
 
 const BUILTIN_PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
+  antigravity: AntigravityIcon as unknown as ProviderIconComponent,
   claude: ClaudeIcon as unknown as ProviderIconComponent,
   codex: CodexIcon as unknown as ProviderIconComponent,
   copilot: CopilotIcon as unknown as ProviderIconComponent,
