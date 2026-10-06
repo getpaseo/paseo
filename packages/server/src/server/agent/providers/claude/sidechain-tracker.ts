@@ -6,6 +6,10 @@ import {
   mapClaudeRunningToolCall,
 } from "./tool-call-mapper.js";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
+import {
+  isClaudeSubagentHandbackToolName,
+  readClaudeSubagentHandback,
+} from "./subagent-handback.js";
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 
@@ -253,6 +257,15 @@ export class ClaudeSidechainTracker {
       } else if (block.type === "thinking") {
         const text = readTrimmedString(block.thinking);
         if (text) items.push({ type: "reasoning", text });
+      } else {
+        const report = readClaudeSubagentHandback(block)?.report;
+        if (report) {
+          items.push({
+            type: "assistant_message",
+            text: report,
+            ...(messageId ? { messageId } : {}),
+          });
+        }
       }
     }
     return items;
@@ -391,6 +404,12 @@ export class ClaudeSidechainTracker {
   }
 
   private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
+    return this.extractToolActionCandidates(message).filter(
+      (action) => !isClaudeSubagentHandbackToolName(action.toolName),
+    );
+  }
+
+  private extractToolActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
     if (message.type === "assistant") {
       return this.extractAssistantMessageActions(message);
     }

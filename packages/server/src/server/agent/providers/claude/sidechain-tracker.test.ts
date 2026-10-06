@@ -35,4 +35,63 @@ describe("ClaudeSidechainTracker", () => {
       },
     });
   });
+
+  it("shows a SubagentHandback report as the subagent's final message", () => {
+    const tracker = new ClaudeSidechainTracker({ getToolInput: () => null });
+    const report = "## Verdict\n\n- **Coherent**";
+    const frames = [
+      {
+        type: "stream_event",
+        parent_tool_use_id: "task-1",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "handback-1",
+            name: "SubagentHandback",
+            input: {},
+          },
+        },
+      },
+      {
+        type: "assistant",
+        parent_tool_use_id: "task-1",
+        message: {
+          id: "msg-1",
+          content: [
+            {
+              type: "tool_use",
+              id: "handback-1",
+              name: "SubagentHandback",
+              input: { message: report },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        parent_tool_use_id: "task-1",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "handback-1",
+              content: [{ type: "text", text: '{"success":true}' }],
+            },
+          ],
+        },
+      },
+    ];
+
+    const childItems = frames
+      .flatMap((frame) => tracker.handleMessage(frame as unknown as SDKMessage, "task-1"))
+      .flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline"
+          ? [event.event.item]
+          : [],
+      );
+
+    expect(childItems).toEqual([{ type: "assistant_message", text: report, messageId: "msg-1" }]);
+  });
 });

@@ -44,6 +44,7 @@ import {
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
+import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
 import {
   ClaudeTaskProtocolSource,
@@ -2084,6 +2085,7 @@ class ClaudeAgentSession implements AgentSession {
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
+  private subagentHandbackIds = new Set<string>();
   private pendingPermissions = new Map<string, PendingPermission>();
   private activeForegroundTurnId: string | null = null;
   private autonomousTurn: AutonomousTurnState | null = null;
@@ -5184,7 +5186,7 @@ class ClaudeAgentSession implements AgentSession {
     // User SDK entries can arrive as multiple text blocks, but Paseo treats them as one message.
     const userTextParts: string[] = [];
     for (const block of content) {
-      if (!isClaudeContentChunk(block)) {
+      if (!isClaudeContentChunk(block) || this.mapSubagentHandbackBlock(block, items)) {
         continue;
       }
       this.mapBlockToTimeline(block, {
@@ -5270,6 +5272,24 @@ class ClaudeAgentSession implements AgentSession {
       default:
         break;
     }
+  }
+
+  // A subagent's handback call is its final message, and the call's result is only an
+  // acknowledgement, so neither becomes a tool call.
+  private mapSubagentHandbackBlock(block: ClaudeContentChunk, items: AgentTimelineItem[]): boolean {
+    if (typeof block.tool_use_id === "string" && this.subagentHandbackIds.has(block.tool_use_id)) {
+      this.subagentHandbackIds.delete(block.tool_use_id);
+      return true;
+    }
+    const handback = readClaudeSubagentHandback(block);
+    if (!handback) {
+      return false;
+    }
+    this.subagentHandbackIds.add(handback.callId);
+    if (handback.report) {
+      items.push({ type: "assistant_message", text: handback.report });
+    }
+    return true;
   }
 
   private handleToolUseStart(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
