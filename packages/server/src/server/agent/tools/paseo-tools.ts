@@ -3026,7 +3026,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error(entry.error ?? `Provider '${providerId}' is unavailable`);
       }
       const selectedModel = settings?.model ?? resolvedProviderModel.model;
-      const features = await agentManager.listDraftFeatures({
+      const featureSnapshot = await agentManager.listDraftFeatureSnapshot({
         provider: providerId,
         cwd: resolvedCwd,
         ...(settings?.modeId ? { modeId: settings.modeId } : {}),
@@ -3043,8 +3043,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           enabled: summary.enabled,
           status: summary.status,
           modes: summary.modes,
-          selectedModel: selectedModel ?? null,
-          features,
+          selectedModel: featureSnapshot.selectedModel,
+          features: featureSnapshot.features,
         }),
       };
     },
