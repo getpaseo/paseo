@@ -49,6 +49,17 @@ describe("path equivalence", () => {
   });
 
   test.each([
+    ["/", "C:\\"],
+    ["/", String.raw`\\server\share`],
+    ["/", String.raw`\\server\share\HEAD`],
+    ["C:\\Repo", String.raw`\Repo\HEAD`],
+    ["C:\\", "/Repo/HEAD"],
+  ])("cached containment keeps mixed Windows root behavior for %s and %s", (root, candidate) => {
+    const paths = createRealpathAwarePathContext();
+    expect(paths.relative(root, candidate)).toBe(getRealpathAwareRelativePath(root, candidate));
+  });
+
+  test.each([
     ["C:/Users/Administrator/GhostFactory", "C:\\Users\\Administrator\\GhostFactory"],
     ["d:\\Projects\\paseo", "D:\\Projects\\paseo"],
     ["C:\\Users\\Administrator\\GhostFactory\\", "C:\\Users\\Administrator\\GhostFactory"],

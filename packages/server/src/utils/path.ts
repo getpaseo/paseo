@@ -92,7 +92,9 @@ export function createRealpathAwarePathContext(
         text,
         comparable,
         prefix: comparable.endsWith(separator) ? comparable : `${comparable}${separator}`,
-        absolute: (windows ? nodePath.win32 : nodePath.posix).isAbsolute(text),
+        absolute:
+          (windows ? nodePath.win32 : nodePath.posix).isAbsolute(text) &&
+          (!windows || looksLikeDefiniteWindowsPath(text)),
       };
       prepared.set(key, value);
     }
