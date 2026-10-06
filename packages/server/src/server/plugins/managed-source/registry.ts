@@ -32,10 +32,12 @@ export async function resolveRegistryPlugin(
     redirect: "error",
     signal: AbortSignal.timeout(30000),
   });
-  if (response.status === 404)
-    throw new Error(
-      `Plugin ${identity.id} was not found in registry ${base.host}. Use git:${identity.id} to install directly from GitHub, or a full Git URL.`,
-    );
+  if (response.status === 404) {
+    const guidance = install
+      ? `If you intended a GitHub source, use git:${identity.id}, or a full Git URL for another Git host.`
+      : "Check that the installed plugin is still published in this registry before updating.";
+    throw new Error(`Plugin ${identity.id} was not found in registry ${base.host}. ${guidance}`);
+  }
   if (!response.ok)
     throw new Error(`Registry ${base.host} returned ${response.status} for ${identity.id}`);
   const plugin = PublishedPluginDetailSchema.parse(await response.json());
