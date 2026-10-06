@@ -103,7 +103,8 @@ for (const layout of FRENCH_LAYOUTS) {
 
         const hint = page.getByText(/pour saisir$/).first();
         await expect(hint).toBeVisible();
-        expect(await placeholderOverlaps(input, hint)).toBe(false);
+        // The input takes the hint's width on the render after the hint lays out.
+        await expect.poll(() => placeholderOverlaps(input, hint)).toBe(false);
       } finally {
         await agent.cleanup();
       }
