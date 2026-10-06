@@ -8,6 +8,13 @@ async function openPlugins(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: /^Plugins/ })).toBeVisible();
 }
 
+function pluginCards(page: Page, section: string): Locator {
+  return page
+    .getByRole("region", { name: section })
+    .getByRole("link")
+    .filter({ hasNotText: /^See all$/ });
+}
+
 test("browses from the directory into a category, a plugin, and its author", async ({
   page,
   context,
@@ -508,11 +515,7 @@ test.describe("registry fixture layout", () => {
     await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("Featured");
     const featured = page.getByRole("region", { name: "Featured" });
     await expect(featured).toContainText("A selection of hand picked plugins");
-    await expect(featured.getByRole("link", { name: /Added/ })).toHaveText([
-      /Dracula/,
-      /Herald/,
-      /launchd Jobs/,
-    ]);
+    await expect(pluginCards(page, "Featured")).toHaveText([/Dracula/, /Herald/, /launchd Jobs/]);
   });
 
   test("lists the nine categories in order with counts, and the newest plugins first", async ({
@@ -524,9 +527,12 @@ test.describe("registry fixture layout", () => {
       CATEGORIES.map((category) => new RegExp(`^${category.label}\\s*\\d+$`)),
     );
     await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
-    await expect(
-      page.getByRole("region", { name: "What’s new" }).getByRole("link", { name: /Added/ }),
-    ).toHaveText([/Base2Tone/, /Sayr/, /PromptKit/, /Defer/]);
+    await expect(pluginCards(page, "What’s new")).toHaveText([
+      /Base2Tone/,
+      /Sayr/,
+      /PromptKit/,
+      /Defer/,
+    ]);
   });
 });
 
