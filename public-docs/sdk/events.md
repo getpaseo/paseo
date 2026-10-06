@@ -42,6 +42,29 @@ await directory.subscription.release();
 
 `client.agents.subscribe()` and agent-handle `subscribe()` add local listeners to observations owned by that API instance. They do not request data. Use the returned subscription's callbacks when multiple filtered views need separate updates.
 
+## Follow an agent's background work
+
+Background work is what an agent left running after its tool call returned: a Claude shell started with `run_in_background`, a `Monitor` watch, or another task that is not a subagent. Subagents and workflows stay in the agent's subagents.
+
+```ts
+const agent = client.agents.ref(agentId);
+let latest: PaseoAgentBackgroundWorkItem[] | null = null;
+
+const unsubscribe = agent.backgroundWork.subscribe((items) => {
+  latest = items;
+  render(items);
+});
+const initial = await agent.backgroundWork.list();
+if (latest === null) render(initial);
+
+// When this view closes:
+unsubscribe();
+```
+
+Each update carries the agent's whole list. Subscribe before calling `list()`, and keep an update that arrived first: it is newer. Each item has `id`, `kind` (`"shell"`, `"monitor"` or `"other"`; treat any other value as `"other"`), `description` (or `null`) and `startedAt`. The list empties when the provider process restarts or the agent closes. Nothing survives a daemon restart.
+
+Both calls throw when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host.
+
 ## Follow timeline events
 
 ```ts
