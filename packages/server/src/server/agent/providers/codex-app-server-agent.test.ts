@@ -48,9 +48,24 @@ test("keeps native secret answers out of Paseo's completed question timeline", (
     answers: { password: ["private-value"], color: ["blue"] },
   });
 
-  expect(item.detail).toMatchObject({ text: expect.stringContaining("color: blue") });
-  expect(item.metadata?.answers).toEqual({ color: ["blue"] });
-  expect(JSON.stringify(item)).not.toContain("private-value");
+  expect(item.detail).toEqual({
+    type: "plain_text",
+    text: "Password: Enter password\n\nColor: Choose a color\n\nAnswers:\n\ncolor: blue",
+    icon: "brain",
+  });
+  expect(item.metadata).toEqual({
+    questions: [
+      {
+        id: "password",
+        header: "Password",
+        question: "Enter password",
+        options: [],
+        isSecret: true,
+      },
+      { id: "color", header: "Color", question: "Choose a color", options: [] },
+    ],
+    answers: { color: ["blue"] },
+  });
 });
 
 describe("mapCodexPlanUpdateToTodo", () => {
@@ -3137,12 +3152,23 @@ describe("Codex app-server provider", () => {
     });
 
     expect(await nativeReply).toEqual({ answers: { password: { answers: ["private-value"] } } });
-    expect(events.find((event) => event.type === "permission_resolved")).toMatchObject({
-      resolution: { behavior: "allow" },
+    const resolvedPermission = events.find((event) => event.type === "permission_resolved");
+    expect(resolvedPermission).toMatchObject({ resolution: { behavior: "allow" } });
+    expect(resolvedPermission).not.toHaveProperty("resolution.updatedInput");
+    const completedQuestion = events.findLast(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "secret-question" &&
+        event.item.status === "completed",
+    );
+    expect(completedQuestion).toMatchObject({
+      item: {
+        detail: { text: "Password: Enter password" },
+        metadata: { questions: [expect.objectContaining({ isSecret: true })] },
+      },
     });
-    expect(
-      JSON.stringify(events.filter((event) => event.type !== "permission_requested")),
-    ).not.toContain("private-value");
+    expect(completedQuestion).not.toHaveProperty("item.metadata.answers");
   });
 
   test("converts Codex collab agent notifications through the normal timeline path", () => {

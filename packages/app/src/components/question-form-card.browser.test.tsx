@@ -76,8 +76,7 @@ function mountCard(
   const otherInput = () =>
     view.getByRole<HTMLInputElement>("textbox", { name: String(question.question) });
   const check = (label: string) => act(() => view.getByRole(optionRole, { name: label }).click());
-  const type = (text: string) => {
-    const input = otherInput();
+  const type = (text: string, input = otherInput()) => {
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (!valueSetter) throw new Error("HTML input value setter is unavailable");
     act(() => {
@@ -179,12 +178,7 @@ describe("Codex question delivery", () => {
 
     const input = card.view.getByLabelText<HTMLInputElement>("Password?");
     expect(input.type).toBe("password");
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    if (!valueSetter) throw new Error("HTML input value setter is unavailable");
-    act(() => {
-      valueSetter.call(input, "test-password-123");
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: "test-password-123" }));
-    });
+    card.type("test-password-123", input);
     card.submit();
 
     expect(card.submittedAnswers()).toEqual({ Password: "test-password-123" });

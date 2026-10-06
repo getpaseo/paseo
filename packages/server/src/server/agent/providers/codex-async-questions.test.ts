@@ -324,19 +324,27 @@ test("shows an async question, keeps streaming, and delivers its answer without 
     };
     await session.respondToPermission(permission.id, privateAnswer);
     expect(session.getPendingPermissions()).toEqual([]);
-    expect(JSON.stringify(session.describePersistence()?.metadata?.asyncQuestions)).not.toContain(
-      "private-answer",
-    );
+    expect(session.describePersistence()?.metadata?.asyncQuestions).toEqual([
+      {
+        item: {
+          type: "agentMessage",
+          id: questionItem.id,
+          delivery: "async",
+          questions: questionItem.questions,
+        },
+        resolution: "answered",
+      },
+    ]);
     expect(
-      JSON.stringify(
-        events.findLast(
-          (event) =>
-            event.type === "timeline" &&
-            event.item.type === "tool_call" &&
-            event.item.callId === questionItem.id,
-        ),
+      events.findLast(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === questionItem.id,
       ),
-    ).not.toContain("private-answer");
+    ).toMatchObject({
+      item: { detail: { text: "Which color?\nBlue, Green\n\nAnswered in chat" } },
+    });
     expect(appServer.requests().filter((request) => request.method === "turn/steer")).toMatchObject(
       [
         {
