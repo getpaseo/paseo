@@ -309,23 +309,40 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
 
   test("Pi runtime launches the same resolved command that diagnostics find", async () => {
     const fixture = makeFixture("pi", ["--mode", "rpc"], "piRuntime");
-    const emptyPath = mkdtempSync(path.join(tmpdir(), "paseo empty path "));
-    tempDirs.push(emptyPath);
     const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path";
 
     await withPathEntry(fixture.root, async () => {
       const client = new PiRpcAgentClient({
         logger: pino({ level: "silent" }),
-        runtimeSettings: { env: { [pathKey]: emptyPath } },
+        runtimeSettings: { env: { [pathKey]: fixture.root } },
       });
       const diagnostic = await client.getDiagnostic();
       expect(diagnostic.diagnostic).toContain(fixture.shim);
 
       await expect(
-        client.fetchCatalog({ scope: "workspace", cwd: emptyPath, force: false }),
+        client.fetchCatalog({ scope: "workspace", cwd: fixture.root, force: false }),
       ).resolves.toEqual({ models: [], modes: [] });
       expect(existsSync(path.join(fixture.root, "launched"))).toBe(true);
-      expect(readFileSync(path.join(fixture.root, "launched"), "utf8")).toBe(emptyPath);
+      expect(readFileSync(path.join(fixture.root, "launched"), "utf8")).toBe(fixture.root);
+    });
+  });
+
+  test("Pi runtime resolves its default command using the provider PATH", async () => {
+    const daemonPi = makeFixture("pi", ["--mode", "rpc"], "piRuntime");
+    const providerPi = makeFixture("pi", ["--mode", "rpc"], "piRuntime");
+    const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path";
+
+    await withPathEntry(daemonPi.root, async () => {
+      const client = new PiRpcAgentClient({
+        logger: pino({ level: "silent" }),
+        runtimeSettings: { env: { [pathKey]: providerPi.root } },
+      });
+
+      await expect(
+        client.fetchCatalog({ scope: "workspace", cwd: providerPi.root, force: false }),
+      ).resolves.toEqual({ models: [], modes: [] });
+      expect(existsSync(path.join(providerPi.root, "launched"))).toBe(true);
+      expect(existsSync(path.join(daemonPi.root, "launched"))).toBe(false);
     });
   });
 });

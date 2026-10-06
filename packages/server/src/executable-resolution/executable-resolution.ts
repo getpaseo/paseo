@@ -9,6 +9,13 @@ type Which = (
   options: { all: true; path?: string; pathExt?: string },
 ) => Promise<string[]>;
 
+function getEnvironmentValue(env: ProcessEnvRecord | undefined, name: string): string | undefined {
+  if (!env) return undefined;
+  const exactValue = env[name];
+  if (exactValue !== undefined || process.platform !== "win32") return exactValue;
+  return Object.entries(env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+}
+
 const require = createRequire(import.meta.url);
 const which = require("which") as Which;
 const PROBE_TIMEOUT_MS = 2000;
@@ -48,7 +55,11 @@ async function enumerateCandidatesViaLibrary(
 ): Promise<string[]> {
   let candidates: string[];
   try {
-    candidates = await which(name, { all: true, path: env?.PATH, pathExt: env?.PATHEXT });
+    candidates = await which(name, {
+      all: true,
+      path: getEnvironmentValue(env, "PATH"),
+      pathExt: getEnvironmentValue(env, "PATHEXT"),
+    });
   } catch (error) {
     // `which` throws ENOENT when the command is absent from PATH.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
