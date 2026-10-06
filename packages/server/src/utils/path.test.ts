@@ -6,11 +6,48 @@ import { describe, expect, test } from "vitest";
 import {
   areEquivalentPaths,
   createPathEquivalenceMatcher,
+  createRealpathAwarePathContext,
   getRealpathAwareRelativePath,
   isPathInsideRoot,
 } from "./path.js";
 
 describe("path equivalence", () => {
+  test("resolves each distinct path once across an event batch with many workspaces", () => {
+    const reads: string[] = [];
+    const paths = createRealpathAwarePathContext((path) => {
+      reads.push(path);
+      return [path];
+    });
+    for (let event = 0; event < 1000; event += 1) {
+      const candidate = `/repo/.git/fsmonitor--daemon/cookies/${event}`;
+      expect(paths.matches("/repo/.git", candidate)).toBe(false);
+      for (let workspace = 0; workspace < 108; workspace += 1) {
+        const root = `/repo/.git/worktrees/${workspace}`;
+        expect(paths.relative(root, candidate)).toBeNull();
+      }
+    }
+    expect(reads).toHaveLength(1109);
+    expect(new Set(reads).size).toBe(reads.length);
+  });
+
+  test("discards resolved paths between batches so a symlink change is visible", () => {
+    let resolved = "/first";
+    const read = (path: string) => (path === "/alias" ? [path, resolved] : [path]);
+    const first = createRealpathAwarePathContext(read);
+    expect(first.matches("/alias", "/first")).toBe(true);
+    resolved = "/second";
+    expect(createRealpathAwarePathContext(read).matches("/alias", "/second")).toBe(true);
+  });
+
+  test("cached containment preserves Windows casing, aliases, and deleted paths", () => {
+    const paths = createRealpathAwarePathContext((path) =>
+      path === "/alias" ? [path, "/repo/.git"] : [path],
+    );
+    expect(paths.relative("C:\\Repo\\.git", "c:\\repo\\.git\\HEAD")).toBe("HEAD");
+    expect(paths.relative("/alias", "/repo/.git/deleted.lock")).toBe("deleted.lock");
+    expect(paths.inside("/alias", "/repo/.git-other/HEAD")).toBe(false);
+  });
+
   test.each([
     ["C:/Users/Administrator/GhostFactory", "C:\\Users\\Administrator\\GhostFactory"],
     ["d:\\Projects\\paseo", "D:\\Projects\\paseo"],

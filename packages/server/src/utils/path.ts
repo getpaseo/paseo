@@ -58,6 +58,81 @@ export function createRealpathAwarePathMatcher(target: string): (candidate: stri
   };
 }
 
+export interface RealpathAwarePathContext {
+  matches(left: string, right: string): boolean;
+  relative(root: string, candidate: string): string | null;
+  inside(root: string, candidate: string): boolean;
+}
+
+/** Resolve each path once during a synchronous event batch; discard before the next batch. */
+export function createRealpathAwarePathContext(
+  readVariants: (path: string) => readonly string[] = collectPathVariants,
+): RealpathAwarePathContext {
+  const cached = new Map<string, readonly string[]>();
+  const prepared = new Map<
+    string,
+    { text: string; comparable: string; prefix: string; absolute: boolean }
+  >();
+  const variants = (path: string): readonly string[] => {
+    let values = cached.get(path);
+    if (!values) {
+      values = readVariants(path);
+      cached.set(path, values);
+    }
+    return values;
+  };
+  const prepare = (path: string, windows: boolean) => {
+    const key = `${windows ? "windows" : "posix"}:${path}`;
+    let value = prepared.get(key);
+    if (!value) {
+      const text = normalizePathPreservingCase(path, windows);
+      const comparable = windows ? text.toLowerCase() : text;
+      const separator = windows ? "\\" : "/";
+      value = {
+        text,
+        comparable,
+        prefix: comparable.endsWith(separator) ? comparable : `${comparable}${separator}`,
+        absolute: (windows ? nodePath.win32 : nodePath.posix).isAbsolute(text),
+      };
+      prepared.set(key, value);
+    }
+    return value;
+  };
+  const relative = (root: string, candidate: string): string | null => {
+    for (const rootVariant of variants(root)) {
+      for (const candidateVariant of variants(candidate)) {
+        const windows = shouldCompareAsWindows(rootVariant, candidateVariant);
+        const a = prepare(rootVariant, windows);
+        const b = prepare(candidateVariant, windows);
+        let suffix: string | null;
+        if (!a.absolute || !b.absolute) {
+          suffix = getRelativePathInsideRoot(rootVariant, candidateVariant);
+        } else if (a.comparable === b.comparable) {
+          suffix = "";
+        } else if (b.comparable.startsWith(a.prefix)) {
+          suffix = b.text.slice(a.text.length + (a.prefix.length > a.comparable.length ? 1 : 0));
+          if (suffix.startsWith("..")) suffix = null;
+        } else {
+          suffix = null;
+        }
+        if (suffix !== null) return suffix;
+      }
+    }
+    return null;
+  };
+  return {
+    matches: (left, right) =>
+      variants(left).some((a) =>
+        variants(right).some((b) => {
+          const windows = shouldCompareAsWindows(a, b);
+          return prepare(a, windows).comparable === prepare(b, windows).comparable;
+        }),
+      ),
+    relative,
+    inside: (root, candidate) => relative(root, candidate) !== null,
+  };
+}
+
 let pathContainmentChecks: number | null = null;
 
 // Containment is re-derived from scratch on every call. A tree walk that asks it per entry, or
