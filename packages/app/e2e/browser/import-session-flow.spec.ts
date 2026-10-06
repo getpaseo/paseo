@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
-import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
@@ -120,20 +120,42 @@ test.afterAll(async () => {
   await rm(claudeConfigDirectory, { recursive: true, force: true });
 });
 
-test("filters cached sessions before searching a persistent miss", async ({ page }, testInfo) => {
-  const requests: Array<{ query: string; providers: string }> = [];
+interface SessionRequest {
+  query: string;
+  providers: string;
+  limit: number;
+}
+
+function observeSessionRequests(page: Page): SessionRequest[] {
+  const requests: SessionRequest[] = [];
   page.on("websocket", (socket) =>
     socket.on("framesent", ({ payload }) => {
       if (typeof payload !== "string") return;
-      const frame: { message?: { type?: string; query?: string; providers?: string[] } } =
-        JSON.parse(payload);
+      const frame: {
+        message?: { type?: string; query?: string; providers?: string[]; limit?: number };
+      } = JSON.parse(payload);
       if (frame.message?.type === "fetch_recent_provider_sessions_request")
         requests.push({
           query: frame.message.query ?? "",
           providers: (frame.message.providers ?? []).join(","),
+          limit: frame.message.limit ?? 15,
         });
     }),
   );
+  return requests;
+}
+
+function sessionRequestProviders(request: object): string {
+  if (!("providers" in request) || !Array.isArray(request.providers)) {
+    throw new Error("Session request must identify its providers");
+  }
+  return request.providers.join(",");
+}
+
+test("keeps cached matches visible while finding older matches and paging the host results", async ({
+  page,
+}, testInfo) => {
+  const requests = observeSessionRequests(page);
   const flow = new ImportSessionFlow(page);
   await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
   await flow.openGlobally();
@@ -141,33 +163,90 @@ test("filters cached sessions before searching a persistent miss", async ({ page
     first: [scenario.importSessionId, "fixture-worktree", "fixture-unrelated"],
   });
   await flow.expectProviderError("Broken ACP");
-  expect(requests.length).toBeGreaterThan(0);
-  const initialRequests = [...requests];
+  const initialProviders = [...new Set(requests.map((request) => request.providers))].sort();
+  expect(initialProviders).toContain("claude");
+  expect(initialProviders).toContain(brokenProvider);
   await page.clock.install();
-  await flow.search("invoice");
-  await page.clock.runFor(600);
-  expect(requests).toEqual(initialRequests);
-  await page.getByTestId("import-session-search").fill("no-such-session");
-  await page.clock.runFor(200);
-  expect(requests).toEqual(initialRequests);
-  await flow.search("invoice");
-  await page.clock.runFor(600);
-  expect(requests).toEqual(initialRequests);
-  await page.getByTestId("import-session-search").fill("fixture item 20");
+  await page.clock.pauseAt(Date.now() + 1_000);
+  const search = page.getByTestId("import-session-search");
+  await search.fill("invoice");
+  await expect(page.getByText("Invoice migration plan", { exact: true })).toBeVisible();
+  await expect(page.getByText("Root session 20", { exact: true })).toHaveCount(0);
+  // Paging remains available while the typed query catches up with the host query.
+  await expect(page.getByTestId("import-session-load-more")).toBeVisible();
+  expect(requests.filter((request) => request.query === "invoice")).toEqual([]);
   await page.clock.runFor(450);
   await expect(page.getByText("Root session 20", { exact: true })).toBeVisible();
   expect(
     requests
-      .filter((request) => request.query === "fixture item 20")
+      .filter((request) => request.query === "invoice")
       .map((request) => request.providers)
       .sort(),
-  ).toEqual([...new Set(initialRequests.map((request) => request.providers))].sort());
-  await page.getByTestId("import-session-search").fill("item 20");
-  await page.clock.runFor(600);
-  expect(requests.filter((request) => request.query === "item 20")).toEqual([]);
+  ).toEqual(initialProviders);
+  await expect(page.getByTestId("import-session-load-more")).toHaveCount(0);
+
+  await search.fill("no-such-session");
+  await page.clock.runFor(200);
+  await search.fill("Root session");
+  await page.clock.runFor(450);
+  await expect(page.getByTestId("import-session-load-more")).toBeEnabled();
+  expect(requests.filter((request) => request.query === "no-such-session")).toEqual([]);
+  await expect(page.getByText("Root session 19", { exact: true })).toHaveCount(0);
+  await page.getByTestId("import-session-load-more").click();
+  await expect(page.getByTestId("import-session-session-claude-fixture-root-19")).toHaveCount(1);
+  await expect(page.locator('[data-testid^="import-session-session-claude-"]')).toHaveCount(20);
+  await expect(page.getByTestId("import-session-load-more")).toHaveCount(0);
+  expect(
+    requests
+      .filter((request) => request.query === "Root session" && request.providers === "claude")
+      .map((request) => request.limit),
+  ).toEqual([15, 45]);
   await page.screenshot({ path: testInfo.outputPath("cached-session-search.png") });
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(page.getByTestId("import-session-sheet")).toHaveCount(0);
+});
+
+test("starts a new session search while a previous provider request is pending", async ({
+  page,
+}) => {
+  const gate = await installDaemonWebSocketGate(page);
+  try {
+    const flow = new ImportSessionFlow(page);
+    await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+    await flow.openGlobally();
+    await flow.expectRows({
+      first: [scenario.importSessionId, "fixture-worktree", "fixture-unrelated"],
+    });
+    await flow.expectProviderError("Broken ACP");
+    await expect(page.getByTestId("import-session-load-more")).toBeEnabled();
+    const requestType = "fetch_recent_provider_sessions_request";
+    const initialProviders = [
+      ...new Set(gate.getClientRequests(requestType).map(sessionRequestProviders)),
+    ].sort();
+    expect(initialProviders).toContain(brokenProvider);
+    expect(initialProviders).toContain("claude");
+    await page.clock.install();
+    await page.clock.pauseAt(Date.now() + 1_000);
+    const responseType = "fetch_recent_provider_sessions_response";
+    gate.holdNextServerMessage(responseType);
+    const search = page.getByTestId("import-session-search");
+    await search.fill("invoice");
+    await page.clock.runFor(450);
+    await gate.waitForHeldServerMessage(responseType);
+    await search.fill("Root session 20");
+    await page.clock.runFor(450);
+    await expect
+      .poll(() =>
+        gate
+          .getClientRequests(requestType)
+          .filter((request) => "query" in request && request.query === "Root session 20")
+          .map(sessionRequestProviders)
+          .sort(),
+      )
+      .toEqual(initialProviders);
+    await expect(page.getByText("Root session 20", { exact: true })).toBeVisible();
+    gate.releaseHeldServerMessage(responseType);
+  } finally {
+    gate.restore();
+  }
 });
 
 test("an open Import Session row keeps its age current", async ({ page }) => {
@@ -301,6 +380,44 @@ test("an active-writer conflict shows specific guidance instead of a generic fai
   }
 });
 
+test("an import failure keeps generic copy visible and permits retry after recovery", async ({
+  page,
+}, testInfo) => {
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+  await flow.openGlobally();
+  const row = page.getByTestId("import-session-session-claude-fixture-worktree");
+  await expect(row).toBeVisible();
+  const unavailableDirectory = `${scenario.worktreeDirectory}-unavailable`;
+  const originalProjectIds = new Set(
+    (await client.listProjects()).projects.map((project) => project.projectId),
+  );
+  try {
+    await rename(scenario.worktreeDirectory, unavailableDirectory);
+    try {
+      await row.click();
+      await expect(
+        page.getByText("Could not import selected session.", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByTestId("import-session-sheet")).toBeVisible();
+      await expect(row).toBeEnabled();
+      await expect(page.getByText(/Working directory does not exist|ENOENT/)).toHaveCount(0);
+      await capture(page, testInfo, "14-mobile-generic-import-failure.png");
+    } finally {
+      await rename(unavailableDirectory, scenario.worktreeDirectory);
+    }
+    await flow.importSession("fixture-worktree");
+    await expect(page.getByTestId("user-message").filter({ visible: true })).toContainText(
+      "Check the worktree import flow",
+    );
+  } finally {
+    const createdProjects = (await client.listProjects()).projects.filter(
+      (project) => !originalProjectIds.has(project.projectId),
+    );
+    await Promise.all(createdProjects.map((project) => client.removeProject(project.projectId)));
+  }
+});
+
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const outputPath = testInfo.outputPath(name);
   await page.screenshot({ path: outputPath, fullPage: true });
@@ -336,7 +453,9 @@ async function seedClaudeSessions(input: {
       cwd: [input.projectRoot, input.worktreeDirectory, input.unrelatedDirectory][index % 3]!,
       id: `fixture-root-${String(index + 1).padStart(2, "0")}`,
       title: `Root session ${String(index + 1).padStart(2, "0")}`,
-      prompt: index === 7 ? "Investigate invoice rendering" : `Review fixture item ${index + 1}`,
+      prompt: [7, 19].includes(index)
+        ? "Investigate invoice rendering"
+        : `Review fixture item ${index + 1}`,
     })),
   ];
   const newest = Date.now() - 60_000;
