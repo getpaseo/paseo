@@ -216,7 +216,12 @@ export class PluginService {
           }),
         };
         const manifest = await readPluginManifest(path.resolve(source.path)).catch(() => null);
-        if (manifest?.description) item.description = manifest.description;
+        if (manifest) {
+          item.name = manifest.name;
+          item.description = manifest.description;
+          item.icon = manifest.icon;
+          item.media = manifest.media;
+        }
         item.installation = await this.managedSources
           ?.describe(id, source.path)
           .catch(() => undefined);

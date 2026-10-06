@@ -657,8 +657,7 @@ The repository overview takes precedence over a registry import stopgap. Online 
 fails when the pinned commit has no `OVERVIEW.md`, except for unchanged imported records
 that already carry `plugins/<owner>/<slug>.md` in the registry repository. Every version bump
 requires a repository overview and removes the stopgap in the same PR. A bump without the
-repository overview fails validation. Neither README files nor a `paseo-listing.json`
-`readme` override supplies the overview.
+repository overview fails validation. README files do not supply the overview.
 
 Author overviews and registry stopgaps follow the same content contract, in this order.
 Choose headings only when they help; length follows complexity. A theme needs one paragraph.

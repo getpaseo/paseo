@@ -52,12 +52,24 @@ The required root manifest is `paseo-plugin.json`:
 }
 ```
 
-| Field          | Required | Behavior                                                               |
-| -------------- | -------- | ---------------------------------------------------------------------- |
-| `id`           | Yes      | Default installation ID.                                               |
-| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**. |
-| `requirements` | No       | Supported Paseo versions, described below.                             |
-| `build`        | No       | Preparation commands, described in the CLI reference.                  |
+| Field          | Required | Behavior                                                                                  |
+| -------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `id`           | Yes      | Default installation ID.                                                                  |
+| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.  |
+| `icon`         | No       | Relative path to a PNG inside the plugin package.                                         |
+| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid. |
+| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                    |
+| `requirements` | No       | Supported Paseo versions, described below.                                                |
+| `build`        | No       | Preparation commands, described in the CLI reference.                                     |
+
+Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
+segments. See [icons and screenshots](/docs/plugins/publishing#icons-and-screenshots) for an example.
+Paseo validates the references without opening local assets or fetching URLs.
+
+Unknown top-level fields are ignored. Known fields still validate, and unknown keys inside
+`requirements` are rejected so a misspelled constraint cannot silently skip a compatibility check.
+Manifests using `name`, `icon`, or `media` require Paseo 0.11.0 or later; older daemons reject
+these fields during installation.
 
 ### Requirements
 
