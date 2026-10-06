@@ -80,6 +80,103 @@ vi.mock("./cli/external.js", () => ({
   runExternalCliTextCommand: mocks.runExternalCliTextCommand,
 }));
 
+const UPDATE_INFO = {
+  version: "1.2.4",
+  releaseDate: "2026-04-28T00:00:00.000Z",
+  rolloutHours: 24,
+};
+
+function createUpdateHandlers(runtime: FakeAppUpdateRuntime) {
+  const service = createAppUpdateService({
+    runtime,
+    isPackaged: () => true,
+    now: () => Date.parse("2026-04-28T12:00:00.000Z"),
+    bucket: async () => 0,
+  });
+  return createDaemonCommandHandlers({ installAppUpdate: service.downloadAndInstallUpdate });
+}
+
+// Launches a real child process as the daemon supervisor. It writes the lock
+// file and idles, so the desktop manager owns a running daemon it can stop.
+function installFakeSupervisor(fixtureRoot: string): {
+  lockPath: string;
+  exit(): void;
+  kill(): void;
+} {
+  mkdirSync(mocks.paseoHome, { recursive: true });
+  const lockPath = path.join(mocks.paseoHome, "paseo.pid");
+  const supervisorPath = path.join(fixtureRoot, "supervisor.mjs");
+  writeFileSync(
+    supervisorPath,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      "import { hostname } from 'node:os';",
+      "writeFileSync(process.argv[2], JSON.stringify({",
+      "  pid: process.pid,",
+      "  startedAt: new Date().toISOString(),",
+      "  hostname: hostname(),",
+      "  uid: process.getuid?.() ?? 0,",
+      "  listen: '127.0.0.1:6799',",
+      "  desktopManaged: true,",
+      "}));",
+      "setInterval(() => {}, 60_000);",
+    ].join("\n"),
+  );
+  mocks.createNodeEntrypointInvocation.mockReturnValue({
+    command: process.execPath,
+    args: [supervisorPath, lockPath],
+    env: {},
+  });
+  const signal = (name: NodeJS.Signals) => {
+    try {
+      const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      process.kill(lock.pid, name);
+    } catch {
+      // The supervisor never started or already exited.
+    }
+  };
+  return { lockPath, exit: () => signal("SIGTERM"), kill: () => signal("SIGKILL") };
+}
+
+// Answers `daemon status` from the lock file and keeps `daemon stop` open
+// until the test releases it, so a cancel can land mid-stop.
+function holdDaemonStop(lockPath: string): {
+  requested: Promise<void>;
+  release(result: { action: string }): void;
+} {
+  let release: (result: { action: string }) => void = () => undefined;
+  let markRequested: () => void = () => undefined;
+  const requested = new Promise<void>((resolve) => {
+    markRequested = resolve;
+  });
+  mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
+    if (args[1] === "status") {
+      const lock = JSON.parse(readFileSync(lockPath, "utf8")) as {
+        pid: number;
+        startedAt: string;
+      };
+      return {
+        localDaemon: "running",
+        pid: lock.pid,
+        startedAt: lock.startedAt,
+        listen: "127.0.0.1:6799",
+        hostname: hostname(),
+        daemonVersion: "1.2.3",
+        desktopManaged: true,
+        serverId: "srv_test",
+      };
+    }
+    if (args[1] === "stop") {
+      markRequested();
+      return await new Promise<{ action: string }>((resolve) => {
+        release = resolve;
+      });
+    }
+    throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
+  });
+  return { requested, release: (result) => release(result) };
+}
+
 describe("daemon-manager commands", () => {
   let fixtureRoot: string;
 
@@ -179,124 +276,33 @@ describe("daemon-manager commands", () => {
   });
 
   it("does not install when cancel arrives while the idle stop is finishing", async () => {
-    mkdirSync(mocks.paseoHome);
-    const lockPath = path.join(mocks.paseoHome, "paseo.pid");
-    const supervisorPath = path.join(fixtureRoot, "supervisor.mjs");
-    writeFileSync(
-      supervisorPath,
-      [
-        "import { writeFileSync } from 'node:fs';",
-        "import { hostname } from 'node:os';",
-        "writeFileSync(process.argv[2], JSON.stringify({",
-        "  pid: process.pid,",
-        "  startedAt: new Date().toISOString(),",
-        "  hostname: hostname(),",
-        "  uid: process.getuid?.() ?? 0,",
-        "  listen: '127.0.0.1:6799',",
-        "  desktopManaged: true,",
-        "}));",
-        "setInterval(() => {}, 60_000);",
-      ].join("\n"),
-    );
-    mocks.createNodeEntrypointInvocation.mockReturnValue({
-      command: process.execPath,
-      args: [supervisorPath, lockPath],
-      env: {},
-    });
-    let releaseStop: (result: { action: string }) => void = () => undefined;
-    let markStopCalled: () => void = () => undefined;
-    const stopCalled = new Promise<void>((resolve) => {
-      markStopCalled = resolve;
-    });
-    mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
-      if (args[1] === "status") {
-        const lock = JSON.parse(readFileSync(lockPath, "utf8")) as {
-          pid: number;
-          startedAt: string;
-        };
-        return {
-          localDaemon: "running",
-          pid: lock.pid,
-          startedAt: lock.startedAt,
-          listen: "127.0.0.1:6799",
-          hostname: hostname(),
-          daemonVersion: "1.2.3",
-          desktopManaged: true,
-          serverId: "srv_test",
-        };
-      }
-      if (args[1] === "stop") {
-        markStopCalled();
-        return await new Promise<{ action: string }>((resolve) => {
-          releaseStop = resolve;
-        });
-      }
-      throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
-    });
-
+    const supervisor = installFakeSupervisor(fixtureRoot);
+    const stop = holdDaemonStop(supervisor.lockPath);
     const runtime = new FakeAppUpdateRuntime();
-    runtime.nextCheck({
-      isUpdateAvailable: true,
-      updateInfo: {
-        version: "1.2.4",
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        rolloutHours: 24,
-      },
-    });
-    const service = createAppUpdateService({
-      runtime,
-      isPackaged: () => true,
-      now: () => Date.parse("2026-04-28T12:00:00.000Z"),
-      bucket: async () => 0,
-    });
-    const handlers = createDaemonCommandHandlers({
-      installAppUpdate: service.downloadAndInstallUpdate,
-    });
-    let supervisorPid: number | null = null;
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
     try {
       await handlers.start_desktop_daemon();
       const installing = handlers.install_app_update({ whenIdle: true });
-      await stopCalled;
-      supervisorPid = (JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number }).pid;
+      await stop.requested;
+
       handlers.cancel_app_update();
-      releaseStop({ action: "shutdown_requested" });
-      try {
-        process.kill(supervisorPid, "SIGTERM");
-      } catch {
-        // The supervisor can already be gone.
-      }
+      stop.release({ action: "shutdown_requested" });
+      supervisor.exit();
+
       await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
       expect(runtime.installedVersions).toEqual([]);
     } finally {
-      if (supervisorPid !== null) {
-        try {
-          process.kill(supervisorPid, "SIGKILL");
-        } catch {
-          // The supervisor already exited.
-        }
-      }
+      supervisor.kill();
       await handlers.stop_desktop_daemon().catch(() => undefined);
     }
   });
 
   it("ignores a cancel from a window that did not start the update", async () => {
     const runtime = new FakeAppUpdateRuntime();
-    const updateInfo = {
-      version: "1.2.4",
-      releaseDate: "2026-04-28T00:00:00.000Z",
-      rolloutHours: 24,
-    };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo });
-    const service = createAppUpdateService({
-      runtime,
-      isPackaged: () => true,
-      now: () => Date.parse("2026-04-28T12:00:00.000Z"),
-      bucket: async () => 0,
-    });
-    const handlers = createDaemonCommandHandlers({
-      installAppUpdate: service.downloadAndInstallUpdate,
-    });
-    const download = runtime.beginUpdateDownload(updateInfo, { announce: false });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
 
     const installing = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
     await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
