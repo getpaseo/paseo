@@ -280,7 +280,7 @@ describe("managed Git plugin sources", () => {
 });
 
 describe("registry plugin sources", () => {
-  it("treats owner/repository as GitHub shorthand without contacting the registry while registry installs are off", async () => {
+  it("keeps explicit Git sources and persisted Git installs independent of the registry", async () => {
     const repository = await createRepository();
     const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-off-home-"));
     roots.push(home);
@@ -298,12 +298,34 @@ describe("registry plugin sources", () => {
         const sources = new ManagedPluginSources(home, {
           defaultUrl: `http://127.0.0.1:${address.port}`,
         });
-        const candidate = await sources.prepareInstall({ source: "fixture/repository" });
-        expect(candidate.record).toEqual({
-          kind: "git",
-          remote: "https://github.com/fixture/repository.git",
-        });
-        await sources.discard(candidate);
+        for (const source of [
+          "git:fixture/repository",
+          "https://github.com/fixture/repository.git",
+        ]) {
+          const candidate = await sources.place(
+            "managed-example",
+            await sources.prepareInstall({ source }),
+          );
+          expect(candidate.record).toEqual({
+            kind: "git",
+            remote: "https://github.com/fixture/repository.git",
+          });
+          sources.commit("managed-example", candidate.record);
+          const restarted = new ManagedPluginSources(home, {
+            defaultUrl: `http://127.0.0.1:${address.port}/changed`,
+          });
+          expect((await restarted.preview("managed-example", candidate.directory)).outcome).toBe(
+            "current",
+          );
+          expect(
+            (await restarted.describe("managed-example", candidate.directory)).identity,
+          ).toEqual({
+            kind: "git",
+            remote: "https://github.com/fixture/repository.git",
+            pluginPath: ".",
+          });
+          await sources.discard(candidate);
+        }
       });
       expect(requests).toEqual([]);
     } finally {
@@ -369,7 +391,6 @@ describe("registry plugin sources", () => {
     const url = `http://${host}/internal`;
     try {
       const sources = new ManagedPluginSources(home, {
-        enabled: true,
         defaultUrl: url,
         registries: { [host]: { authorization: "Bearer test" } },
       });
@@ -380,7 +401,11 @@ describe("registry plugin sources", () => {
       ).toBe("managed-example");
       await sources.verifyCandidate("managed-example", candidate);
       sources.commit("managed-example", candidate.record);
-      const preview = await sources.preview("managed-example", candidate.directory);
+      const restarted = new ManagedPluginSources(home, {
+        defaultUrl: "http://127.0.0.1:1/changed",
+        registries: { [host]: { authorization: "Bearer test" } },
+      });
+      const preview = await restarted.preview("managed-example", candidate.directory);
       expect(preview.outcome).toBe("current");
       expect(preview.current?.identity).toEqual({
         kind: "git",
@@ -444,7 +469,7 @@ it("installs and updates only the npm artifacts pinned by the plugin registry", 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing registry address");
-  const options = { enabled: true, defaultUrl: `http://127.0.0.1:${address.port}` };
+  const options = { defaultUrl: `http://127.0.0.1:${address.port}` };
   try {
     const sources = new ManagedPluginSources(home, options);
     const candidate = await sources.place(

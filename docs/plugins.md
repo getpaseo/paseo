@@ -117,12 +117,9 @@ the bundled integration; an entry with `extends` shadows it with a custom provid
 
 ## Install from a registry
 
-Registry installs are off by default. Set `pluginRegistryEnabled: true` in daemon config or
-`PASEO_PLUGIN_REGISTRY_ENABLED=1`, then restart the daemon. While they are off, bare
-`owner/repo` is GitHub shorthand and the daemon never contacts a registry.
-
-With registry installs on, `paseo plugin install owner/slug` installs the registry's reviewed
-artifact, and GitHub shorthand requires `github:`. Registry installs
+`paseo plugin add owner/slug` installs the registry's reviewed artifact by default.
+Browse published plugins at [paseo.sh/plugins](https://paseo.sh/plugins).
+Use `git:owner/repository` or a full Git URL for a Git source. Registry installs
 keep the registry URL and ID, so update checks use its approved pin. Explicit version/ref
 selection is unavailable for registry installs; install an explicit source to select your own.
 
@@ -138,13 +135,13 @@ owns static hosting, record shapes, pins, and advisory install counts.
 
 ## Install a Git source
 
-GitHub repositories use `owner/repository` or `github:owner/repository`. Other hosts use a Git
+GitHub repositories use `git:owner/repository` or `github:owner/repository`. Other hosts use a Git
 URL. An existing directory still wins over source resolution.
 
 ```bash
-paseo plugin install owner/repository
+paseo plugin install git:owner/repository
 paseo plugin install https://gitlab.com/group/repository.git
-paseo plugin install owner/monorepo:plugins/review
+paseo plugin install git:owner/monorepo:plugins/review
 paseo plugin install github:owner/repository --ref main
 ```
 

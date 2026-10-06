@@ -2160,7 +2160,7 @@ export const en = {
       globalTitle: "Enable plugins",
       globalHint: "Global switch for every configured plugin",
       sourceLabel: "Plugin source",
-      sourcePlaceholder: "Directory, Git URL, or npm package",
+      sourcePlaceholder: "owner/slug, directory, Git URL, or npm package",
       docs: "Docs",
       install: "Install plugin",
       installing: "Installing…",

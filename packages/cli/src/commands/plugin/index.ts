@@ -215,10 +215,12 @@ export function createPluginCommand(): Command {
     plugin
       .command("install")
       .alias("add")
-      .description("Trust and install a plugin from a directory, Git repository, or npm package")
+      .description(
+        "Trust and install a plugin from a registry, directory, Git repository, or npm package",
+      )
       .argument(
         "<source>",
-        "Host directory, GitHub owner/repo, git: or npm: source, optionally followed by :plugin/path",
+        "Registry owner/slug or host/owner/slug, host directory, explicit git:owner/repo or Git URL, or npm: source",
       )
       .option("--id <id>", "Runtime plugin ID (defaults to paseo-plugin.json id)")
       .option("--ref <ref>", "Git branch, tag, or commit")

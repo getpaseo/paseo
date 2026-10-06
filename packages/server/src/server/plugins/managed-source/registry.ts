@@ -6,8 +6,6 @@ import {
 import type { PluginUpdateTarget } from "@getpaseo/protocol/messages";
 
 export interface RegistryOptions {
-  /** Off: bare owner/repo is GitHub shorthand and no registry is contacted. */
-  enabled?: boolean;
   defaultUrl?: string;
   registries?: PluginRegistries;
 }

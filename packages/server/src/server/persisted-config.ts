@@ -308,6 +308,7 @@ export const PersistedConfigSchema = z
 
     providers: ProvidersSchema.optional(),
     pluginRegistries: PluginRegistriesSchema.optional(),
+    // COMPAT(plugin-registry-gate): added in v0.11.0; accept the ignored startup key until 2027-04-06.
     pluginRegistryEnabled: z.boolean().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),

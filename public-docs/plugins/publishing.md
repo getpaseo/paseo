@@ -11,8 +11,23 @@ category: Plugins
 Publish your plugin so other people can install and use it in Paseo. Start with a working
 [plugin project](/docs/plugins), then choose where to share it:
 
+- [Plugin registry](#plugin-registry): share a reviewed artifact users install by `owner/slug`.
 - [npm](#publish-on-npm): publish a package on the public npm registry.
 - [GitHub or Git](#share-through-github-or-git): let users install from a repository.
+
+## Plugin registry
+
+Browse published plugins at [paseo.sh/plugins](https://paseo.sh/plugins).
+Users install the reviewed artifact with:
+
+```bash
+paseo plugin add owner/slug
+```
+
+Publish your artifact through npm or Git, then follow the
+[registry submission guide](https://github.com/getpaseo/plugins) to submit it for review.
+Registry installations and updates use the approved revision and plugin path.
+Direct Git installs use explicit `git:owner/repository` shorthand or a full Git URL.
 
 ## Publish on npm
 
@@ -141,7 +156,7 @@ In the app, enter only the source identifier.
 Push the plugin project to a repository. Users can install it with:
 
 ```bash
-paseo plugin install github:acme/paseo-review
+paseo plugin add git:acme/paseo-review
 ```
 
 For another Git host:

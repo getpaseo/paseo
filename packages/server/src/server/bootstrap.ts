@@ -414,7 +414,6 @@ export interface PaseoDaemonConfig {
   plugins?: Record<string, PluginSource>;
   pluginRegistries?: PluginRegistries;
   pluginRegistryUrl?: string;
-  pluginRegistryEnabled?: boolean;
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -625,7 +624,6 @@ export async function createPaseoDaemon(
       usageSession: (id) => agentManager.usageSession(id),
     },
     managedSources: new ManagedPluginSources(config.paseoHome, {
-      enabled: config.pluginRegistryEnabled ?? false,
       registries: config.pluginRegistries,
       defaultUrl: config.pluginRegistryUrl,
     }),
