@@ -194,6 +194,34 @@ const title = "Hello";
     );
   });
 
+  it("highlights quoted Vue directive values as code", () => {
+    const code = "<template><p v-if=\"count > 0\" :class='badge'>x</p></template>";
+
+    const tokens = highlightCode(code, "Directive.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "count", style: "variable" },
+        { text: "0", style: "number" },
+        { text: "badge", style: "variable" },
+      ]),
+    );
+    expect(tokens).not.toContainEqual({ text: '"count > 0"', style: "string" });
+  });
+
+  it("keeps a Vue interpolation open through nested template strings", () => {
+    const code = "<template><p>{{ `a ${`}}`} b` }}</p></template>";
+
+    const tokens = highlightCode(code, "Nested.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "`}}`", style: "string" },
+        { text: " b`", style: "string" },
+      ]),
+    );
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");

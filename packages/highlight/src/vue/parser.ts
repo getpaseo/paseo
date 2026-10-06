@@ -40,14 +40,26 @@ function isRegexStart(text: string, position: number): boolean {
   );
 }
 
-function skipQuotedText(text: string, opening: number): number {
+// Template strings nested deeper than this are treated as running to the end.
+const MAX_TEMPLATE_NESTING = 32;
+
+function skipQuotedText(text: string, opening: number, nesting = 0): number {
   const quote = text.charCodeAt(opening);
   for (let position = opening + 1; position < text.length; position++) {
     const code = text.charCodeAt(position);
     if (code === 92) position++;
     else if (code === quote) return position;
+    else if (quote === 96 && code === 36 && text.charCodeAt(position + 1) === 123) {
+      position = skipTemplateSubstitution(text, position + 2, nesting);
+    }
   }
   return text.length - 1;
+}
+
+function skipTemplateSubstitution(text: string, start: number, nesting: number): number {
+  if (nesting >= MAX_TEMPLATE_NESTING) return text.length - 1;
+  const closing = findClosingBrace(text, start, () => true, nesting + 1);
+  return closing >= 0 ? closing : text.length - 1;
 }
 
 function skipLineComment(text: string, opening: number): number {
@@ -73,7 +85,14 @@ function skipRegex(text: string, opening: number): number {
   return text.length - 1;
 }
 
-function findInterpolationEnd(text: string, start: number): number {
+// Finds the first `}` outside nested braces, strings, comments, and regexes
+// for which `isEnd` holds.
+function findClosingBrace(
+  text: string,
+  start: number,
+  isEnd: (position: number) => boolean,
+  nesting = 0,
+): number {
   let depth = 0;
   for (let position = start; position < text.length; position++) {
     const code = text.charCodeAt(position);
@@ -84,16 +103,20 @@ function findInterpolationEnd(text: string, start: number): number {
     } else if (code === 47 && isRegexStart(text, position)) {
       position = skipRegex(text, position);
     } else if (code === 34 || code === 39 || code === 96) {
-      position = skipQuotedText(text, position);
+      position = skipQuotedText(text, position, nesting);
     } else if (code === 123) {
       depth++;
     } else if (code === 125 && depth === 0) {
-      if (text.charCodeAt(position + 1) === 125) return position;
+      if (isEnd(position)) return position;
     } else if (code === 125) {
       depth--;
     }
   }
   return -1;
+}
+
+function findInterpolationEnd(text: string, start: number): number {
+  return findClosingBrace(text, start, (position) => text.charCodeAt(position + 1) === 125);
 }
 
 function findExpressions(text: string): Range[] {
@@ -110,13 +133,14 @@ function findExpressions(text: string): Range[] {
   return ranges;
 }
 
-function findDirectiveExpression(text: string): Range | null {
-  const trimmed = text.trim();
+function findDirectiveExpression(value: string): Range | null {
+  const quote = value[0];
+  const isQuoted = (quote === '"' || quote === "'") && value.length >= 2 && value.endsWith(quote);
+  const inner = isQuoted ? value.slice(1, -1) : value;
+  const trimmed = inner.trim();
   if (!trimmed) return null;
-  const leading = text.indexOf(trimmed[0]);
-  const trailing = leading + trimmed.length;
-  if (leading > 0 && /[\w-]/.test(text.charAt(leading - 1))) return null;
-  return { from: leading, to: trailing };
+  const from = (isQuoted ? 1 : 0) + inner.indexOf(trimmed);
+  return { from, to: from + trimmed.length };
 }
 
 function getOpenTagAttributes(node: SyntaxNode, input: Input): Record<string, string> {
