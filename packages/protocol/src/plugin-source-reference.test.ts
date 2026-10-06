@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { parsePluginSourceReference } from "./plugin-source-reference.js";
 
 describe("plugin source references", () => {
+  it.each(["./owner/slug", "../owner/slug", "/owner/slug", "~/owner/slug", "~"])(
+    "recognizes the explicit directory %s by shape",
+    (source) => {
+      expect(parsePluginSourceReference(source)).toEqual({
+        kind: "directory",
+        source,
+        pluginPath: undefined,
+      });
+      expect(parsePluginSourceReference(`${source}:plugins/review`)).toEqual({
+        kind: "directory",
+        source,
+        pluginPath: "plugins/review",
+      });
+    },
+  );
+
   it.each([
     ["npm:review@1.2.0:nested", "npm:review@1.2.0", "nested"],
     ["npm:review@^1.2.0", "npm:review@^1.2.0", undefined],
@@ -42,7 +58,7 @@ describe("plugin source references", () => {
     ["D:\\plugins\\repository", "D:\\plugins\\repository", undefined],
     ["D:\\plugins\\repository:plugins/review", "D:\\plugins\\repository", "plugins/review"],
   ])("parses %s", (reference, source, pluginPath) => {
-    expect(parsePluginSourceReference(reference)).toEqual({ source, pluginPath });
+    expect(parsePluginSourceReference(reference)).toEqual({ kind: "managed", source, pluginPath });
   });
 });
 

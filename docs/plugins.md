@@ -136,7 +136,7 @@ owns static hosting, record shapes, pins, and advisory install counts.
 ## Install a Git source
 
 GitHub repositories use `git:owner/repository` or `github:owner/repository`. Other hosts use a Git
-URL. An existing directory still wins over source resolution.
+URL.
 
 ```bash
 paseo plugin install git:owner/repository

@@ -149,7 +149,11 @@ export class ManagedPluginSources {
   ): Promise<ManagedPluginCandidate> {
     const registry = parsePluginRegistryReference(input.source, this.registryOptions.defaultUrl);
     if (registry) {
-      if (input.ref || input.pluginPath)
+      if (input.ref)
+        throw new Error(
+          "Registry installs pin the reviewed revision. Drop --ref, or install from an explicit github:owner/repository source to choose a revision.",
+        );
+      if (input.pluginPath)
         throw new Error("Registry sources use their reviewed artifact path and revision");
       const resolved = await resolveRegistryPlugin(registry, this.registryOptions, true);
       const candidate = await this.prepareInstall(resolved.input, resolved.target);

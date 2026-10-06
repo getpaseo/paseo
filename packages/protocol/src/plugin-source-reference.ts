@@ -1,19 +1,27 @@
 import { parsePluginRegistryReference } from "./plugin-registry.js";
 import type { PluginInstallation } from "./messages.js";
 export interface PluginSourceReference {
+  kind: "directory" | "managed";
   source: string;
   pluginPath: string | undefined;
 }
 
 export function parsePluginSourceReference(reference: string): PluginSourceReference {
-  if (parsePluginRegistryReference(reference)) return { source: reference, pluginPath: undefined };
+  if (/^(\.\.?\/|\/|~)/.test(reference)) {
+    return { kind: "directory", ...splitPluginPath(reference, { scp: false }) };
+  }
+  if (parsePluginRegistryReference(reference))
+    return { kind: "managed", source: reference, pluginPath: undefined };
   const prefix = /^(npm:|github:|git:(?!\/\/))/.exec(reference)?.[0];
   const source = prefix ? reference.slice(prefix.length) : reference;
   const parsed = splitPluginPath(source, { scp: prefix !== "npm:" });
-  return { ...parsed, source: `${prefix ?? ""}${parsed.source}` };
+  return { kind: "managed", ...parsed, source: `${prefix ?? ""}${parsed.source}` };
 }
 
-function splitPluginPath(reference: string, options: { scp: boolean }): PluginSourceReference {
+function splitPluginPath(
+  reference: string,
+  options: { scp: boolean },
+): Pick<PluginSourceReference, "source" | "pluginPath"> {
   const separator = reference.lastIndexOf(":");
   if (separator === -1) return { source: reference, pluginPath: undefined };
 

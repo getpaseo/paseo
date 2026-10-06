@@ -27,11 +27,20 @@ export async function resolveRegistryPlugin(
   const headers: Record<string, string> = {};
   if (authorization) headers.Authorization = authorization;
   if (install) headers["X-Paseo-Install"] = "1";
-  const response = await fetch(`${identity.url.replace(/\/+$/, "")}/plugins/${identity.id}.json`, {
-    headers,
-    redirect: "error",
-    signal: AbortSignal.timeout(30000),
-  });
+  const url = `${identity.url.replace(/\/+$/, "")}/plugins/${identity.id}.json`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (cause) {
+    const guidance = install
+      ? `Plugin ${identity.id} was not installed. Retry or use an explicit npm: or github: source.`
+      : `Could not check updates for ${identity.id}. Retry later.`;
+    throw new Error(`Could not reach plugin registry ${url}. ${guidance}`, { cause });
+  }
   if (response.status === 404) {
     const guidance = install
       ? `If you intended a GitHub source, use git:${identity.id}, or a full Git URL for another Git host.`

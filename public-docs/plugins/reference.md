@@ -2259,7 +2259,7 @@ failures stay inside the plugin error boundary.
 Paste one of these source identifiers into **Settings → Plugins**, or pass it to
 `paseo plugin install`. `paseo plugin add <source>` and `paseo plugin install <source>` are aliases.
 Absolute host paths are recommended because relative paths resolve against the daemon's working
-directory. The app does not expand `~`; your shell may expand it before the CLI runs.
+directory. The daemon expands `~` to its home directory.
 
 | Source                     | Accepted form                                                              | Example                                       |
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
@@ -2284,19 +2284,17 @@ The package registry validates the selected version, tag, or range.
 
 Paseo resolves an identifier in this order:
 
-1. An existing directory matching the complete identifier on the daemon host wins, including a
-   literal directory containing `:`.
+1. A bare `owner/slug` is a registry id; local directories start with `./`, `../`, `/`, or `~`.
 2. Otherwise, recognize `npm:`, `github:`, or `git:` before interpreting a subdirectory suffix.
    `git://` is a Git URL scheme. An explicit prefix selects acquisition of that kind.
 3. Recognize a final `:relative/plugin/path` only when its suffix contains no empty, `.` or `..`
    segments. A lone `.` selects the source root. Both `/` and `\` separate suffix segments; use `/`
    across hosts. URL ports and the separator in an SCP source stay part of the source. A suffix
    that does not satisfy these rules stays part of the identifier.
-4. Without an explicit prefix, an existing directory matching the remaining source wins.
-5. Resolve bare `owner/slug` through the default plugin registry and `host/owner/slug` through
+4. Resolve bare `owner/slug` through the default plugin registry and `host/owner/slug` through
    that registry host. Resolve Git URLs and SCP sources as Git. `github:` requires
    `owner/repository` shorthand; `git:` accepts it as well as URLs and SCP sources.
-6. Resolve a remaining npm package name with its optional selector through the host's registry.
+5. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
 
 The default registry is `https://plugins.paseo.sh`. Browse [published plugins](https://paseo.sh/plugins)

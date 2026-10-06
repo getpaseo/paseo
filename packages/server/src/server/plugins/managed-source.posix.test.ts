@@ -280,6 +280,35 @@ describe("managed Git plugin sources", () => {
 });
 
 describe("registry plugin sources", () => {
+  it("explains how to choose a revision when --ref is used with a registry id", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-ref-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+    await expect(
+      sources.prepareInstall({ source: "fixture/example", ref: "main" }),
+    ).rejects.toThrow(
+      "Registry installs pin the reviewed revision. Drop --ref, or install from an explicit github:owner/repository source to choose a revision.",
+    );
+  });
+
+  it("names the registry URL and recovery steps when the registry fetch fails", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-offline-home-"));
+    roots.push(home);
+    const server = createServer((request) => request.socket.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing registry address");
+    const url = `http://127.0.0.1:${address.port}`;
+    try {
+      const sources = new ManagedPluginSources(home, { defaultUrl: url });
+      await expect(sources.prepareInstall({ source: "fixture/example" })).rejects.toThrow(
+        `Could not reach plugin registry ${url}/plugins/fixture/example.json. Plugin fixture/example was not installed. Retry or use an explicit npm: or github: source.`,
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("explains explicit GitHub spelling when a registry ID is missing", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-missing-home-"));
     roots.push(home);
