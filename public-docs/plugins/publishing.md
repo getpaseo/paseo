@@ -174,14 +174,8 @@ badges, changelog, contributing or license sections, marketing, and unsupported 
 Avoid implementation filler such as empty cleanup functions, catalogs of theme-token fields,
 or lists of absent features. Keep only what helps someone choose the plugin.
 
-Every migration-written registry stopgap ends with this exact italic credit:
-
-```text
-*This plugin entry was imported from [paseo.cafe](https://paseo.cafe/plugins/<cafe-slug>).*
-```
-
-Replace `<cafe-slug>` with the migration assignment's `cafeFile` minus `.json`.
-Do not add this credit to author-owned artifact overviews.
+If your plugin is an unchanged imported record, you can propose an author-written overview
+to replace the registry stopgap. Do not add import credit to your own `OVERVIEW.md`.
 
 ## Share through GitHub or Git
 

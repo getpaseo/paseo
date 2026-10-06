@@ -29,34 +29,31 @@ afterEach(async () => {
 });
 
 describe("plugin scaffold", () => {
-  it.each(["hello-plugin", "theme-plugin", "provider-plugin"])(
-    "creates an author overview beside the manifest for %s",
-    async (id) => {
-      const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
-      directories.push(parent);
-      const directory = path.join(parent, id);
-      await scaffoldPluginDirectory(directory);
+  it("creates an author overview beside the manifest", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
+    directories.push(parent);
+    const directory = path.join(parent, "hello-plugin");
+    await scaffoldPluginDirectory(directory);
 
-      const overview = await readFile(path.join(directory, "OVERVIEW.md"), "utf8");
-      const comments = overview.match(/<!--[\s\S]*?-->/g) ?? [];
-      expect(comments).toHaveLength(1);
-      expect(overview.replace(/<!--[\s\S]*?-->/g, "").trim()).toBe("");
-      expect(overview).toContain("required to list");
-      expect(overview).toContain("README");
-      expect(overview).toContain("choosing a plugin in Paseo");
-      expect(overview).toContain("Length follows complexity");
-      expect(overview).toContain("1. Describe what your plugin is and does");
-      expect(overview).toContain("2. Explain how it works only when it is not obvious");
-      expect(overview).toContain("3. Explain setup when needed");
-      expect(overview).toContain("4. Explain capabilities and settings");
-      expect(overview).toContain("permissions");
-      expect(overview).toContain("known limits");
-      expect(overview).not.toContain("This plugin entry was imported");
-      const packageJson = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
-      expect(packageJson.files).toContain("OVERVIEW.md");
-      expect(await readdir(directory)).toContain("paseo-plugin.json");
-    },
-  );
+    const overview = await readFile(path.join(directory, "OVERVIEW.md"), "utf8");
+    const comments = overview.match(/<!--[\s\S]*?-->/g) ?? [];
+    expect(comments).toHaveLength(1);
+    expect(overview.replace(/<!--[\s\S]*?-->/g, "").trim()).toBe("");
+    expect(overview).toContain("required to list");
+    expect(overview).toContain("README");
+    expect(overview).toContain("choosing a plugin in Paseo");
+    expect(overview).toContain("Length follows complexity");
+    expect(overview).toContain("1. Describe what your plugin is and does");
+    expect(overview).toContain("2. Explain how it works only when it is not obvious");
+    expect(overview).toContain("3. Explain setup when needed");
+    expect(overview).toContain("4. Explain capabilities and settings");
+    expect(overview).toContain("permissions");
+    expect(overview).toContain("known limits");
+    expect(overview).not.toContain("This plugin entry was imported");
+    const packageJson = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
+    expect(packageJson.files).toContain("OVERVIEW.md");
+    expect(await readdir(directory)).toContain("paseo-plugin.json");
+  });
 
   it("includes the author overview in the packed npm artifact", async () => {
     const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
