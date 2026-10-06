@@ -1084,9 +1084,9 @@ export const ptBR: TranslationResources = {
         },
         activity: {
           commented: "Comentou",
-          approved: "Aprovado",
+          approved: "Aprovou",
           requestedChanges: "Solicitou alterações",
-          reviewed: "Revisado",
+          reviewed: "Revisou",
         },
         time: {
           justNow: "agora mesmo",

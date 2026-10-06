@@ -255,8 +255,12 @@ describe("translation resources", () => {
       expect(pr.actions.addingToChat).not.toBe(englishPr.actions.addingToChat);
       expect(pr.accessibility.commentActions).not.toBe(englishPr.accessibility.commentActions);
       expect(pr.accessibility.threadActions).not.toBe(englishPr.accessibility.threadActions);
-      expect(pr.activity).not.toEqual(englishPr.activity);
-      expect(pr.states).not.toEqual(englishPr.states);
+      for (const verb of Object.keys(englishPr.activity) as (keyof typeof englishPr.activity)[]) {
+        expect(pr.activity[verb]).not.toBe(englishPr.activity[verb]);
+      }
+      for (const state of Object.keys(englishPr.states) as (keyof typeof englishPr.states)[]) {
+        expect(pr.states[state]).not.toBe(englishPr.states[state]);
+      }
       expect(pr.thread.resolved).not.toBe(englishPr.thread.resolved);
       expect(pr.thread.outdated).not.toBe(englishPr.thread.outdated);
       expect(resource.sidebar.statusGroupAccessibility).not.toBe(

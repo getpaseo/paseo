@@ -1046,16 +1046,16 @@ export const zhCN: TranslationResources = {
           },
         },
         states: {
-          draft: "Draft",
-          merged: "已 merge",
+          draft: "草稿",
+          merged: "已合并",
           closed: "已关闭",
-          open: "Open",
+          open: "开放",
         },
         activity: {
           commented: "已评论",
           approved: "已批准",
           requestedChanges: "请求修改",
-          reviewed: "已 review",
+          reviewed: "已审查",
         },
         time: {
           justNow: "刚刚",

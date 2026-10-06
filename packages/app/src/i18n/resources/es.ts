@@ -1093,10 +1093,10 @@ export const es: TranslationResources = {
           open: "Abierto",
         },
         activity: {
-          commented: "Comentado",
-          approved: "Aprobado",
-          requestedChanges: "Cambios solicitados",
-          reviewed: "Revisado",
+          commented: "Comentó",
+          approved: "Aprobó",
+          requestedChanges: "Solicitó cambios",
+          reviewed: "Revisó",
         },
         time: {
           justNow: "En este momento",
