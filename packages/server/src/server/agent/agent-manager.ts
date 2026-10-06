@@ -4645,7 +4645,9 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined,
     message: string,
   ): void {
-    for (const [requestId] of agent.pendingPermissions) {
+    for (const [requestId, request] of agent.pendingPermissions) {
+      // It belongs to a provider subagent that can outlive this turn; the provider settles it.
+      if (request.fromProviderSubagent) continue;
       agent.pendingPermissions.delete(requestId);
       if (!options?.fromHistory) {
         this.dispatchStream(agent.id, {

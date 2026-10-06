@@ -1221,6 +1221,132 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  interface PermissionInternals {
+    handlePermissionRequest(
+      name: string,
+      input: Record<string, unknown>,
+      options: Record<string, unknown>,
+    ): Promise<PermissionResult>;
+    translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+    failActiveTurns(errorMessage: string): void;
+  }
+
+  /** A Task subagent announced on the main stream. */
+  function subagentStarted(taskId: string, announced: Record<string, unknown>): SDKMessage {
+    return {
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      tool_use_id: `toolu_${taskId}`,
+      task_type: "local_agent",
+      subagent_type: "general-purpose",
+      description: "Helper",
+      spawn_depth: 1,
+      ...announced,
+    } as unknown as SDKMessage;
+  }
+
+  function askAs(internal: PermissionInternals, agentID: string | undefined, toolUseID: string) {
+    return internal.handlePermissionRequest(
+      "Bash",
+      { command: "npm test" },
+      { toolUseID, ...(agentID ? { agentID } : {}) },
+    );
+  }
+
+  test("a human steer leaves a background subagent's permission request for the user", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as PermissionInternals;
+
+    try {
+      const { turnId } = await session.startTurn("first turn");
+      internal.translateMessageToEvents(subagentStarted("helper-task", { is_backgrounded: true }));
+      const helperPermission = askAs(internal, "helper-task", "tool-helper");
+      const mainPermission = askAs(internal, undefined, "tool-main");
+
+      await expect(
+        session.steerActiveTurn?.("do this instead", {
+          expectedTurnId: turnId,
+          clearPendingPermissions: true,
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+      await expect(mainPermission).resolves.toMatchObject({
+        behavior: "deny",
+        message: expect.stringContaining("message instead of approving"),
+      });
+      // The helper keeps asking while the steer is still unread; that is not superseded either.
+      const laterHelperPermission = askAs(internal, "helper-task", "tool-helper-2");
+
+      const pending = session.getPendingPermissions();
+      expect(pending.map((request) => request.metadata?.toolUseId)).toEqual([
+        "tool-helper",
+        "tool-helper-2",
+      ]);
+      expect(pending.every((request) => request.fromProviderSubagent)).toBe(true);
+      for (const request of pending) {
+        await session.respondToPermission(request.id, { behavior: "allow" });
+      }
+      await expect(helperPermission).resolves.toMatchObject({ behavior: "allow" });
+      await expect(laterHelperPermission).resolves.toMatchObject({ behavior: "allow" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("stopping the turn leaves pending only what outlives it", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as PermissionInternals;
+
+    try {
+      await session.startTurn("first turn");
+      internal.translateMessageToEvents(subagentStarted("helper-task", { is_backgrounded: true }));
+      internal.translateMessageToEvents(subagentStarted("foreground-task", {}));
+      // Spawned inside the helper: it runs on the helper's time, not the turn's.
+      internal.translateMessageToEvents(subagentStarted("nested-task", { spawn_depth: 2 }));
+      const outliving = [
+        askAs(internal, "helper-task", "tool-helper"),
+        askAs(internal, "nested-task", "tool-nested"),
+        // A workflow's child agent is never declared as a subagent here.
+        askAs(internal, "workflow-child", "tool-workflow-child"),
+      ];
+      // A foreground subagent is part of the turn waiting on it, so its request goes with it.
+      const foregroundPermission = askAs(internal, "foreground-task", "tool-foreground");
+      const mainPermission = askAs(internal, undefined, "tool-main");
+
+      await session.interrupt();
+
+      await expect(mainPermission).rejects.toThrow("Permission request canceled");
+      await expect(foregroundPermission).rejects.toThrow("Permission request canceled");
+      const pending = session.getPendingPermissions();
+      expect(pending.map((request) => request.metadata?.toolUseId)).toEqual([
+        "tool-helper",
+        "tool-nested",
+        "tool-workflow-child",
+      ]);
+      expect(pending.every((request) => request.fromProviderSubagent)).toBe(true);
+
+      // They can outlive the turn, but not the Claude process that raised them.
+      const withdrawn = outliving.map((permission) =>
+        expect(permission).rejects.toThrow("Claude stopped before the request was answered"),
+      );
+      internal.failActiveTurns("Claude stream ended before terminal result");
+      await Promise.all(withdrawn);
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
@@ -3160,10 +3286,15 @@ describe("ClaudeAgentSession context window usage", () => {
   });
 
   test("a compaction abandoned in an autonomous turn does not suppress the next marker", async () => {
-    // Trailing output after the foreground result opens an autonomous turn, which starts
-    // compacting and is then ended by the next foreground turn, never reaching a boundary.
+    // Claude starts a turn of its own after the foreground result, which starts compacting and is
+    // then ended by the next foreground turn, never reaching a boundary.
     const session = await createSessionForTurns([
-      [createSuccessResult(), createMessageStartEvent(), createCompactingStatus()],
+      [
+        createSuccessResult(),
+        createInitMessage(),
+        createMessageStartEvent(),
+        createCompactingStatus(),
+      ],
       [createCompactingStatus(), createSuccessResult()],
     ]);
 

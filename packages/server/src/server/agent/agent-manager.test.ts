@@ -7016,6 +7016,68 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
   });
 });
 
+test("keeps a provider subagent's pending permission when the agent's turn ends", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-subagent-permission-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+
+  class LiveEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new LiveEventClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000981",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const pendingIds = () => [...(manager.getAgent(snapshot.id)?.pendingPermissions.keys() ?? [])];
+
+  // A background subagent asks while the agent's own turn is running, and keeps waiting after
+  // that turn ends: only an answer, or the provider, settles its request.
+  capturedSession!.pushEvent({
+    type: "permission_requested",
+    provider: "codex",
+    request: {
+      id: "subagent-permission",
+      provider: "codex",
+      name: "Bash",
+      kind: "tool",
+      fromProviderSubagent: true,
+    },
+  });
+  const turns: Array<{ turnId: string; terminal: AgentStreamEvent }> = [
+    {
+      turnId: "turn-a",
+      terminal: { type: "turn_canceled", provider: "codex", turnId: "turn-a", reason: "stop" },
+    },
+    {
+      turnId: "turn-b",
+      terminal: { type: "turn_failed", provider: "codex", turnId: "turn-b", error: "API Error" },
+    },
+  ];
+  for (const { turnId, terminal } of turns) {
+    capturedSession!.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    capturedSession!.pushEvent({
+      type: "permission_requested",
+      provider: "codex",
+      request: { id: `${turnId}-permission`, provider: "codex", name: "Write", kind: "tool" },
+    });
+    await vi.waitFor(() => expect(pendingIds()).toContain(`${turnId}-permission`));
+
+    capturedSession!.pushEvent(terminal);
+    await vi.waitFor(() => expect(pendingIds()).toEqual(["subagent-permission"]));
+  }
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("preserves terminal fallback when no active turn identity was observed", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-untracked-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

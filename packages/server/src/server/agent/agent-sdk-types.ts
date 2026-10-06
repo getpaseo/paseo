@@ -488,6 +488,12 @@ export interface AgentPermissionRequest {
   suggestions?: AgentPermissionUpdate[];
   actions?: AgentPermissionAction[];
   metadata?: AgentMetadata;
+  /**
+   * Raised by a provider subagent rather than the agent's own turn. The provider settles it: a
+   * background subagent keeps running after the turn ends, so its request stays pending until it
+   * is answered or the provider withdraws it.
+   */
+  fromProviderSubagent?: boolean;
 }
 
 export type AgentPermissionResponse =
