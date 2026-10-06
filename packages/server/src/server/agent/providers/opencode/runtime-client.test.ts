@@ -209,3 +209,110 @@ test.each([
   },
   10000,
 );
+
+test("selects v2 for an OpenCode v2 binary that answers --version after 7 s", async () => {
+  const { chmod, mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { delimiter, join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-slow-version-"));
+  const executable = join(root, process.platform === "win32" ? "opencode.cmd" : "opencode");
+  if (process.platform === "win32") {
+    const script = join(root, "version.cjs");
+    await writeFile(script, 'setTimeout(() => console.log("opencode v2.0.22"), 7000)');
+    await writeFile(executable, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    await writeFile(
+      executable,
+      '#!/usr/bin/env node\nsetTimeout(() => console.log("opencode v2.0.22"), 7000)\n',
+    );
+    await chmod(executable, 0o755);
+  }
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const previousPath = process.env[pathKey];
+  process.env[pathKey] = [root, previousPath].filter(Boolean).join(delimiter);
+  const client = new OpenCodeRuntimeClient(createTestLogger());
+  try {
+    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+      "Auto-accept",
+    );
+  } finally {
+    await client.shutdown();
+    if (previousPath === undefined) delete process.env[pathKey];
+    else process.env[pathKey] = previousPath;
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("surfaces unrecognized version output from the default OpenCode executable", async () => {
+  const { chmod, mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { delimiter, join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-default-probe-error-"));
+  const executable = join(root, process.platform === "win32" ? "opencode.cmd" : "opencode");
+  if (process.platform === "win32") {
+    const script = join(root, "version.cjs");
+    await writeFile(script, 'console.log("default wrapper output")');
+    await writeFile(executable, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    await writeFile(executable, '#!/usr/bin/env node\nconsole.log("default wrapper output")\n');
+    await chmod(executable, 0o755);
+  }
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const previousPath = process.env[pathKey];
+  process.env[pathKey] = [root, previousPath].filter(Boolean).join(delimiter);
+  const client = new OpenCodeRuntimeClient(createTestLogger());
+  try {
+    await expect(client.listFeatures({ provider: "opencode", cwd: root })).rejects.toThrow(
+      "Unrecognized OpenCode version output: default wrapper output",
+    );
+  } finally {
+    await client.shutdown();
+    if (previousPath === undefined) delete process.env[pathKey];
+    else process.env[pathKey] = previousPath;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.runIf(process.platform === "win32")(
+  "probes the OpenCode cmd shim selected by provider PATH",
+  async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+    const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+    const root = await mkdtemp(path.join(tmpdir(), "opencode-provider-path-"));
+    const daemonPath = path.join(root, "daemon");
+    const providerPath = path.join(root, "provider");
+    await import("node:fs/promises").then(({ mkdir }) =>
+      Promise.all([mkdir(daemonPath), mkdir(providerPath)]),
+    );
+    const writeShim = async (directory: string, version: string) => {
+      const script = path.join(directory, "version.cjs");
+      const shim = path.join(directory, "opencode.cmd");
+      await writeFile(script, `console.log("opencode v${version}")`);
+      await writeFile(shim, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+    };
+    await Promise.all([writeShim(daemonPath, "1.14.46"), writeShim(providerPath, "2.0.22")]);
+    const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path";
+    const previousPath = process.env[pathKey];
+    process.env[pathKey] = [daemonPath, process.env[pathKey]].filter(Boolean).join(path.delimiter);
+    const client = new OpenCodeRuntimeClient(createTestLogger(), {
+      env: { [pathKey]: providerPath },
+    });
+    try {
+      expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+        "Auto-accept",
+      );
+    } finally {
+      await client.shutdown();
+      if (previousPath === undefined) delete process.env[pathKey];
+      else process.env[pathKey] = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
