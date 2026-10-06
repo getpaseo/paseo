@@ -280,6 +280,30 @@ describe("managed Git plugin sources", () => {
 });
 
 describe("registry plugin sources", () => {
+  it("explains explicit GitHub spelling when a registry ID is missing", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-missing-home-"));
+    roots.push(home);
+    const requests: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url);
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing registry address");
+    try {
+      const sources = new ManagedPluginSources(home, {
+        defaultUrl: `http://127.0.0.1:${address.port}`,
+      });
+      await expect(sources.prepareInstall({ source: "fixture/missing" })).rejects.toThrow(
+        "Use git:fixture/missing to install directly from GitHub",
+      );
+      expect(requests).toEqual(["/plugins/fixture/missing.json"]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("keeps explicit Git sources and persisted Git installs independent of the registry", async () => {
     const repository = await createRepository();
     const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-off-home-"));
