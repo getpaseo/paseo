@@ -22,6 +22,6 @@ export function readClaudeSubagentHandback(block: {
   if (block.type !== "tool_use" || !isClaudeSubagentHandbackToolName(block.name)) return null;
   if (typeof block.id !== "string" || block.id.length === 0) return null;
   const input = block.input as { message?: unknown } | null | undefined;
-  const report = typeof input?.message === "string" ? input.message.trim() : "";
-  return { callId: block.id, report: report.length > 0 ? report : null };
+  const report = typeof input?.message === "string" ? input.message : "";
+  return { callId: block.id, report: report.trim().length > 0 ? report : null };
 }

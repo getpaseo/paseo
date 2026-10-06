@@ -38,7 +38,7 @@ describe("ClaudeSidechainTracker", () => {
 
   it("shows a SubagentHandback report as the subagent's final message", () => {
     const tracker = new ClaudeSidechainTracker({ getToolInput: () => null });
-    const report = "## Verdict\n\n- **Coherent**";
+    const report = "    indented code\n\n## Verdict\n\n- **Coherent**";
     const frames = [
       {
         type: "stream_event",
@@ -77,6 +77,7 @@ describe("ClaudeSidechainTracker", () => {
             {
               type: "tool_result",
               tool_use_id: "handback-1",
+              tool_name: "SubagentHandback",
               content: [{ type: "text", text: '{"success":true}' }],
             },
           ],
