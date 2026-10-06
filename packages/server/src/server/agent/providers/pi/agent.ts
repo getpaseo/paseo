@@ -1154,11 +1154,12 @@ function createRuntime(
   logger: Logger,
   runtimeSettings: ProviderRuntimeSettings | undefined,
   requestTimeoutMs: number,
+  command: string,
 ): PiRuntime {
   return new PiCliRuntime({
     logger,
     runtimeSettings,
-    command: [PI_BINARY_COMMAND],
+    command: [command],
     commandsRpcName: "get_commands",
     requestTimeoutMs,
   });
@@ -2496,7 +2497,7 @@ export class PiRpcAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const providerOptions = PiProviderOptionsSchema.parse(config.providerOptions ?? {});
-    const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
+    const runtime = await this.resolveRuntime(providerOptions.rpcTimeoutMs);
     const mcpEnv = {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
@@ -2558,7 +2559,7 @@ export class PiRpcAgentClient implements AgentClient {
     const providerOptions = PiProviderOptionsSchema.parse(
       resumeConfig.config.providerOptions ?? {},
     );
-    const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
+    const runtime = await this.resolveRuntime(providerOptions.rpcTimeoutMs);
     const mcpEnv = {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
@@ -2650,7 +2651,7 @@ export class PiRpcAgentClient implements AgentClient {
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
     const providerOptions = PiProviderOptionsSchema.parse(options.providerOptions ?? {});
-    const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
+    const runtime = await this.resolveRuntime(providerOptions.rpcTimeoutMs);
     let runtimeSession: PiRuntimeSession | undefined;
     let closePromise: Promise<void> | undefined;
     const closeSession = () => {
@@ -2756,8 +2757,18 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  private resolveRuntime(rpcTimeoutMs: number): PiRuntime {
-    return this.runtime ?? createRuntime(this.logger, this.runtimeSettings, rpcTimeoutMs);
+  private async resolveRuntime(rpcTimeoutMs: number): Promise<PiRuntime> {
+    if (this.runtime) {
+      return this.runtime;
+    }
+    const launch = await this.resolvePiLaunch();
+    const availability = await checkProviderLaunchAvailable(launch);
+    return createRuntime(
+      this.logger,
+      this.runtimeSettings,
+      rpcTimeoutMs,
+      availability.resolvedPath ?? launch.command,
+    );
   }
 
   private async prepareMcpInjection(

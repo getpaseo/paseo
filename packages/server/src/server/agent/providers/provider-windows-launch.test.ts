@@ -1,5 +1,12 @@
 import type { ChildProcess } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -7,6 +14,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { PiRpcAgentClient } from "./pi/agent.js";
 import { PiCliRuntime } from "./pi/cli-runtime.js";
 
 interface SpawnResult {
@@ -56,6 +64,12 @@ if (JSON.stringify(actual) !== JSON.stringify(expected)) {
   process.exit(42);
 }
 if (${JSON.stringify(launchMode)} === "piRuntime") {
+  require("node:fs").writeFileSync(
+    ${JSON.stringify(path.join(root, "launched"))},
+    process.env.Path ?? process.env.PATH ?? "",
+  );
+}
+if (${JSON.stringify(launchMode)} === "piRuntime") {
   let buffer = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
@@ -83,6 +97,16 @@ if (${JSON.stringify(launchMode)} === "piRuntime") {
               messageCount: 0,
               pendingMessageCount: 0,
             },
+          }) + "\\n",
+        );
+      } else if (command.type === "get_available_models") {
+        process.stdout.write(
+          JSON.stringify({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: true,
+            data: { models: [] },
           }) + "\\n",
         );
       }
@@ -282,4 +306,26 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
       expect(result.stdout.trim()).toBe("ARGV_OK");
     },
   );
+
+  test("Pi runtime launches the same resolved command that diagnostics find", async () => {
+    const fixture = makeFixture("pi", ["--mode", "rpc"], "piRuntime");
+    const emptyPath = mkdtempSync(path.join(tmpdir(), "paseo empty path "));
+    tempDirs.push(emptyPath);
+    const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path";
+
+    await withPathEntry(fixture.root, async () => {
+      const client = new PiRpcAgentClient({
+        logger: pino({ level: "silent" }),
+        runtimeSettings: { env: { [pathKey]: emptyPath } },
+      });
+      const diagnostic = await client.getDiagnostic();
+      expect(diagnostic.diagnostic).toContain(fixture.shim);
+
+      await expect(
+        client.fetchCatalog({ scope: "workspace", cwd: emptyPath, force: false }),
+      ).resolves.toEqual({ models: [], modes: [] });
+      expect(existsSync(path.join(fixture.root, "launched"))).toBe(true);
+      expect(readFileSync(path.join(fixture.root, "launched"), "utf8")).toBe(emptyPath);
+    });
+  });
 });
