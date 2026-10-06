@@ -118,6 +118,22 @@ const RUNNING_WORKFLOW_TURN_EVENTS = [
   COMPLETED_TURN_EVENTS[2],
 ];
 
+const BACKGROUND_SHELL_TURN_EVENTS = [
+  COMPLETED_TURN_EVENTS[0],
+  {
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [
+      { task_id: "bash-1", task_type: "local_bash", description: "sleep 20" },
+      { task_id: "wf-1", task_type: "local_workflow", description: "Run the spec workflow" },
+    ],
+    uuid: "00000000-0000-4000-8000-000000000001",
+    session_id: "claude-runtime-exit-session",
+  },
+  COMPLETED_TURN_EVENTS[1],
+  COMPLETED_TURN_EVENTS[2],
+];
+
 const MISSING_RESUMED_CONVERSATION_RESULT = {
   type: "result",
   subtype: "error_during_execution",
@@ -267,6 +283,100 @@ describe("Claude runtime exit", () => {
         provider: "claude",
         event: { type: "upsert", id: "toolu_workflow", status: "failed" },
       });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports background tasks except subagents as background work", async () => {
+    const queryFactory = vi.fn(() => createQueryMock(BACKGROUND_SHELL_TURN_EVENTS));
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(createChildProcessStub());
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      await session.run("start a background shell");
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "background_work",
+          provider: "claude",
+          items: [{ id: "bash-1", kind: "shell", description: "sleep 20" }],
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("empties background work when the process dies while idle", async () => {
+    let capturedOptions: Options | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock(BACKGROUND_SHELL_TURN_EVENTS);
+    });
+    const child = createChildProcessStub();
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      await session.run("start a background shell");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      child.emit("exit", 1, null);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "background_work", provider: "claude", items: [] }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("empties background work when a query restart retires the process", async () => {
+    let capturedOptions: Options | undefined;
+    const child = createChildProcessStub();
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock(BACKGROUND_SHELL_TURN_EVENTS, {
+        tail: new Promise<never>(() => undefined),
+        onReturn: () => child.emit("exit", 0, null),
+      });
+    });
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      await session.run("start a background shell");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      await session.setThinkingOption(null);
+      await session.listCommands();
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "background_work", provider: "claude", items: [] }),
+      );
     } finally {
       await session.close();
     }

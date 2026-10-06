@@ -49,6 +49,7 @@ import {
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { expandTilde } from "../../../../utils/path.js";
+import { toBackgroundWorkInputs } from "./background-work.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-history.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
@@ -4103,11 +4104,13 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private failRunningRuntimeTasks(): void {
-    this.dispatchEvents(
-      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
+    this.dispatchEvents([
+      ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
       ),
-    );
+      // The SDK resets its background task set when the CLI process (re)starts.
+      { type: "background_work", provider: "claude", items: [] },
+    ]);
   }
 
   private startQueryPump(): void {
@@ -4800,6 +4803,18 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (message.subtype === "task_notification") {
       this.appendTaskNotificationEvents(message, events);
+      return;
+    }
+    if (message.subtype === "background_tasks_changed") {
+      this.logger.debug(
+        { tasks: message.tasks.map(({ task_id, task_type }) => ({ task_id, task_type })) },
+        "claude.background_tasks_changed",
+      );
+      events.push({
+        type: "background_work",
+        provider: "claude",
+        items: toBackgroundWorkInputs(message.tasks),
+      });
       return;
     }
     if (message.subtype === "task_progress") {
