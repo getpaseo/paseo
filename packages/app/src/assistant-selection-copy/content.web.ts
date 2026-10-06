@@ -24,6 +24,7 @@ const CHAT_SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
 const messageRowSelector = (messageId: string) => `[data-message-id="${CSS.escape(messageId)}"]`;
 const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
 const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
+const IMAGE_FRAME_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
 
 const turndown = new TurndownService({
   bulletListMarker: "-",
@@ -66,7 +67,7 @@ export function createAssistantSelectionClipboardContent(
     return null;
   }
 
-  const range = selection.getRangeAt(0);
+  const range = startAfterImageFrame(selection.getRangeAt(0));
   const parts = selectedMessageParts(range)?.filter((part) => selectsContent(part.range));
   if (!parts?.length) {
     return null;
@@ -91,6 +92,26 @@ export function createAssistantSelectionClipboardContent(
   }
   const content = createMarkdownClipboardContent(markdown);
   return { ...content, html: flattenClipboardListMarkup(content.html) };
+}
+
+/**
+ * A drag that starts in the gap below an image anchors at the start of the image's
+ * rendered internals, ahead of the hidden `img`, while only the text after it is
+ * highlighted. Pressing on the image itself opens it instead of starting a selection,
+ * so a selection that starts inside an image and ends past it starts after the image.
+ */
+function startAfterImageFrame(range: Range): Range {
+  const start =
+    range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement;
+  const frame = start?.closest(IMAGE_FRAME_SELECTOR);
+  if (!frame || frame.contains(range.endContainer)) {
+    return range;
+  }
+  const afterFrame = range.cloneRange();
+  afterFrame.setStartAfter(frame);
+  return afterFrame;
 }
 
 /**
