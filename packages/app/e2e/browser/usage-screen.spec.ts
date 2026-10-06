@@ -322,14 +322,14 @@ test("expired login refreshes to windows with visible pin toggles", async ({ pag
     await gotoAppShell(page);
     await openUsage(page);
     await expect(
-      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+      page.getByText("Claude: Login expired 1h ago. Run claude to refresh it.", { exact: true }),
     ).toBeVisible();
     await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
     await qaScreenshot(page, "usage-expired-login");
     await fixture.setReport(loginWindows);
     await refreshLoginUsage(page);
     await expect(
-      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+      page.getByText("Claude: Login expired 1h ago. Run claude to refresh it.", { exact: true }),
     ).toHaveCount(0);
     await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
     const row = page.getByRole("checkbox", { name: /^Pin Claude Weekly, / });
@@ -473,4 +473,65 @@ async function captureSettingsState(
 ) {
   await qaScreenshot(page, name);
   await testInfo.attach(name, { body: await page.screenshot(), contentType: "image/png" });
+}
+
+test("an account with all logins failing shows each harness and remedy, then only usage when one succeeds", async ({
+  page,
+}) => {
+  const fixture = await installLoginUsage([
+    { harness: "Codex", report: { status: "error", error: "Usage API returned 500. Try again." } },
+    {
+      harness: "OpenCode",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 401, refreshedBy: "opencode" },
+      },
+    },
+    {
+      harness: "Pi",
+      report: { status: "unavailable", problem: { kind: "no_quota", detail: "No active plan" } },
+    },
+    {
+      harness: "OMP",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 403, refreshedBy: "omp" },
+      },
+    },
+  ]);
+  try {
+    await gotoAppShell(page);
+    await openUsage(page);
+    await expectLoginErrors(page, [
+      "Codex: Usage API returned 500. Try again.",
+      "OpenCode: Login rejected (HTTP 401). Run opencode to refresh it.",
+      "Pi: No active plan",
+      "OMP: Login rejected (HTTP 403). Run omp to refresh it.",
+    ]);
+    await fixture.setReport([
+      {
+        harness: "Codex",
+        report: { status: "error", error: "Usage API returned 500. Try again." },
+      },
+      {
+        harness: "OpenCode",
+        report: { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] },
+      },
+    ]);
+    await refreshLoginUsage(page);
+    await expectLoginUsageOnly(page, "42%");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+async function expectLoginErrors(page: Page, lines: string[]) {
+  const card = page.getByTestId("usage-report-login-journey:account");
+  await expect(card.getByTestId("usage-login-error")).toHaveText(lines.join("\n"));
+}
+
+async function expectLoginUsageOnly(page: Page, percentage: string) {
+  const card = page.getByTestId("usage-report-login-journey:account");
+  await expect(card.getByText(percentage, { exact: true })).toBeVisible();
+  await expect(card.getByTestId("usage-login-error")).toHaveCount(0);
 }

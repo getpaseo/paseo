@@ -163,7 +163,7 @@ export const pluginSettings = {
       globalEnabled: "Plugins activés",
       globalDisabled: "Plugins désactivés",
     },
-    removeConfirmTitle: "Supprimer {{id}} ?",
+    removeConfirmTitle: "Supprimer {{id}} ?",
     removeConfirmMessage: "La configuration sera supprimée. Le dossier source ne sera pas effacé.",
     states: {
       offlineTitle: "L’hôte des plugins est hors ligne",

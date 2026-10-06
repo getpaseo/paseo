@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { UsageSourceRegistry } from "../../../packages/server/src/server/plugins/usage-sources/index.js";
+import { Usage as MuseUsage } from "../server/usage.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import os from "node:os";
@@ -221,9 +223,9 @@ test("text and reasoning stream, completion overwrites deltas, user echo retains
       { type: "text", text: "hello" },
     ],
   });
-  expect(h.events.filter((event) => event.type === "session.persistence").length).toBeGreaterThan(
-    1,
-  );
+  expect(h.events.findLast((event) => event.type === "session.persistence")).toMatchObject({
+    persistence: { version: 1, data: { model: "meta/muse-spark-1.3", thinkingOption: "high" } },
+  });
 });
 test("tool calls classify read, shell, and edit with fetched JSON patch converted to unified diff", async () => {
   const h = await harness("tools-edit");
@@ -327,23 +329,69 @@ test("interrupt awaits cancelled terminal and reconciles the tool", async () => 
     ),
   ).toBeGreaterThan(terminalIndex);
 });
+test("a fresh connection restores earlier messages from persisted session state", async () => {
+  const original = await harness();
+  const historyPath = path.join(original.root, "native-history.ndjson");
+  original.launch.env.MUSE_TEST_HISTORY = historyPath;
+  await original.open();
+  await original.prompt();
+  await original.wait((event) => event.type === "session.turn" && event.state === "completed");
+  const messages = [
+    ...new Map(
+      original.events
+        .filter((event) => event.type === "timeline.item")
+        .map((event) => event.item)
+        .filter((item) => item.type === "user_message" || item.type === "assistant_message")
+        .map((item) => [item.id, item] as const),
+    ).values(),
+  ];
+  expect(messages.map((item) => item.type)).toEqual(["user_message", "assistant_message"]);
+  const saved = original.events.findLast((event) => event.type === "session.persistence");
+  if (!saved) throw new Error("Expected session persistence");
+  const persistencePath = path.join(original.root, "persistence.json");
+  // Older daemon records carry a view cursor even though their timeline is not durable.
+  await writeFile(
+    persistencePath,
+    JSON.stringify({
+      ...saved.persistence,
+      data: { ...saved.persistence.data, cursor: saved.persistence.data.cursor ?? "v:old:7" },
+    }),
+  );
+  await original.connection.close();
+  const reopened = await harness("text-reasoning", { MUSE_TEST_HISTORY: historyPath });
+  expect(await reopened.open(JSON.parse(await readFile(persistencePath, "utf8")))).toMatchObject({
+    type: "session.ready",
+  });
+  const restored = reopened.events
+    .filter((event) => event.type === "timeline.item")
+    .map((event) => event.item)
+    .filter((item) => item.type === "user_message" || item.type === "assistant_message");
+  expect(restored.map((item) => ({ type: item.type, text: item.text }))).toEqual(
+    messages.map((item) => ({ type: item.type, text: item.text })),
+  );
+  const reopenedState = reopened.events.findLast((event) => event.type === "session.persistence");
+  expect(reopenedState?.persistence.data).not.toHaveProperty("cursor");
+  expect(reopened.events.filter((event) => event.type === "session.turn")).toEqual([]);
+  await reopened.prompt();
+  await reopened.wait((event) => event.type === "session.turn" && event.state === "completed");
+});
+
 for (const cursor of [undefined, "v:old:7"]) {
-  test(`resume ${cursor ? "with cursor emits suffix and ignores old terminal" : "without cursor replays inline history"}`, async () => {
-    const h = await harness(cursor ? "resume-with-cursor" : "resume-without-cursor");
+  test(`resume ${cursor ? "with a legacy persistence cursor" : "without a persistence cursor"} replays inline history`, async () => {
+    const h = await harness("resume-without-cursor");
     await h.open({
       version: 1,
       data: { sessionId: "saved-session", ...(cursor ? { cursor } : {}) },
     });
     expect(h.events.filter((event) => event.type === "session.turn")).toEqual([]);
     const history = h.events.filter((event) => event.type === "timeline.item");
-    if (!cursor)
-      expect(history).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            item: expect.objectContaining({ type: "assistant_message", text: "RESUME_MARKER_OK" }),
-          }),
-        ]),
-      );
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          item: expect.objectContaining({ type: "assistant_message", text: "RESUME_MARKER_OK" }),
+        }),
+      ]),
+    );
     await h.prompt();
     await h.wait((event) => event.type === "session.turn" && event.state === "completed");
     expect(
@@ -351,7 +399,10 @@ for (const cursor of [undefined, "v:old:7"]) {
     ).toHaveLength(1);
     expect(
       (await h.recorded()).find((frame) => frame.method === "session/resume").params,
-    ).toMatchObject({ sessionId: "saved-session", ...(cursor ? { cursor } : {}) });
+    ).toMatchObject({ sessionId: "saved-session" });
+    expect(
+      (await h.recorded()).find((frame) => frame.method === "session/resume").params,
+    ).not.toHaveProperty("cursor");
   });
 }
 test("steer sends ifBusy steer and joins the running turn", async () => {
@@ -862,7 +913,7 @@ test("fingerprint mismatch is logged but does not prevent opening", async () => 
 });
 for (const restoring of [false, true]) {
   test(`MCP servers map to MSP stdio and streamableHttp on ${restoring ? "resume" : "start"}`, async () => {
-    const h = await harness(restoring ? "resume-with-cursor" : "text-reasoning");
+    const h = await harness(restoring ? "resume-without-cursor" : "text-reasoning");
     await h.send({
       type: "session.open",
       sessionId: "paseo-session",
@@ -1366,7 +1417,7 @@ for (const usage of [
   test(`usage source presents ${"usage" in usage ? "subscription windows" : "real route absence"} from discovered accounts`, async () => {
     const h = await harness("catalog-controls", { MUSE_TEST_USAGE: JSON.stringify(usage) });
     await h.open();
-    const inputs = await h.usageSource.discover();
+    const inputs = await h.usageSource.discover({ kind: "global" });
     expect(inputs).toHaveLength(1);
     const account = inputs[0]!;
     expect(account).toEqual({
@@ -1517,7 +1568,7 @@ test("usage identity follows the resolved config directory across credential and
       META_BASE_URL: route!,
     });
     await h.open();
-    const inputs = await h.usageSource.discover();
+    const inputs = await h.usageSource.discover({ kind: "global" });
     expect(inputs).toHaveLength(1);
     identities.push(inputs[0]!.key);
   }
@@ -1527,7 +1578,7 @@ test("usage identity follows the resolved config directory across credential and
 
 test.each(["no sessions", "unrelated environment"])("Muse discovery is empty with %s", async () => {
   const { Usage } = await import("../server/usage.js");
-  expect(await new Usage().registration().discover()).toEqual([]);
+  expect(await new Usage().registration().discover({ kind: "global" })).toEqual([]);
 });
 
 test("Muse window identity follows the reported duration instead of assuming five hours", async () => {
@@ -1542,7 +1593,7 @@ test("Muse window identity follows the reported duration instead of assuming fiv
     }),
   });
   await h.open();
-  const [account] = await h.usageSource.discover();
+  const [account] = await h.usageSource.discover({ kind: "global" });
   expect(await h.usageSource.fetch(account!.input)).toMatchObject({
     status: "available",
     windows: [
@@ -1638,3 +1689,44 @@ async function cleanupStubbornHosts(h: Awaited<ReturnType<typeof harness>>) {
     }
   }
 }
+
+test("Muse reports belong only to the session's account and remain available globally", async () => {
+  const usage = new MuseUsage();
+  const homeEnv = { HOME: "/usage/home" };
+  const configEnv = { HOME: "/usage/home", XDG_CONFIG_HOME: "/usage/work" };
+  const accountIds = [homeEnv, configEnv].map((env, index) => {
+    const launch = { command: "muse", args: [], env };
+    usage.attach(`session-${index}`, launch, async () => ({
+      usage: {
+        observedAtMs: 1700000000000,
+        tier: "Pro",
+        window: { usedPercent: 11, resetsAtMs: 1700018000000, windowDurationMins: 120 },
+        weekly: { usedPercent: 22, resetsAtMs: 1700604800000 },
+      },
+    }));
+    return `muse:${usage.remember(launch).account}`;
+  });
+  const sessions = new Map([
+    ["claude", { provider: "claude", env: homeEnv, sessionKey: "claude" }],
+    ["codex", { provider: "codex", env: configEnv, sessionKey: "codex" }],
+    ["muse-home", { provider: "muse", env: homeEnv, sessionKey: "muse-home" }],
+    ["muse-work", { provider: "muse", env: configEnv, sessionKey: "muse-work" }],
+    ["muse-unknown", { provider: "muse", env: { HOME: "/usage/unknown" }, sessionKey: "unknown" }],
+  ]);
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => sessions.has(id),
+    usageSession: (id) => sessions.get(id) ?? null,
+  });
+  registry.register(usage.registration());
+
+  expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);
+  expect(await registry.listReports({ agentId: "claude" })).toEqual([]);
+  expect(await registry.listReports({ agentId: "codex" })).toEqual([]);
+  for (const [index, agentId] of ["muse-home", "muse-work"].entries()) {
+    const reports = await registry.listReports({ agentId });
+    expect(reports.map((report) => report.id)).toEqual([accountIds[index]]);
+    expect(reports[0]!.report.status).toBe("available");
+  }
+  expect(await registry.listReports({ agentId: "muse-unknown" })).toEqual([]);
+  expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);
+});

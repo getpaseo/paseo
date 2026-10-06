@@ -268,12 +268,18 @@ for (const theme of ["light", "dark"] as const) {
       await expect(card).toBeVisible();
     });
 
-    await test.step("Refresh replaces the card with the source's new report", async () => {
-      usage.answerNext([expiredLogin(onWorkLogin(claude!))]);
+    await test.step("Refresh keeps the card open and replaces it with the new report", async () => {
+      const refreshed = gate();
+      usage.answerNext({ stream: [refreshed.promise, expiredLogin(onWorkLogin(claude!))] });
       const card = contextWindowDetails(page);
       await refreshUsageCard(card, "Claude");
+      await expect(card.getByRole("button", { name: "Refresh Claude" })).toBeDisabled();
+      // Past the card's close grace, with the pointer still on the card.
+      await page.waitForTimeout(500);
+      await expect(card).toBeVisible();
+      refreshed.open();
       await expect(card.getByText(LOGIN_EXPIRED)).toBeVisible();
-      expect(usage.refreshedReports()).toEqual([["claude:work"]]);
+      expect(usage.refreshedAgents()).toEqual([agent.agentId]);
     });
 
     await test.step("after a resume under another login, only that login shows", async () => {
@@ -321,7 +327,7 @@ for (const theme of ["light", "dark"] as const) {
     await test.step("a host without usage reports shows only the context window", async () => {
       await expectOnlyContextWindowWithoutUsage(page, usage, hoverContextWindowMeter, shot);
       // One request per open that had usage; this one sends none.
-      expect(usage.agentRequests()).toHaveLength(5);
+      expect(usage.agentRequests()).toHaveLength(6);
     });
   });
 
@@ -351,7 +357,7 @@ for (const theme of ["light", "dark"] as const) {
       const sheet = contextWindowDetails(page);
       await refreshUsageCard(sheet, "Claude");
       await expect(sheet.getByText(LOGIN_EXPIRED)).toBeVisible();
-      expect(usage.refreshedReports()).toEqual([["claude:work"]]);
+      expect(usage.refreshedAgents()).toEqual([agent.agentId]);
       await shot("problem");
     });
 
@@ -365,7 +371,7 @@ for (const theme of ["light", "dark"] as const) {
 
     await test.step("a host without usage reports shows only the context window", async () => {
       await expectOnlyContextWindowWithoutUsage(page, usage, pressContextWindowMeter, shot);
-      expect(usage.agentRequests()).toHaveLength(2);
+      expect(usage.agentRequests()).toHaveLength(3);
     });
   });
 }
