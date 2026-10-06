@@ -1,37 +1,67 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";
-import { type ChangeEvent, type FormEvent, useCallback, useRef, useState } from "react";
-import { type BrowseQuery, browseHref, DEFAULT_WINDOW } from "./links";
+import { type ChangeEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type BrowseQuery, browseHref, DEFAULT_WINDOW, parseSearchTerm } from "./links";
 
 const ICON_CLASS = "h-3.5 w-3.5 text-extra-muted-foreground";
 
 /**
- * Search box for the plugin pages. Typing replaces the URL with the browse page for the term,
- * keeping `scope`'s category and sort. Without JavaScript the form submits the same URL.
+ * Search box for the plugin pages. Submitting opens the browse page for the term, keeping
+ * `scope`'s category and sort. With `live`, typing filters in place instead: the first character
+ * of a query pushes one history entry and later edits replace it, so Back leaves the search.
+ * Without JavaScript the form submits the same URL.
  */
-export function PluginSearch({ scope, className }: { scope: BrowseQuery; className?: string }) {
+export function PluginSearch({
+  scope,
+  live = false,
+  className,
+}: {
+  scope: BrowseQuery;
+  live?: boolean;
+  className?: string;
+}) {
   const navigate = useNavigate();
+  const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [term, setTerm] = useState(scope.q ?? "");
-  const search = useCallback(
-    (next: string) => {
-      setTerm(next);
-      void navigate({
-        href: browseHref({ ...scope, q: next.trim() ? next : undefined }),
-        replace: true,
-      });
+  // Back and Forward between results of the same page keep this box mounted; show their term.
+  useEffect(
+    () =>
+      router.history.subscribe(({ location, action }) => {
+        if (action.type === "PUSH" || action.type === "REPLACE") return;
+        setTerm(parseSearchTerm(new URLSearchParams(location.search).get("q")) ?? "");
+      }),
+    [router],
+  );
+  const show = useCallback(
+    (next: string, { replace }: { replace: boolean }) => {
+      void navigate({ href: browseHref({ ...scope, q: next.trim() ? next : undefined }), replace });
     },
     [navigate, scope],
   );
+  const edit = useCallback(
+    (next: string) => {
+      setTerm(next);
+      if (live) show(next, { replace: Boolean(term.trim()) });
+    },
+    [live, show, term],
+  );
   const handleChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => search(event.target.value),
-    [search],
+    (event: ChangeEvent<HTMLInputElement>) => edit(event.target.value),
+    [edit],
   );
   const handleClear = useCallback(() => {
-    search("");
+    edit("");
     input.current?.focus();
-  }, [search]);
-  const handleSubmit = useCallback((event: FormEvent) => event.preventDefault(), []);
+  }, [edit]);
+  const handleSubmit = useCallback(
+    (event: FormEvent) => {
+      event.preventDefault();
+      // Live results already show the term.
+      if (!live) show(term, { replace: false });
+    },
+    [live, show, term],
+  );
   return (
     <form
       role="search"

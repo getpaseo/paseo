@@ -1,7 +1,7 @@
 import type { CategorySlug } from "./categories";
 import type { InstallWindow } from "./installs";
 
-export const BUILD_URL = "/docs/plugins";
+export const DOCS_URL = "/docs/plugins";
 export const SUBMIT_URL =
   "https://github.com/getpaseo/plugins/issues/new?template=submit-plugin.yml";
 

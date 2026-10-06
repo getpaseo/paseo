@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/website",
-  "version": "0.11.0-beta.3",
+  "version": "0.11.0-beta.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -38,6 +38,7 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.1",
+    "parse5": "^7.3.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.3",
     "vite-tsconfig-paths": "^5.1.4",

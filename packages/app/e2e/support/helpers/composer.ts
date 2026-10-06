@@ -63,6 +63,12 @@ export async function submitMessage(page: Page, text: string): Promise<void> {
   await input.press("Enter");
 }
 
+/** The Send button works on compact screens, where Enter inserts a newline. */
+export async function submitMessageWithButton(page: Page, text: string): Promise<void> {
+  await fillComposerDraft(page, text);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+}
+
 export async function fillComposerDraft(page: Page, text: string): Promise<void> {
   await composerInput(page).fill(text);
 }

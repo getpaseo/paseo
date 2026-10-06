@@ -1,5 +1,6 @@
 import type { z } from "zod";
-import type { PublishedPluginSchema } from "@getpaseo/protocol/plugin-registry";
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
+import { pluginMediaKind, type PublishedPluginSchema } from "@getpaseo/protocol/plugin-registry";
 import { CATEGORIES, type Category, type CategorySlug } from "./categories";
 import type { InstallCounts, InstallWindow } from "./installs";
 export { CATEGORIES, type Category, type CategorySlug };
@@ -14,6 +15,10 @@ export interface Author {
 const DAY_MS = 24 * 60 * 60 * 1000;
 export function getCategory(slug: string): Category | null {
   return CATEGORIES.find((category) => category.slug === slug) ?? null;
+}
+/** The plugin's first HTTPS image, for cards and link previews; videos never stand in for one. */
+export function firstMediaImage(plugin: Plugin): string | undefined {
+  return plugin.media.find((url) => pluginOverviewUrl(url) && pluginMediaKind(url) === "image");
 }
 export function getPluginsInCategory(plugins: Plugin[], slug: string): Plugin[] {
   return plugins.filter((plugin) => plugin.categories.includes(slug));
@@ -72,9 +77,14 @@ export function searchPlugins(plugins: Plugin[], term: string): Plugin[] {
       .includes(needle),
   );
 }
-/** Newest submissions first; equal dates keep index order. */
+/** The featured IDs that name a listed plugin, in the registry's order, each once. */
+export function featuredPlugins(plugins: Plugin[], featured: string[]): Plugin[] {
+  const byId = new Map(plugins.map((plugin) => [plugin.id, plugin]));
+  return [...new Set(featured)].flatMap((id) => byId.get(id) ?? []);
+}
+/** Most recently listed first; equal dates keep index order. */
 export function newestFirst(plugins: Plugin[]): Plugin[] {
-  return [...plugins].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  return [...plugins].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
 }
 /** Most installs in the window first; equal counts keep index order. */
 export function mostInstalled(
@@ -85,9 +95,9 @@ export function mostInstalled(
   const count = (plugin: Plugin) => installs[plugin.id]?.[window] ?? 0;
   return [...plugins].sort((a, b) => count(b) - count(a));
 }
-/** How long ago the registry accepted the plugin, relative to the loader's clock. */
+/** How long ago the plugin was first listed, relative to the loader's clock. */
 export function addedAgo(plugin: Plugin, now: string): string {
-  const days = Math.floor((Date.parse(now) - Date.parse(plugin.submittedAt)) / DAY_MS);
+  const days = Math.floor((Date.parse(now) - Date.parse(plugin.publishedAt)) / DAY_MS);
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   if (days < 14) return `${days}d ago`;

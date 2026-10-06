@@ -662,6 +662,46 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("keeps custom context in separate tools while a turn continues", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("Explain the project");
+    omp.runtime().beginTurn();
+    for (const display of [true, false, true]) {
+      omp.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "project-context",
+          content: [{ type: "text", text: "Project instructions" }],
+          details: { project: "example" },
+          display,
+        },
+      });
+    }
+    const items = omp.timeline();
+    expect(items).toEqual(
+      [1, 2].map(() => ({
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: {
+          synthetic: true,
+          customType: "project-context",
+          details: { project: "example" },
+        },
+        error: null,
+      })),
+    );
+    expect(new Set(items.map((item) => item.type === "tool_call" && item.callId)).size).toBe(2);
+    expect(omp.completedTurnCount()).toBe(0);
+    omp.runtime().finishTurn();
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -705,11 +745,19 @@ describe("OMP agent client and session", () => {
         message: "Background job DocsSmokeTwo completed",
       },
     ]);
-    // Non-notice custom messages still fall through as assistant messages with
-    // their own id so the stream coalescer never glues them onto the open reply.
-    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
+    expect(
+      omp.timeline().filter((item) => item.type !== "notification" && item.type !== "user_message"),
+    ).toEqual([
       { type: "assistant_message", text: "done", messageId: "omp-assistant-1" },
-      { type: "assistant_message", text: "plain custom status text", messageId: "omp-custom-1" },
+      {
+        type: "tool_call",
+        callId: expect.stringMatching(/^omp-custom-/),
+        name: "custom-message",
+        status: "completed",
+        detail: { type: "plain_text", text: "plain custom status text" },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
   });
 
@@ -878,6 +926,24 @@ describe("OMP agent client and session", () => {
     await expect(omp.runPromptWithoutTurn("/model")).resolves.toMatchObject({ finalText: "" });
     expect(omp.completedTurnCount()).toBe(1);
   });
+
+  test.each(["result after ack", "result before ack"] as const)(
+    "fails a prompt OMP rejects before its agent runs (%s)",
+    async (order) => {
+      const omp = new OmpHarness();
+      await omp.start();
+
+      await expect(
+        omp.runPromptRejectedBeforeAgentRuns(
+          "Reply with ok.",
+          "No API key found for anthropic.",
+          order,
+        ),
+      ).rejects.toThrow("No API key found for anthropic.");
+      expect(omp.turnFailures()).toEqual(["No API key found for anthropic."]);
+      expect(omp.completedTurnCount()).toBe(0);
+    },
+  );
 
   test("completes a no-turn notify with one notification and no assistant text", async () => {
     const scheduler = new ManualNoTurnScheduler();
@@ -1168,6 +1234,25 @@ describe("OMP agent client and session", () => {
     await omp.startTurn("continue");
     expect(omp.runtimeLaunches()).toHaveLength(2);
     expect(omp.runtime().prompts).toEqual([{ message: "continue", imageCount: 0 }]);
+  });
+
+  test("ignores a prompt rejection a previous OMP process left for a reused request id", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "prompt_result",
+      id: "req_1",
+      agentInvoked: false,
+      status: "error",
+      error: { message: "No API key found for anthropic." },
+    });
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+
+    await omp.runPromptWithoutTurnOnNextRuntime("/session", "req_1");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.turnFailures()).toEqual(["OMP RPC process exited with code 1 and signal null"]);
+    expect(omp.completedTurnCount()).toBe(1);
   });
 
   test("reports an immediate relaunch failure without retrying in a loop", async () => {

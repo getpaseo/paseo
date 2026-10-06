@@ -1,10 +1,11 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { CodeBlock } from "~/components/code-block";
-import { DocsMarkdown } from "~/components/docs-markdown";
+import { PluginOverview, PluginContentLink } from "~/plugins/overview";
 import { SiteShell } from "~/components/site-shell";
 import { pageMeta } from "~/meta";
 import {
+  firstMediaImage,
   formatInstalls,
   getAuthor,
   getCategory,
@@ -17,6 +18,7 @@ import {
 } from "~/plugins";
 import { AuthorLink } from "~/plugins/author-link";
 import { categoryHref } from "~/plugins/links";
+import { MediaGallery } from "~/plugins/media-gallery";
 import { PluginsNotFound } from "~/plugins/not-found";
 import "~/styles.css";
 
@@ -34,7 +36,7 @@ export const Route = createFileRoute("/plugins/$owner_/$slug")({
       loaderData?.plugin ? `${loaderData.plugin.name} – Paseo plugin` : "Plugin not found – Paseo",
       loaderData?.plugin?.description ?? "Plugin not found.",
       `/plugins/${params.owner}/${params.slug}`,
-      loaderData?.plugin.screenshots[0],
+      loaderData?.plugin && firstMediaImage(loaderData.plugin),
     ),
   component: PluginPage,
   notFoundComponent: () => (
@@ -75,46 +77,22 @@ function PluginPage() {
           )}
           <span className="tabular-nums">{formatInstalls(installs)} installs</span>
           <span className="font-mono">{pluginVersion(plugin)}</span>
-          <a
-            href={plugin.repository.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={META_LINK_CLASS}
-          >
+          <PluginContentLink href={plugin.repository.url} className={META_LINK_CLASS}>
             Source
             <ExternalLink className="h-3 w-3" />
-          </a>
+          </PluginContentLink>
           {npm && (
-            <a href={npm} target="_blank" rel="noopener noreferrer" className={META_LINK_CLASS}>
+            <PluginContentLink href={npm} className={META_LINK_CLASS}>
               npm
               <ExternalLink className="h-3 w-3" />
-            </a>
+            </PluginContentLink>
           )}
         </div>
 
-        {plugin.screenshots.length > 0 && (
-          <div className="-mx-6 mt-10 flex gap-3 overflow-x-auto px-6 md:mx-0 md:px-0">
-            {plugin.screenshots.map((url, index) => (
-              <a
-                key={url}
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="aspect-video w-[85%] flex-shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] sm:w-[60%] md:w-[calc(50%-0.375rem)]"
-              >
-                <img
-                  src={url}
-                  alt={`${plugin.name} screenshot ${index + 1}`}
-                  loading="lazy"
-                  className="h-full w-full object-cover object-top"
-                />
-              </a>
-            ))}
-          </div>
-        )}
+        <MediaGallery name={plugin.name} media={plugin.media} />
 
         <div className="mt-10 border-t border-white/10 pt-10">
-          <DocsMarkdown>{readmeBody(plugin.readme)}</DocsMarkdown>
+          <PluginOverview>{readmeBody(plugin.readme)}</PluginOverview>
         </div>
       </div>
     </SiteShell>
