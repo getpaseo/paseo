@@ -301,6 +301,10 @@ export function buildACPClientCapabilities(
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
+// Archive and delete await close(). The ACP SDK does not reject a pending
+// request when the provider never answers, so these calls must be bounded
+// or the provider process is never terminated.
+const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -2476,13 +2480,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.connection && this.sessionId) {
       try {
         if (this.activeForegroundTurnId) {
-          await this.connection.cancel({ sessionId: this.sessionId });
+          await withTimeout(
+            this.connection.cancel({ sessionId: this.sessionId }),
+            ACP_CLOSE_REQUEST_TIMEOUT_MS,
+            `ACP cancel timed out after ${ACP_CLOSE_REQUEST_TIMEOUT_MS}ms`,
+          );
         }
       } catch {}
 
       try {
         if (this.agentCapabilities?.sessionCapabilities?.close) {
-          await this.connection.unstable_closeSession({ sessionId: this.sessionId });
+          await withTimeout(
+            this.connection.unstable_closeSession({ sessionId: this.sessionId }),
+            ACP_CLOSE_REQUEST_TIMEOUT_MS,
+            `ACP closeSession timed out after ${ACP_CLOSE_REQUEST_TIMEOUT_MS}ms`,
+          );
         }
       } catch (error) {
         this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
