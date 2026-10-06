@@ -20,8 +20,8 @@ export interface PendingForegroundRun {
   kind: "foreground";
   stagedEvents: AgentStreamEvent[];
   start: ForegroundRunStart;
-  startSettledPromise: Promise<void>;
-  resolveStartSettled: () => void;
+  turnStartedPromise: Promise<void>;
+  resolveTurnStarted: () => void;
   settled: boolean;
   settledPromise: Promise<void>;
   resolveSettled: () => void;
@@ -63,16 +63,21 @@ export class AgentRunState {
     start: Exclude<ForegroundRunStart, { status: "pending" }>,
   ): void {
     run.start = start;
-    run.resolveStartSettled();
+    if (start.status === "started") {
+      run.resolveTurnStarted();
+    }
   }
 
-  /** Resolves once the agent's foreground run has a turn id, failed to start, or ended. */
+  /**
+   * Resolves once the agent's foreground run has a turn id or has ended. A failed start
+   * resolves only once its run is cleared, so callers never see a failed run still tracked.
+   */
   async waitForForegroundStart(agentId: string): Promise<void> {
     const run = this.getPendingRun(agentId);
     if (run?.start.status !== "pending") {
       return;
     }
-    await Promise.race([run.startSettledPromise, run.settledPromise]);
+    await Promise.race([run.turnStartedPromise, run.settledPromise]);
   }
 
   hasPendingRun(agentId: string): boolean {
@@ -298,16 +303,16 @@ export class ForegroundTurnStream {
 }
 
 function createPendingForegroundRun(): PendingForegroundRun {
-  let resolveStartSettled!: () => void;
-  const startSettledPromise = new Promise<void>((resolvePromise) => {
-    resolveStartSettled = resolvePromise;
+  let resolveTurnStarted!: () => void;
+  const turnStartedPromise = new Promise<void>((resolvePromise) => {
+    resolveTurnStarted = resolvePromise;
   });
   return {
     ...createTrackedRunState(),
     kind: "foreground",
     start: { status: "pending" },
-    startSettledPromise,
-    resolveStartSettled,
+    turnStartedPromise,
+    resolveTurnStarted,
     stagedEvents: [],
   };
 }
