@@ -107,6 +107,16 @@ async function main(): Promise<void> {
         const removed = await context.paseo(["plugin", "remove", "relative-cli", "--json"]);
         assert.equal(removed.exitCode, 0, removed.stderr);
       }
+      // An absolute path belongs to the daemon's platform, which can differ from the CLI's.
+      const windowsSource = `C:\\${path.basename(context.workDir)}\\missing:sub`;
+      sources.length = 0;
+      const missing = await context.paseo(
+        ["plugin", "add", windowsSource, "--host", `127.0.0.1:${address.port}`, "--json"],
+        { cwd: caller },
+      );
+      assert.deepEqual(sources, [windowsSource]);
+      assert.equal(missing.exitCode, 1);
+      assert.match(missing.stderr, /Plugin directory does not exist/);
     } finally {
       for (const socket of proxy.clients) socket.close();
       await promisify(proxy.close.bind(proxy))();

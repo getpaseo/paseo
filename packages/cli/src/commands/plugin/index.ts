@@ -129,13 +129,16 @@ export async function runPluginInstallCommand(
     "Trusting plugin code: server code and preparation commands run unsandboxed on the daemon host; client code runs inside Paseo. Dependencies and future updates are part of the codebase you trust.\n",
   );
   const reference = parsePluginSourceReference(source);
-  const resolvedSource =
-    reference.kind === "directory"
-      ? formatPluginSourceReference(
-          path.resolve(expandUserPath(reference.source)),
-          reference.pluginPath,
-        )
-      : source;
+  let resolvedSource = source;
+  if (reference.kind === "directory") {
+    const directory = expandUserPath(reference.source);
+    // An absolute path can target a daemon on a different operating system.
+    const absoluteDirectory =
+      path.posix.isAbsolute(directory) || path.win32.isAbsolute(directory)
+        ? directory
+        : path.resolve(directory);
+    resolvedSource = formatPluginSourceReference(absoluteDirectory, reference.pluginPath);
+  }
   const sourceReference = formatPluginSourceReference(resolvedSource, options.path);
   const data = await withPluginSourceClient(options.daemonTarget, (client) =>
     client.installPluginSource({
