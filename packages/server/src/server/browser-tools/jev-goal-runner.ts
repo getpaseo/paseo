@@ -205,6 +205,11 @@ export class JevBrowserGoalRunner {
         status: result.status === "passed" ? "passed" : "failed",
         message: result.message,
       });
+      if (!input.browserId && !reporter && result.status === "passed") {
+        await this.execute(context, { command: "close_tab", args: { browserId } }).catch(
+          () => undefined,
+        );
+      }
       return result;
     } catch (error) {
       ownRun?.finish({
