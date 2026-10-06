@@ -411,7 +411,7 @@ account metadata is unavailable. Labels can name accounts without becoming their
 Return logins in preference order and set `harness` to the owning harness's display name, such as
 Codex, OpenCode, Pi, or OMP. The daemon treats inputs as opaque and never derives labels from them.
 
-The host-wide Usage screen groups logins with the same key into one account card and tries them
+The host-wide Usage modal groups logins with the same key into one account card and tries them
 concurrently, preferring the discovery order when selecting a result. If any login returns
 `available`, it shows usage with no errors. If all fail, it shows
 every login's error on a separate line with its harness label and its own remedy.

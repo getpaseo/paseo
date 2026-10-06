@@ -7,7 +7,11 @@ import {
   installUsageReportsFixture,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
-import { refreshAllUsage, showUsageAs } from "../support/helpers/usage-sidebar-item";
+import {
+  openUsageFromIcon,
+  refreshAllUsage,
+  showUsageAs,
+} from "../support/helpers/usage-sidebar-item";
 
 const ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
 
@@ -98,7 +102,8 @@ test.describe("usage settings", () => {
     // The shared percentages setting applies to the host section.
     await expect(page.getByTestId("usage-options-menu")).toBeVisible();
     const hostUsageUrl = page.url();
-    await page.goto("/usage");
+    await gotoAppShell(page);
+    await openUsageFromIcon(page);
     await showUsageAs(page, "remaining");
     await page.goto(hostUsageUrl);
     await expect(card.getByText("30% left")).toBeVisible();

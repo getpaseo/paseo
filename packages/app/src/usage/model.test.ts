@@ -6,7 +6,7 @@ import {
   replaceReport,
   resolveUsageRefresh,
   resolveUsageHostId,
-  resolveUsageScreenHostId,
+  resolveUsageModalHostId,
   resolveUsageView,
   settleReports,
   upsertReport,
@@ -117,35 +117,35 @@ describe("resolveUsageHostId", () => {
   });
 });
 
-describe("resolveUsageScreenHostId", () => {
+describe("resolveUsageModalHostId", () => {
   it("shows the picked host while it stays connected, even one that cannot report usage", () => {
-    expect(resolveUsageScreenHostId({ pickedServerId: "old", activeServerId: "b", hosts })).toBe(
+    expect(resolveUsageModalHostId({ pickedServerId: "old", activeServerId: "b", hosts })).toBe(
       "old",
     );
-    expect(
-      resolveUsageScreenHostId({ pickedServerId: "offline", activeServerId: "b", hosts }),
-    ).toBe("b");
+    expect(resolveUsageModalHostId({ pickedServerId: "offline", activeServerId: "b", hosts })).toBe(
+      "b",
+    );
   });
 
   it("otherwise shows the host the sidebar row reads", () => {
     for (const pickedServerId of [null, "a", "offline"]) {
       for (const activeServerId of ["b", null, "old", "offline"]) {
         const choice = { pickedServerId, activeServerId, hosts };
-        expect(resolveUsageScreenHostId(choice)).toBe(resolveUsageHostId(choice));
+        expect(resolveUsageModalHostId(choice)).toBe(resolveUsageHostId(choice));
       }
     }
   });
 
-  it("shows the first connected host when none reports usage, so the screen says to update it", () => {
+  it("shows the first connected host when none reports usage, so the modal says to update it", () => {
     expect(
-      resolveUsageScreenHostId({
+      resolveUsageModalHostId({
         pickedServerId: null,
         activeServerId: null,
         hosts: hosts.slice(0, 2),
       }),
     ).toBe("old");
     expect(
-      resolveUsageScreenHostId({ pickedServerId: null, activeServerId: null, hosts: [] }),
+      resolveUsageModalHostId({ pickedServerId: null, activeServerId: null, hosts: [] }),
     ).toBeNull();
   });
 });
