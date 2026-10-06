@@ -109,7 +109,7 @@ function getSherpaOnnxModelPaths(
   };
 }
 
-// The archive is removed only after its model is in place, so a model whose archive is
+// The archive is removed only as its model moves into place, so a model whose archive is
 // still in .downloads did not finish installing and may hold truncated files.
 export async function isSherpaOnnxModelInstalled(
   modelsDir: string,
