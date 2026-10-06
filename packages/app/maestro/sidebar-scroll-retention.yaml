@@ -1,0 +1,53 @@
+appId: sh.paseo.debug
+---
+# Start in a workspace with the sidebar closed. Both workspace IDs come from
+# the connected host: TOP_WORKSPACE is near the top; SCROLLED_WORKSPACE starts
+# below the viewport. The list must remain unchanged throughout the flow.
+- tapOn:
+    id: menu-button
+- scrollUntilVisible:
+    element:
+      id: sidebar-workspace-row-${TOP_WORKSPACE}
+    direction: UP
+    timeout: 60000
+- assertNotVisible:
+    id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+- scrollUntilVisible:
+    element:
+      id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+    direction: DOWN
+    timeout: 60000
+- waitForAnimationToEnd
+- assertVisible:
+    id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+- assertNotVisible:
+    id: sidebar-workspace-row-${TOP_WORKSPACE}
+- tapOn:
+    id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+- waitForAnimationToEnd
+- assertNotVisible:
+    id: sidebar-project-workspace-list-scroll
+- swipe:
+    start: "5%,50%"
+    end: "90%,50%"
+    duration: 300
+- waitForAnimationToEnd
+- assertVisible:
+    id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+- assertNotVisible:
+    id: sidebar-workspace-row-${TOP_WORKSPACE}
+
+# Selecting the current workspace removes workspace switching as a cause.
+# Reopening by button removes horizontal movement as a cause.
+- tapOn:
+    id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+- waitForAnimationToEnd
+- tapOn:
+    id: menu-button
+- waitForAnimationToEnd
+- assertVisible:
+    id: sidebar-workspace-row-${SCROLLED_WORKSPACE}
+- assertNotVisible:
+    id: sidebar-workspace-row-${TOP_WORKSPACE}
+- tapOn:
+    id: sidebar-close

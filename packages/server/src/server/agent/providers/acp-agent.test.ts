@@ -1,8 +1,10 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -822,6 +824,46 @@ describe("mapACPUsage", () => {
       outputTokens: 7,
       cachedInputTokens: 5,
     });
+  });
+});
+
+describe("ACP context-window usage", () => {
+  async function emitUsageUpdate(update: {
+    used: number;
+    size: number;
+  }): Promise<{ events: unknown[] }> {
+    const session = createSessionWithConfig({ provider: "dsh" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: unknown[] = [];
+    session.subscribe((event) => {
+      if (event.type === "usage_updated") events.push(event);
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: update.used, size: update.size },
+    });
+    return { events };
+  }
+
+  test("forwards usage_update as context-window usage state", async () => {
+    const { events } = await emitUsageUpdate({ used: 13_759, size: 1_000_000 });
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "dsh",
+        usage: { contextWindowMaxTokens: 1_000_000, contextWindowUsedTokens: 13_759 },
+      },
+    ]);
+  });
+
+  test("emits nothing when size and used cannot both drive a meter", async () => {
+    await expect(
+      emitUsageUpdate({ used: -1, size: 0 }).then((result) => result.events),
+    ).resolves.toEqual([]);
+    await expect(
+      emitUsageUpdate({ used: 13_759, size: 0 }).then((result) => result.events),
+    ).resolves.toEqual([]);
   });
 });
 
@@ -3396,6 +3438,8 @@ interface ACPCloseInternals {
   child: ChildProcess | null;
   connection: unknown;
   sessionId: string | null;
+  activeForegroundTurnId: string | null;
+  agentCapabilities: { sessionCapabilities?: { close?: unknown } } | null;
 }
 
 async function startTerminal(
@@ -3460,6 +3504,38 @@ describe("ACPAgentSession close() tree-kill", () => {
 
     expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() terminates the provider when cancel and closeSession never settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminator = new FakeTerminator();
+      const session = createSession({ terminateProcess: terminator.terminate });
+      const child = createTerminalChildStub();
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      const unstableCloseSession = vi.fn(() => new Promise<void>(() => undefined));
+      const internals = asInternals<ACPCloseInternals>(session);
+      internals.child = child;
+      internals.sessionId = "session-1";
+      internals.activeForegroundTurnId = "turn-1";
+      internals.agentCapabilities = { sessionCapabilities: { close: {} } };
+      internals.connection = { cancel, unstable_closeSession: unstableCloseSession };
+
+      let settled = false;
+      const closing = (async () => {
+        await session.close();
+        settled = true;
+      })();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(settled).toBe(true);
+      expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(unstableCloseSession).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(terminator.terminated).toContain(child);
+      await closing;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("close() terminates running terminal child processes", async () => {
@@ -4179,4 +4255,118 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       mcpServers: [],
     });
   });
+});
+
+const SILENT_CLOSE_ACP_AGENT = `
+import { readFileSync, writeFileSync } from "node:fs";
+import { Readable, Writable } from "node:stream";
+const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
+writeFileSync(process.env.ACP_PID_FILE, String(process.pid));
+new AgentSideConnection(
+  () => ({
+    async initialize() {
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { sessionCapabilities: { close: {} } },
+      };
+    },
+    async newSession() {
+      return { sessionId: "silent-close-session" };
+    },
+    async authenticate() {},
+    async cancel() {},
+    unstable_closeSession() {
+      return new Promise(() => {});
+    },
+  }),
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
+`;
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface SilentCloseProvider {
+  session: ACPAgentSession;
+  readPid(): Promise<number>;
+  dispose(): Promise<void>;
+}
+
+async function startSilentCloseProvider(): Promise<SilentCloseProvider> {
+  const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-silent-close-"));
+  const agentScript = path.join(dir, "agent.mjs");
+  const pidFile = path.join(dir, "agent.pid");
+  await writeFile(agentScript, SILENT_CLOSE_ACP_AGENT);
+  const session = new ACPAgentSession(
+    { provider: "silent-close-acp", cwd: dir },
+    {
+      provider: "silent-close-acp",
+      logger: createTestLogger(),
+      defaultCommand: [process.execPath, agentScript],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      launchEnv: {
+        ACP_SDK_URL: pathToFileURL(
+          createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+        ).href,
+        ACP_PID_FILE: pidFile,
+      },
+    },
+  );
+  const readPid = async () => Number(await readFile(pidFile, "utf8"));
+  return {
+    session,
+    readPid,
+    async dispose() {
+      const pid = await readPid().catch(() => null);
+      if (pid !== null && isProcessAlive(pid)) {
+        process.kill(pid, "SIGKILL");
+      }
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("ACPAgentSession close() with an unresponsive provider", () => {
+  let provider: SilentCloseProvider | null = null;
+
+  afterEach(async () => {
+    await provider?.dispose();
+    provider = null;
+  });
+
+  test("terminates a provider that never answers session/close", async () => {
+    provider = await startSilentCloseProvider();
+    await provider.session.initializeNewSession();
+    const pid = await provider.readPid();
+    expect(isProcessAlive(pid)).toBe(true);
+
+    expect(await settlesWithin(provider.session.close(), 8_000)).toBe(true);
+    expect(isProcessAlive(pid)).toBe(false);
+  }, 15_000);
 });

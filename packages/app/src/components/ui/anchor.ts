@@ -1,10 +1,8 @@
 import type { View } from "react-native";
 
 /**
- * Where a floating menu surface goes relative to the thing that opened it.
- *
- * This was two byte-identical copies, one in `dropdown-menu.tsx` and one in `context-menu.tsx`.
- * Submenus need a third caller, so it lives here now and the menus import it.
+ * Where a floating surface goes relative to the thing that opened it. Menus and hover cards
+ * place themselves with it.
  */
 
 export type Placement = "top" | "bottom" | "left" | "right";
@@ -38,14 +36,15 @@ export function measureElement(element: View): Promise<Rect> {
  * there is more room above. Both conditions matter: flipping into a side that is equally
  * cramped just moves the clipping, so a surface taller than the whole viewport stays put.
  *
- * Only the vertical placements flip. A left/right submenu that doesn't fit is handled by the
- * caller choosing its side up front, because flipping it mid-open would move the surface out
- * from under the pointer that is travelling toward it.
+ * Horizontal flipping is opt-in for hover cards. Submenus choose their direction up front so
+ * they do not move out from under the pointer travelling toward them.
  */
 function flipPlacement(input: {
   placement: Placement;
   triggerRect: Rect;
   contentHeight: number;
+  contentWidth: number;
+  flipHorizontal: boolean;
   displayArea: Rect;
 }): Placement {
   const { placement, triggerRect, contentHeight, displayArea } = input;
@@ -57,6 +56,14 @@ function flipPlacement(input: {
   }
   if (placement === "top" && spaceTop < contentHeight && spaceBottom > spaceTop) {
     return "bottom";
+  }
+  if (input.flipHorizontal) {
+    const spaceLeft = triggerRect.x - displayArea.x;
+    const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
+    if (placement === "right" && spaceRight < input.contentWidth && spaceLeft > spaceRight)
+      return "left";
+    if (placement === "left" && spaceLeft < input.contentWidth && spaceRight > spaceLeft)
+      return "right";
   }
   return placement;
 }
@@ -120,6 +127,7 @@ export function computePosition({
   placement,
   alignment,
   offset,
+  flipHorizontal = false,
 }: {
   triggerRect: Rect;
   contentSize: Size;
@@ -127,11 +135,15 @@ export function computePosition({
   placement: Placement;
   alignment: Alignment;
   offset: number;
+  /** Hover cards can choose either side; submenu direction is owned by the menu. */
+  flipHorizontal?: boolean;
 }): { x: number; y: number; actualPlacement: Placement } {
   const actualPlacement = flipPlacement({
     placement,
     triggerRect,
     contentHeight: contentSize.height,
+    contentWidth: contentSize.width,
+    flipHorizontal,
     displayArea,
   });
   const anchored = anchorToPlacement({

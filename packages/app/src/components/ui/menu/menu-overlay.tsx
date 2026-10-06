@@ -38,7 +38,7 @@ import {
   type Placement,
   type Rect,
   type Size,
-} from "./menu-anchor";
+} from "../anchor";
 
 const SCROLL_CONTENT_STYLE = { flexGrow: 1 } as const;
 const CONTENT_ENTERING_DURATION_MS = 150;

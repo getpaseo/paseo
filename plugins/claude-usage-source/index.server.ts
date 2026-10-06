@@ -8,7 +8,7 @@ export default function contribute(server: PluginServerContext) {
     label: "Claude",
     icon: "icon.svg",
     input: inputSchema,
-    discover: () => discover(),
+    discover: (scope) => discover(scope),
     fetch: fetchUsage,
   });
   return () => {};

@@ -15,8 +15,10 @@ fixed-target labels and icons from that registration, filter by host, and never 
 panel type for another. Tab moves reject unsupported destinations, and placement resolves only to
 a compatible pane.
 
-Files and Changes are the Explorer defaults and its singleton navigation views. Other compatible
-tabs, including agents, terminals, files, and diffs, can move between Explorer and main panes.
+Files and Changes are the Explorer defaults. Their panel manifests mark them as singletons,
+so a pane’s + menu omits each while that pane already contains it. Closing one makes its menu
+item available again. Other compatible tabs, including agents, terminals, files, and diffs,
+can move between Explorer and main panes.
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
 retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
 
@@ -41,11 +43,13 @@ The persisted layout still contains the Explorer pane so tabs survive reloads. T
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-The tab rail has no inline add or close controls. Its context menu opens a New Tab launcher and
-toggles Files, Changes, and Explorer-compatible workspace-scoped plugin panels from the shared
-launch catalog. Individual tab menus close instances or move compatible tabs to main. Explorer tabs
-can be reordered, but the dock cannot be split. Selecting an Explorer tab does not change workspace
-focus.
+Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
+hide their close buttons through the panel manifest; close them from the tab context menu.
+Other tabs reveal the close control on hover. The + menu opens compatible panels in the dock and
+omits Agent and terminal profiles. Agents and terminals can still be dragged into Explorer.
+Bulk-close actions apply only to the dock's tabs. Explorer tabs can be reordered and dragged
+between compatible panes, but the dock cannot be split or maximized. Selecting an Explorer tab
+does not change workspace focus.
 
 Cmd+E shows or hides Explorer without changing its selected view. Compact layouts use the combined
 full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens. Compact Changes has no tree rail; its overview is the Jump to file action (`packages/app/src/git/jump-to-file/`), a sheet over the same changed-files tree the desktop rail renders.

@@ -280,6 +280,7 @@ test.skipIf(process.platform !== "linux")(
         })
         .toEqual([
           "agent.archived",
+          "agent.closed",
           "agent.created",
           "agent.permission_requested",
           "agent.permission_resolved",

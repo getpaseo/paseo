@@ -26,13 +26,18 @@ import { PluginRuntime } from "./runtime.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
-import { UsageSourceRegistry } from "./usage-sources/index.js";
+import {
+  type AgentUsageLookup,
+  type ListUsageReportsOptions,
+  UsageSourceRegistry,
+} from "./usage-sources/index.js";
 import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
   emit?: PluginLifecycle["emit"];
+  drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
@@ -55,6 +60,7 @@ interface PluginRuntimePort {
 }
 
 interface PluginServiceDependencies {
+  usageAgents?: AgentUsageLookup;
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
@@ -95,7 +101,12 @@ export class PluginService {
     private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
-    this.usageSources = new UsageSourceRegistry(Date.now, 300_000, this.logger);
+    this.usageSources = new UsageSourceRegistry(
+      Date.now,
+      300_000,
+      this.logger,
+      dependencies.usageAgents,
+    );
     this.runtime =
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {
@@ -118,6 +129,10 @@ export class PluginService {
   readonly emit: PluginLifecycle["emit"] = (name, event) => {
     this.runtime.emit?.(name, event);
   };
+
+  async drainEvents(): Promise<void> {
+    await this.runtime.drainEvents?.();
+  }
 
   readonly before: PluginLifecycle["before"] = async (name, request) => {
     if (this.runtime.before) {
@@ -144,7 +159,7 @@ export class PluginService {
     return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  listUsageReports(options?: { forceRefresh?: boolean; reportIds?: string[] }) {
+  listUsageReports(options?: ListUsageReportsOptions) {
     return this.usageSources.listReports(options);
   }
 
@@ -568,8 +583,8 @@ export class PluginService {
           id: source.id,
           label: source.label,
           icon: source.icon,
-          discover: async () => {
-            const result = await this.runtime.discoverUsage(pluginId, source.id);
+          discover: async (scope) => {
+            const result = await this.runtime.discoverUsage(pluginId, source.id, scope);
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;

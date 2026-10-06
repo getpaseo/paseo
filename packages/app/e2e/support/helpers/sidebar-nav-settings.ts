@@ -197,16 +197,27 @@ export async function moveFooterItemUp(page: Page, key: string): Promise<void> {
     .click();
 }
 
+function footerItemSwitch(page: Page, key: string): Locator {
+  return page.getByTestId("sidebar-nav-section-footer").getByTestId(`sidebar-nav-toggle-${key}`);
+}
+
 export async function setFooterItemVisible(
   page: Page,
   key: string,
   visible: boolean,
 ): Promise<void> {
-  const toggle = page
-    .getByTestId("sidebar-nav-section-footer")
-    .getByTestId(`sidebar-nav-toggle-${key}`);
+  const toggle = footerItemSwitch(page, key);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", String(visible));
+}
+
+/** Whether Settings > Sidebar shows a footer item as on. */
+export async function expectFooterItemSetting(
+  page: Page,
+  key: string,
+  visible: boolean,
+): Promise<void> {
+  await expect(footerItemSwitch(page, key)).toHaveAttribute("aria-checked", String(visible));
 }
 
 export async function expectFooterOrder(page: Page, keys: string[]): Promise<void> {

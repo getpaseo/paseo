@@ -1,3 +1,4 @@
+import { UsageSourceRegistry } from "../../../packages/server/src/server/plugins/usage-sources/index.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -217,7 +218,10 @@ test("discovers a Pi OAuth login independently of the CLI login", async () => {
         "openai-codex": { type: "oauth", access: "fixture-pi", accountId: "pi-account" },
       }),
     );
-    const inputs = await discover({ home: directory, env: {}, platform: "linux" });
+    const inputs = await discover(
+      { kind: "global" },
+      { home: directory, env: {}, platform: "linux" },
+    );
     expect(inputs.map((account) => account.input)).toContainEqual({
       route: { store: "pi", path: join(directory, ".pi", "agent", "auth.json") },
     });
@@ -227,16 +231,19 @@ test("discovers a Pi OAuth login independently of the CLI login", async () => {
 });
 
 async function accountFor(input: CodexUsageInput) {
-  const accounts = await discover({
-    home: fixtureHome,
-    env: {
-      CODEX_HOME:
-        input.route.store === "codex"
-          ? (await import("node:path")).dirname(input.route.path)
-          : fixtureHome,
+  const accounts = await discover(
+    { kind: "global" },
+    {
+      home: fixtureHome,
+      env: {
+        CODEX_HOME:
+          input.route.store === "codex"
+            ? (await import("node:path")).dirname(input.route.path)
+            : fixtureHome,
+      },
+      platform: "linux",
     },
-    platform: "linux",
-  });
+  );
   const account = accounts.find(
     (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
   );
@@ -250,7 +257,7 @@ test.each(["empty home", "unrelated files"])(
     const home = await mkdtemp(join(tmpdir(), "codex-no-login-"));
     try {
       if (scenario === "unrelated files") await writeFile(join(home, "unrelated.json"), "{}");
-      expect(await discover({ home, env: {}, platform: "linux" })).toEqual([]);
+      expect(await discover({ kind: "global" }, { home, env: {}, platform: "linux" })).toEqual([]);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -378,4 +385,83 @@ test("unknown lengths and code review never get a duration from their slot", asy
       { id: "code_review:five_hour", label: "Code review · 5-hour", shortLabel: "Code review 5h" },
     ],
   });
+});
+
+test("session discovery isolates CODEX_HOME and excludes foreign routes", async () => {
+  const home = await mkdtemp(join(tmpdir(), "codex-session-scope-"));
+  try {
+    await writeFile(
+      join(home, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "session-token", account_id: "session-account" } }),
+    );
+    const scope = {
+      kind: "session" as const,
+      provider: "codex",
+      env: { HOME: home, CODEX_HOME: home },
+    };
+    const accounts = await discover(scope, { home: "/unused-default-home", env: {} });
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.input).toEqual(authInput(home));
+    expect(
+      await discover({ ...scope, env: { ...scope.env, OPENAI_BASE_URL: "https://other.test" } }),
+    ).toEqual([]);
+    expect(await discover({ ...scope, provider: "claude" })).toEqual([]);
+    expect(
+      await discover({ ...scope, env: { HOME: home, CODEX_HOME: join(home, "missing") } }),
+    ).toEqual([]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#6155: real Codex and OpenCode stores share an account but keep agent failures separate", async () => {
+  await writeAuth("fixture-codex", "same-account");
+  const data = join(fixtureHome, "data");
+  await mkdir(join(data, "opencode"), { recursive: true });
+  await writeFile(
+    join(data, "opencode", "auth.json"),
+    JSON.stringify({
+      openai: { type: "oauth", access: "fixture-opencode", accountId: "same-account", expires: 0 },
+    }),
+  );
+  const env = { HOME: fixtureHome, CODEX_HOME: fixtureHome, XDG_DATA_HOME: data };
+  const lookup = { home: fixtureHome, env, platform: "linux" as const, now: () => 1_000 };
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => id === "agent",
+    usageSession: () => ({ provider: "codex", env, sessionKey: "launch" }),
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: (scope) => discover(scope, lookup),
+    fetch: (input) =>
+      fetchUsage(inputSchema.parse(input), async () => new Response(null, { status: 401 }), lookup),
+  });
+  const [host] = await registry.listReports();
+  expect(host?.loginErrors).toEqual([
+    {
+      harness: "Codex",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
+      },
+    },
+    {
+      harness: "OpenCode",
+      report: {
+        status: "unavailable",
+        problem: {
+          kind: "expired",
+          expiresAt: "1970-01-01T00:00:00.000Z",
+          refreshedBy: "opencode",
+        },
+      },
+    },
+  ]);
+  const [agent] = await registry.listReports({ agentId: "agent" });
+  expect(agent?.report).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
+  });
+  expect(agent?.loginErrors).toEqual([host!.loginErrors![0]]);
 });

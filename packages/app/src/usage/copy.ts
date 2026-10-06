@@ -25,6 +25,7 @@ export const usageCopy = {
   empty: "No usage data",
   noHosts: "No connected hosts",
   errorTitle: "Unable to load usage",
+  agentError: (reason: string) => `Unable to load usage: ${reason}`,
   hostUnavailable: (host: string) => `Connect to ${host} to see usage`,
   hostUpgradeRequired: (host: string) => `Update ${host} to see usage`,
   clientUnavailable: "Host connection is not ready",
