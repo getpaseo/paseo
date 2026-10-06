@@ -18,13 +18,13 @@ describe("AgentBackgroundWorkStore", () => {
         "agent-a",
         [
           { id: "bash-1", kind: "shell", description: "sleep 20" },
-          { id: "mon-1", kind: "monitor", description: null },
+          { id: "task-1", kind: "other", description: null },
         ],
         T1,
       ),
     ).toEqual([
       { id: "bash-1", kind: "shell", description: "sleep 20", startedAt: T0 },
-      { id: "mon-1", kind: "monitor", description: null, startedAt: T1 },
+      { id: "task-1", kind: "other", description: null, startedAt: T1 },
     ]);
   });
 
@@ -62,6 +62,15 @@ describe("AgentBackgroundWorkStore", () => {
     expect(store.clear("agent-a")).toBeNull();
     expect(store.list("agent-a")).toEqual([]);
     expect(store.list("agent-b")).toHaveLength(1);
+  });
+
+  test("keeps only the wire fields of each input", () => {
+    const store = new AgentBackgroundWorkStore();
+    const input = { id: "bash-1", kind: "shell", description: null, pid: 4242 };
+
+    expect(store.apply("agent-a", [input], T0)).toEqual([
+      { id: "bash-1", kind: "shell", description: null, startedAt: T0 },
+    ]);
   });
 
   test("list returns a copy", () => {

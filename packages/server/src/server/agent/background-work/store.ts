@@ -1,6 +1,6 @@
 export interface AgentBackgroundWorkInput {
   id: string;
-  /** Open string: "shell" | "monitor" | "other" today. */
+  /** Open string: "shell" or "other" today (Claude Monitor watches report as "shell"). */
   kind: string;
   description: string | null;
 }
@@ -29,7 +29,12 @@ export class AgentBackgroundWorkStore {
     for (const input of inputs) {
       if (seen.has(input.id)) continue;
       seen.add(input.id);
-      next.push({ ...input, startedAt: startedAtById.get(input.id) ?? timestamp });
+      next.push({
+        id: input.id,
+        kind: input.kind,
+        description: input.description,
+        startedAt: startedAtById.get(input.id) ?? timestamp,
+      });
     }
     if (sameItems(previous, next)) return null;
     if (next.length === 0) this.items.delete(agentId);

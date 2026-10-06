@@ -4,7 +4,8 @@ import { CLAUDE_SUBAGENT_TASK_TYPE, CLAUDE_WORKFLOW_TASK_TYPE } from "./subagent
 export interface ClaudeBackgroundTask {
   task_id: string;
   task_type: string;
-  description: string;
+  /** The user's `claude` binary can differ from the SDK typings, so this is read defensively. */
+  description?: unknown;
 }
 
 /** Subagents and workflows already live in the subagents track. */
@@ -19,12 +20,16 @@ export function toBackgroundWorkInputs(
     .map((task) => ({
       id: task.task_id,
       kind: toKind(task.task_type),
-      description: task.description.trim() || null,
+      description: readDescription(task.description),
     }));
 }
 
+/** Claude Monitor watches report as `local_bash`, so they map to "shell" too. */
 function toKind(taskType: string): string {
   if (taskType === "local_bash") return "shell";
-  if (/monitor/i.test(taskType)) return "monitor";
   return "other";
+}
+
+function readDescription(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
