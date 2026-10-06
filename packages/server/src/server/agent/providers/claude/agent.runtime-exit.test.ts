@@ -382,6 +382,61 @@ describe("Claude runtime exit", () => {
     }
   });
 
+  test("ignores background work a retired query reports after its restart", async () => {
+    let capturedOptions: Options | undefined;
+    let deliverLateEvent: ((event: unknown) => void) | undefined;
+    let retiredQuery: Query | undefined;
+    const child = createChildProcessStub();
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      if (retiredQuery) {
+        return createQueryMock([], { tail: new Promise<never>(() => undefined) });
+      }
+      retiredQuery = createQueryMock(BACKGROUND_SHELL_TURN_EVENTS, {
+        tail: new Promise<unknown>((resolve) => {
+          deliverLateEvent = resolve;
+        }),
+        onReturn: () => child.emit("exit", 0, null),
+      });
+      return retiredQuery;
+    });
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      await session.run("start a background shell");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      await session.setThinkingOption(null);
+      await session.listCommands();
+      expect(queryFactory).toHaveBeenCalledTimes(2);
+
+      // The retired query still had this queued when the restart emptied the list.
+      deliverLateEvent?.(BACKGROUND_SHELL_TURN_EVENTS[1]);
+      // One next() per scripted event and one for the late event; the pump stops
+      // reading a query it no longer owns instead of routing that event.
+      await vi.waitFor(() =>
+        expect(retiredQuery?.next).toHaveBeenCalledTimes(BACKGROUND_SHELL_TURN_EVENTS.length + 1),
+      );
+      // Let a routed late event reach subscribers before checking the list.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const backgroundWork = events.filter((event) => event.type === "background_work");
+      expect(backgroundWork.at(-1)).toEqual(
+        expect.objectContaining({ type: "background_work", provider: "claude", items: [] }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   test("tree-kills the retired process when the resumed conversation is gone", async () => {
     let capturedOptions: Options | undefined;
     let deliverMissingConversation: ((event: unknown) => void) | undefined;
