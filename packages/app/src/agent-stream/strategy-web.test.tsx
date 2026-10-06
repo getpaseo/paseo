@@ -56,6 +56,8 @@ function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
 }
 
 function MeasuredTestRow({ item }: { item: StreamItem }) {
+  const [loaded, setLoaded] = React.useState(false);
+  const load = React.useCallback(() => setLoaded(true), []);
   const height = item.kind === "user_message" && item.text === "grown" ? 120 : 24;
   const measure = React.useCallback(
     (node: HTMLDivElement | null) => {
@@ -67,7 +69,14 @@ function MeasuredTestRow({ item }: { item: StreamItem }) {
     },
     [height],
   );
-  return <div ref={measure}>{item.id}</div>;
+  return (
+    <div ref={measure}>
+      <button type="button" onClick={load}>
+        {loaded ? "Loaded" : "Load"}
+      </button>
+      {item.id}
+    </div>
+  );
 }
 
 describe("createWebStreamStrategy", () => {
@@ -204,6 +213,8 @@ describe("createWebStreamStrategy", () => {
     };
     act(() => root?.render(strategy.render(input)));
     const row = container.querySelector('[data-history-row-id="message-0"]')!;
+    act(() => row.querySelector("button")!.click());
+    expect(row.querySelector("button")!.textContent).toBe("Loaded");
     const viewport = container.querySelector('[data-testid="agent-chat-scroll"]')!;
     Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
     act(() =>
@@ -217,6 +228,7 @@ describe("createWebStreamStrategy", () => {
     );
     expect(container.querySelector('[data-history-row-id="message-0"]')).toBe(row);
     expect(row.isConnected).toBe(true);
+    expect(row.querySelector("button")!.textContent).toBe("Loaded");
     act(() =>
       root?.render(
         strategy.render({
@@ -233,6 +245,7 @@ describe("createWebStreamStrategy", () => {
     expect(
       (container.querySelector('[data-history-row-id="message-1"]') as HTMLElement).style.transform,
     ).toBe("translateY(120px)");
+    expect(row.querySelector("button")!.textContent).toBe("Loaded");
   });
 
   it("keeps the timeline width stable with an overlay scrollbar", () => {
