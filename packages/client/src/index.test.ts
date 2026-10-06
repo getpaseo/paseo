@@ -1990,6 +1990,35 @@ test("background work subscriptions keep an update that overtakes their list", a
   await client.close();
 });
 
+test("background work subscriptions report a failed list to onError", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items), {
+    onError: (error) => errors.push(error),
+  });
+  acknowledgeObservation(ws, "background-work-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.background_work.list.request",
+    }),
+  );
+  const listRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: { requestId: listRequest.requestId, agentId: "agent-a", items: [], error: "boom" },
+    }),
+  );
+
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toBeInstanceOf(Error);
+  expect((errors[0] as Error).message).toContain("boom");
+  expect(received).toEqual([]);
+  await client.close();
+});
+
 test("background work asks for a host update when the daemon lacks it", async () => {
   const { client } = await connectClient({ ownedSubscriptions: true });
   const handle = client.agents.ref("agent-a");

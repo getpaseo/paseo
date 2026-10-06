@@ -354,8 +354,20 @@ export interface PaseoAgentBackgroundWorkHandle {
    * Calls `listener` with the agent's current list once the subscription is established, again
    * after each reconnect, then with the full list each time it changes. Returns the unsubscribe
    * function.
+   *
+   * When reading the current list fails, `options.onError` receives the error and `listener` is
+   * not called; without `onError` the error is logged. The read is not retried: the next
+   * reconnect reads the list again.
    */
-  subscribe(listener: (items: PaseoAgentBackgroundWorkItem[]) => void): () => void;
+  subscribe(
+    listener: (items: PaseoAgentBackgroundWorkItem[]) => void,
+    options?: PaseoAgentBackgroundWorkSubscribeOptions,
+  ): () => void;
+}
+
+export interface PaseoAgentBackgroundWorkSubscribeOptions {
+  /** Receives the error when reading the agent's current list fails. */
+  onError?: (error: unknown) => void;
 }
 
 export interface PaseoAgentHandle {
@@ -963,7 +975,7 @@ function createAgentHandleFactory(
       },
       backgroundWork: {
         list: (options) => daemonClient.listAgentBackgroundWork(id, options),
-        subscribe: (listener) => {
+        subscribe: (listener, options) => {
           const observation = observeBackgroundWork();
           // Bumped by every delivery so a list answered after a newer update is dropped.
           let sequence = 0;
@@ -977,7 +989,11 @@ function createAgentHandleFactory(
                   if (!released && listed === sequence) listener(items);
                   return undefined;
                 })
-                .catch((error) => console.error("Background work list failed", error));
+                .catch((error: unknown) => {
+                  if (released) return;
+                  if (options?.onError) options.onError(error);
+                  else console.error("Background work list failed", error);
+                });
             },
             update: (message) => {
               if (message.type !== "agent.background_work.update") return;
