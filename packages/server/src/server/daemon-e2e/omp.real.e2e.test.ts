@@ -552,7 +552,9 @@ describe("daemon E2E (real OMP)", () => {
         await restartedClient.fetchAgents({ subscribe: {} });
         const replayed = await timeline(restartedClient, agent.id);
 
-        expect(JSON.stringify(replayed)).not.toContain("Unsupported history record");
+        expect(
+          replayed.filter((item) => item.type === "tool_call" && item.name === "custom-message"),
+        ).toEqual([]);
         expect(replayed.filter((item) => item.type === "compaction")).toEqual([
           expect.objectContaining({ type: "compaction", status: "completed" }),
         ]);
