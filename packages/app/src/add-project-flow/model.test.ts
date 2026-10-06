@@ -211,7 +211,7 @@ describe("Add Project options", () => {
 });
 
 describe("local directory search", () => {
-  it("shows recent paths without searching and filters cached results before a remote fallback", () => {
+  it("shows recent paths immediately while allowing host searches even with local matches", () => {
     const recommendedPaths = ["/repo/recent", "/repo/older"];
     const cachedResults = [{ query: "app", paths: ["/src/app-mobile", "/src/app-web"] }];
     expect(planDirectorySearch({ query: "", recommendedPaths, cachedResults })).toEqual({
@@ -220,7 +220,7 @@ describe("local directory search", () => {
     });
     expect(planDirectorySearch({ query: "mobile", recommendedPaths, cachedResults })).toEqual({
       paths: ["/src/app-mobile"],
-      queryToFetch: null,
+      queryToFetch: "mobile",
     });
     expect(planDirectorySearch({ query: "missing", recommendedPaths, cachedResults })).toEqual({
       paths: [],
@@ -232,7 +232,7 @@ describe("local directory search", () => {
         recommendedPaths,
         cachedResults: [...cachedResults, { query: "missing", paths: [] }],
       }),
-    ).toEqual({ paths: [], queryToFetch: null });
+    ).toEqual({ paths: [], queryToFetch: "missing" });
   });
 
   it("limits visible suggestions without losing the rest of the local search index", () => {
@@ -246,12 +246,39 @@ describe("local directory search", () => {
     );
     expect(planDirectorySearch({ query: "project-99", recommendedPaths, cachedResults })).toEqual({
       paths: ["/projects/project-99"],
-      queryToFetch: null,
+      queryToFetch: "project-99",
     });
     expect(planDirectorySearch({ query: "~/src", recommendedPaths: [], cachedResults })).toEqual({
       paths: ["/Users/me/src/mobile"],
-      queryToFetch: null,
+      queryToFetch: "~/src",
     });
+  });
+
+  it("uses the current host response instead of removed paths from other cached searches", () => {
+    expect(
+      planDirectorySearch({
+        query: "app",
+        recommendedPaths: ["/recent/app"],
+        cachedResults: [
+          { query: "mobile", paths: ["/deleted/app-mobile"] },
+          { query: "app", paths: ["/current/app-web"] },
+        ],
+      }),
+    ).toEqual({
+      paths: ["/current/app-web", "/recent/app"],
+      queryToFetch: "app",
+    });
+  });
+
+  it("keeps host matches visible when local recommendations fill the suggestion limit", () => {
+    const recommendedPaths = Array.from({ length: 30 }, (_, index) => `/local/app-${index}`);
+    const result = planDirectorySearch({
+      query: "app",
+      recommendedPaths,
+      cachedResults: [{ query: "app", paths: ["/host/app-new"] }],
+    });
+    expect(result.paths).toEqual(["/host/app-new", ...recommendedPaths.slice(0, 29)]);
+    expect(result.queryToFetch).toBe("app");
   });
 
   it("keeps hosts isolated and drops invalidated searches from local filtering", async () => {

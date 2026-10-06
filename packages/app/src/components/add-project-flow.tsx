@@ -783,6 +783,14 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (
+        isWeb &&
+        event.key === "Enter" &&
+        event.target instanceof Element &&
+        event.target.closest('button, [role="button"]')
+      ) {
+        return false;
+      }
       if (!handleKey(event.key)) return false;
       event.preventDefault();
       return true;
@@ -949,6 +957,17 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               <Text style={styles.stateText} testID="add-project-flow-empty">
                 {emptyText(page, host ?? null)}
               </Text>
+            ) : null}
+            {!isSubmitting && searchesDirectories && query.trim() && !queryError ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onPress={directoryQuery.retry}
+                disabled={loading}
+                testID="add-project-flow-refresh"
+              >
+                Refresh
+              </Button>
             ) : null}
           </ScrollView>
           <View style={styles.footer} testID="add-project-flow-footer">
