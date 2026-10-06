@@ -6,6 +6,10 @@ function connection(
   options: {
     acknowledgeSubscriptions?: boolean;
     ownedSubscriptions?: boolean;
+    ownedCapability?: boolean;
+    workspaceMultiplicity?: boolean;
+    broadcasts?: boolean;
+    browserHost?: { hostKind: string; supportedCommands: string[] };
     acknowledgeTimelineReads?: boolean;
   } = {},
 ) {
@@ -40,8 +44,9 @@ function connection(
                 version: null,
                 features: {
                   ...(options.ownedSubscriptions === false ? {} : { ownedSubscriptions: true }),
-                  selectiveAgentTimeline: true,
-                  explicitEventSubscriptions: true,
+                  workspaceMultiplicity: options.workspaceMultiplicity ?? true,
+                  selectiveAgentTimeline: !options.broadcasts,
+                  explicitEventSubscriptions: !options.broadcasts,
                 },
               },
             },
@@ -112,6 +117,12 @@ function connection(
   const client = new DaemonClient({
     url: "ws://test",
     clientId: "test",
+    capabilities: {
+      [CLIENT_CAPS.browserHost]: options.browserHost,
+      ...(options.ownedCapability === undefined
+        ? {}
+        : { [CLIENT_CAPS.ownedSubscriptions]: options.ownedCapability }),
+    },
     transportFactory: () => transport,
     reconnect: { enabled: false },
   });
@@ -382,19 +393,30 @@ test("failed terminal bootstrap reports the domain error without reconnecting or
   }
 });
 
-test("an old host produces an update-host error without sending a legacy subscription", async () => {
+test("older hosts share event demand on one connection and release only their own listeners", async () => {
   const h = connection({ ownedSubscriptions: false });
   try {
     const connecting = h.client.connect();
     h.open();
     await connecting;
-    const observation = h.client.observeAgents({ filter: { labels: { role: "orchestrator" } } });
-    await expect(observation.ready).rejects.toThrow(
-      "Update the host to use independent subscriptions.",
-    );
-    await observation.release();
-    expect(h.sent.filter((frame) => frame.type === "session")).toEqual([]);
-    expect(h.client.isConnected).toBe(true);
+    const first = h.client.observeEvents(["project.update"]);
+    const second = h.client.observeEvents(["project.update"]);
+    await Promise.all([first.ready, second.ready]);
+    const received: string[] = [];
+    first.subscribe({ snapshot: () => {}, update: () => received.push("first") });
+    second.subscribe({ snapshot: () => {}, update: () => received.push("second") });
+    h.receive({ type: "project.update", payload: { kind: "remove", projectId: "project" } });
+    expect(received).toEqual(["first", "second"]);
+    await first.release();
+    h.receive({ type: "project.update", payload: { kind: "remove", projectId: "project" } });
+    expect(received).toEqual(["first", "second", "second"]);
+    expect(h.sent.at(-1)?.message?.events).toEqual(["project.update"]);
+    await second.release();
+    expect(h.sent.at(-1)?.message?.events).toEqual([]);
+    expect(h.sent.filter((frame) => frame.type === "hello")).toHaveLength(1);
+    expect(
+      h.sent.filter((frame) => frame.message?.type === "subscription.release.request"),
+    ).toEqual([]);
   } finally {
     await h.client.close();
   }
@@ -474,9 +496,13 @@ function timelinePage(requestId: string | undefined, epoch: string, seq: number)
   };
 }
 
-test("timeline recovery snapshots precede live updates for independent owners and survive epoch changes", async () => {
+test.each([
+  { name: "modern", ownedSubscriptions: true, broadcasts: false },
+  { name: "legacy selective", ownedSubscriptions: false, broadcasts: false },
+  { name: "legacy broadcast", ownedSubscriptions: false, broadcasts: true },
+])("$name timelines restore live delivery without requesting history", async (mode) => {
   const { createPaseoApi } = await import("./index");
-  const h = connection({ acknowledgeTimelineReads: false });
+  const h = connection(mode);
   const api = createPaseoApi(h.client);
   const received: import("./index").PaseoAgentTimelineEvent[][] = [[], [], []];
   try {
@@ -487,118 +513,154 @@ test("timeline recovery snapshots precede live updates for independent owners an
       api.agents.ref("agent").timeline.subscribe((event) => events.push(event)),
     );
     await Promise.all(owners.map((owner) => owner.ready));
-    const reads = () =>
-      h.sent.filter((frame) => frame.message?.type === "fetch_agent_timeline_request");
-    expect(reads()).toHaveLength(0); // Initial subscription remains live-only.
-    const oldIds = new Set(owners.map((owner) => owner.subscriptionId));
-    h.disconnect();
-    const reconnected = h.client.connect();
-    h.open();
-    await reconnected;
-    await expect.poll(() => reads().length).toBe(3);
-    expect(new Set(owners.map((owner) => owner.subscriptionId)).size).toBe(3);
-    expect(owners.every((owner) => !oldIds.has(owner.subscriptionId))).toBe(true);
-    await owners[2].release(); // The history reply can arrive after the owner is gone.
-    const live = (index: number, seq: number, epoch: string) =>
-      h.receive({
-        type: "agent_stream",
-        payload: {
+    expect(received).toEqual([[], [], []]);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const oldIds = owners.map((owner) => owner.subscriptionId);
+      h.disconnect();
+      await owners[2].release();
+      const reconnected = h.client.connect();
+      h.open();
+      await reconnected;
+      await expect.poll(() => owners[0].subscriptionId).not.toBe(oldIds[0]);
+      expect(
+        h.sent.filter((frame) => frame.message?.type === "fetch_agent_timeline_request"),
+      ).toEqual([]);
+      for (const index of [0, 1]) {
+        expect(owners[index].subscriptionId).not.toBeNull();
+        expect(received[index].at(-1)).toEqual({
           agentId: "agent",
           subscriptionId: owners[index].subscriptionId,
-          seq,
-          epoch,
-          timestamp: new Date(0).toISOString(),
-          event: {
-            type: "timeline",
-            provider: "codex",
-            item: { type: "user_message", text: `live-${seq}` },
-          },
-        },
-      });
-    live(0, 4, "old");
-    live(0, 5, "old");
-    h.receive(timelinePage(reads()[1].message?.requestId, "new", 4));
-    h.receive(timelinePage(reads()[2].message?.requestId, "new", 4));
-    await expect.poll(() => received[1].length).toBe(1);
-    expect(received[0]).toEqual([]);
-    live(1, 5, "new");
-    h.receive(timelinePage(reads()[0].message?.requestId, "old", 4));
-    await expect.poll(() => received[0].length).toBe(2);
-    for (const [index, epoch] of [
-      [0, "old"],
-      [1, "new"],
-    ] as const) {
-      expect(received[index][0]).toMatchObject({
-        event: {
-          type: "snapshot",
-          reason: "reconnect",
-          page: {
-            epoch,
-            hasOlder: true,
-            startCursor: { epoch, seq: 4 },
-            entries: [{ item: { text: `persisted-${epoch}-4` } }],
-          },
-        },
-      });
-      expect(received[index][1]).toMatchObject({ seq: 5 });
+          event: { type: "subscription_restored" },
+        });
+      }
+      const live = {
+        agentId: "agent",
+        timestamp: new Date(0).toISOString(),
+        event: { type: "turn_completed", provider: "codex" },
+      };
+      if (mode.ownedSubscriptions) {
+        for (const owner of owners.slice(0, 2))
+          h.receive({
+            type: "agent_stream",
+            payload: { ...live, subscriptionId: owner.subscriptionId },
+          });
+      } else h.receive({ type: "agent_stream", payload: live });
+      for (const events of received.slice(0, 2))
+        expect(events.map((update) => update.event.type)).toEqual(
+          Array.from({ length: cycle + 1 }, () => [
+            "subscription_restored",
+            "turn_completed",
+          ]).flat(),
+        );
+      expect(received[2]).toEqual([]);
     }
-    expect(received[2]).toEqual([]);
-    await owners[0].release();
-    live(1, 6, "new");
-    expect(received[1]).toHaveLength(3);
   } finally {
     await api.dispose();
     await h.client.close();
   }
 });
 
-test("timeline recovery replaces an obsolete read after bounded overflow and epoch invalidation", async () => {
+test("a consumer chooses its recovery cursor and a failed read leaves live delivery active", async () => {
+  const { createPaseoApi } = await import("./index");
   const h = connection({ acknowledgeTimelineReads: false });
-  const messages: unknown[] = [];
+  const api = createPaseoApi(h.client);
+  const received: import("./index").PaseoAgentTimelineEvent[] = [];
+  let read: Promise<unknown> | undefined;
   try {
     const connected = h.client.connect();
     h.open();
     await connected;
-    const owner = h.client.subscribeAgentTimeline("agent", (message) => messages.push(message));
+    const timeline = api.agents.ref("agent").timeline;
+    const owner = timeline.subscribe((message) => {
+      received.push(message);
+      if (message.event.type === "subscription_restored") {
+        read = timeline.refetch({
+          direction: "after",
+          cursor: { epoch: "cached", seq: 42 },
+          limit: 7,
+        });
+        void read.catch(() => {});
+      }
+    });
     await owner.ready;
     h.disconnect();
     const reconnected = h.client.connect();
     h.open();
     await reconnected;
-    const reads = () =>
-      h.sent.filter((frame) => frame.message?.type === "fetch_agent_timeline_request");
-    await expect.poll(() => reads().length).toBe(1);
-    for (let seq = 1; seq <= 130; seq++)
+    await expect.poll(() => read !== undefined).toBe(true);
+    const requests = h.sent.filter(
+      (frame) => frame.message?.type === "fetch_agent_timeline_request",
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].message).toMatchObject({
+      direction: "after",
+      cursor: { epoch: "cached", seq: 42 },
+      limit: 7,
+    });
+    // A slow consumer-owned history read must not buffer or filter live events.
+    for (let seq = 43; seq < 173; seq++)
       h.receive({
         type: "agent_stream",
         payload: {
           agentId: "agent",
           subscriptionId: owner.subscriptionId,
           seq,
-          epoch: "old",
+          epoch: "cached",
           timestamp: new Date(0).toISOString(),
-          event: {
-            type: "timeline",
-            provider: "codex",
-            item: { type: "assistant_message", text: "piece" },
-          },
+          event: { type: "turn_completed", provider: "codex" },
         },
       });
-    h.receive(timelinePage(reads()[0].message?.requestId, "old", 1));
-    await expect.poll(() => reads().length).toBe(2);
-    expect(messages).toEqual([]);
+    expect(received).toHaveLength(131);
     h.receive({
       type: "agent.timeline.replacement",
       payload: { agentId: "agent", subscriptionId: owner.subscriptionId, epoch: "new" },
     });
-    h.receive(timelinePage(reads()[1].message?.requestId, "old", 130));
-    await expect.poll(() => reads().length).toBe(3);
-    expect(messages).toEqual([]);
-    h.receive(timelinePage(reads()[2].message?.requestId, "new", 2));
-    await expect.poll(() => messages.length).toBe(2);
-    expect(messages).toMatchObject([
-      { type: "agent.timeline.replacement", payload: { epoch: "new" } },
-      { type: "agent.timeline.snapshot", payload: { page: { epoch: "new" } } },
+    expect(received.at(-1)?.event).toEqual({ type: "replacement", epoch: "new" });
+    const page = timelinePage(requests[0].message?.requestId, "cached", 42);
+    h.receive({ ...page, payload: { ...page.payload, error: "History unavailable" } });
+    await expect(read).rejects.toThrow("History unavailable");
+    expect(owner.subscriptionId).not.toBeNull();
+    expect(received.some((message) => message.event.type === "error")).toBe(false);
+    expect(
+      h.sent.filter((frame) => frame.message?.type === "fetch_agent_timeline_request"),
+    ).toHaveLength(1);
+    await owner.release();
+  } finally {
+    await api.dispose();
+    await h.client.close();
+  }
+});
+
+test("subscription-restored notification waits for the new membership acknowledgement", async () => {
+  const h = connection({ acknowledgeSubscriptions: false });
+  const received: unknown[] = [];
+  const acknowledge = (id: string) =>
+    h.receive({
+      type: "agent.timeline.set_subscription.response",
+      payload: {
+        agentIds: ["agent"],
+        requestId: h.sent.at(-1)?.message?.requestId,
+        subscriptionId: id,
+      },
+    });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const owner = h.client.subscribeAgentTimeline("agent", (message) => received.push(message));
+    acknowledge("first");
+    await owner.ready;
+    h.disconnect();
+    const reconnected = h.client.connect();
+    h.open();
+    await reconnected;
+    expect(received).toEqual([]);
+    acknowledge("second");
+    expect(received).toEqual([
+      {
+        type: "agent.timeline.subscription_restored",
+        payload: { agentId: "agent", subscriptionId: "second" },
+      },
     ]);
     await owner.release();
   } finally {
@@ -606,31 +668,361 @@ test("timeline recovery replaces an obsolete read after bounded overflow and epo
   }
 });
 
-test("timeline recovery failure is observable and releases its owner", async () => {
-  const h = connection({ acknowledgeTimelineReads: false });
-  const messages: unknown[] = [];
+function legacyAgent(input: {
+  id: string;
+  cwd: string;
+  status?: "idle" | "running";
+  updatedAt?: string;
+  projectRoot?: string;
+}) {
+  const updatedAt = input.updatedAt ?? "2026-06-18T10:00:00.000Z";
+  return {
+    agent: {
+      id: input.id,
+      provider: "mock",
+      cwd: input.cwd,
+      model: null,
+      createdAt: updatedAt,
+      updatedAt,
+      lastUserMessageAt: null,
+      status: input.status ?? "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    },
+    project: {
+      projectKey: "/repo",
+      projectName: "repo",
+      workspaceName: "app",
+      checkout: {
+        cwd: input.cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "git@example.com:repo/app.git",
+        worktreeRoot: input.cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: input.projectRoot ?? "/repo",
+      },
+    },
+  };
+}
+
+test.each([
+  { cwd: "/repo/app", id: "/repo/app", root: "/repo" },
+  { cwd: "C:\\repo\\app", id: "C:/repo/app", root: "C:\\repo" },
+  { cwd: "C:\\", id: "C:", root: "C:\\" },
+  { cwd: "C:/", id: "C:", root: "C:/" },
+  { cwd: "\\\\server\\share\\", id: "//server/share", root: "\\\\server\\share\\" },
+  { cwd: "\\\\?\\C:\\repo\\app", id: "//?/C:/repo/app", root: "\\\\?\\C:\\repo" },
+  { cwd: "/repo/trailing space ", id: "/repo/trailing space", root: "/repo/ " },
+  { cwd: "/repo/back\\slash", id: "/repo/back/slash", root: "/repo" },
+])(
+  "old workspaces preserve daemon filesystem paths ($cwd) and stable IDs",
+  async ({ cwd, id, root }) => {
+    const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+    try {
+      const connecting = h.client.connect();
+      h.open();
+      await connecting;
+      const workspaces = h.client.observeWorkspaces();
+      const request = h.sent.at(-1)!.message!;
+      expect(request.type).toBe("fetch_agents_request");
+      h.receive({
+        type: "fetch_agents_response",
+        payload: {
+          requestId: request.requestId,
+          entries: [legacyAgent({ id: "agent", cwd, projectRoot: root, status: "idle" })],
+          pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+        },
+      });
+      expect((await workspaces.ready).entries).toEqual([
+        expect.objectContaining({
+          id,
+          workspaceDirectory: cwd,
+          projectRootPath: root,
+          projectId: "/repo",
+          status: "done",
+        }),
+      ]);
+      const updates: unknown[] = [];
+      workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+      const changed = legacyAgent({ id: "agent", cwd, projectRoot: root, status: "running" });
+      h.receive({ type: "agent_update", payload: { kind: "upsert", ...changed } });
+      expect(updates).toEqual([
+        expect.objectContaining({
+          type: "workspace_update",
+          payload: expect.objectContaining({
+            kind: "upsert",
+            workspace: expect.objectContaining({
+              id,
+              workspaceDirectory: cwd,
+              projectRootPath: root,
+              status: "running",
+            }),
+          }),
+        }),
+      ]);
+      const fetching = h.client.fetchAgent("agent");
+      const detail = h.sent.at(-1)!.message!;
+      h.receive({
+        type: "fetch_agent_response",
+        payload: { requestId: detail.requestId, ...changed, error: null },
+      });
+      expect((await fetching).agent?.workspaceId).toBe(id);
+      expect(h.sent.filter((frame) => frame.type === "hello")).toHaveLength(1);
+      await workspaces.release();
+    } finally {
+      await h.client.close();
+    }
+  },
+);
+
+test("legacy workspace pages contain only that page's groups and retain earlier live state", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "first", cwd: "/first", status: "running" })],
+        pageInfo: { hasMore: true, nextCursor: "next-page", prevCursor: null },
+      },
+    });
+    const first = await workspaces.ready;
+    const next = h.client.fetchWorkspaces({
+      page: { cursor: first.pageInfo.nextCursor!, limit: 1 },
+    });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "second", cwd: "/second" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: "previous-page" },
+      },
+    });
+    const second = await next;
+    expect([...first.entries, ...second.entries].map((workspace) => workspace.id)).toEqual([
+      "/first",
+      "/second",
+    ]);
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+    // Earlier pages must remain in the aggregate: this idle sibling cannot
+    // replace the running status of the first workspace.
+    h.receive({
+      type: "agent_update",
+      payload: { kind: "upsert", ...legacyAgent({ id: "sibling", cwd: "/first" }) },
+    });
+    expect(updates).toEqual([]);
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "first" } });
+    expect(updates).toEqual([
+      expect.objectContaining({
+        type: "workspace_update",
+        payload: expect.objectContaining({
+          kind: "upsert",
+          workspace: expect.objectContaining({ id: "/first", status: "done" }),
+        }),
+      }),
+    ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("old attention stream events reach the current notification interface", async () => {
+  const h = connection({ ownedSubscriptions: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const observation = h.client.observeEvents(["agent_attention_required"]);
+    await observation.ready;
+    const received: unknown[] = [];
+    observation.subscribe({ snapshot: () => {}, update: (message) => received.push(message) });
+    h.receive({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent",
+        timestamp: "2026-09-11T00:00:00Z",
+        event: {
+          type: "attention_required",
+          provider: "mock",
+          reason: "finished",
+          timestamp: "2026-09-11T00:00:00Z",
+          shouldNotify: true,
+        },
+      },
+    });
+    expect(received).toEqual([
+      {
+        type: "agent_attention_required",
+        payload: {
+          agentId: "agent",
+          reason: "finished",
+          timestamp: "2026-09-11T00:00:00Z",
+          shouldNotify: true,
+          subscriptionId: observation.subscriptionId,
+        },
+      },
+    ]);
+    await observation.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("broadcast-only hosts expose local timeline readiness without sending an unsupported RPC", async () => {
+  const h = connection({ ownedSubscriptions: false, broadcasts: true });
   try {
     const connected = h.client.connect();
     h.open();
     await connected;
-    const owner = h.client.subscribeAgentTimeline("agent", (message) => messages.push(message));
-    await owner.ready;
-    h.disconnect();
-    const reconnected = h.client.connect();
+    const observation = h.client.observeTimeline(["agent"]);
+    expect(await observation.ready).toEqual({
+      agentIds: ["agent"],
+      requestId: expect.any(String),
+      subscriptionId: observation.subscriptionId,
+    });
+    expect(h.sent).toHaveLength(1);
+    await observation.release();
+    expect(h.sent).toHaveLength(1);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("old browser hosting requires the registration sent in hello", async () => {
+  const h = connection({ ownedSubscriptions: false });
+  try {
+    const connected = h.client.connect();
     h.open();
-    await reconnected;
-    const reads = () =>
-      h.sent.filter((frame) => frame.message?.type === "fetch_agent_timeline_request");
-    await expect.poll(() => reads().length).toBe(1);
-    const page = timelinePage(reads()[0].message?.requestId, "epoch", 0);
-    h.receive({ ...page, payload: { ...page.payload, error: "Agent no longer available" } });
-    await expect.poll(() => owner.subscriptionId).toBe(null);
-    expect(messages).toEqual([
-      {
-        type: "agent.timeline.error",
-        payload: { agentId: "agent", error: "Agent no longer available" },
+    await connected;
+    const observation = h.client.registerBrowserHost({
+      hostKind: "test",
+      supportedCommands: ["list_tabs"],
+    });
+    await expect(observation.ready).rejects.toThrow("browser_host");
+    expect(h.sent).toHaveLength(1);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("old timeline observers retain shared membership and restore surviving interests", async () => {
+  const h = connection({ ownedSubscriptions: false });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const app = h.client.observeTimeline(["app"]);
+    const plugin = h.client.observeTimeline(["plugin"]);
+    await Promise.all([app.ready, plugin.ready]);
+    expect(h.sent.at(-1)?.message?.agentIds).toEqual(["app", "plugin"]);
+    await plugin.release();
+    expect(h.sent.at(-1)?.message?.agentIds).toEqual(["app"]);
+    h.disconnect();
+    const reconnecting = h.client.connect();
+    h.open();
+    await reconnecting;
+    await expect.poll(() => h.sent.at(-1)?.message?.agentIds).toEqual(["app"]);
+    await app.release();
+    expect(h.sent.at(-1)?.message?.agentIds).toEqual([]);
+    expect(h.sent.some((frame) => frame.message?.type === "subscription.release.request")).toBe(
+      false,
+    );
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("old browser hosts attach to their hello registration without another connection", async () => {
+  const registration = {
+    hostKind: "desktop app",
+    supportedCommands: ["list_tabs"] as ["list_tabs"],
+  };
+  const h = connection({ ownedSubscriptions: false, browserHost: registration });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const observation = h.client.registerBrowserHost(registration);
+    expect(await observation.ready).toEqual({
+      requestId: expect.any(String),
+      subscriptionId: observation.subscriptionId,
+    });
+    await observation.release();
+    expect(h.sent).toHaveLength(1);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("delivery follows the negotiated client capability as well as the server feature", async () => {
+  const h = connection({ ownedCapability: false });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const observation = h.client.observeEvents(["project.update"]);
+    expect((await observation.ready).subscriptionId).toMatch(/^legacy:/);
+    await observation.release();
+    expect(h.sent.at(-1)?.message).toMatchObject({
+      type: "session.events.set_subscription.request",
+      events: [],
+    });
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("subscribeFile returns its initial version without calling the change callback", async () => {
+  const h = connection();
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const changes: unknown[] = [];
+    const initial = { status: "missing" as const, cwd: "/repo", path: "file.txt" };
+    const subscribing = h.client.subscribeFile({ cwd: "/repo", path: "file.txt" }, (value) =>
+      changes.push(value),
+    );
+    h.receive({
+      type: "fs.file.subscribe.response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        subscriptionId: "file-owner",
+        initial,
       },
-    ]);
+    });
+    const file = await subscribing;
+    expect(file.initial).toEqual(initial);
+    expect(changes).toEqual([]);
+    const version = {
+      status: "ready",
+      cwd: "/repo",
+      path: "file.txt",
+      size: 1,
+      modifiedAt: "2026-09-11T00:00:00Z",
+    };
+    h.receive({ type: "fs.file.update", payload: { subscriptionId: "file-owner", version } });
+    expect(changes).toEqual([version]);
+    await file.unsubscribe();
   } finally {
     await h.client.close();
   }

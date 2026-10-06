@@ -15,8 +15,10 @@ fixed-target labels and icons from that registration, filter by host, and never 
 panel type for another. Tab moves reject unsupported destinations, and placement resolves only to
 a compatible pane.
 
-Files and Changes are the Explorer defaults and its singleton navigation views. Other compatible
-tabs, including agents, terminals, files, and diffs, can move between Explorer and main panes.
+Files and Changes are the Explorer defaults. Their panel manifests mark them as singletons,
+so a pane’s + menu omits each while that pane already contains it. Closing one makes its menu
+item available again. Other compatible tabs, including agents, terminals, files, and diffs,
+can move between Explorer and main panes.
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
 retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
 
@@ -30,7 +32,10 @@ never read or modify that width.
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching Explorer tab. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
-Explorer sidebar setting. Callers request the content and never choose the shell.
+Explorer sidebar setting. Automatic PR discovery follows that preference once per workspace without
+interrupting the user's work. Closing the tab opts that workspace out of future automatic opens,
+even for a different PR; moving or reordering it remains the user's choice.
+Callers request the content and never choose the shell.
 The composer Changes pill is a two-stage desktop action: it first reveals Explorer on Changes, then
 routes later presses to the working diff through the shared diff preference.
 
@@ -38,14 +43,16 @@ The persisted layout still contains the Explorer pane so tabs survive reloads. T
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-The tab rail has no inline add or close controls. Its context menu opens a New Tab launcher and
-toggles Files, Changes, and Explorer-compatible workspace-scoped plugin panels from the shared
-launch catalog. Individual tab menus close instances or move compatible tabs to main. Explorer tabs
-can be reordered, but the dock cannot be split. Selecting an Explorer tab does not change workspace
-focus.
+Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
+hide their close buttons through the panel manifest; close them from the tab context menu.
+Other tabs reveal the close control on hover. The + menu opens compatible panels in the dock and
+omits Agent and terminal profiles. Agents and terminals can still be dragged into Explorer.
+Bulk-close actions apply only to the dock's tabs. Explorer tabs can be reordered and dragged
+between compatible panes, but the dock cannot be split or maximized. Selecting an Explorer tab
+does not change workspace focus.
 
 Cmd+E shows or hides Explorer without changing its selected view. Compact layouts use the combined
-full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens.
+full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens. Compact Changes has no tree rail; its overview is the Jump to file action (`packages/app/src/git/jump-to-file/`), a sheet over the same changed-files tree the desktop rail renders.
 Wide native layouts without pane splits use the same combined content in a resizable inline dock;
 opening a file leaves that dock visible. Both presentations keep their selection in the panel store
 and reuse the layout store's per-workspace Explorer width. They do not create a second Explorer
@@ -57,8 +64,11 @@ lifecycle.
 layout store remembers one ordinary pane per workspace. The first side open creates a full-height
 right split around the workspace root; later side opens reuse it.
 
-Closing the pane or moving away its final tab removes it normally and clears the remembered id. A
-later side open creates a new pane. There is no hidden side-pane lifecycle.
+Removing a pane clears its remembered id; a later side open creates a new pane. The last visible
+ordinary pane stays when its final tab closes and shows the New launcher. An empty workspace does
+not automatically create an agent draft tab; choosing Agent opens one. Explorer cannot replace the
+workspace canvas, even when visible. Restoring a saved layout enforces the same rule while preserving Explorer and saved
+tab content. There is no hidden side-pane lifecycle.
 
 Placement intent still controls existing tabs:
 

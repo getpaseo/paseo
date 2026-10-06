@@ -32,8 +32,11 @@ class MemoryStorage implements ReplicaRowStore {
   writes = 0;
   cleanups = 0;
   nextWriteFailure: Error | null = null;
+  persistentWriteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
   onRead: (() => void) | null = null;
+  /** Throws once a read goes past this count, so a non-terminating read loop fails the test. */
+  readLimit: number | null = null;
 
   private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
     return `${row.serverId}:${row.kind}:${row.id}`;
@@ -47,6 +50,11 @@ class MemoryStorage implements ReplicaRowStore {
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
     this.reads.push({ serverId, kinds, ...(ids ? { ids } : {}) });
+    if (this.readLimit !== null && this.reads.length > this.readLimit) {
+      throw new Error(
+        `replica cache read ${this.reads.length} passed the limit of ${this.readLimit}`,
+      );
+    }
     this.onRead?.();
     await this.readGate;
     const acceptedKinds = new Set(kinds);
@@ -71,6 +79,7 @@ class MemoryStorage implements ReplicaRowStore {
 
   async apply(changes: ReplicaRowChanges): Promise<void> {
     this.writes += 1;
+    if (this.persistentWriteFailure) throw this.persistentWriteFailure;
     if (this.nextWriteFailure) {
       const error = this.nextWriteFailure;
       this.nextWriteFailure = null;
@@ -108,6 +117,12 @@ function createCache(storage: MemoryStorage, maxBytes?: number): ReplicaCache {
   });
   cache.setHosts([SERVER_ID]);
   return cache;
+}
+
+function requireTimelineRow(storage: MemoryStorage): ReplicaRow {
+  const row = [...storage.rows.values()].find((candidate) => candidate.kind === "timeline");
+  if (!row) throw new Error("timeline row was not written");
+  return row;
 }
 
 function agent(id = "agent-1"): Agent {
@@ -241,6 +256,41 @@ function deleteDirectory(cache: ReplicaCache, serverId: string): void {
 }
 
 describe("ReplicaCache", () => {
+  it("rejects pre-baseline-fix checkpoints without discarding cached rows or timelines", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory();
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    await storage.apply({
+      deletes: [],
+      upserts: [
+        {
+          serverId: SERVER_ID,
+          kind: "checkpoint",
+          id: "singleton",
+          payload: JSON.stringify(baseline.checkpoint),
+        },
+      ],
+    });
+
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toBeUndefined();
+    expect([...restored.workspaces.keys()]).toEqual([...baseline.workspaces.keys()]);
+    expect([...restored.projects.keys()]).toEqual([...baseline.projects.keys()]);
+    expect([...restored.agents.keys()]).toEqual([...baseline.agents.keys()]);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+    expect(await storage.read(SERVER_ID, ["checkpoint"])).toEqual([]);
+
+    reader.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await reader.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+      baseline.checkpoint,
+    );
+  });
+
   it("does nothing until an owner explicitly commits data", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -426,6 +476,34 @@ describe("ReplicaCache", () => {
     expect(await cache.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
   });
 
+  it("gives up a read instead of retrying while the store keeps rejecting writes", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    storage.persistentWriteFailure = new Error("QuotaExceededError");
+    storage.reads.length = 0;
+    storage.readLimit = 5;
+
+    deleteDirectory(cache, SERVER_ID);
+
+    expect(await cache.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    expect(storage.reads.length).toBeLessThanOrEqual(1);
+  });
+
+  it("still reads a host whose rows are stored when another host's write is rejected", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage, noLegacyCleanup);
+    cache.setHosts([SERVER_ID, "other-host"]);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    storage.persistentWriteFailure = new Error("QuotaExceededError");
+
+    commitDirectory(cache, "other-host", directory());
+
+    expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.id).toBe("workspace-1");
+  });
+
   it("discards a durable read when the host changes while it is in flight", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -501,10 +579,25 @@ describe("ReplicaCache", () => {
       hasOlder: true,
     });
     await writer.flush();
-    const row = [...storage.rows.values()].find((candidate) => candidate.kind === "timeline");
-    if (!row) throw new Error("timeline row was not written");
+    const row = requireTimelineRow(storage);
     const payload = JSON.parse(row.payload) as { items: Array<Record<string, unknown>> };
     delete payload.items[0]?.pluginItemId;
+    storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
+      ...row,
+      payload: JSON.stringify(payload),
+    });
+
+    expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
+  });
+
+  it("refetches old cached Markdown fragments instead of offering them as whole messages", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    const row = requireTimelineRow(storage);
+    const payload = JSON.parse(row.payload) as { items: Array<Record<string, unknown>> };
+    Object.assign(payload.items[0]!, { blockGroupId: "message-1", blockIndex: 0 });
     storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
       ...row,
       payload: JSON.stringify(payload),

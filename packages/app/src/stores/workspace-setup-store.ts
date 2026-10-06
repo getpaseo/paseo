@@ -1,3 +1,5 @@
+import { createNameId } from "mnemonic-id";
+import { generateDraftId } from "@/stores/draft-keys";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -44,7 +46,9 @@ export function shouldSeedWorkspaceSetupTab(snapshot: WorkspaceSetupSnapshot | n
 }
 
 interface WorkspaceSetupStoreState {
-  pendingWorkspaceSetup: PendingWorkspaceSetup | null;
+  pendingWorkspaceSetup:
+    | (PendingWorkspaceSetup & { creationId: string; worktreeSlug: string })
+    | null;
   snapshots: Record<string, WorkspaceSetupSnapshot>;
   requestedKeys: Set<string>;
   surfacedFailedSetupKeys: Set<string>;
@@ -71,7 +75,13 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
   requestedKeys: new Set(),
   surfacedFailedSetupKeys: new Set(),
   beginWorkspaceSetup: (value) => {
-    set({ pendingWorkspaceSetup: value });
+    set({
+      pendingWorkspaceSetup: {
+        ...value,
+        creationId: generateDraftId(),
+        worktreeSlug: createNameId(),
+      },
+    });
   },
   clearWorkspaceSetup: () => {
     set({ pendingWorkspaceSetup: null });

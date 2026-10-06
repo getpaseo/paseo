@@ -389,3 +389,50 @@ test("blocked setup preserves the legacy failed shape and optional provenance", 
     legacySnapshot.parse(failed),
   );
 });
+
+test("usage login errors are additive and older reports still parse", () => {
+  const entry = {
+    id: "codex:account",
+    account: {},
+    fetchedAt: "2026-10-05T00:00:00.000Z",
+    sourceId: "codex",
+    sourceLabel: "Codex",
+    report: { status: "error", error: "Usage API returned 500" },
+  };
+  const legacy = z.object({
+    type: z.literal("usage.list_reports.update"),
+    payload: z.object({
+      requestId: z.string(),
+      report: z.object({
+        id: z.string(),
+        account: z.object({ label: z.string().optional() }),
+        fetchedAt: z.string(),
+        sourceId: z.string(),
+        sourceLabel: z.string(),
+        icon: z.string().optional(),
+        report: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("available"), windows: z.array(z.unknown()) }),
+          z.object({ status: z.literal("unavailable"), problem: z.unknown() }),
+          z.object({ status: z.literal("error"), error: z.string() }),
+        ]),
+      }),
+    }),
+  });
+  const oldMessage = {
+    type: "usage.list_reports.update",
+    payload: { requestId: "usage", report: entry },
+  };
+  const newMessage = {
+    ...oldMessage,
+    payload: {
+      ...oldMessage.payload,
+      report: {
+        ...entry,
+        loginErrors: [{ harness: "Codex", report: entry.report }],
+      },
+    },
+  };
+  expect(SessionOutboundMessageSchema.parse(oldMessage)).toEqual(oldMessage);
+  expect(SessionOutboundMessageSchema.parse(newMessage)).toEqual(newMessage);
+  expect(legacy.parse(newMessage)).toEqual(oldMessage);
+});

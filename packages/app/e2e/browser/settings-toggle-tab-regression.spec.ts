@@ -1,6 +1,6 @@
 import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
-import { createIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
+import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
 import { waitForTabBar, expectAgentTabActive } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
@@ -104,12 +104,12 @@ test.describe("Settings toggle tab regression", () => {
     const workspace = await seedWorkspace({ repoPrefix: "settings-toggle-tab-" });
 
     try {
-      const firstAgent = await createIdleAgent(workspace.client, {
+      const firstAgent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `settings-toggle-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(workspace.client, {
+      const secondAgent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `settings-toggle-b-${Date.now()}`,
@@ -165,12 +165,12 @@ test.describe("Settings toggle tab regression", () => {
     const workspace = await seedWorkspace({ repoPrefix: "settings-composer-height-" });
 
     try {
-      const firstAgent = await createIdleAgent(workspace.client, {
+      const firstAgent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `settings-composer-height-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(workspace.client, {
+      const secondAgent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `settings-composer-height-b-${Date.now()}`,
@@ -225,12 +225,12 @@ test.describe("Settings toggle tab regression", () => {
     const workspace = await seedWorkspace({ repoPrefix: "agent-route-refresh-" });
 
     try {
-      const firstAgent = await createIdleAgent(workspace.client, {
+      const firstAgent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `agent-route-refresh-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(workspace.client, {
+      const secondAgent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `agent-route-refresh-b-${Date.now()}`,

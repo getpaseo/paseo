@@ -23,6 +23,8 @@ For a local daemon, `project create` defaults to the current directory and resol
 
 **`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge`/`projectPath` for a change request. `worktreeSlug` controls the managed path. Returns the workspace descriptor centered on `workspaceId`.
 
+Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch; `refs/heads/main` selects local main. Bare `main` prefers local main when it exists, otherwise origin/main. Paseo retains the resolved ref for workspace comparisons, even after rebasing the branch or changing its PR target.
+
 **`list_workspaces`** — list active workspaces.
 
 **`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
@@ -113,11 +115,11 @@ Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. Th
 The CLI and tools use the same ownership semantics even where their syntax differs:
 
 ```bash
-paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base main
+paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base origin/main
 paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
 paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
-paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base main "<prompt>"
+paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
 paseo send <agent-id> "<follow-up>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"

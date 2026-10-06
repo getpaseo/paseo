@@ -8,7 +8,7 @@ export interface SubscriptionObserver<T> {
   error?(error: unknown): void;
 }
 
-/** A stable local lifetime. The host ID changes when the transport reconnects. */
+/** A stable local lifetime. IDs change on reconnect; legacy IDs identify local listeners only. */
 export interface OwnedSubscription<T> {
   readonly subscriptionId: string | null;
   readonly ready: Promise<SubscriptionSnapshot<T>>;

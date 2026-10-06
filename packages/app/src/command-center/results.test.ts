@@ -363,11 +363,11 @@ describe("Command Center query tokenization", () => {
     }
   });
 
-  it("requires each token to be adjacent characters, not a subsequence", () => {
-    // Unlike the composer's slash-command list, where "/pasbab" finds "/paseo-babysit". Dropping
-    // the subsequence tier is what keeps "No matches" meaning no matches: this list preselects
-    // its first row, so a query that should find nothing must not put an action under Enter.
-    for (const query of ["labdes", "lbl", "lasdsgn"]) {
+  it("matches subsequences within words without joining separate words", () => {
+    expect(sectionResultIds(buildContributionSections([labelAsDesign()], "lbl dsgn"))).toEqual([
+      "label:design",
+    ]);
+    for (const query of ["labdes", "lasdsgn"]) {
       expect(sectionResultIds(buildContributionSections([labelAsDesign()], query)), query).toEqual(
         [],
       );

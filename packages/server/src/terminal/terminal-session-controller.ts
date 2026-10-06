@@ -66,6 +66,7 @@ interface ActiveTerminalStream {
   unsubscribe: () => void;
   needsSnapshot: boolean;
   snapshotInFlight: boolean;
+  retrySnapshotErrors: boolean;
   readyRevision?: number;
   restore?: TerminalRestoreOptions;
   bufferedOutputs: BufferedTerminalOutput[];
@@ -706,7 +707,10 @@ export class TerminalSessionController {
       });
     }
 
-    const slot = this.bindActiveStream(session, owner, { restore: msg.restore });
+    const slot = this.bindActiveStream(session, owner, {
+      restore: msg.restore,
+      retrySnapshotErrors: !ownership.isModern(owner.source),
+    });
     if (slot === null) {
       await owner.release();
       this.sessionLogger.warn(
@@ -852,7 +856,7 @@ export class TerminalSessionController {
   private bindActiveStream(
     terminal: TerminalSession,
     owner: OwnedSubscription,
-    options?: { restore?: TerminalRestoreOptions },
+    options: { restore?: TerminalRestoreOptions; retrySnapshotErrors: boolean },
   ): number | null {
     if (!this.hasBinaryChannel()) {
       return null;
@@ -870,6 +874,7 @@ export class TerminalSessionController {
       unsubscribe: () => {},
       needsSnapshot: true,
       snapshotInFlight: false,
+      retrySnapshotErrors: options.retrySnapshotErrors,
       exiting: false,
       readyRevision: undefined,
       restore: options?.restore,
@@ -1010,6 +1015,14 @@ export class TerminalSessionController {
       );
       // Natural completion owns the buffered final bytes and waits for this read.
       if (activeStream.exiting) return;
+      // COMPAT(terminalSnapshotErrors): restored in v0.8.0; remove after 2027-03-11 once client floor >= v0.8.0.
+      // Old clients interpret every stream exit as PTY exit. Preserve their
+      // attached stream after failure. Another snapshot notification can retry;
+      // this does not schedule recovery. Source teardown still releases the stream.
+      if (activeStream.retrySnapshotErrors) {
+        activeStream.needsSnapshot = true;
+        return;
+      }
       activeStream.owner.emit({
         type: "terminal_stream_exit",
         payload: {

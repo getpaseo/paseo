@@ -104,13 +104,13 @@ test("public SDK scope cancellation during bootstrap releases the returned ID", 
   }
 });
 
-test("a surviving public SDK timeline recovers persistent rows written during its socket outage", async () => {
+test("a restored public SDK timeline leaves missed history to the consumer", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const sockets: WebSocket[] = [];
   const makeClient = (observer: boolean) =>
     new PublicDaemonClient({
       url: `ws://127.0.0.1:${daemon.port}/ws`,
-      clientId: observer ? "r5-observer" : "r5-actor",
+      clientId: observer ? "timeline-observer" : "timeline-actor",
       appVersion: "0.8.0",
       reconnect: { enabled: false },
       webSocketFactory: (url) => {
@@ -136,28 +136,32 @@ test("a surviving public SDK timeline recovers persistent rows written during it
     const handle = api.agents.ref(agent.id);
     const subscription = handle.timeline.subscribe((event) => received.push(event));
     await subscription.ready;
-    await actor.sendMessage(agent.id, "before-outage-r5");
+    await actor.sendMessage(agent.id, "before-outage");
     await actor.waitForFinish(agent.id);
-    await expect.poll(() => JSON.stringify(received)).toContain("before-outage-r5");
+    await expect.poll(() => JSON.stringify(received)).toContain("before-outage");
+    const cached = await handle.timeline.refetch();
+    expect(cached.endCursor).not.toBeNull();
     const oldId = subscription.subscriptionId;
     sockets[0]!.terminate();
     await expect.poll(() => observer.getConnectionState().status).not.toBe("connected");
-    await actor.sendMessage(agent.id, "during-outage-r5");
+    await actor.sendMessage(agent.id, "during-outage");
     await actor.waitForFinish(agent.id);
     await observer.connect();
     await expect
       .poll(() => subscription.subscriptionId)
       .toSatisfy((id: unknown) => typeof id === "string" && id !== oldId);
-    await actor.sendMessage(agent.id, "after-outage-r5");
+    await expect.poll(() => JSON.stringify(received)).toContain("subscription_restored");
+    expect(JSON.stringify(received)).not.toContain("during-outage");
+    await actor.sendMessage(agent.id, "after-outage");
     await actor.waitForFinish(agent.id);
-    await expect.poll(() => JSON.stringify(received)).toContain("after-outage-r5");
+    await expect.poll(() => JSON.stringify(received)).toContain("after-outage");
     const history = await handle.timeline.refetch({
-      direction: "before",
-      limit: 100,
+      direction: "after",
+      cursor: cached.endCursor!,
       projection: "projected",
     });
-    expect(JSON.stringify(history)).toContain("during-outage-r5");
-    expect(JSON.stringify(received)).toContain("during-outage-r5");
+    expect(JSON.stringify(history)).toContain("during-outage");
+    expect(JSON.stringify(received)).not.toContain("during-outage");
   } finally {
     await api.dispose();
     await observer.close();

@@ -19,7 +19,10 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
-import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
+import type {
+  TerminalOutputData,
+  TerminalFindResult,
+} from "../terminal/runtime/terminal-emulator-runtime";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -49,6 +52,9 @@ type BridgeInboundMessage =
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
   | { type: "paste"; streamKey: string; text: string }
   | { type: "clear"; streamKey: string }
+  | { type: "find"; streamKey: string; query: string; direction?: "next" | "previous" }
+  | { type: "clearFind"; streamKey: string }
+  | { type: "findWidgetSize"; streamKey: string; size: { width: number; height: number } }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
   | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
@@ -67,6 +73,8 @@ type BridgeOutboundMessage =
   | { type: "bridgeReady" }
   | { type: "rendererReady"; streamKey: string; isReady: boolean }
   | { type: "input"; streamKey: string; data: string }
+  | { type: "findRequest"; streamKey: string }
+  | { type: "findResult"; streamKey: string; result: TerminalFindResult }
   | {
       type: "resize";
       streamKey: string;
@@ -162,6 +170,8 @@ export default function WebViewTerminalEmulator({
   onSwipeLeft,
   onSwipeRight,
   initialSnapshot = null,
+  onFindRequest,
+  onFindResult,
   onInput,
   onFocus,
   onResize,
@@ -209,6 +219,8 @@ export default function WebViewTerminalEmulator({
     swipeGesturesEnabled,
   };
   const callbacksRef = useRef({
+    onFindRequest,
+    onFindResult,
     onInput,
     onFocus,
     onResize,
@@ -222,6 +234,8 @@ export default function WebViewTerminalEmulator({
     onSwipeRight,
   });
   callbacksRef.current = {
+    onFindRequest,
+    onFindResult,
     onInput,
     onFocus,
     onResize,
@@ -315,6 +329,11 @@ export default function WebViewTerminalEmulator({
   useImperativeHandle(
     ref,
     (): TerminalEmulatorHandle => ({
+      find: {
+        setWidgetSize: (size) => sendToWebView({ type: "findWidgetSize", streamKey, size }),
+        search: (query, direction) => sendToWebView({ type: "find", streamKey, query, direction }),
+        clear: () => sendToWebView({ type: "clearFind", streamKey }),
+      },
       writeOutput: (data: TerminalOutputData) => {
         const output = outputDecoderRef.current.decode(data, { stream: true });
         if (output.length === 0) {
@@ -561,6 +580,14 @@ export default function WebViewTerminalEmulator({
           mountedStreamKey: mountRequestedStreamKeyRef.current,
         })
       ) {
+        return;
+      }
+      if (message.type === "findRequest") {
+        callbacksRef.current.onFindRequest?.();
+        return;
+      }
+      if (message.type === "findResult") {
+        callbacksRef.current.onFindResult?.(message.result);
         return;
       }
       handleTerminalMessage(message);

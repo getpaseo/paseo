@@ -2,7 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  paneFind: {
+    connectionFailure:
+      "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
+    historyChangedFailure: "Чат изменился во время поиска. Выполните поиск снова.",
+    revealFailure: "Не удалось показать это совпадение. Повторите попытку.",
+    searching: "Поиск…",
+    loading: "Загрузка…",
+    failed: "Ошибка",
+    retry: "Повторить",
+
+    title: "Найти",
+    placeholder: "Найти в панели",
+    close: "Закрыть поиск",
+    matches: "Совпадения",
+    previous: "Предыдущее совпадение",
+    next: "Следующее совпадение",
+    toggleReplace: "Показать замену",
+    replaceWith: "Заменить на",
+    replace: "Заменить",
+    replaceAll: "Заменить всё",
+    noMatches: "Нет совпадений",
+    position: "{{current}} из {{total}}",
+    total: "Совпадений: {{total}}",
+  },
   common: {
+    bottomSheetBackdrop: "Фон нижней панели",
     back: "Назад",
     loading: "Загрузка...",
     actions: {
@@ -154,7 +179,8 @@ export const ru: TranslationResources = {
       initialPromptRequired: "Необходим инициализирующий промпт",
       alreadyLoading: "Уже загружается",
       uploadFailed: "Ошибка загрузки файла",
-      noClipboardImage: "В буфере обмена нет изображения",
+      noClipboardImage:
+        "В текущем буфере обмена нет изображения. Попробуйте вставить его с клавиатуры.",
       pasteImageFailed: "Не удалось вставить изображение",
       fileTooLarge: "Файл {{fileName}} слишком большой (максимальный размер: {{size}})",
     },
@@ -209,6 +235,10 @@ export const ru: TranslationResources = {
     historyLoadFailed: "Не удалось загрузить историю агента",
     messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
     permission: {
+      rejectedPlan: "Отклонённый план",
+      approvedPlan: "Одобренный план",
+      canceledPlan: "Отменённый план",
+
       plan: "План",
       required: "Требуется разрешение",
       deny: "Отклонить",
@@ -222,7 +252,8 @@ export const ru: TranslationResources = {
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",
-      reconnecting: "Повторное подключение",
+      reconnecting: "Повторное подключение к хосту",
+      updating: "Обновление сообщений",
       timelineSyncFailed: "Не удалось обновить историю агента.",
       timelineSyncRetrying: "Повторная попытка…",
       archivingTitle: "Агент перемещается в архив...",
@@ -413,7 +444,9 @@ export const ru: TranslationResources = {
       recovery: {
         archivedTitle: "Рабочая область в архиве",
         restoreDescription:
-          "Рабочее пространство «{{workspaceName}}» было архивировано, а его worktree удалён. Восстановите ветку {{branch}}, чтобы снова открыть рабочее пространство.",
+          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Worktree будет использовать ветку {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Новая ветка будет создана от сохранённой базовой или ветки репозитория по умолчанию.",
         unarchiveDescription:
           "Рабочее пространство «{{workspaceName}}» находится в архиве. Разархивируйте его, чтобы снова открыть.",
         restoreAction: "Восстановить",
@@ -895,6 +928,9 @@ export const ru: TranslationResources = {
         openChangesTab: "Открыть вкладку «Изменения»",
         openDiffTab: "Открыть вкладку «Дифф»",
         closeChangesTab: "Закрыть вкладку «Изменения»",
+        jumpToFile: {
+          title: "Перейти к файлу",
+        },
         binaryFile: "Бинарный файл",
         tooLarge: "Дифф слишком велик для отображения",
         previewTooLargeTitle: "Этот дифф слишком велик для предварительного просмотра",
@@ -1129,6 +1165,9 @@ export const ru: TranslationResources = {
       hosts: "Хосты",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
+    },
+    footer: {
+      usage: "Использование",
     },
     help: {
       trigger: "Помощь и поддержка",
@@ -1518,6 +1557,8 @@ export const ru: TranslationResources = {
     noFiles: "Файлы и каталоги не найдены",
     noCommands: "Команды не найдены",
     failedToLoad: "Не удалось загрузить",
+    chooseProjectForCommands: "Выберите проект, чтобы увидеть команды",
+    chooseModelForCommands: "Выберите модель, чтобы увидеть команды",
   },
   loadOlderHistory: {
     failed: "Не удалось загрузить старую историю.",
@@ -1609,6 +1650,21 @@ export const ru: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "Пароль для {{host}}",
+      label: "Пароль хоста",
+    },
+    hostConfirmation: {
+      title: "Подключиться к этому хосту?",
+      description:
+        "Этот хост сможет выполнять код в приложении и обращаться к другим вашим подключённым хостам. Подключайтесь, только если узнаёте его.",
+      descriptionChanged:
+        "Эта ссылка меняет способ подключения к этому хосту. Хост сможет выполнять код в приложении и обращаться к другим вашим подключённым хостам. Подключайтесь, только если узнаёте его.",
+      hostLabel: "Хост",
+      fingerprintLabel: "Отпечаток ключа",
+      relayLabel: "Реле",
+      connect: "Подключить",
+    },
     connectionMethods: {
       title: "Добавить подключение",
       direct: {
@@ -1676,6 +1732,12 @@ export const ru: TranslationResources = {
       helper: "Подключитесь к демону Paseo на удалённом хосте.",
       fields: {
         target: "Хост SSH",
+        password: "Пароль демона",
+        optional: "Необязательно",
+      },
+      passwordVisibility: {
+        show: "Показать пароль",
+        hide: "Скрыть пароль",
       },
       actions: {
         cancel: "Отмена",
@@ -1908,6 +1970,8 @@ export const ru: TranslationResources = {
     dismiss: "Закрыть",
   },
   contextWindow: {
+    noData: "Нет данных о контексте",
+    accessibilityNoData: "Контекстное окно: нет данных о контексте",
     title: "Контекстное окно",
     used: "Использовано: {{percentage}}%",
     tokens: "Токены: {{used}} / {{max}}",
@@ -1949,8 +2013,11 @@ export const ru: TranslationResources = {
     groupInfo: "О разделе «{{title}}»",
     sections: {
       general: "Основные",
+      chat: "Чат",
       appearance: "Оформление",
-      layout: en.settings.sections.layout,
+      sidebar: "Боковая панель",
+      terminal: "Терминал",
+      browser: "Браузер",
       editor: "Редактор",
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",
@@ -2009,6 +2076,7 @@ export const ru: TranslationResources = {
     },
     general: {
       title: "Основные",
+      sending: "Отправка",
       browserData: {
         title: "Данные браузера",
         siteData: "Файлы cookie и данные сайтов",
@@ -2038,8 +2106,6 @@ export const ru: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "URL-адреса сервисов",
-        description: "Где открывать URL-адреса запущенных скриптов",
         options: {
           ask: "Спрашивать",
           inApp: "В Paseo",
@@ -2059,7 +2125,6 @@ export const ru: TranslationResources = {
       toolCallDetail: {
         label: "Отображение вызовов инструментов",
         description: "Как вызовы инструментов отображаются на временной шкале",
-        accessibilityLabel: "Выбрать отображение вызовов инструментов ({{value}})",
         options: {
           overview: "Сводка",
           detailed: "Все подробности",
@@ -2164,9 +2229,16 @@ export const ru: TranslationResources = {
         description: "Показывать оглавление для перехода между запросами",
       },
       sidebar: {
-        title: "Боковая панель",
-        description:
-          "Выберите, какие элементы отображаются вверху боковой панели и в каком порядке",
+        header: {
+          title: "Верх",
+          description:
+            "Выберите, какие элементы отображаются вверху боковой панели и в каком порядке",
+        },
+        footer: {
+          title: "Низ",
+          description:
+            "Выберите, какие строки отображаются внизу боковой панели и в каком порядке. «Добавить проект» и ряд значков видны всегда",
+        },
         moveUp: "Переместить вверх",
         moveDown: "Переместить вниз",
       },
@@ -2190,6 +2262,14 @@ export const ru: TranslationResources = {
         codeSize: "Размер кода",
         codeSizeHint: "Используется для кода, диффов и вывода терминала",
         codeSizeAccessibility: "Размер шрифта кода",
+      },
+      layout: {
+        title: "Макет",
+        contentWidth: "Ширина содержимого",
+        contentWidthHint: "Максимальная ширина чата и файлов Markdown на широких экранах",
+        contentWidthAccessibility: "Ширина содержимого в пикселях",
+        reset: "Сбросить",
+        resetAccessibility: "Сбросить ширину содержимого",
       },
       syntax: {
         title: "Синтаксис",
@@ -2301,6 +2381,10 @@ export const ru: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance:
+          "Удалите этот хост и добавьте его снова с паролем, который запрашивает этот демон.",
+      },
       appearance: {
         title: "Оформление",
         name: {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,6 +23,12 @@ async function runSupervisorFixture(options: {
   workerSource: string;
   restartOnCrash?: boolean;
   timeoutMs?: number;
+  /** POSIX RLIMIT_FSIZE for the supervisor, in 512-byte blocks: writes past it fail like a full disk. */
+  fileSizeLimitBlocks?: number;
+  /** Occupy the log path with a directory so the supervisor cannot open daemon.log. */
+  blockLogPath?: boolean;
+  /** Close the reading end of the supervisor's stdout and stderr as soon as it starts. */
+  closeOutput?: boolean;
 }): Promise<{
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -36,9 +42,12 @@ async function runSupervisorFixture(options: {
   const workerPath = path.join(tempDir, "worker.mjs");
   const runnerPath = path.join(tempDir, "runner.mjs");
 
+  if (options.blockLogPath) {
+    await mkdir(logPath);
+  }
   await writeFile(
     workerPath,
-    `process.send?.({ type: "paseo:ready", listen: "fixture" });\n${options.workerSource}`,
+    `process.send?.({ type: "paseo:ready", listen: "fixture", serverId: "srv_fixture" });\n${options.workerSource}`,
   );
   await writeFile(
     runnerPath,
@@ -62,11 +71,27 @@ async function runSupervisorFixture(options: {
   );
 
   const startedAt = Date.now();
-  const child = spawn(process.execPath, ["--import", "tsx", runnerPath], {
+  const runnerArgs = [process.execPath, "--import", "tsx", runnerPath];
+  const [command, ...args] =
+    options.fileSizeLimitBlocks === undefined
+      ? runnerArgs
+      : [
+          "/bin/sh",
+          "-c",
+          `ulimit -f ${options.fileSizeLimitBlocks} && exec "$@"`,
+          "sh",
+          ...runnerArgs,
+        ];
+  const child = spawn(command, args, {
     cwd: repoRoot,
     env: { ...process.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
+
+  if (options.closeOutput) {
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
 
   let stdout = "";
   let stderr = "";
@@ -98,8 +123,17 @@ async function runSupervisorFixture(options: {
     });
   });
 
-  const log = await readFile(logPath, "utf8");
+  const log = await readLogIfWritten(logPath);
   return { code, signal, elapsedMs: Date.now() - startedAt, log, stdout, stderr };
+}
+
+async function readLogIfWritten(logPath: string): Promise<string> {
+  try {
+    return await readFile(logPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
 }
 
 describe("supervisor durable logging", () => {
@@ -169,6 +203,30 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain('"worker-json-stderr"');
     expect(result.stdout).toContain('"worker-json-stdout"');
     expect(result.stderr).toContain('"worker-json-stderr"');
+  });
+
+  test("keeps supervising the worker when nobody reads its stdout or stderr", async () => {
+    const result = await runSupervisorFixture({
+      closeOutput: true,
+      workerSource: `
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
+        process.stdout.write("first stdout line\\n");
+        process.stderr.write("first stderr line\\n");
+        setTimeout(() => {
+          process.stdout.write("later stdout line\\n");
+          process.send?.({ type: "paseo:shutdown", reason: "closed_output_probe" });
+        }, 500);
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain("first stderr line\n");
+    expect(result.log).toContain("later stdout line\n");
+    expect(result.log).toContain('"reason":"closed_output_probe"');
   });
 
   test("preserves raw non-JSON stdout and stderr lines", async () => {
@@ -348,4 +406,55 @@ describe("supervisor durable logging", () => {
       expect(result.log).toContain("Supervisor exiting");
     },
   );
+
+  // POSIX-only: RLIMIT_FSIZE is how the test makes daemon.log writes fail.
+  test.skipIf(isPlatform("win32"))(
+    "keeps supervising the worker when daemon.log can no longer be written",
+    async () => {
+      const result = await runSupervisorFixture({
+        fileSizeLimitBlocks: 128,
+        workerSource: `
+          process.on("message", (message) => {
+            if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+          });
+          const line = '{"level":30,"msg":"' + "x".repeat(1000) + '"}\\n';
+          for (let i = 0; i < 200; i += 1) process.stdout.write(line);
+          setTimeout(() => {
+            process.send?.({ type: "paseo:shutdown", reason: "log_write_failure_probe" });
+          }, 1000);
+          setInterval(() => {}, 1000);
+        `,
+      });
+
+      expect(result.stderr).not.toContain("Unhandled 'error' event");
+      expect(result.code).toBe(0);
+      expect(result.signal).toBeNull();
+    },
+  );
+
+  test("resumes writing daemon.log once the log path is writable again", async () => {
+    const result = await runSupervisorFixture({
+      blockLogPath: true,
+      workerSource: `
+        import { rmdirSync } from "node:fs";
+
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
+        process.stdout.write("line while daemon.log is blocked\\n");
+        setTimeout(() => {
+          rmdirSync(process.argv[1].replace(/worker\\.mjs$/, "daemon.log"));
+          process.stdout.write("line after daemon.log is writable\\n");
+          setTimeout(() => {
+            process.send?.({ type: "paseo:shutdown", reason: "log_recovery_probe" });
+          }, 200);
+        }, 500);
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.log).toContain("line after daemon.log is writable\n");
+    expect(result.log).toContain('"reason":"log_recovery_probe"');
+  });
 });

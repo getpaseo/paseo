@@ -134,15 +134,20 @@ export async function verifyDelayedWorkspaceCreation(
         );
         if (!upload) throw new Error("The create request did not contain the submitted file");
         expect(await readFile(upload.path)).toEqual(CONTEXT.buffer);
+        const agents = await client.fetchAgents();
+        expect(
+          agents.entries.find((entry) => entry.agent.workspaceId === created.id)?.agent,
+        ).toMatchObject({
+          cwd: created.workspaceDirectory,
+        });
         expect(delay.agentRequests[0]).toMatchObject({
-          workspaceId: created.id,
           initialPrompt: PROMPT,
           config: {
             provider: "mock",
             model: "ten-second-stream",
             modeId: "load-test",
             thinkingOptionId: "low",
-            cwd: created.workspaceDirectory,
+            cwd: repo.path,
           },
           attachments: [
             expect.objectContaining({

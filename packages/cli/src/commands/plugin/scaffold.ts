@@ -20,17 +20,23 @@ const TSCONFIG = {
   include: ["**/*.ts", "**/*.tsx"],
 };
 
-const CLIENT_ENTRY = `import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { GreetingSurface } from "./client/greeting";
+const CLIENT_ENTRY = `import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import { GreetingScreen } from "./client/greeting";
+
+function GreetingItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  return (
+    <SidebarRow
+      icon="MessageCircle"
+      active={currentScreen?.screenId === "greeting"}
+      onPress={() => openScreen({ screenId: "greeting" })}
+    />
+  );
+}
 
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("greeting", GreetingSurface);
-  client.addSidebarItem({
-    id: "greeting",
-    title: "Greeting",
-    icon: "MessageCircle",
-    surface: "greeting",
-  });
+  client.addScreen({ id: "greeting", title: "Greeting", Component: GreetingScreen });
+  client.addSidebarHeaderItem({ id: "greeting", title: "Greeting", Component: GreetingItem });
   return () => {};
 }
 `;
@@ -63,7 +69,7 @@ export function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
 }
 `;
 
-const CLIENT_GREETING = `import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+const CLIENT_GREETING = `import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useMutation } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -71,7 +77,7 @@ import { Pressable, Text, View } from "react-native";
 import { greetingRpc } from "../shared/greeting";
 import { openExternal } from "./web";
 
-export function GreetingSurface({ theme, layout }: PluginSurfaceProps) {
+export function GreetingScreen({ theme, layout }: PluginScreenProps) {
   const createGreeting = useRpc(greetingRpc);
   const greeting = useMutation({ mutationFn: createGreeting });
   const styles = useMemo(
@@ -147,6 +153,16 @@ export async function scaffoldPluginDirectory(
     name: id,
     private: true,
     version: "0.0.0",
+    files: [
+      "paseo-plugin.json",
+      "index.client.ts",
+      "index.client.tsx",
+      "index.server.ts",
+      "index.server.tsx",
+      "client/",
+      "server/",
+      "shared/",
+    ],
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
       "@getpaseo/plugin": version,

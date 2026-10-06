@@ -25,6 +25,7 @@ const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
   "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
+const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
 interface RunnerCall {
   args: string[];
@@ -3324,34 +3325,33 @@ describe("ForgeService", () => {
         name: "parentRepo",
         parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
       }),
-      JSON.stringify([
-        {
-          number: 41,
-          url: "https://github.com/parentOwner/parentRepo/pull/41",
-          title: "Wrong fork owner",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          statusCheckRollup: [],
-          reviewDecision: "REVIEW_REQUIRED",
-          headRepositoryOwner: { login: "otherFork" },
-        },
-        {
-          number: 42,
-          url: "https://github.com/parentOwner/parentRepo/pull/42",
-          title: "Real fork PR",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          statusCheckRollup: [],
-          reviewDecision: "REVIEW_REQUIRED",
-          headRepositoryOwner: { login: "forkOwner" },
-        },
-      ]),
+      JSON.stringify([{ number: 41 }, { number: 42 }]),
+      JSON.stringify({
+        number: 41,
+        url: "https://github.com/parentOwner/parentRepo/pull/41",
+        title: "Wrong fork owner",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: "otherFork" },
+      }),
+      JSON.stringify({
+        number: 42,
+        url: "https://github.com/parentOwner/parentRepo/pull/42",
+        title: "Real fork PR",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3371,27 +3371,182 @@ describe("ForgeService", () => {
       title: "Real fork PR",
       headRefName: "feature/fork",
     });
-    expect(runner.calls.slice(0, 3).map((call) => call.args)).toEqual([
+    expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
-      [
-        "pr",
-        "list",
-        "--repo",
-        "parentOwner/parentRepo",
-        "--state",
-        "all",
-        "--head",
-        "forkOwner:feature/fork",
-        "--limit",
-        "10",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
+      ["api", `repos/parentOwner/parentRepo/pulls?${FORK_PR_QUERY}`],
+      ["pr", "view", "41", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
+      ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
     ]);
   });
 
-  it("retries scoped PR list without statusCheckRollup when token permissions are insufficient", async () => {
+  it("reads the fork PR carrying the checked-out commit past newer attempts on the branch", async () => {
+    const checkoutSha = "3333333333333333333333333333333333333333";
+    const viewed: number[] = [];
+    const runner: GitHubCommandRunner = async (args) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            owner: { login: "forkOwner" },
+            name: "parentRepo",
+            parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "api") {
+        // Newest first, and the checkout is sitting on the oldest attempt.
+        return {
+          stdout: JSON.stringify([
+            { number: 50, head: { sha: "5".repeat(40) } },
+            { number: 49, head: { sha: "4".repeat(40) } },
+            { number: 48, head: { sha: "8".repeat(40) } },
+            { number: 47, head: { sha: checkoutSha } },
+          ]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "view" && /^\d+$/.test(args[2] ?? "")) {
+        const number = Number(args[2]);
+        viewed.push(number);
+        return {
+          stdout: currentPullRequestJson({
+            number,
+            url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
+            state: "CLOSED",
+            headRefOid: number === 47 ? checkoutSha : `${number}`.repeat(20),
+            headRepositoryOwner: { login: "forkOwner" },
+          }),
+          stderr: "",
+        };
+      }
+      throw noPullRequestError(args);
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: checkoutSha,
+    });
+
+    expect(status).toMatchObject({
+      number: 47,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    expect(viewed).toContain(47);
+    expect(viewed).toHaveLength(3);
+  });
+
+  it("propagates a failed fork PR lookup instead of reporting no pull request", async () => {
+    const rateLimitError = new GitHubCommandError({
+      args: ["api", "repos/parentOwner/parentRepo/pulls"],
+      cwd: "/repo",
+      exitCode: 1,
+      stderr: "API rate limit exceeded",
+    });
+    const runner = createScriptedRunner([
+      { error: noPullRequestError() },
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "parentRepo",
+        parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+      }),
+      { error: rateLimitError },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" }),
+    ).rejects.toThrow(GitHubCommandError);
+  });
+
+  it("resolves a fork PR whose branch name is crowded in the parent repository", async () => {
+    // Mirrors what `gh` really does: `pr list --head` matches the string
+    // against headRefName, so an "owner:branch" head never matches, and a
+    // popular branch name fills the candidate page with other forks' PRs.
+    const calls: RunnerCall[] = [];
+    function parentRepoPullRequest(
+      number: number,
+      headRepositoryOwner: string,
+    ): Record<string, unknown> {
+      return {
+        number,
+        url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
+        title: `PR ${number}`,
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "main",
+        headRefOid: `${number}`.padStart(40, "0"),
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: headRepositoryOwner },
+      };
+    }
+    const crowd = Array.from({ length: 10 }, (_, index) =>
+      parentRepoPullRequest(100 + index, `otherFork${index}`),
+    );
+    const runner: GitHubCommandRunner = async (args, options) => {
+      calls.push({ args, cwd: options.cwd });
+      if (args[0] === "repo" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            owner: { login: "forkOwner" },
+            name: "parentRepo",
+            parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "view" && args[2] === "4984") {
+        return { stdout: JSON.stringify(parentRepoPullRequest(4984, "forkOwner")), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        throw noPullRequestError(args);
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        const headRef = args[args.indexOf("--head") + 1];
+        const limit = Number(args[args.indexOf("--limit") + 1]);
+        const matching = crowd.filter((candidate) => candidate.headRefName === headRef);
+        return { stdout: JSON.stringify(matching.slice(0, limit)), stderr: "" };
+      }
+      if (args[0] === "api" && args[1]?.startsWith("repos/")) {
+        expect(args[1]).toContain("head=forkOwner%3Amain");
+        return { stdout: JSON.stringify([{ number: 4984 }]), stderr: "" };
+      }
+      return { stdout: "{}", stderr: "" };
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "main",
+    });
+
+    expect(status).toMatchObject({
+      number: 4984,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+      headRefName: "main",
+    });
+  });
+
+  it("retries the fork PR view without statusCheckRollup when token permissions are insufficient", async () => {
     const runner = createScriptedRunner([
       currentPullRequestJson({
         number: 7,
@@ -3404,36 +3559,30 @@ describe("ForgeService", () => {
         name: "parentRepo",
         parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
       }),
+      JSON.stringify([{ number: 42 }]),
       {
         error: statusCheckRollupPermissionError([
           "pr",
-          "list",
+          "view",
+          "42",
           "--repo",
           "parentOwner/parentRepo",
-          "--state",
-          "all",
-          "--head",
-          "forkOwner:feature/fork",
           "--json",
           CURRENT_PR_STATUS_FIELDS,
-          "--limit",
-          "10",
         ]),
       },
-      JSON.stringify([
-        {
-          number: 42,
-          url: "https://github.com/parentOwner/parentRepo/pull/42",
-          title: "Real fork PR",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          reviewDecision: "REVIEW_REQUIRED",
-          headRepositoryOwner: { login: "forkOwner" },
-        },
-      ]),
+      JSON.stringify({
+        number: 42,
+        url: "https://github.com/parentOwner/parentRepo/pull/42",
+        title: "Real fork PR",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3454,34 +3603,17 @@ describe("ForgeService", () => {
       checks: [],
       checksStatus: "none",
     });
-    expect(runner.calls.slice(0, 4).map((call) => call.args)).toEqual([
+    expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
+      ["api", `repos/parentOwner/parentRepo/pulls?${FORK_PR_QUERY}`],
+      ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
       [
         "pr",
-        "list",
+        "view",
+        "42",
         "--repo",
         "parentOwner/parentRepo",
-        "--state",
-        "all",
-        "--head",
-        "forkOwner:feature/fork",
-        "--limit",
-        "10",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
-      [
-        "pr",
-        "list",
-        "--repo",
-        "parentOwner/parentRepo",
-        "--state",
-        "all",
-        "--head",
-        "forkOwner:feature/fork",
-        "--limit",
-        "10",
         "--json",
         CURRENT_PR_STATUS_BASE_FIELDS,
       ],
@@ -3629,21 +3761,20 @@ describe("ForgeService", () => {
         name: "repo",
         parent: { owner: { login: "parentOwner" }, name: "repo" },
       }),
-      JSON.stringify([
-        {
-          number: 88,
-          url: "https://github.com/parentOwner/repo/pull/88",
-          title: "Fork-only PR",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          statusCheckRollup: [],
-          reviewDecision: null,
-          headRepositoryOwner: { login: "forkOwner" },
-        },
-      ]),
+      JSON.stringify([{ number: 88 }]),
+      JSON.stringify({
+        number: 88,
+        url: "https://github.com/parentOwner/repo/pull/88",
+        title: "Fork-only PR",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: null,
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3662,7 +3793,7 @@ describe("ForgeService", () => {
       repoName: "repo",
       headRefName: "feature/fork",
     });
-    expect(runner.calls[2]?.args).toContain("forkOwner:feature/fork");
+    expect(runner.calls[2]?.args).toEqual(["api", `repos/parentOwner/repo/pulls?${FORK_PR_QUERY}`]);
   });
 
   it("propagates DNS errors while resolving the current PR view", async () => {

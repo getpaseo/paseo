@@ -20,6 +20,24 @@ export interface ToolCallDetailProjection extends GroupedToolCalls<ToolCallDetai
 
 const EMPTY_TOOL_CALL_GROUPS = new Map<string, ToolCallDetailGroup>();
 
+// Approval UI owns pending plan presentation. Retain the canonical tool in the
+// stream model so resolving it can reveal a card at its original position.
+const visibleItemsCache = new WeakMap<StreamItem[], StreamItem[]>();
+function visibleToolCallItems(items: StreamItem[]): StreamItem[] {
+  const cached = visibleItemsCache.get(items);
+  if (cached) return cached;
+  const visible = items.filter((item) => {
+    if (item.kind !== "tool_call" || item.payload.source !== "agent") return true;
+    const data = item.payload.data;
+    return (
+      data.name !== "ExitPlanMode" && !(data.name === "plan_approval" && data.status === "running")
+    );
+  });
+  const result = visible.length === items.length ? items : visible;
+  visibleItemsCache.set(items, result);
+  return result;
+}
+
 export function prepareToolCallHistory(
   level: ToolCallDetailLevel,
   tail: StreamItem[],
@@ -29,7 +47,10 @@ export function prepareToolCallHistory(
   }
   return {
     mode: "overview",
-    grouped: prepareGroupedHistory({ tail, buildGroup: buildOverviewGroup }),
+    grouped: prepareGroupedHistory({
+      tail: visibleToolCallItems(tail),
+      buildGroup: buildOverviewGroup,
+    }),
   };
 }
 
@@ -42,8 +63,8 @@ export function projectToolCallDetailLevel(input: {
 }): ToolCallDetailProjection {
   if (input.level === "detailed") {
     return {
-      tail: input.tail,
-      head: input.head,
+      tail: visibleToolCallItems(input.tail),
+      head: visibleToolCallItems(input.head),
       groupsByHostId: EMPTY_TOOL_CALL_GROUPS,
       historyGroupUpdatesByHostId: EMPTY_TOOL_CALL_GROUPS,
     };
@@ -53,7 +74,7 @@ export function projectToolCallDetailLevel(input: {
   }
   return groupLiveToolCalls({
     history: input.preparedHistory.grouped,
-    head: input.head,
+    head: visibleToolCallItems(input.head),
     isTurnActive: input.isTurnActive,
     buildGroup: buildOverviewGroup,
   });

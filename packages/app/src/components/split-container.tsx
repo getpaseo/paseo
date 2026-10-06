@@ -399,18 +399,6 @@ export function SplitContainer({
     },
     [workspaceKey],
   );
-  const handleCreateExplorerTab = useCallback(
-    () => onCreateNewTab({ paneId: explorerSidebarPaneId ?? undefined }),
-    [explorerSidebarPaneId, onCreateNewTab],
-  );
-  const handleMoveExplorerTabToMain = useCallback(
-    (tabId: string) => {
-      if (layout.focusedPaneId) {
-        onMoveTabToPane(tabId, layout.focusedPaneId);
-      }
-    },
-    [layout.focusedPaneId, onMoveTabToPane],
-  );
   const splitRoot = useMemo(
     () =>
       resolveSplitContainerRoot({
@@ -727,8 +715,19 @@ export function SplitContainer({
                   closingTabIds={closingTabIds}
                   onSelectTab={onSelectTabInPane}
                   onCloseTab={onCloseTab}
-                  onCreateNewTab={handleCreateExplorerTab}
-                  onMoveTabToMain={handleMoveExplorerTabToMain}
+                  onCreateNewTab={onCreateNewTab}
+                  hoveredCloseTabKey={hoveredCloseTabKey}
+                  setHoveredCloseTabKey={setHoveredCloseTabKey}
+                  onCopyResumeCommand={onCopyResumeCommand}
+                  onCopyAgentId={onCopyAgentId}
+                  onCopyTerminalId={onCopyTerminalId}
+                  onCopyFilePath={onCopyFilePath}
+                  onReloadAgent={onReloadAgent}
+                  onRenameTab={onRenameTab}
+                  onCloseTabsToLeft={onCloseTabsToLeft}
+                  onCloseTabsToRight={onCloseTabsToRight}
+                  onCloseOtherTabs={onCloseOtherTabs}
+                  onExitFocusMode={onExitFocusMode}
                   buildPaneContentModel={buildPaneContentModel}
                   onReorderTabsInPane={onReorderTabsInPane}
                   activeDragTabId={activeDragTabId}

@@ -47,8 +47,10 @@ export function withGlobalOptions<Args extends unknown[], Result>(
         if (typeof value === "string") selectors[key].add(value);
       }
     }
-    if (selectors.home.size > 1 || selectors.host.size > 1)
-      throw { code: "TARGET_AMBIGUOUS", message: "Conflicting duplicate daemon selectors." };
+    for (const key of ["home", "host"] as const) {
+      if (selectors[key].size > 1)
+        throw { code: "TARGET_AMBIGUOUS", message: `Conflicting duplicate --${key} selectors.` };
+    }
     const localOnly = localCommands.has(command);
     options.daemonTarget = selectDaemonTarget(options, process.env, localOnly);
     mergedArgs[mergedArgs.length - 2] = options;

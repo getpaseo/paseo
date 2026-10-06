@@ -8,7 +8,6 @@ import {
   View,
   Text,
   Pressable,
-  FlatList,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
@@ -33,15 +32,8 @@ import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
-import { FileHeader } from "@/git/file-header";
-import {
-  buildDiffTree,
-  collectDirPaths,
-  compressSingleChildChains,
-  flattenDiffTree,
-  type DiffTreeRow,
-} from "@/git/diff-tree";
-import { DiffFolderRow } from "@/git/diff-folder-row";
+import { ChangedFilesTree } from "@/git/changed-files-tree";
+import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
 import {
   selectPrHintFromStatus,
   type PrHint,
@@ -81,6 +73,7 @@ import {
   paneContentToolbarIconSize,
   paneContentToolbarIconButtonStyle,
   paneContentToolbarTrailingPadding,
+  type ToolbarTrailingControl,
   ToolbarButton,
   ToolbarControls,
 } from "@/components/ui/pane-content-toolbar";
@@ -568,7 +561,12 @@ function ChangesDiffOnlyToolbar({
   sidebarSurface: boolean;
 }) {
   return (
-    <ChangesToolbarRow compact={compact} sidebarSurface={sidebarSurface} testID="changes-header">
+    <ChangesToolbarRow
+      compact={compact}
+      sidebarSurface={sidebarSurface}
+      testID="changes-header"
+      trailing="glyph"
+    >
       <ChangesToolbarLeading />
       <ChangesToolbarTrailing>
         <ChangesToolbarActions mode={mode} compact={compact} />
@@ -582,19 +580,22 @@ function ChangesToolbarRow({
   compact,
   sidebarSurface,
   testID,
+  trailing,
 }: {
   children: ReactNode;
   compact: boolean;
   sidebarSurface: boolean;
   testID: string;
+  /** What the row's last control paints, so it can pad to the shared trailing rail. */
+  trailing: ToolbarTrailingControl;
 }) {
   const toolbarStyle = useMemo(
     () => [
       styles.changesToolbar,
-      { paddingRight: paneContentToolbarTrailingPadding(compact) },
+      { paddingRight: paneContentToolbarTrailingPadding(compact, trailing) },
       sidebarSurface ? styles.changesToolbarSidebar : null,
     ],
-    [compact, sidebarSurface],
+    [compact, sidebarSurface, trailing],
   );
   return (
     <PaneContentToolbar style={toolbarStyle} testID={testID}>
@@ -625,6 +626,7 @@ function ChangesRepositoryToolbar({
       compact={compact}
       sidebarSurface={sidebarSurface}
       testID="changes-repository-header"
+      trailing={model.gitActions ? "framed" : "glyph"}
     >
       <ChangesToolbarLeading>
         <BranchSwitcher
@@ -720,7 +722,12 @@ function ChangesComparisonToolbar({
   sidebarSurface: boolean;
 }) {
   return (
-    <ChangesToolbarRow compact={compact} sidebarSurface={sidebarSurface} testID="changes-header">
+    <ChangesToolbarRow
+      compact={compact}
+      sidebarSurface={sidebarSurface}
+      testID="changes-header"
+      trailing="glyph"
+    >
       <ChangesToolbarLeading>
         <DiffModeMenu
           diffMode={model.diffMode}
@@ -1239,134 +1246,23 @@ function buildToggleButtonStyle(
   return (state) => [baseStyles, paneContentToolbarIconButtonStyle(state, selected, isMobile)];
 }
 
-function ChangedFilesTree({
-  files,
-  mode,
-  onSelectFile,
-  collapsedFolderPaths,
-  onCollapsedFolderPathsChange,
-}: {
-  files: ParsedDiffFile[];
-  mode: WorkingDiffMode;
-  onSelectFile: (path: string) => void;
-  collapsedFolderPaths: string[];
-  onCollapsedFolderPathsChange: (paths: string[]) => void;
-}) {
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
-  const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
-  const collapsedFolders = useMemo(() => new Set(collapsedFolderPaths), [collapsedFolderPaths]);
-  const items = useMemo(
-    () => flattenDiffTree(compressedTree, collapsedFolders),
-    [collapsedFolders, compressedTree],
-  );
-  const handleSelectPath = useCallback((path: string) => setSelectedPath(path), []);
-  const handleSelectFile = useCallback(
-    (path: string) => {
-      setSelectedPath(path);
-      onSelectFile(path);
-    },
-    [onSelectFile],
-  );
-  const handleToggleFolder = useCallback(
-    (dirPath: string) => {
-      const next = collapsedFolders.has(dirPath)
-        ? Array.from(collapsedFolders).filter((path) => path !== dirPath)
-        : [...collapsedFolders, dirPath];
-      onCollapsedFolderPathsChange(next);
-    },
-    [collapsedFolders, onCollapsedFolderPathsChange],
-  );
-  const handleCollapseFolder = useCallback(
-    (dirPath: string) => {
-      const prefix = `${dirPath}/`;
-      onCollapsedFolderPathsChange([
-        ...new Set([
-          ...collapsedFolders,
-          ...allFolderPaths.filter(
-            (folderPath) => folderPath === dirPath || folderPath.startsWith(prefix),
-          ),
-        ]),
-      ]);
-    },
-    [allFolderPaths, collapsedFolders, onCollapsedFolderPathsChange],
-  );
-  const renderItem = useCallback(
-    ({ item }: { item: DiffTreeRow }) => {
-      if (item.kind === "folder") {
-        return (
-          <DiffFolderRow
-            dirPath={item.dirPath}
-            displayName={item.displayName}
-            depth={item.depth}
-            collapsed={collapsedFolders.has(item.dirPath)}
-            isSelected={selectedPath === item.dirPath}
-            additions={item.additions}
-            deletions={item.deletions}
-            onToggle={handleToggleFolder}
-            onCollapse={handleCollapseFolder}
-            onSelect={handleSelectPath}
-            onCopyPath={mode.onCopyPath}
-            onCopyRelativePath={mode.onCopyRelativePath}
-            onReveal={mode.onReveal}
-            revealTargetName={mode.revealTargetName}
-            onDuplicate={mode.onDuplicate}
-            onRevert={mode.onRevert}
-            testID={`diff-folder-${item.dirPath}`}
-          />
-        );
-      }
-      return (
-        <FileHeader
-          file={item.file}
-          workspaceFileDragScope={mode.workspaceFileDragScope}
-          bodyVisible={false}
-          showsBodyState={false}
-          isSelected={selectedPath === item.file.path}
-          depth={item.depth}
-          showDir={false}
-          onActivate={handleSelectFile}
-          onSelect={handleSelectPath}
-          onOpenFile={mode.onOpenFile}
-          onOpenToSide={mode.onOpenToSide}
-          onAddToChat={mode.onAddToChat}
-          onCopyPath={mode.onCopyPath}
-          onCopyRelativePath={mode.onCopyRelativePath}
-          onReveal={mode.onReveal}
-          revealTargetName={mode.revealTargetName}
-          onDownload={mode.onDownload}
-          onDuplicate={mode.onDuplicate}
-          onRevert={mode.onRevert}
-          testID={`diff-tree-file-${item.fileIndex}`}
-        />
-      );
-    },
-    [
-      handleCollapseFolder,
-      handleSelectFile,
-      handleSelectPath,
-      handleToggleFolder,
-      collapsedFolders,
-      mode,
-      selectedPath,
-    ],
-  );
-  const keyExtractor = useCallback(
-    (item: DiffTreeRow) =>
-      item.kind === "folder" ? `folder-${item.dirPath}` : `file-${item.file.path}`,
-    [],
-  );
+interface JumpToFileVisibility {
+  isCompact: boolean;
+  presentation: ChangesPresentation;
+  hasChanges: boolean;
+  isDiffLoading: boolean;
+}
 
-  return (
-    <FlatList
-      data={items}
-      renderItem={renderItem}
-      keyExtractor={keyExtractor}
-      style={styles.scrollView}
-      contentContainerStyle={styles.contentContainer}
-      testID="changes-file-tree"
-    />
-  );
+/**
+ * The room the floating Jump to file action needs over the diff, and zero where
+ * it is not offered. Compact users never see the tree rail, so the diff is their
+ * only view of what changed; the tree and diff presentations are already halves
+ * of a desktop split.
+ */
+function jumpToFileClearance(visibility: JumpToFileVisibility): number {
+  if (!visibility.isCompact || visibility.presentation !== "combined") return 0;
+  if (!visibility.hasChanges || visibility.isDiffLoading) return 0;
+  return JUMP_TO_FILE_CLEARANCE;
 }
 
 function ChangesTreeRail({
@@ -1834,6 +1730,13 @@ export function ChangesSurface({
   );
 
   const hasChanges = files.length > 0;
+  const jumpToFileInset = jumpToFileClearance({
+    isCompact: isMobile,
+    presentation,
+    hasChanges,
+    isDiffLoading,
+  });
+  const showJumpToFile = jumpToFileInset > 0;
   const selectedDiffStat = useMemo(
     () => computeSelectedDiffStat(files, isDiffLoading),
     [files, isDiffLoading],
@@ -1890,6 +1793,7 @@ export function ChangesSurface({
     >
       <DiffDocument
         files={files}
+        contentInsetBottom={jumpToFileInset}
         collapseState={collapseState}
         displayPreferences={sharedDisplayPreferences}
         mode={workingMode}
@@ -2023,7 +1927,12 @@ export function ChangesSurface({
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
-      <View style={styles.diffContainer}>{bodyContent}</View>
+      <View style={styles.diffContainer}>
+        {bodyContent}
+        {showJumpToFile ? (
+          <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
+        ) : null}
+      </View>
 
       <ChangesCommits
         presentation={presentation}
@@ -2092,16 +2001,10 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
     position: "relative",
   },
-  scrollView: {
-    flex: 1,
-  },
   scrollContainer: {
     flex: 1,
     minHeight: 0,
     position: "relative",
-  },
-  contentContainer: {
-    paddingBottom: theme.spacing[8],
   },
   loadingContainer: {
     flex: 1,

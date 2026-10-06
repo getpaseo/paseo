@@ -7,12 +7,12 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { _electron as electron, expect } from "playwright/test";
+import { savePersistedConfig } from "@getpaseo/server/configuration";
 import {
-  savePersistedConfig,
   startDaemonInstance,
   stopDaemonInstance,
   readDaemonInstance,
-} from "@getpaseo/server";
+} from "@getpaseo/server/daemon-control";
 
 const repo = fileURLToPath(new URL("../../..", import.meta.url));
 const root = await mkdtemp(path.join(tmpdir(), "paseo desktop lifecycle "));
@@ -206,7 +206,8 @@ try {
     (await mkdtemp(path.join(tmpdir(), "paseo-desktop-lifecycle-artifacts-")));
   await mkdir(artifacts, { recursive: true });
   for (const name of await readdir(root))
-    if (name.endsWith(".png")) await copyFile(path.join(root, name), path.join(artifacts, name));
+    if (name.endsWith(".png") || name === "metro.log")
+      await copyFile(path.join(root, name), path.join(artifacts, name));
   await rm(root, { recursive: true, force: true });
   console.log(`Lifecycle artifacts: ${artifacts}`);
 }

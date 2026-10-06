@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { hostname, platform } from "node:os";
+import { platform } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
+import { getHostName } from "../host-name.js";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 async function captureUnhandledRejections(action: () => Promise<void>): Promise<unknown[]> {
@@ -88,7 +89,7 @@ describe("Hub relationship", () => {
         .update(secret ?? "")
         .digest("base64url"),
     );
-    expect(enrollment.hostname).toBe(hostname());
+    expect(enrollment.hostname).toBe(getHostName());
     relationship.completeEnrollment();
     await connecting.result;
     await relationship.socketDialed();
@@ -297,7 +298,7 @@ describe("Hub relationship", () => {
       version: 2,
       relationship: { permissions: ["hub.execute"] },
     });
-    expect(await relationship.status()).toMatchObject({ permissions: "hub.execute" });
+    expect(await relationship.status()).toMatchObject({ permissions: ["hub.execute"] });
   });
 
   test.each([
@@ -419,7 +420,7 @@ describe("Hub relationship", () => {
 
     expect(disconnected).toMatchObject({
       state: "not_connected",
-      hub: null,
+      hubOrigin: null,
       warning: expect.stringContaining("server-side revocation may remain pending"),
     });
     expect(reconnected.state).toBe("connecting");
@@ -483,14 +484,14 @@ describe("Hub relationship", () => {
 
     const disconnected = await relationship.disconnect(true);
 
-    expect(disconnected).toMatchObject({ state: "not_connected", hub: null });
+    expect(disconnected).toMatchObject({ state: "not_connected", hubOrigin: null });
     expect(relationship.revocationAttempts()).toBe(0);
     expect(relationship.relationshipFile()).toBeNull();
 
     relationship.completeEnrollment();
     await connecting.result;
     expect(relationship.socketAttempts()).toBe(0);
-    expect(await relationship.status()).toMatchObject({ state: "not_connected", hub: null });
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", hubOrigin: null });
   });
 
   test("daemon restart reconnects the same durable relationship", async () => {
@@ -811,9 +812,9 @@ describe("Hub relationship", () => {
     expect(status).toMatchObject({
       state: "revoked",
       daemonId: enrollment.daemonId,
-      hub: "https://hub.test",
-      permissions: "hub.execute",
-      error: reason,
+      hubOrigin: "https://hub.test",
+      permissions: ["hub.execute"],
+      lastError: reason,
     });
     expect(persisted?.state).toBe("revoked");
     expect(persisted?.relationship).toMatchObject({
@@ -848,10 +849,10 @@ describe("Hub relationship", () => {
 
     expect(disconnected).toMatchObject({
       state: "not_connected",
-      hub: null,
+      hubOrigin: null,
       warning: expect.stringContaining("server-side revocation may remain pending"),
     });
-    expect(await relationship.status()).toMatchObject({ state: "not_connected", hub: null });
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", hubOrigin: null });
     expect(relationship.revocationAttempts()).toBe(1);
     expect(relationship.socketAttempts()).toBe(1);
     expect(relationship.pendingRelationshipRetries()).toBe(0);
@@ -864,10 +865,14 @@ describe("Hub relationship", () => {
 
     const disconnected = await relationship.disconnect();
 
-    expect(disconnected).toMatchObject({ state: "not_connected", hub: null, error: null });
+    expect(disconnected).toMatchObject({
+      state: "not_connected",
+      hubOrigin: null,
+      lastError: null,
+    });
     expect(disconnected).not.toHaveProperty("warning");
     expect(relationship.revocationAttempts()).toBe(1);
-    expect(await relationship.status()).toMatchObject({ state: "not_connected", error: null });
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", lastError: null });
   });
 
   test("force disconnect removes local authority without notifying the Hub", async () => {
@@ -876,7 +881,7 @@ describe("Hub relationship", () => {
 
     const forced = await relationship.disconnect(true);
 
-    expect(forced).toMatchObject({ state: "not_connected", hub: null });
+    expect(forced).toMatchObject({ state: "not_connected", hubOrigin: null });
     expect(forced).not.toHaveProperty("warning");
     expect(relationship.revocationAttempts()).toBe(0);
     expect(relationship.loggableValues(forced)).not.toContain(
@@ -895,7 +900,7 @@ describe("Hub relationship", () => {
 
     await relationship.startStoppedDaemon();
 
-    expect(await relationship.status()).toMatchObject({ state: "not_connected", hub: null });
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", hubOrigin: null });
     expect(relationship.relationshipFile()).toBeNull();
     expect(relationship.revocationAttempts()).toBe(0);
     expect(relationship.pendingRelationshipRetries()).toBe(0);

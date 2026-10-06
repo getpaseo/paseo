@@ -187,55 +187,60 @@ describe("replaceFetchedAgentDirectory", () => {
     store.clearSession(serverId);
   });
 
-  it("removes every replica-owned artifact for a removed agent", () => {
-    const serverId = "server-removal";
-    const agentId = "removed-agent";
-    const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
-    const agent = {
-      ...normalizeAgentSnapshot(createAgentPayload({ id: agentId }), serverId),
-      projectPlacement: null,
-    };
-    store.setAgents(serverId, new Map([[agentId, agent]]));
-    store.setAgentDetails(serverId, new Map([[agentId, agent]]));
-    store.setQueuedMessages(
-      serverId,
-      new Map([[agentId, [{ id: "queued", text: "next", attachments: [] }]]]),
-    );
-    store.setAgentTimelineCursor(
-      serverId,
-      new Map([[agentId, { epoch: "epoch", startSeq: 1, endSeq: 2 }]]),
-    );
-    store.setPendingPermissions(
-      serverId,
-      new Map([["permission", { key: "permission", agentId, request: null as never }]]),
-    );
-    store.setInitializingAgents(serverId, new Map([[agentId, true]]));
-    setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
+  it.each(["directory", "entity"] as const)(
+    "cleans removed %s state without invalidating an independent transcript",
+    (kind) => {
+      const serverId = "server-removal";
+      const agentId = "removed-agent";
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, null as unknown as DaemonClient);
+      const agent = {
+        ...normalizeAgentSnapshot(createAgentPayload({ id: agentId }), serverId),
+        projectPlacement: null,
+      };
+      store.setAgents(serverId, new Map([[agentId, agent]]));
+      store.setAgentDetails(serverId, new Map([[agentId, agent]]));
+      store.setQueuedMessages(
+        serverId,
+        new Map([[agentId, [{ id: "queued", text: "next", attachments: [] }]]]),
+      );
+      store.setAgentTimelineCursor(
+        serverId,
+        new Map([[agentId, { epoch: "epoch", startSeq: 1, endSeq: 2 }]]),
+      );
+      store.setPendingPermissions(
+        serverId,
+        new Map([["permission", { key: "permission", agentId, request: null as never }]]),
+      );
+      store.setInitializingAgents(serverId, new Map([[agentId, true]]));
+      setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
-    new AgentStoreProjection(serverId).applyDelta({ kind: "remove", agentId });
+      const projection = new AgentStoreProjection(serverId);
+      if (kind === "directory") projection.applyDelta({ kind: "remove", agentId });
+      else projection.remove(agentId);
 
-    const session = useSessionStore.getState().sessions[serverId];
-    expect({
-      agents: session?.agents.has(agentId),
-      details: session?.agentDetails.has(agentId),
-      queued: session?.queuedMessages.has(agentId),
-      cursor: session?.agentTimelineCursor.has(agentId),
-      permissions: session?.pendingPermissions.size,
-      initializing: session?.initializingAgents.has(agentId),
-      archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
-    }).toEqual({
-      agents: false,
-      details: false,
-      queued: false,
-      cursor: false,
-      permissions: 0,
-      initializing: false,
-      archivePending: false,
-    });
+      const session = useSessionStore.getState().sessions[serverId];
+      expect({
+        agents: session?.agents.has(agentId),
+        details: session?.agentDetails.has(agentId),
+        queued: session?.queuedMessages.has(agentId),
+        cursor: session?.agentTimelineCursor.has(agentId),
+        permissions: session?.pendingPermissions.size,
+        initializing: session?.initializingAgents.has(agentId),
+        archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
+      }).toEqual({
+        agents: false,
+        details: false,
+        queued: false,
+        cursor: kind === "directory",
+        permissions: 0,
+        initializing: false,
+        archivePending: false,
+      });
 
-    store.clearSession(serverId);
-  });
+      store.clearSession(serverId);
+    },
+  );
 
   it("keeps newer metadata while accepting usage-only updates and legacy workspace ownership", () => {
     const serverId = "server-usage";

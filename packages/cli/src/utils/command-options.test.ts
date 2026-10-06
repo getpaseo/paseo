@@ -31,7 +31,10 @@ describe("global command options", () => {
   it("rejects conflicting parent and command selectors", async () => {
     await expect(
       parseHost(["--host", "first:6767", "ls", "--host", "last:6767"]),
-    ).rejects.toMatchObject({ code: "TARGET_AMBIGUOUS" });
+    ).rejects.toMatchObject({
+      code: "TARGET_AMBIGUOUS",
+      message: "Conflicting duplicate --host selectors.",
+    });
   });
 
   it("lets local-only commands ignore a global host", async () => {

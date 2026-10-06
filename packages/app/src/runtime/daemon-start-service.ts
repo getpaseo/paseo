@@ -27,7 +27,6 @@ export async function upsertDesktopDaemonConnection(
   if (store.getHosts().some((host) => host.serverId === serverId)) {
     return { ok: true };
   }
-
   const listenAddress = daemon.listen?.trim() ?? "";
   if (!listenAddress) {
     return { ok: false, error: "Desktop daemon did not return a listen address." };

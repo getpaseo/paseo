@@ -1,5 +1,10 @@
+import pino from "pino";
 import { randomUUID } from "node:crypto";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CreationService } from "../creation/index.js";
 
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
@@ -281,13 +286,8 @@ export function createProviderSnapshotManagerStub(): {
   };
 }
 
-export function createAgentRequestsStub(): SessionOptions["agentRequests"] {
+export function createMessageReceiptsStub(): SessionOptions["messageReceipts"] {
   return {
-    async create(input) {
-      const agentId = randomUUID();
-      await input.create(agentId);
-      return agentId;
-    },
     send: (input) => input.send(),
   };
 }
@@ -303,4 +303,18 @@ export function createProviderSnapshot(
       return { entry, contentHash: JSON.stringify(content) };
     }),
   };
+}
+
+const creationDirectories: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    creationDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+export function createTestCreationService(): SessionOptions["creationService"] {
+  const directory = join(tmpdir(), `session-creation-${randomUUID()}`);
+  creationDirectories.push(directory);
+  return new CreationService(directory, pino({ level: "silent" }));
 }
