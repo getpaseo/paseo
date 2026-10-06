@@ -16,6 +16,7 @@ import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
+import type { AgentBackgroundWorkItem } from "./agent/background-work/store.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
@@ -8097,17 +8098,12 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.background_work.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
       this.emit({
         type: "agent.background_work.list.response",
         payload: {
           requestId: msg.requestId,
           agentId: msg.agentId,
-          items: this.agentManager.listAgentBackgroundWork(msg.agentId),
+          items: await this.readAgentBackgroundWork(msg.agentId),
           error: null,
         },
       });
@@ -8122,6 +8118,22 @@ export class Session {
         },
       });
     }
+  }
+
+  // Background work lives only in memory, so an agent that is not loaded has none.
+  // Answering from storage keeps a read from resuming a dormant agent.
+  private async readAgentBackgroundWork(agentId: string): Promise<AgentBackgroundWorkItem[]> {
+    if (this.agentManager.getAgent(agentId)) {
+      return this.agentManager.listAgentBackgroundWork(agentId);
+    }
+    const record = await this.agentStorage.get(agentId);
+    if (!record || record.internal) {
+      throw new Error(`Unknown agent '${agentId}'`);
+    }
+    if (record.archivedAt) {
+      throw new Error(`Agent is archived: ${agentId}`);
+    }
+    return [];
   }
 
   private async handleProviderSubagentTimelineRequest(
