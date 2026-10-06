@@ -3,6 +3,29 @@ import path from "node:path";
 import { PluginIdSchema } from "@getpaseo/protocol/messages";
 import { resolveCliVersion } from "../../version.js";
 
+const OVERVIEW = `<!--
+Opening paragraph: describe what your plugin does and the workflow it supports.
+README is for people browsing your project on GitHub. This overview is for people
+choosing a plugin in Paseo. Replace these comments with 80–250 words in sentence
+case and plain factual language: an opening paragraph, requirements, then
+considerations. Omit install instructions (the listing page has the command),
+badges, changelog, contributing sections, and marketing. Describe only behavior
+your plugin implements.
+-->
+
+<!--
+Requirements: state the required Paseo daemon version, operating systems,
+providers, accounts, other plugins, and external tools. Include only requirements
+that apply to your plugin.
+-->
+
+<!--
+Considerations: explain permissions, what the plugin reads, what it sends and
+where it sends it, and known limits. Describe the actual behavior so people can
+decide whether to use it.
+-->
+`;
+
 const TSCONFIG = {
   compilerOptions: {
     target: "ES2020",
@@ -155,6 +178,7 @@ export async function scaffoldPluginDirectory(
     version: "0.0.0",
     files: [
       "paseo-plugin.json",
+      "OVERVIEW.md",
       "index.client.ts",
       "index.client.tsx",
       "index.server.ts",
@@ -179,6 +203,7 @@ export async function scaffoldPluginDirectory(
       "paseo-plugin.json",
       `${JSON.stringify({ id, requirements: { paseo: `>=${version}` } }, null, 2)}\n`,
     ],
+    ["OVERVIEW.md", OVERVIEW],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["tsconfig.json", `${JSON.stringify(TSCONFIG, null, 2)}\n`],
     ["index.client.tsx", CLIENT_ENTRY],

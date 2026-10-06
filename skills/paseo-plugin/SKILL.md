@@ -638,6 +638,33 @@ Do not edit a local config when the target is a remote daemon. Perform the edit 
 
 When the same screen or sidebar item exists on several connected hosts, Paseo shows it once. The screen header has a host picker; a sidebar item uses the host of the screen on display, else the host last picked in one of the plugin's screens. The selected host owns the bundle, SDK calls, RPCs, and query cache. An offline selected host does not fall through to another host. Attachment sources stay scoped to the composer's host.
 
+## Publishing a listing
+
+Write `OVERVIEW.md` beside `paseo-plugin.json` and include it in the published artifact.
+README serves people browsing the project on GitHub; the overview helps people choose a
+plugin in Paseo. Replace the scaffold's three guidance comments with factual content before
+publishing. The scaffold includes the overview in the npm `files` list.
+
+Listing resolution uses the reviewed artifact in this order:
+
+1. The `readme` path in the artifact's `paseo-listing.json`, if set.
+2. `OVERVIEW.md` beside the artifact's manifest, under `pluginPath` for monorepos.
+3. `plugins/<owner>/<slug>.md` in the registry repository.
+4. The artifact's `README.md`.
+5. The artifact's `readme.md`.
+
+The registry copy is an import-time stopgap. On the version bump that ships the author's
+`OVERVIEW.md`, the reviewer removes the registry copy.
+
+Apply the same contract to author overviews and registry stopgaps: 80–250 words, sentence
+case, and plain factual language. Start with what the plugin does and the workflow it
+supports, then requirements (daemon version, operating systems, providers, accounts, other
+plugins, external tools), then considerations (permissions, what it reads, what it sends and
+where, known limits). State only applicable requirements and behavior the plugin implements.
+Omit install instructions (the listing page has the command), badges, changelog,
+contributing sections, and marketing. See
+[Your listing page](https://paseo.sh/docs/plugins/publishing.md#your-listing-page).
+
 ## Typecheck and manage
 
 When editing a plugin, typecheck its source before install or reload:

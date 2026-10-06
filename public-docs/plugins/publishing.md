@@ -56,6 +56,7 @@ The scaffold includes this `files` list in `package.json`:
 {
   "files": [
     "paseo-plugin.json",
+    "OVERVIEW.md",
     "index.client.ts",
     "index.client.tsx",
     "index.server.ts",
@@ -135,6 +136,35 @@ Paseo uses the host's npm registry settings and credentials for installation and
 In the app, enter only the source identifier.
 
 :::
+
+## Your listing page
+
+Write `OVERVIEW.md` beside `paseo-plugin.json` for people choosing your plugin in Paseo.
+Your README serves people browsing the project on GitHub. The scaffold creates an overview
+with comments to guide you; replace them with the listing text before publishing. Include the
+file in your published artifact. The scaffold's npm `files` list includes it.
+
+The registry resolves listing content in this order, using the reviewed artifact:
+
+1. The `readme` path in the artifact's `paseo-listing.json`, if set.
+2. `OVERVIEW.md` beside the artifact's manifest, under `pluginPath` for monorepos.
+3. `plugins/<owner>/<slug>.md` in the registry repository.
+4. The artifact's `README.md`.
+5. The artifact's `readme.md`.
+
+The registry copy is an import-time stopgap. On the version bump that ships the author's
+`OVERVIEW.md`, the reviewer removes the registry copy.
+
+Author overviews and registry stopgaps follow the same content contract: 80–250 words,
+sentence case, and plain factual language, in this order:
+
+- **Opening paragraph:** what the plugin does and the workflow it supports.
+- **Requirements:** required daemon version, operating systems, providers, accounts, other
+  plugins, and external tools. State only requirements that apply.
+- **Considerations:** permissions, what it reads, what it sends and where, and known limits.
+
+Omit install instructions (the listing page has the command), badges, changelog,
+contributing sections, and marketing. Describe only behavior the plugin implements.
 
 ## Share through GitHub or Git
 

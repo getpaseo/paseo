@@ -28,6 +28,33 @@ afterEach(async () => {
 });
 
 describe("plugin scaffold", () => {
+  it.each(["hello-plugin", "theme-plugin", "provider-plugin"])(
+    "creates an author overview beside the manifest for %s",
+    async (id) => {
+      const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
+      directories.push(parent);
+      const directory = path.join(parent, id);
+      await scaffoldPluginDirectory(directory);
+
+      const overview = await readFile(path.join(directory, "OVERVIEW.md"), "utf8");
+      const comments = overview.match(/<!--[\s\S]*?-->/g) ?? [];
+      expect(comments).toHaveLength(3);
+      expect(overview.replace(/<!--[\s\S]*?-->/g, "").trim()).toBe("");
+      expect(comments[0]).toContain("Opening paragraph");
+      expect(comments[0]).toContain("README");
+      expect(comments[0]).toContain("choosing a plugin in Paseo");
+      expect(comments[0]).toContain("80–250 words");
+      expect(comments[1]).toContain("Requirements");
+      expect(comments[1]).toContain("daemon version");
+      expect(comments[2]).toContain("Considerations");
+      expect(comments[2]).toContain("permissions");
+      expect(comments[2]).toContain("known limits");
+      const packageJson = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
+      expect(packageJson.files).toContain("OVERVIEW.md");
+      expect(await readdir(directory)).toContain("paseo-plugin.json");
+    },
+  );
+
   it(
     "creates a standalone split-runtime project that typechecks",
     { timeout: 15_000 },
@@ -60,6 +87,7 @@ describe("plugin scaffold", () => {
         version: "0.0.0",
         files: [
           "paseo-plugin.json",
+          "OVERVIEW.md",
           "index.client.ts",
           "index.client.tsx",
           "index.server.ts",
