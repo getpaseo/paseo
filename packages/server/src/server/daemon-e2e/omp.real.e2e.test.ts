@@ -131,6 +131,15 @@ async function timeline(client: DaemonClient, agentId: string): Promise<AgentTim
   return result.entries.map((entry) => entry.item);
 }
 
+function compactionFiller(): string {
+  const teas = ["assam", "darjeeling", "sencha", "oolong"];
+  return Array.from(
+    { length: 1200 },
+    (_, index) =>
+      `Record ${String(index).padStart(5, "0")}: tea=${teas[index % teas.length]} origin=region-${index % 37} notes=lorem ipsum dolor sit amet`,
+  ).join("\n");
+}
+
 function latestTools(items: AgentTimelineItem[]) {
   const latest = new Map<string, Extract<AgentTimelineItem, { type: "tool_call" }>>();
   for (const item of items) if (item.type === "tool_call") latest.set(item.callId, item);
@@ -504,6 +513,52 @@ describe("daemon E2E (real OMP)", () => {
             .replace(/\s/g, ""),
         ).toContain(`HOST_TOOL_OK:${agent.id}`);
       } finally {
+        await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "a compaction shows as a compaction row after a daemon restart",
+    async () => {
+      const harness = await createHarness();
+      let restarted: TestPaseoDaemon | null = null;
+      let restartedClient: DaemonClient | null = null;
+      try {
+        const agent = await createAgent(harness, "compact-restart");
+        await promptAndFinish(
+          harness,
+          agent.id,
+          `${compactionFiller()}\n\nReply exactly OMP_COMPACT_FIRST`,
+        );
+        await promptAndFinish(harness, agent.id, "Reply exactly OMP_COMPACT_SECOND");
+        await harness.client.sendMessage(agent.id, "/compact");
+        await harness.client.waitForFinish(agent.id, TIMEOUT_MS);
+        await promptAndFinish(harness, agent.id, "Reply exactly OMP_COMPACT_THIRD");
+
+        await harness.client.close();
+        await harness.daemon.close();
+        restarted = await createTestPaseoDaemon({
+          agentClients: createRealProviderClients(["omp"], pino({ level: "silent" })),
+          providerOverrides: { omp: { enabled: true } },
+          logger: pino({ level: "silent" }),
+          paseoHomeRoot: harness.paseoHomeRoot,
+          staticDir: harness.staticDir,
+          cleanup: false,
+        });
+        restartedClient = new DaemonClient({ url: `ws://127.0.0.1:${restarted.port}/ws` });
+        await restartedClient.connect();
+        await restartedClient.fetchAgents({ subscribe: {} });
+        const replayed = await timeline(restartedClient, agent.id);
+
+        expect(JSON.stringify(replayed)).not.toContain("Unsupported history record");
+        expect(replayed.filter((item) => item.type === "compaction")).toEqual([
+          expect.objectContaining({ type: "compaction", status: "completed" }),
+        ]);
+      } finally {
+        await restartedClient?.close().catch(() => undefined);
+        await restarted?.close().catch(() => undefined);
         await closeHarness(harness);
       }
     },
