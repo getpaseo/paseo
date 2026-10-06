@@ -92,6 +92,7 @@ const BrowserGoalInputSchema = z
     goal: z.string().trim().min(1),
     browserId: BrowserAutomationBrowserIdSchema.optional(),
     url: BrowserHttpUrlInputSchema.optional(),
+    separateTab: z.boolean().optional(),
     values: z
       .record(
         z.string().min(1),
@@ -202,12 +203,13 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Create browser tab",
       description:
-        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. For a multi-step task outside tests (a flow, a form, finding something), call browser_goal instead: Jev drives the steps in the daemon for a fraction of the tokens. Use this tool for a single step, to debug a failed run, or after browser_goal stopped. Create a new Paseo browser tab in this agent's workspace on the most recently connected browser automation host, opened in the background without switching the user's view. Pass the final target URL here, with any token, query, or hash, so the page opens directly; opening a blank tab and navigating afterwards loses one-time tokens. http(s) and scheme-less host URLs (treated as http) are accepted; the returned browserId is used by tab-scoped tools.",
+        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. For a multi-step task outside tests (a flow, a form, finding something), call browser_goal instead: Jev drives the steps in the daemon for a fraction of the tokens. Use this tool for a single step, to debug a failed run, or after browser_goal stopped. Open a Paseo browser tab in this agent's workspace. An existing tab of the same application (same origin) is reused and navigated to the URL; pass separateTab: true only when a second tab is needed, e.g. a second account. A new tab opens on the most recently connected browser automation host, opened in the background without switching the user's view. Pass the final target URL here, with any token, query, or hash, so the page opens directly; opening a blank tab and navigating afterwards loses one-time tokens. http(s) and scheme-less host URLs (treated as http) are accepted; the returned browserId is used by tab-scoped tools.",
       inputSchema: {
         url: BrowserHttpUrlInputSchema.optional(),
+        separateTab: z.boolean().optional(),
       },
     },
-    async ({ url }) => {
+    async ({ url, separateTab }) => {
       const context = resolveBrowserToolContext(options);
       const missingWorkspace = requireWorkspaceContext(context);
       if (missingWorkspace) {
@@ -217,6 +219,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         agentId: context.agentId,
         cwd: context.cwd,
         ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+        ...(separateTab ? { separateTab } : {}),
         command: {
           command: "new_tab",
           args: url ? { url } : {},

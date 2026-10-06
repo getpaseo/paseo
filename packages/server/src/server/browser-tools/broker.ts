@@ -26,6 +26,8 @@ export interface BrowserToolsExecuteInput {
   timeoutMs?: number;
   /** Pins the command to one host, e.g. the app's streamed tabs to the daemon's own browser. */
   hostId?: string;
+  /** Opens a fresh tab even if one for the same application exists, e.g. for multi-account tests. */
+  separateTab?: boolean;
 }
 
 interface PendingBrowserToolsRequest {
@@ -150,6 +152,15 @@ export class BrowserToolsBroker {
       return this.executeListTabs({ request: request.data, timeoutMs });
     }
 
+    if (
+      request.data.command.command === "new_tab" &&
+      request.data.command.args.url &&
+      !input.separateTab
+    ) {
+      const reused = await this.reuseTabForOrigin({ input, request: request.data, timeoutMs });
+      if (reused) return reused;
+    }
+
     if (this.isUnknownBrowser(request.data.command)) {
       await this.discoverUnknownBrowser(request.data, timeoutMs);
     }
@@ -239,6 +250,51 @@ export class BrowserToolsBroker {
       },
       timeoutMs,
     });
+  }
+
+  private async reuseTabForOrigin(params: {
+    input: BrowserToolsExecuteInput;
+    request: BrowserAutomationExecuteRequest;
+    timeoutMs: number;
+  }): Promise<BrowserToolsResponsePayload | null> {
+    const command = params.request.command;
+    const target = command.command === "new_tab" ? command.args.url : undefined;
+    if (!target) return null;
+    const origin = new URL(target).origin;
+    const listed = await this.executeListTabs({
+      request: {
+        ...params.request,
+        requestId: `${params.request.requestId}:reuse`,
+        command: { command: "list_tabs", args: {} },
+      },
+      timeoutMs: params.timeoutMs,
+    });
+    if (!listed.ok || listed.result.command !== "list_tabs") return null;
+    const tab = listed.result.tabs.find((candidate) => {
+      if (params.request.workspaceId && candidate.workspaceId !== params.request.workspaceId) {
+        return false;
+      }
+      try {
+        return new URL(candidate.url).origin === origin;
+      } catch {
+        return false;
+      }
+    });
+    const workspaceId = tab?.workspaceId ?? params.request.workspaceId;
+    if (!tab || !workspaceId) return null;
+    if (tab.url !== target) {
+      const navigated = await this.execute({
+        ...params.input,
+        requestId: undefined,
+        command: { command: "navigate", args: { browserId: tab.browserId, url: target } },
+      });
+      if (!navigated.ok) return null;
+    }
+    return {
+      requestId: params.request.requestId,
+      ok: true,
+      result: { command: "new_tab", browserId: tab.browserId, workspaceId, url: target },
+    };
   }
 
   private async executeListTabs(params: {

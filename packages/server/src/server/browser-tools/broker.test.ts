@@ -238,6 +238,7 @@ describe("BrowserToolsBroker", () => {
 
     const newTabPromise = broker.execute({
       command: { command: "new_tab", args: { url: "https://example.com" } },
+      separateTab: true,
       workspaceId: "workspace-1",
     });
 
@@ -311,6 +312,7 @@ describe("BrowserToolsBroker", () => {
 
     const newTabPromise = broker.execute({
       command: { command: "new_tab", args: { url: "https://example.com" } },
+      separateTab: true,
       workspaceId: "workspace-1",
     });
 
@@ -331,6 +333,86 @@ describe("BrowserToolsBroker", () => {
       ok: true,
       result: { command: "new_tab", browserId: BROWSER_ID },
     });
+  });
+
+  test("new tab reuses an existing tab of the same application and navigates it", async () => {
+    const broker = createBroker();
+    const host = new FakeBrowserHostClient("host-1");
+    broker.registerClient(host);
+
+    const promise = broker.execute({
+      command: {
+        command: "new_tab",
+        args: { url: "https://app.example/dashboard" },
+      },
+      workspaceId: "workspace-1",
+    });
+    await Promise.resolve();
+    expect(host.receivedRequests.map((request) => request.command.command)).toEqual(["list_tabs"]);
+    host.resolveLatestWith(broker, {
+      requestId: "req-1:reuse",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [
+          {
+            browserId: BROWSER_ID,
+            workspaceId: "workspace-1",
+            url: "https://app.example/login",
+            title: "Login",
+            isActive: true,
+            isLoading: false,
+          },
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(host.receivedRequests.map((request) => request.command.command)).toEqual([
+      "list_tabs",
+      "navigate",
+    ]);
+    host.resolveLatestWith(broker, {
+      requestId: "req-2",
+      ok: true,
+      result: {
+        command: "navigate",
+        browserId: BROWSER_ID,
+        url: "https://app.example/dashboard",
+      },
+    } as never);
+
+    await expect(promise).resolves.toMatchObject({
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        url: "https://app.example/dashboard",
+      },
+    });
+  });
+
+  test("new tab opens a fresh tab for another application or when separateTab is set", async () => {
+    const broker = createBroker();
+    const host = new FakeBrowserHostClient("host-1");
+    broker.registerClient(host);
+
+    const separate = broker.execute({
+      command: { command: "new_tab", args: { url: "https://app.example/" } },
+      separateTab: true,
+      workspaceId: "workspace-1",
+    });
+    expect(host.receivedRequests.map((request) => request.command.command)).toEqual(["new_tab"]);
+    host.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://app.example/",
+      },
+    });
+    await expect(separate).resolves.toMatchObject({ ok: true });
   });
 
   test("list tabs aggregates all hosts and seeds browser id affinity", async () => {
@@ -482,13 +564,29 @@ describe("BrowserToolsBroker", () => {
   test.each([
     {
       name: "scroll",
-      command: { command: "scroll", args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 } },
-      result: { command: "scroll", browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+      command: {
+        command: "scroll",
+        args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+      },
+      result: {
+        command: "scroll",
+        browserId: BROWSER_ID,
+        deltaX: 0,
+        deltaY: 400,
+      },
     },
     {
       name: "resize",
-      command: { command: "resize", args: { browserId: BROWSER_ID, width: 1024, height: 768 } },
-      result: { command: "resize", browserId: BROWSER_ID, width: 1024, height: 768 },
+      command: {
+        command: "resize",
+        args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+      },
+      result: {
+        command: "resize",
+        browserId: BROWSER_ID,
+        width: 1024,
+        height: 768,
+      },
     },
     {
       name: "close_tab",
@@ -510,7 +608,9 @@ describe("BrowserToolsBroker", () => {
     broker.registerClient(other);
     broker.registerClient(owner);
 
-    const newTabPromise = broker.execute({ command: { command: "new_tab", args: {} } });
+    const newTabPromise = broker.execute({
+      command: { command: "new_tab", args: {} },
+    });
     owner.resolveLatestWith(broker, {
       requestId: "req-1",
       ok: true,
@@ -523,7 +623,10 @@ describe("BrowserToolsBroker", () => {
     });
     await newTabPromise;
 
-    const resultPromise = broker.execute({ command, requestId: "req-command" });
+    const resultPromise = broker.execute({
+      command,
+      requestId: "req-command",
+    });
 
     expect(owner.receivedRequests.at(-1)).toEqual({
       type: "browser.automation.execute.request",
@@ -552,7 +655,9 @@ describe("BrowserToolsBroker", () => {
     broker.registerClient(other);
     broker.registerClient(owner);
 
-    const newTabPromise = broker.execute({ command: { command: "new_tab", args: {} } });
+    const newTabPromise = broker.execute({
+      command: { command: "new_tab", args: {} },
+    });
     owner.resolveLatestWith(broker, {
       requestId: "req-1",
       ok: true,
@@ -709,7 +814,10 @@ describe("BrowserToolsBroker", () => {
     });
     await expect(
       broker.execute({
-        command: { command: "scroll", args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 } },
+        command: {
+          command: "scroll",
+          args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+        },
       }),
     ).resolves.toEqual({
       requestId: "req-1",
@@ -730,6 +838,7 @@ describe("BrowserToolsBroker", () => {
 
     const newTabPromise = broker.execute({
       command: { command: "new_tab", args: {} },
+      separateTab: true,
       workspaceId: "workspace-1",
     });
     owner.resolveLatestWith(broker, {
@@ -772,6 +881,7 @@ describe("BrowserToolsBroker", () => {
 
     const newTabPromise = broker.execute({
       command: { command: "new_tab", args: {} },
+      separateTab: true,
       workspaceId: "workspace-1",
     });
     owner.resolveLatestWith(broker, {
@@ -892,7 +1002,9 @@ describe("BrowserToolsBroker", () => {
     });
     expect(broker.getPendingRequestCount()).toBe(0);
 
-    const listResult = broker.execute({ command: { command: "list_tabs", args: {} } });
+    const listResult = broker.execute({
+      command: { command: "list_tabs", args: {} },
+    });
     expect(newHost.receivedRequests).toHaveLength(1);
     newHost.resolveLatestWith(broker, {
       requestId: "req-1",
@@ -1001,7 +1113,11 @@ describe("BrowserToolsBroker", () => {
     daemonHost.resolveLatestWith(broker, {
       requestId: "req-1",
       ok: false,
-      error: { code: "browser_tab_not_found", message: "gone", retryable: false },
+      error: {
+        code: "browser_tab_not_found",
+        message: "gone",
+        retryable: false,
+      },
     });
     await snapshot;
   });
@@ -1014,7 +1130,10 @@ describe("BrowserToolsBroker", () => {
     broker.registerClient(desktopHost);
 
     // As after a daemon restart: the tab exists again, but nothing routed it yet.
-    const snapshot = broker.execute({ command: snapshotCommand(), workspaceId: "workspace-1" });
+    const snapshot = broker.execute({
+      command: snapshotCommand(),
+      workspaceId: "workspace-1",
+    });
     await Promise.resolve();
     daemonHost.resolveLatestWith(broker, {
       requestId: "req-1:discover:daemon-playwright",

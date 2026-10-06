@@ -65,6 +65,7 @@ export interface JevBrowserGoalInput {
   goal: string;
   browserId?: string;
   url?: string;
+  separateTab?: boolean;
   values?: Record<string, JevBrowserValue>;
   verify: JevBrowserVerification[];
   maxSteps?: number;
@@ -72,6 +73,7 @@ export interface JevBrowserGoalInput {
 }
 
 export interface JevBrowserGoalContext {
+  separateTab?: boolean;
   agentId?: string;
   cwd?: string;
   workspaceId?: string;
@@ -205,7 +207,7 @@ export class JevBrowserGoalRunner {
         status: result.status === "passed" ? "passed" : "failed",
         message: result.message,
       });
-      if (!input.browserId && !reporter && result.status === "passed") {
+      if (input.separateTab && !input.browserId && !reporter && result.status === "passed") {
         await this.execute(context, { command: "close_tab", args: { browserId } }).catch(
           () => undefined,
         );
@@ -381,10 +383,10 @@ export class JevBrowserGoalRunner {
     context: JevBrowserGoalContext,
   ): Promise<string> {
     if (!input.browserId) {
-      const created = await this.execute(context, {
-        command: "new_tab",
-        args: input.url ? { url: input.url } : {},
-      });
+      const created = await this.execute(
+        input.separateTab ? { ...context, separateTab: true } : context,
+        { command: "new_tab", args: input.url ? { url: input.url } : {} },
+      );
       if (!created.ok) {
         throw new Error(created.error.message);
       }
