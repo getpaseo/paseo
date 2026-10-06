@@ -1,4 +1,5 @@
 export const BUILTIN_PROVIDER_ICON_NAMES = [
+  "antigravity",
   "claude",
   "codex",
   "copilot",

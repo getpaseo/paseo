@@ -261,7 +261,7 @@ const CATALOG_DATA = [
     title: "Kiro CLI",
     description: "Amazon's AI coding agent with native ACP support",
     version: "manual",
-    iconId: null,
+    iconId: "kiro",
     installLink: "https://kiro.dev/docs/cli/acp/",
     command: ["kiro-cli", "acp"],
   },
