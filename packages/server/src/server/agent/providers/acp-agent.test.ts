@@ -4292,53 +4292,81 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-describe("ACPAgentSession close() with an unresponsive provider", () => {
-  test("terminates a provider that never answers session/close", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-silent-close-"));
-    const agentScript = path.join(dir, "agent.mjs");
-    const pidFile = path.join(dir, "agent.pid");
-    await writeFile(agentScript, SILENT_CLOSE_ACP_AGENT);
-    const session = new ACPAgentSession(
-      { provider: "silent-close-acp", cwd: dir },
-      {
-        provider: "silent-close-acp",
-        logger: createTestLogger(),
-        defaultCommand: [process.execPath, agentScript],
-        defaultModes: [],
-        capabilities: {
-          supportsStreaming: true,
-          supportsSessionPersistence: true,
-          supportsDynamicModes: true,
-          supportsMcpServers: true,
-          supportsReasoningStream: true,
-          supportsToolInvocations: true,
-        },
-        launchEnv: {
-          ACP_SDK_URL: pathToFileURL(
-            createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
-          ).href,
-          ACP_PID_FILE: pidFile,
-        },
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface SilentCloseProvider {
+  session: ACPAgentSession;
+  readPid(): Promise<number>;
+  dispose(): Promise<void>;
+}
+
+async function startSilentCloseProvider(): Promise<SilentCloseProvider> {
+  const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-silent-close-"));
+  const agentScript = path.join(dir, "agent.mjs");
+  const pidFile = path.join(dir, "agent.pid");
+  await writeFile(agentScript, SILENT_CLOSE_ACP_AGENT);
+  const session = new ACPAgentSession(
+    { provider: "silent-close-acp", cwd: dir },
+    {
+      provider: "silent-close-acp",
+      logger: createTestLogger(),
+      defaultCommand: [process.execPath, agentScript],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
       },
-    );
-    let pid: number | null = null;
-    try {
-      await session.initializeNewSession();
-      pid = Number(await readFile(pidFile, "utf8"));
-      expect(isProcessAlive(pid)).toBe(true);
-
-      const closed = await Promise.race([
-        session.close().then(() => true),
-        new Promise<false>((resolve) => setTimeout(() => resolve(false), 8_000)),
-      ]);
-
-      expect(closed).toBe(true);
-      expect(isProcessAlive(pid)).toBe(false);
-    } finally {
+      launchEnv: {
+        ACP_SDK_URL: pathToFileURL(
+          createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+        ).href,
+        ACP_PID_FILE: pidFile,
+      },
+    },
+  );
+  const readPid = async () => Number(await readFile(pidFile, "utf8"));
+  return {
+    session,
+    readPid,
+    async dispose() {
+      const pid = await readPid().catch(() => null);
       if (pid !== null && isProcessAlive(pid)) {
         process.kill(pid, "SIGKILL");
       }
       await rm(dir, { recursive: true, force: true });
-    }
+    },
+  };
+}
+
+describe("ACPAgentSession close() with an unresponsive provider", () => {
+  let provider: SilentCloseProvider | null = null;
+
+  afterEach(async () => {
+    await provider?.dispose();
+    provider = null;
+  });
+
+  test("terminates a provider that never answers session/close", async () => {
+    provider = await startSilentCloseProvider();
+    await provider.session.initializeNewSession();
+    const pid = await provider.readPid();
+    expect(isProcessAlive(pid)).toBe(true);
+
+    expect(await settlesWithin(provider.session.close(), 8_000)).toBe(true);
+    expect(isProcessAlive(pid)).toBe(false);
   }, 15_000);
 });
