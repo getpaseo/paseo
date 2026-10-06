@@ -53,6 +53,7 @@ export type {
 } from "./terminals/index.js";
 import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentBackgroundWorkItem,
   FetchAgentsEntry,
   FetchAgentsOptions,
   FetchAgentsPageInfo,
@@ -344,6 +345,19 @@ export interface PaseoAgentTimelineHandle {
   subscribe(handler: (event: PaseoAgentTimelineEvent) => void): PaseoAgentTimelineSubscription;
 }
 
+export type PaseoAgentBackgroundWorkItem = AgentBackgroundWorkItem;
+
+export interface PaseoAgentBackgroundWorkHandle {
+  /** Reads the agent's current background work once. */
+  list(options?: { requestId?: string; timeout?: number }): Promise<PaseoAgentBackgroundWorkItem[]>;
+  /**
+   * Calls `listener` with the agent's full list each time it changes. Subscribe before calling
+   * `list()` so no change is missed, and prefer the latest update over an older `list()` result.
+   * Returns the unsubscribe function.
+   */
+  subscribe(listener: (items: PaseoAgentBackgroundWorkItem[]) => void): () => void;
+}
+
 export interface PaseoAgentHandle {
   readonly id: string;
   readonly address: AgentAddress;
@@ -367,6 +381,7 @@ export interface PaseoAgentHandle {
   readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
+  readonly backgroundWork: PaseoAgentBackgroundWorkHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   /**
@@ -603,6 +618,7 @@ export function createPaseoApi(
     daemonClient,
     listenAgents,
     (agentId, handler) => own(() => daemonClient.subscribeAgentTimeline(agentId, handler)),
+    () => own(() => daemonClient.observeAgentBackgroundWork()),
   );
   const createAgent = async (
     options: PaseoAgentCreateOptions,
@@ -898,6 +914,7 @@ function createAgentHandleFactory(
   daemonClient: DaemonClient,
   listen: (handler: PaseoAgentUpdateHandler) => () => void,
   subscribeTimeline: DaemonClient["subscribeAgentTimeline"],
+  observeBackgroundWork: () => ReturnType<DaemonClient["observeAgentBackgroundWork"]>,
 ): AgentHandleFactory {
   return (agent) => {
     const id = typeof agent === "string" ? agent : agent.id;
@@ -943,6 +960,27 @@ function createAgentHandleFactory(
                 });
             }
           }),
+      },
+      backgroundWork: {
+        list: (options) => daemonClient.listAgentBackgroundWork(id, options),
+        subscribe: (listener) => {
+          const observation = observeBackgroundWork();
+          observation.subscribe({
+            snapshot: () => {},
+            update: (message) => {
+              if (message.type !== "agent.background_work.update") return;
+              if (message.payload.agentId !== id) return;
+              listener(message.payload.items);
+            },
+          });
+          return () => {
+            void observation
+              .release()
+              .catch((error) =>
+                console.error("Background work subscription cleanup failed", error),
+              );
+          };
+        },
       },
       get workspaceId() {
         return current?.workspaceId ?? null;

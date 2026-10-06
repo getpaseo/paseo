@@ -1833,3 +1833,80 @@ test("agent reload reopens through the daemon RPC then returns the observed snap
     await client.close();
   }
 });
+
+const BACKGROUND_WORK_FEATURES = { ownedSubscriptions: true, agentBackgroundWork: true };
+const SHELL_ITEM = {
+  id: "bash-1",
+  kind: "shell",
+  description: "sleep 20",
+  startedAt: "2026-10-06T10:00:00.000Z",
+};
+
+test("agent handles list background work", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+
+  const pending = client.agents.ref("agent-a").backgroundWork.list();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "agent.background_work.list.request", agentId: "agent-a" });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-a",
+        items: [SHELL_ITEM],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(pending).resolves.toEqual([SHELL_ITEM]);
+  await client.close();
+});
+
+test("agent handles follow only their own background work", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  const unsubscribe = client.agents
+    .ref("agent-a")
+    .backgroundWork.subscribe((items) => received.push(items));
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["agent.background_work.update"],
+  });
+  acknowledgeObservation(ws, "background-work-sdk");
+
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-b", items: [SHELL_ITEM] },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [SHELL_ITEM] },
+    }),
+  );
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM]]));
+
+  unsubscribe();
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
+    }),
+  );
+  expect(received).toEqual([[SHELL_ITEM]]);
+  await client.close();
+});
+
+test("background work asks for a host update when the daemon lacks it", async () => {
+  const { client } = await connectClient({ ownedSubscriptions: true });
+  const handle = client.agents.ref("agent-a");
+
+  await expect(handle.backgroundWork.list()).rejects.toThrow("Update the host");
+  expect(() => handle.backgroundWork.subscribe(() => {})).toThrow("Update the host");
+  await client.close();
+});
