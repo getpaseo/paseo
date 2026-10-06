@@ -1,5 +1,4 @@
 import { useCallback, useMemo } from "react";
-import { useIsFetching } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useFetchQuery } from "@/data/query";
 import { useCachedQueryData } from "@/hooks/use-cached-query-data";
@@ -17,12 +16,8 @@ export function useDirectorySearch(input: {
   const cachedResults = useCachedQueryData<DirectorySearchResult>(root);
   const plan = planDirectorySearch({ ...input, cachedResults });
   const query = input.query.trim();
-  const pendingOtherSearches = useIsFetching({
-    queryKey: root,
-    predicate: (cached) => cached.queryKey[2] !== query,
-  });
   const candidate =
-    input.enabled && input.client && plan.queryToFetch && pendingOtherSearches === 0
+    input.enabled && input.client && plan.queryToFetch
       ? JSON.stringify([input.hostId, plan.queryToFetch])
       : null;
   const settledCandidate = useDebouncedValue(candidate, 400);
@@ -57,9 +52,7 @@ export function useDirectorySearch(input: {
     paths: plan.paths,
     isFetching: result.isFetching,
     isError: result.isError && candidate !== null,
-    isWaiting:
-      Boolean(input.enabled && plan.queryToFetch) &&
-      (pendingOtherSearches > 0 || candidate !== settledCandidate),
+    isWaiting: candidate !== null && candidate !== settledCandidate,
     retry,
   };
 }

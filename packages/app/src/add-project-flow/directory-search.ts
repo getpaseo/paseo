@@ -15,14 +15,13 @@ export function planDirectorySearch(input: {
   const paths = buildWorkingDirectorySuggestions({
     recommendedPaths: [
       ...input.recommendedPaths,
-      ...input.cachedResults.flatMap((result) => result.paths),
+      ...(previousResult ? [] : input.cachedResults.flatMap((result) => result.paths)),
     ],
     serverPaths: previousResult?.paths ?? [],
     query,
   });
   return {
-    paths: paths.slice(0, 30),
-    // A cached empty response is an answer too. Retyping it must not start a loop.
-    queryToFetch: query && paths.length === 0 && !previousResult ? query : null,
+    paths: [...new Set([...(previousResult?.paths ?? []), ...paths])].slice(0, 30),
+    queryToFetch: query || null,
   };
 }
