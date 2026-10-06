@@ -170,14 +170,24 @@ describe("Codex question delivery", () => {
     expect(card.view.getByRole("button", { name: "Send to chat" })).toBeTruthy();
   });
 
-  it("masks a native Codex secret answer", () => {
+  it("masks and submits a native Codex secret answer", () => {
     const card = mountCard(
       { question: "Password?", header: "Password", options: [], isSecret: true },
       "codex",
       "request_user_input",
     );
 
-    expect(card.view.getByLabelText<HTMLInputElement>("Password?").type).toBe("password");
+    const input = card.view.getByLabelText<HTMLInputElement>("Password?");
+    expect(input.type).toBe("password");
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!valueSetter) throw new Error("HTML input value setter is unavailable");
+    act(() => {
+      valueSetter.call(input, "test-password-123");
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: "test-password-123" }));
+    });
+    card.submit();
+
+    expect(card.submittedAnswers()).toEqual({ Password: "test-password-123" });
     expect(card.view.queryByTestId("question-form-chat-delivery-warning")).toBeNull();
   });
 });
