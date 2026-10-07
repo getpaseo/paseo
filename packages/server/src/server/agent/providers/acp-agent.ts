@@ -110,7 +110,6 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
-import { EmptyModelCatalogError } from "../empty-model-catalog-error.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
@@ -807,10 +806,13 @@ export function deriveModesFromACP(
  * it currently carries. A selector that advertises but lists nothing is a
  * degraded provider signal, not a provider without models.
  */
-function advertisesACPModelSelection(
-  models: SessionModelState | null | undefined,
-  configOptions: SessionConfigOption[] | null | undefined,
-): boolean {
+function advertisesACPModelSelection({
+  models,
+  configOptions,
+}: {
+  models: SessionModelState | null | undefined;
+  configOptions: SessionConfigOption[] | null | undefined;
+}): boolean {
   return models != null || findSelectConfigOption({ configOptions, category: "model" }) !== null;
 }
 
@@ -1178,16 +1180,6 @@ export class ACPAgentClient implements AgentClient {
             ),
           )
         : derivedModels;
-      if (
-        models.length === 0 &&
-        advertisesACPModelSelection(transformed.models, transformed.configOptions)
-      ) {
-        // The provider claims a model selector but enumerated nothing — e.g.
-        // Devin CLI answers session/new with an empty `model` config option
-        // while signed out. Surface it as a refreshable error rather than a
-        // "ready" snapshot that pins an empty list into the catalog cache.
-        throw new EmptyModelCatalogError(this.provider);
-      }
       const modeInfo = deriveModesFromACP(
         this.defaultModes,
         transformed.modes,
@@ -1196,6 +1188,16 @@ export class ACPAgentClient implements AgentClient {
       return {
         models: this.modelTransformer ? this.modelTransformer(models) : models,
         modes: modeInfo.modes,
+        // The provider may advertise a model selector while enumerating
+        // nothing (e.g. Devin CLI answers session/new with an empty `model`
+        // config option while signed out). Report the signal so the registry
+        // can raise an error only when configured models don't cover the gap —
+        // failing here would also abort mode discovery for providers that
+        // replace runtime models with a configured list.
+        advertisesModelSelection: advertisesACPModelSelection({
+          models: transformed.models,
+          configOptions: transformed.configOptions,
+        }),
       };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);

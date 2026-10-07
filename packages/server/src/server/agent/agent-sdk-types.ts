@@ -735,6 +735,13 @@ export interface ProviderCatalog {
   models: AgentModelDefinition[];
   modes: AgentMode[];
   defaultModeId?: string | null;
+  /**
+   * True when the provider exposes a model selector — a `models` field or a
+   * model config option — even if {@link models} is currently empty. Lets the
+   * registry distinguish "provider has no model selection" from a degraded
+   * "selector advertised but enumerated nothing" state.
+   */
+  advertisesModelSelection?: boolean;
 }
 
 export interface ResolveAgentDefaultModeInput {

@@ -48,7 +48,6 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
-import { EmptyModelCatalogError } from "../empty-model-catalog-error.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -1952,6 +1951,7 @@ describe("ACPAgentClient modelTransformer", () => {
         },
       ],
       modes: [],
+      advertisesModelSelection: true,
     });
   });
 });
@@ -2046,10 +2046,11 @@ describe("ACPAgentClient empty advertised model catalog", () => {
     });
   }
 
-  test("rejects catalog discovery when a model selector advertises zero options", async () => {
+  test("flags the catalog when a model selector advertises zero options", async () => {
     // Signed-out Devin CLI responds to session/new with a `model` config option
-    // whose options list is empty. That must surface as a refreshable error —
-    // not a "ready" snapshot caching an empty model list forever.
+    // whose options list is empty. The flag — not a throw — lets the registry
+    // decide whether configured models cover the gap and keeps mode discovery
+    // intact for providers that replace runtime models.
     const client = createCatalogClient({
       sessionId: "session-1",
       configOptions: [
@@ -2059,10 +2060,13 @@ describe("ACPAgentClient empty advertised model catalog", () => {
 
     await expect(
       client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
-    ).rejects.toBeInstanceOf(EmptyModelCatalogError);
+    ).resolves.toMatchObject({
+      models: [],
+      advertisesModelSelection: true,
+    });
   });
 
-  test("rejects catalog discovery when the models field advertises an empty list", async () => {
+  test("flags the catalog when the models field advertises an empty list", async () => {
     const client = createCatalogClient({
       sessionId: "session-1",
       models: { availableModels: [], currentModelId: null },
@@ -2071,10 +2075,13 @@ describe("ACPAgentClient empty advertised model catalog", () => {
 
     await expect(
       client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
-    ).rejects.toBeInstanceOf(EmptyModelCatalogError);
+    ).resolves.toMatchObject({
+      models: [],
+      advertisesModelSelection: true,
+    });
   });
 
-  test("keeps an empty catalog when the provider advertises no model selection", async () => {
+  test("reports no model selection when the provider advertises none", async () => {
     const client = createCatalogClient({
       sessionId: "session-1",
       configOptions: [
@@ -2094,6 +2101,7 @@ describe("ACPAgentClient empty advertised model catalog", () => {
     ).resolves.toEqual({
       models: [],
       modes: [{ id: "default", label: "Default", description: undefined }],
+      advertisesModelSelection: false,
     });
   });
 });
@@ -2306,6 +2314,7 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
           description: "After transform",
         },
       ],
+      advertisesModelSelection: false,
     });
   });
 });
@@ -2384,6 +2393,7 @@ describe("ACPAgentClient fetchCatalog", () => {
     ).resolves.toEqual({
       models: [],
       modes: [],
+      advertisesModelSelection: false,
     });
   });
 });

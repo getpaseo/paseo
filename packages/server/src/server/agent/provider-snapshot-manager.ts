@@ -978,6 +978,7 @@ export class ProviderSnapshotManager {
           initial,
           client,
           markStale: () => {
+            if (!isCurrent()) return;
             current.stale = true;
           },
           publish: (entry) => {

@@ -601,6 +601,57 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("a superseded probe's empty-catalog failure does not stale the recovered catalog", async () => {
+    // A forced refresh can overlap an older probe on the same catalog. When
+    // the newer probe succeeds and the older one later fails with
+    // EmptyModelCatalogError, the stale mark must not clobber the fresh
+    // result — otherwise every recovered catalog would immediately re-probe.
+    const cwd = "/tmp/project";
+    let rejectFirstProbe: ((error: Error) => void) | undefined;
+    const fetchCatalog = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectFirstProbe = reject;
+          }),
+      )
+      .mockImplementation(async () => ({
+        models: [
+          {
+            provider: "codex",
+            id: "gpt-5.4-mini",
+            label: "GPT 5.4 Mini",
+          },
+        ] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const firstRefresh = manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] });
+      await vi.waitFor(() => expect(fetchCatalog).toHaveBeenCalledTimes(1));
+
+      await manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] });
+      rejectFirstProbe!(new EmptyModelCatalogError("codex"));
+      await firstRefresh;
+
+      const [entry] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(entry).toMatchObject({ provider: "codex", status: "ready" });
+      expect(entry.models).toHaveLength(1);
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("other catalog failures stay cached until an explicit refresh", async () => {
     const cwd = "/tmp/project";
     const fetchCatalog = vi.fn(async () => {
