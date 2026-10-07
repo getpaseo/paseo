@@ -355,6 +355,29 @@ test("switches an auto mode session to another mode when Claude Code uses Bedroc
   }
 });
 
+test("does not keep a query started in a mode that Claude Code rejected", async () => {
+  const launchedModes: Array<string | undefined> = [];
+  sdkQueryFactory.mockImplementation(({ options }: { options: { permissionMode?: string } }) => {
+    launchedModes.push(options.permissionMode);
+    const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    if (launchedModes.length === 1) {
+      queryMock.setPermissionMode.mockRejectedValue(new Error("bypass refused"));
+    }
+    return queryMock;
+  });
+  const session = await createSession();
+
+  try {
+    await expect(session.setMode("bypassPermissions")).rejects.toThrow("bypass refused");
+    await session.listCommands();
+
+    expect(await session.getCurrentMode()).toBe("default");
+    expect(launchedModes).toEqual(["bypassPermissions", "default"]);
+  } finally {
+    await session.close();
+  }
+});
+
 test("logs redacted query summary and never leaks sentinel secrets", async () => {
   const envSecret = "PASEO_ENV_SENTINEL_SECRET";
   const runtimeSecret = "PASEO_RUNTIME_SENTINEL_SECRET";
