@@ -1219,6 +1219,13 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
         30_000,
         client.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 25_000),
       );
+      // The running status precedes the Agent tool call, so a steer sent on it alone can reach
+      // Claude before the helper exists and prove nothing about a helper surviving it.
+      await within(
+        "confirm the background helper is registered before steering",
+        60_000,
+        waitForProviderSubagentToExist(client, agent.id, 55_000),
+      );
 
       await within(
         "send the app's default steer while main is busy with its own sleep",

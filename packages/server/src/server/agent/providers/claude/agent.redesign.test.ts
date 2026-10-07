@@ -1538,6 +1538,30 @@ test("an interrupt after Claude took the message but before it started stops it"
   await session.close();
 });
 
+test("a prompt sent while a stopped prompt is being withdrawn is not withdrawn too", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  let settleWithdrawal: (cancelled: boolean) => void = () => {};
+  queryMock.cancelAsyncMessage.mockImplementationOnce(
+    () => new Promise<boolean>((resolve) => (settleWithdrawal = resolve)),
+  );
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+
+  await session.startTurn("first");
+  const firstUuid = await readFirstPromptUuid();
+  await session.interrupt();
+  await vi.waitFor(() => expect(queryMock.cancelAsyncMessage).toHaveBeenCalledTimes(1));
+
+  await session.startTurn("second");
+  settleWithdrawal(false);
+
+  await vi.waitFor(() => expect(queryMock.interrupt).toHaveBeenCalledTimes(1));
+  expect(queryMock.cancelAsyncMessage).toHaveBeenCalledTimes(1);
+  expect(queryMock.cancelAsyncMessage).toHaveBeenCalledWith(firstUuid);
+
+  await session.close();
+});
+
 test("an interrupt while only background subagents run never reaches Claude", async () => {
   const queryMock = createInterruptibleQueryMock();
   sdkQueryFactory.mockImplementation(() => queryMock);

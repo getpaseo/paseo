@@ -4138,13 +4138,16 @@ class ClaudeAgentSession implements AgentSession {
       );
       return;
     }
-    // Claude can dequeue a message for its next turn before announcing it started; withdrawing it
-    // is then a no-op, and only an interrupt stops it.
-    if (!claudeStartedTurn && (await this.withdrawUnstartedMessages(queryToInterrupt))) {
-      return;
+    if (claudeStartedTurn) {
+      this.pendingInterruptAbort = true;
+      await this.withdrawUnstartedMessages(queryToInterrupt);
+    } else {
+      // Claude can dequeue a message for its next turn before announcing it started; withdrawing
+      // it is then a no-op, and only an interrupt stops it. Withdraw once: a prompt sent while
+      // this withdrawal was in flight belongs to the next turn.
+      if (await this.withdrawUnstartedMessages(queryToInterrupt)) return;
+      this.pendingInterruptAbort = true;
     }
-    this.pendingInterruptAbort = true;
-    await this.withdrawUnstartedMessages(queryToInterrupt);
     try {
       await this.awaitWithTimeout(
         queryToInterrupt.interrupt(),
