@@ -25,8 +25,12 @@ For web pages, use the Paseo browser: it is already signed in where the user sig
 
 When you delegate work, prefer Paseo's \`create_agent\` so quota-aware routing applies. Native subagents inherit your current model and thinking: keep them at the same level or cheaper, and never escalate a simple follow-up to the strongest model with maximum thinking unless the subtask truly needs it.`;
 
+export const BROWSER_TAKEOVER_INSTRUCTION = `When \`browser_goal\` or \`browser_test\` ends with anything other than passed (uncertain, blocked, failed), the task is not over and the result is not your answer. Take over yourself: call \`browser_snapshot\` on the same \`browserId\` and finish the steps with the \`browser_*\` tools, using the visible controls the result lists. Do not end your turn with a failed run and an open tab. Finish the task, or close the tab you opened and ask the user one concrete question.`;
+
+export const TIME_ENTRY_INSTRUCTION = `Never book, submit, or correct time entries (HOURS, Zoho, or any time tracking) on your own, whatever earlier authorization, ledger, or estimate exists. When work for a day needs booking, ask the user first: how many hours to enter for that date. Enter exactly the duration they answer, then read it back. Without an answer nothing is booked.`;
+
 export function composeDaemonAppendSystemPrompt(userPrompt: string): string {
   const trimmed = userPrompt.trim();
-  const base = `${TESTING_ENGINE_INSTRUCTION}\n\n${CODE_COMMENT_INSTRUCTION}\n\n${WRITING_BLOCK_INSTRUCTION}\n\n${QUESTION_LIFECYCLE_INSTRUCTION}\n\n${SYSTEM_ONE_INSTRUCTION}`;
+  const base = `${TESTING_ENGINE_INSTRUCTION}\n\n${CODE_COMMENT_INSTRUCTION}\n\n${WRITING_BLOCK_INSTRUCTION}\n\n${QUESTION_LIFECYCLE_INSTRUCTION}\n\n${SYSTEM_ONE_INSTRUCTION}\n\n${BROWSER_TAKEOVER_INSTRUCTION}\n\n${TIME_ENTRY_INSTRUCTION}`;
   return trimmed ? `${base}\n\n${trimmed}` : base;
 }

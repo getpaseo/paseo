@@ -1058,6 +1058,12 @@ function browserGoalToolResult(
           `URL: ${result.url}`,
           ...(result.usage ? [formatJevUsage(result.usage)] : []),
           ...(trace ? ["", trace] : []),
+          ...(result.status === "passed"
+            ? []
+            : [
+                "",
+                `Not finished. Continue yourself on browserId ${result.browserId}: browser_snapshot, then browser_click/browser_fill with the refs. Do not stop here and do not leave the tab open.`,
+              ]),
         ].join("\n"),
       },
     ],
