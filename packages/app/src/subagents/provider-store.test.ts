@@ -1,8 +1,11 @@
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
+import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   observeProviderSubagentTimeline,
   providerSubagentKey,
+  refreshProviderSubagents,
+  resyncProviderSubagents,
   useProviderSubagentStore,
 } from "./provider-store";
 
@@ -15,6 +18,7 @@ afterEach(() => {
     descriptors: new Map(),
     timelines: new Map(),
     hiddenFromTrack: new Set(),
+    listedParents: new Set(),
   });
 });
 
@@ -725,5 +729,76 @@ describe("projected child history", () => {
     expect([...current().tail, ...current().head]).toHaveLength(1);
     expect(JSON.stringify(current()).length).toBeLessThan(1_000_000);
     expect(current().lastSeq).toBe(2000);
+  });
+});
+
+describe("resyncing after the update feed resubscribes", () => {
+  function child(
+    id: string,
+    parentAgentId: string,
+    status: ProviderSubagentDescriptorPayload["status"],
+  ): ProviderSubagentDescriptorPayload {
+    return {
+      id,
+      parentAgentId,
+      provider: "claude",
+      title: "Explore",
+      description: null,
+      status,
+      createdAt: "2026-10-07T10:00:00.000Z",
+      updatedAt: "2026-10-07T10:00:00.000Z",
+      toolCallId: id,
+    };
+  }
+
+  function fakeDaemon(lists: Record<string, ProviderSubagentDescriptorPayload[]>) {
+    const requested: string[] = [];
+    return {
+      requested,
+      lists,
+      client: {
+        listProviderSubagents: async (parentAgentId: string) => {
+          requested.push(parentAgentId);
+          return {
+            requestId: "list",
+            parentAgentId,
+            subagents: lists[parentAgentId] ?? [],
+            error: null,
+          };
+        },
+      },
+    };
+  }
+
+  const status = (parentAgentId: string, subagentId: string) =>
+    useProviderSubagentStore
+      .getState()
+      .descriptors.get(providerSubagentKey(SERVER_ID, parentAgentId, subagentId))?.status;
+
+  test("catches up on children that finished or started while updates were not delivered", async () => {
+    const daemon = fakeDaemon({ [PARENT_ID]: [child("child-1", PARENT_ID, "running")] });
+    await refreshProviderSubagents(daemon.client, SERVER_ID, PARENT_ID);
+    expect(status(PARENT_ID, "child-1")).toBe("running");
+
+    // The connection dropped: the daemon finished child-1 and ran child-2 without telling us.
+    daemon.lists[PARENT_ID] = [
+      child("child-1", PARENT_ID, "completed"),
+      child("child-2", PARENT_ID, "completed"),
+    ];
+    await resyncProviderSubagents(daemon.client, SERVER_ID);
+
+    expect(status(PARENT_ID, "child-1")).toBe("completed");
+    expect(status(PARENT_ID, "child-2")).toBe("completed");
+  });
+
+  test("lists again only the parents this server was showing", async () => {
+    const daemon = fakeDaemon({});
+    await refreshProviderSubagents(daemon.client, SERVER_ID, PARENT_ID);
+    await refreshProviderSubagents(daemon.client, "server-2", "other-parent");
+    daemon.requested.length = 0;
+
+    await resyncProviderSubagents(daemon.client, SERVER_ID);
+
+    expect(daemon.requested).toEqual([PARENT_ID]);
   });
 });

@@ -28,6 +28,8 @@ interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
+  /** Parents whose list this client holds, so a resubscribed update feed can catch them up. */
+  listedParents: Set<string>;
   hideFromTrack(serverId: string, parentAgentId: string, subagentIds: readonly string[]): void;
   replaceList(
     serverId: string,
@@ -101,6 +103,27 @@ function parentPrefix(serverId: string, parentAgentId: string): string {
   return `${serverId}\0${parentAgentId}\0`;
 }
 
+/**
+ * Updates are not replayed across a reconnect, so a child that finished or started while the
+ * update feed was down stays stale until its parent is listed again. Call this once the feed has
+ * resubscribed, so every update after the list is delivered.
+ */
+export async function resyncProviderSubagents(
+  client: ProviderSubagentListClient,
+  serverId: string,
+): Promise<void> {
+  const serverPrefix = `${serverId}\0`;
+  const parentAgentIds = [...useProviderSubagentStore.getState().listedParents]
+    .filter((key) => key.startsWith(serverPrefix))
+    .map((key) => key.slice(serverPrefix.length, -1));
+  await Promise.all(
+    parentAgentIds.map((parentAgentId) =>
+      // A parent that was archived meanwhile has nothing left to catch up.
+      refreshProviderSubagents(client, serverId, parentAgentId).catch(() => undefined),
+    ),
+  );
+}
+
 const EMPTY_TIMELINE: ProviderSubagentTimelineState = {
   tail: [],
   head: [],
@@ -147,6 +170,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
+  listedParents: new Set(),
   hideFromTrack(serverId, parentAgentId, subagentIds) {
     set((state) => {
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
@@ -183,7 +207,10 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           timelines.set(key, settleTimeline(current, subagent));
         }
       }
-      return { descriptors, timelines, hiddenFromTrack };
+      const listedParents = state.listedParents.has(prefix)
+        ? state.listedParents
+        : new Set(state.listedParents).add(prefix);
+      return { descriptors, timelines, hiddenFromTrack, listedParents };
     });
   },
   applyUpdate(serverId, payload) {
