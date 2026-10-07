@@ -1,6 +1,7 @@
-import { isIP } from "node:net";
-import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
+import { request as httpRequest, type ClientRequest, type IncomingMessage, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { connect as tcpConnect, isIP } from "node:net";
+import type { Duplex } from "node:stream";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 
 export interface UsageProxyOptions {
@@ -70,10 +71,7 @@ function parseNoProxyEntry(raw: string): NoProxyEntry | null {
     if (close === -1) return { host: stripIpv6Brackets(entry), port: null };
     const host = entry.slice(1, close);
     const rest = entry.slice(close + 1);
-    return {
-      host,
-      port: /^:\d+$/.test(rest) ? rest.slice(1) : null,
-    };
+    return { host, port: /^:\d+$/.test(rest) ? rest.slice(1) : null };
   }
 
   const firstColon = entry.indexOf(":");
@@ -122,18 +120,18 @@ export function isProxyBypassed(
 
 function isTcpPortOpen(host: string, port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const request = httpRequest({ host, port, method: "CONNECT", path: `${host}:${port}` });
+    const socket = tcpConnect({ host, port });
+    let settled = false;
     const done = (open: boolean) => {
-      request.destroy();
+      if (settled) return;
+      settled = true;
+      socket.destroy();
       resolve(open);
     };
-    request.once("socket", (socket) => {
-      socket.once("connect", () => done(true));
-      socket.once("error", () => done(false));
-      socket.setTimeout(timeoutMs, () => done(false));
-    });
-    request.once("error", () => done(false));
-    request.end();
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+    socket.setTimeout(timeoutMs);
   });
 }
 
@@ -223,6 +221,12 @@ function readResponse(response: IncomingMessage): Promise<Response> {
       reject(error);
     };
 
+    const declaredLength = Number(response.headers["content-length"] ?? 0);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_PROXY_BODY_BYTES) {
+      fail(new Error("Proxy response body exceeds limit"));
+      return;
+    }
+
     response.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_PROXY_BODY_BYTES) {
@@ -257,7 +261,7 @@ function nodeRequest(
   secure: boolean,
   options: RequestOptions,
   onResponse?: (response: IncomingMessage) => void,
-) {
+): ClientRequest {
   return secure ? httpsRequest(options, onResponse) : httpRequest(options, onResponse);
 }
 
@@ -290,11 +294,11 @@ async function sendRequest(
   });
 }
 
-function connectTunnel(proxy: URL, target: URL, signal: AbortSignal): Promise<import("node:net").Socket> {
+function connectTunnel(proxy: URL, target: URL, signal: AbortSignal): Promise<Duplex> {
   return new Promise((resolve, reject) => {
     const targetHost = stripIpv6Brackets(target.hostname);
     const authority = `${targetHost.includes(":") ? `[${targetHost}]` : targetHost}:${target.port || "443"}`;
-    const headers: Record<string, string> = { host: authority, connection: "close" };
+    const headers: Record<string, string> = { host: authority };
     const proxyAuthorization = proxyAuthorizationValue(proxy);
     if (proxyAuthorization) headers["proxy-authorization"] = proxyAuthorization;
 
@@ -323,11 +327,7 @@ function connectTunnel(proxy: URL, target: URL, signal: AbortSignal): Promise<im
   });
 }
 
-function secureTargetSocket(
-  socket: import("node:net").Socket,
-  target: URL,
-  signal: AbortSignal,
-): Promise<TLSSocket> {
+function secureTargetSocket(socket: Duplex, target: URL, signal: AbortSignal): Promise<TLSSocket> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
       socket.destroy();
