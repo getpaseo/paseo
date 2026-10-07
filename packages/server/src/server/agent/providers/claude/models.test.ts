@@ -39,7 +39,7 @@ async function createClaudeConfigDirWithRawSettings(settings: string): Promise<s
   return configDir;
 }
 
-function createCatalogClient(claudeCodeVersion = "2.1.284"): ClaudeAgentClient {
+function createCatalogClient(claudeCodeVersion = "2.1.293"): ClaudeAgentClient {
   return new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveVersion: async () => claudeCodeVersion,
@@ -66,6 +66,7 @@ describe("getClaudeModels", () => {
       "claude-opus-4-6",
       "claude-sonnet-4-6[1m]",
       "claude-sonnet-4-6",
+      "claude-haiku-5-5",
       "claude-haiku-4-5",
     ]);
   });
@@ -100,6 +101,7 @@ describe("getClaudeModels", () => {
         ["claude-opus-4-6", 200_000],
         ["claude-sonnet-4-6[1m]", 1_000_000],
         ["claude-sonnet-4-6", 200_000],
+        ["claude-haiku-5-5", 1_000_000],
         ["claude-haiku-4-5", 200_000],
       ]),
     );
@@ -121,6 +123,12 @@ describe("getClaudeModels", () => {
 
     expect(getClaudeModels("2.1.283").map((model) => model.id)).not.toContain("claude-sonnet-5-5");
     expect(getClaudeModels("2.1.284").map((model) => model.id)).toContain("claude-sonnet-5-5");
+  });
+
+  it("gates Haiku 5.5 on Claude Code 2.1.293 without changing the default", () => {
+    expect(getClaudeModels("2.1.292").map((model) => model.id)).not.toContain("claude-haiku-5-5");
+    expect(getClaudeModels("2.1.293").map((model) => model.id)).toContain("claude-haiku-5-5");
+    expect(getClaudeModels("2.1.293").find((model) => model.isDefault)?.id).toBe("claude-opus-5-5");
   });
 
   it("derives thinking options from model effort capabilities", () => {
@@ -192,6 +200,8 @@ describe("getClaudeModels", () => {
     ["claude-sonnet-5-20260101", true, "high"],
     ["claude-fable-5", false, "high"],
     ["claude-fable-5-1", false, "high"],
+    ["claude-haiku-5-5", true, "medium"],
+    ["claude-haiku-5-5-20261007", true, "medium"],
     ["claude-haiku-4-5", false, undefined],
     ["openrouter/anthropic/claude-opus-4-8", false, undefined],
     [null, false, undefined],
@@ -650,6 +660,51 @@ describe("Claude Sonnet 5.5 catalog", () => {
     expect(findClaudeModel("claude-sonnet-5-5-20260928")?.id).toBe("claude-sonnet-5-5");
     expect(findClaudeModel("claude-sonnet-5-5-20260928[1m]")?.id).toBe("claude-sonnet-5-5");
     expect(findClaudeModel("claude-sonnet-5-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
+  });
+});
+
+describe("Claude Haiku 5.5 catalog", () => {
+  it("offers one Haiku 5.5 entry with a 1M context window", () => {
+    const haiku55Models = getClaudeModels()
+      .filter((model) => model.id.startsWith("claude-haiku-5-5"))
+      .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
+
+    expect(haiku55Models).toEqual([
+      { id: "claude-haiku-5-5", label: "Haiku 5.5", contextWindowMaxTokens: 1_000_000 },
+    ]);
+  });
+
+  it("offers Off and every effort level with medium as the default", () => {
+    const haiku55 = getClaudeModels().find((model) => model.id === "claude-haiku-5-5");
+
+    expect(haiku55?.thinkingOptions?.map((option) => option.id)).toEqual([
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(haiku55?.defaultThinkingOptionId).toBe("medium");
+    expect(
+      haiku55?.thinkingOptions?.filter((option) => option.isDefault).map((option) => option.id),
+    ).toEqual(["medium"]);
+  });
+
+  it("normalizes provider-prefixed runtime IDs", () => {
+    expect(normalizeClaudeRuntimeModelId("anthropic/claude-haiku-5-5")).toBe("claude-haiku-5-5");
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-haiku-5-5-v1:0")).toBe(
+      "claude-haiku-5-5",
+    );
+    expect(claudeManifestModelSupportsFastMode("claude-haiku-5-5")).toBe(false);
+  });
+
+  it("resolves suffixed and dated Haiku 5.5 IDs to the single catalog entry", () => {
+    expect(findClaudeModel("claude-haiku-5-5[1m]")?.id).toBe("claude-haiku-5-5");
+    expect(findClaudeModel("claude-haiku-5-5-20261007")?.id).toBe("claude-haiku-5-5");
+    expect(findClaudeModel("claude-haiku-5-5-20261007[1m]")?.id).toBe("claude-haiku-5-5");
+    expect(findClaudeModel("claude-haiku-5-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
   });
 });
 

@@ -17,16 +17,19 @@ function Home() {
     <LandingPage
       title={
         <>
-          The control plane
+          The agentic development
           <br />
-          for coding agents
+          environment
         </>
       }
       subtitle={
         <>
-          Run many coding agents at once, on your machines.
+          Run many coding agents at once,
+          <br className="sm:hidden" />
+          <span className="hidden sm:inline"> </span>
+          on any machine.
           <br />
-          Desktop and mobile. Open source.
+          From your desk and from your phone.
         </>
       }
     />

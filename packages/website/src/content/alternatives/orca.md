@@ -1,6 +1,6 @@
 ---
-title: Orca ADE Alternative With Agent Chat, a No-Account Relay, and Plugins
-description: Paseo is an Orca alternative for developers who want a chat-first interface, a daemon they can reach from any client, and plugins that run on the server and every client.
+title: Orca Alternative for Agentic Development
+description: Paseo is an open source agentic development environment with parallel worktrees, an editor, terminals, diffs, pull requests, and a built-in browser.
 nav: Orca
 order: 57
 ---
@@ -9,7 +9,7 @@ order: 57
 
 Orca is an MIT-licensed desktop app for running terminal coding agents in parallel Git worktrees. It includes a mobile companion app, SSH worktrees, remote Orca servers, an embedded browser, and a CLI.
 
-Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (Apache-2.0).
+Paseo is an open source agentic development environment. Run parallel agents in separate worktrees, edit files, review diffs and pull requests, and test your app with terminals and a built-in desktop browser. Available on desktop, mobile, web, and CLI under Apache-2.0.
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
@@ -23,7 +23,7 @@ Orca is made by Stably AI, a venture-funded company (Y Combinator). Paseo is ind
 
 ## Architecture and remote machines
 
-The Paseo daemon runs as its own process. Desktop, web, mobile, and CLI clients connect to it directly, over SSH, or through the optional end-to-end encrypted relay. Run the daemon on your laptop, a VM, a home server, or in Docker, and connect to any of them from any client. See [connectivity](/docs/connectivity).
+The Paseo desktop app starts and manages a local daemon automatically. That daemon owns the agents and workspaces, so other clients can connect to the same development environment. Desktop, web, mobile, and CLI clients connect to it directly, over SSH, or through the optional end-to-end encrypted relay. Run the daemon on your laptop, a VM, a home server, or in Docker, and connect to any of them from any client. See [connectivity](/docs/connectivity).
 
 Orca runs inside its desktop app by default and reaches other machines in two ways. SSH worktrees keep the Orca runtime on your laptop and run selected worktrees and terminals on a remote host. Remote Orca Servers, in beta, run Orca desktop or `orca serve` on another machine and let clients pair to it. Orca's documentation recommends Tailscale or another private network for Remote Orca Servers.
 
