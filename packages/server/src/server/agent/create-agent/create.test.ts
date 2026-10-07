@@ -95,6 +95,52 @@ test("session create forwards clientMessageId to the initial prompt run options"
   });
 });
 
+test.each([undefined, "create-msg-1"])(
+  "records the initial prompt while running without a provider echo (%s)",
+  async (clientMessageId) => {
+    const workdir = mkdtempSync(join(tmpdir(), "create-agent-prompt-test-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = createRealAgentManager(storage);
+    try {
+      const { snapshot } = await createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger,
+          providerSnapshotManager: {
+            async resolveCreateConfig() {
+              return { modeId: "always-ask" };
+            },
+          },
+        },
+        {
+          kind: "session",
+          config: { provider: "codex", cwd: workdir },
+          workspaceId: "ws-prompt-test",
+          initialPrompt: "echo hello",
+          clientMessageId,
+          labels: {},
+          provisionalTitle: null,
+          firstAgentContext: { attachments: [] },
+          buildSessionConfig: async (config) => ({ sessionConfig: config }),
+        },
+      );
+      expect(agentManager.getAgent(snapshot.id)?.lifecycle).toBe("running");
+      const messages = agentManager
+        .getTimeline(snapshot.id)
+        .filter((item) => item.type === "user_message");
+      expect(messages).toEqual([
+        expect.objectContaining({
+          text: "echo hello",
+          clientMessageId: clientMessageId ?? expect.any(String),
+        }),
+      ]);
+    } finally {
+      await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+    }
+  },
+);
+
 test("session create validates the requested mode against the provider's modes", async () => {
   const snapshot = {
     id: "agent-1",
