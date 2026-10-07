@@ -166,7 +166,7 @@ function combineSignals(signals: AbortSignal[]): AbortSignal | undefined {
 }
 
 function proxyAuthorizationValue(proxy: URL): string | null {
-  if (!proxy.username) return null;
+  if (!proxy.username && !proxy.password) return null;
   const credentials = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 }
@@ -217,9 +217,12 @@ function readResponse(response: IncomingMessage): Promise<Response> {
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
-      response.destroy(error);
+      response.destroy();
       reject(error);
     };
+
+    response.once("error", fail);
+    response.once("aborted", () => fail(new Error("Proxy response aborted")));
 
     const declaredLength = Number(response.headers["content-length"] ?? 0);
     if (Number.isFinite(declaredLength) && declaredLength > MAX_PROXY_BODY_BYTES) {
@@ -235,8 +238,6 @@ function readResponse(response: IncomingMessage): Promise<Response> {
       }
       chunks.push(chunk);
     });
-    response.once("error", fail);
-    response.once("aborted", () => fail(new Error("Proxy response aborted")));
     response.once("end", () => {
       if (settled) return;
       settled = true;
