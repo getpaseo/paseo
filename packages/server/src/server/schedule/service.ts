@@ -694,42 +694,44 @@ export class ScheduleService {
   ): Promise<void> {
     const manual = options?.manual === true;
     this.runningScheduleIds.add(schedule.id);
-    const runId = randomUUID();
-    const runningRun: ScheduleRun = {
-      id: runId,
-      scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
-      startedAt: now.toISOString(),
-      endedAt: null,
-      status: "running",
-      agentId: null,
-      output: null,
-      error: null,
-    };
-    const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
-
     try {
-      const result = await this.runner(scheduleWithRun, runId);
-      await this.finishRun({
-        scheduleId: schedule.id,
-        runId,
-        status: "succeeded",
-        agentId: result.agentId,
-        output: result.output,
-        error: null,
-        targetGone: false,
-        manual,
-      });
-    } catch (error) {
-      await this.finishRun({
-        scheduleId: schedule.id,
-        runId,
-        status: "failed",
+      const runId = randomUUID();
+      const runningRun: ScheduleRun = {
+        id: runId,
+        scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
+        startedAt: now.toISOString(),
+        endedAt: null,
+        status: "running",
         agentId: null,
         output: null,
-        error: error instanceof Error ? error.message : String(error),
-        targetGone: error instanceof ScheduleTargetGoneError,
-        manual,
-      });
+        error: null,
+      };
+      const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+
+      try {
+        const result = await this.runner(scheduleWithRun, runId);
+        await this.finishRun({
+          scheduleId: schedule.id,
+          runId,
+          status: "succeeded",
+          agentId: result.agentId,
+          output: result.output,
+          error: null,
+          targetGone: false,
+          manual,
+        });
+      } catch (error) {
+        await this.finishRun({
+          scheduleId: schedule.id,
+          runId,
+          status: "failed",
+          agentId: null,
+          output: null,
+          error: error instanceof Error ? error.message : String(error),
+          targetGone: error instanceof ScheduleTargetGoneError,
+          manual,
+        });
+      }
     } finally {
       this.runningScheduleIds.delete(schedule.id);
     }
