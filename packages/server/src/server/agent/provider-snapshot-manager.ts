@@ -25,6 +25,7 @@ import {
   runProviderRefreshWithDeadline,
 } from "./provider-refresh-deadline.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import { isEmptyModelCatalogError } from "./empty-model-catalog-error.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
@@ -976,6 +977,9 @@ export class ProviderSnapshotManager {
           definition,
           initial,
           client,
+          markStale: () => {
+            current.stale = true;
+          },
           publish: (entry) => {
             if (!isCurrent()) return false;
             current.result = identifyEntry(structuredClone(entry));
@@ -1000,6 +1004,7 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     initial: ProviderSnapshotEntry;
     client: AgentClient;
+    markStale: () => void;
     publish: (entry: ProviderSnapshotEntry) => boolean;
   }): Promise<void> {
     const {
@@ -1008,6 +1013,7 @@ export class ProviderSnapshotManager {
       definition,
       initial: base,
       client,
+      markStale,
       publish: setEntry,
     } = options;
 
@@ -1058,6 +1064,12 @@ export class ProviderSnapshotManager {
         enabled: true,
         error: toErrorMessage(error),
       });
+      if (isEmptyModelCatalogError(error)) {
+        // The provider advertised a model selector but enumerated nothing —
+        // most often a transient auth/startup state. Keep the catalog stale so
+        // the next snapshot read re-probes instead of reusing the empty list.
+        markStale();
+      }
       if (emitted) {
         this.logger.warn(
           { err: error, provider, target: catalogOptions },

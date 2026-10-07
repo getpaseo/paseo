@@ -48,6 +48,7 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { EmptyModelCatalogError } from "../empty-model-catalog-error.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -2018,6 +2019,82 @@ describe("ACPAgentClient catalog discovery without a model resolver", () => {
 
     expect(setSessionConfigOption).not.toHaveBeenCalled();
     expect(catalog.models.map((model) => model.id)).toEqual(["model-a", "model-b"]);
+  });
+});
+
+describe("ACPAgentClient empty advertised model catalog", () => {
+  function createCatalogClient(newSessionResult: unknown): ACPAgentClient {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue(newSessionResult),
+          },
+          initialize: { agentCapabilities: {} },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    return new TestACPAgentClient({
+      provider: "acp",
+      logger: createTestLogger(),
+      defaultCommand: ["acp-agent"],
+      defaultModes: [],
+    });
+  }
+
+  test("rejects catalog discovery when a model selector advertises zero options", async () => {
+    // Signed-out Devin CLI responds to session/new with a `model` config option
+    // whose options list is empty. That must surface as a refreshable error —
+    // not a "ready" snapshot caching an empty model list forever.
+    const client = createCatalogClient({
+      sessionId: "session-1",
+      configOptions: [
+        { id: "model", name: "Model", category: "model", type: "select", options: [] },
+      ],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
+    ).rejects.toBeInstanceOf(EmptyModelCatalogError);
+  });
+
+  test("rejects catalog discovery when the models field advertises an empty list", async () => {
+    const client = createCatalogClient({
+      sessionId: "session-1",
+      models: { availableModels: [], currentModelId: null },
+      configOptions: [],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
+    ).rejects.toBeInstanceOf(EmptyModelCatalogError);
+  });
+
+  test("keeps an empty catalog when the provider advertises no model selection", async () => {
+    const client = createCatalogClient({
+      sessionId: "session-1",
+      configOptions: [
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "default",
+          options: [{ value: "default", name: "Default" }],
+        },
+      ],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
+    ).resolves.toEqual({
+      models: [],
+      modes: [{ id: "default", label: "Default", description: undefined }],
+    });
   });
 });
 

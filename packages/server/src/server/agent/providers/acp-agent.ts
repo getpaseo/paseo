@@ -110,6 +110,7 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { EmptyModelCatalogError } from "../empty-model-catalog-error.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
@@ -800,6 +801,19 @@ export function deriveModesFromACP(
   };
 }
 
+/**
+ * True when the session response exposes a model selector — either the
+ * `models` field or a `model` config option — regardless of how many options
+ * it currently carries. A selector that advertises but lists nothing is a
+ * degraded provider signal, not a provider without models.
+ */
+function advertisesACPModelSelection(
+  models: SessionModelState | null | undefined,
+  configOptions: SessionConfigOption[] | null | undefined,
+): boolean {
+  return models != null || findSelectConfigOption({ configOptions, category: "model" }) !== null;
+}
+
 export function deriveModelDefinitionsFromACP(
   provider: string,
   models: SessionModelState | null | undefined,
@@ -1164,6 +1178,16 @@ export class ACPAgentClient implements AgentClient {
             ),
           )
         : derivedModels;
+      if (
+        models.length === 0 &&
+        advertisesACPModelSelection(transformed.models, transformed.configOptions)
+      ) {
+        // The provider claims a model selector but enumerated nothing — e.g.
+        // Devin CLI answers session/new with an empty `model` config option
+        // while signed out. Surface it as a refreshable error rather than a
+        // "ready" snapshot that pins an empty list into the catalog cache.
+        throw new EmptyModelCatalogError(this.provider);
+      }
       const modeInfo = deriveModesFromACP(
         this.defaultModes,
         transformed.modes,
