@@ -248,9 +248,26 @@ export function selectWorkspaceOrderByScope(state: SidebarOrderSnapshot): Record
   return state.workspaceOrderByProject ?? {};
 }
 
+function promoteProjectWorkspaces(
+  project: WorkspaceStructureProject,
+  promotedAt: Readonly<Record<string, number>> | undefined,
+): WorkspaceStructureProject {
+  if (!promotedAt || !project.workspaceKeys.some((key) => promotedAt[key] !== undefined)) {
+    return project;
+  }
+  const rank = (key: string) =>
+    Math.max(project.workspaceActivityAt?.[key] ?? 0, promotedAt[key] ?? 0);
+  const workspaceKeys = project.workspaceKeys
+    .map((key, index) => ({ key, index, at: rank(key) }))
+    .sort((left, right) => right.at - left.at || left.index - right.index)
+    .map((entry) => entry.key);
+  return { ...project, workspaceKeys };
+}
+
 export function composeWorkspaceStructure(input: {
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
+  workspacePromotedAt?: Readonly<Record<string, number>>;
 }): WorkspaceStructure {
   if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
@@ -259,7 +276,9 @@ export function composeWorkspaceStructure(input: {
   const orderedProjects = applyStoredOrdering({
     // Workspaces inside a project keep the newest-activity order the structure built;
     // only projects follow the order the person arranged.
-    items: input.projects,
+    items: input.projects.map((project) =>
+      promoteProjectWorkspaces(project, input.workspacePromotedAt),
+    ),
     storedOrder: input.projectOrder,
     getKey: (project) => project.viewKey,
   });

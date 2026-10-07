@@ -116,9 +116,10 @@ export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
     (state) => selectProjectOrder(state),
     workspaceEqualityFns.deep,
   );
+  const workspacePromotedAt = useSidebarOrderStore((state) => state.workspacePromotedAt);
   return useMemo(
-    () => composeWorkspaceStructure({ projects, projectOrder }),
-    [projectOrder, projects],
+    () => composeWorkspaceStructure({ projects, projectOrder, workspacePromotedAt }),
+    [projectOrder, projects, workspacePromotedAt],
   );
 }
 

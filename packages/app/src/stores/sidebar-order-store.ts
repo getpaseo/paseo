@@ -7,6 +7,7 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 interface SidebarOrderStoreState {
   workspacePromotedAt: Record<string, number>;
   promoteWorkspace: (workspaceKey: string) => void;
+  rankWorkspaces: (workspaceKeys: string[]) => void;
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
@@ -184,6 +185,15 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
             ],
           };
         });
+      },
+      rankWorkspaces: (workspaceKeys) => {
+        const now = Date.now();
+        set((state) => ({
+          workspacePromotedAt: {
+            ...state.workspacePromotedAt,
+            ...Object.fromEntries(workspaceKeys.map((key, index) => [key, now - index])),
+          },
+        }));
       },
       projectOrder: [],
       pinnedWorkspaceOrder: [],

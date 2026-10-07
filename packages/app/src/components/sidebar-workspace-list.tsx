@@ -2177,8 +2177,6 @@ function ProjectModeList({
 
   const getProjectOrder = useSidebarOrderStore((state) => state.getProjectOrder);
   const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
-  const getWorkspaceOrder = useSidebarOrderStore((state) => state.getWorkspaceOrder);
-  const setWorkspaceOrder = useSidebarOrderStore((state) => state.setWorkspaceOrder);
 
   const isWorkspaceRoute = useMemo(
     () => Boolean(pathname && parseHostWorkspaceRouteFromPathname(pathname)),
@@ -2277,28 +2275,12 @@ function ProjectModeList({
     [getProjectOrder, setProjectOrder],
   );
 
+  const rankWorkspaces = useSidebarOrderStore((state) => state.rankWorkspaces);
   const handleWorkspaceReorder = useCallback(
-    (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
-      const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
-      const currentWorkspaceOrder = getWorkspaceOrder(projectViewKey);
-      if (
-        !hasVisibleOrderChanged({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        })
-      ) {
-        return;
-      }
-
-      setWorkspaceOrder(
-        projectViewKey,
-        mergeWithRemainder({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        }),
-      );
+    (_projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+      rankWorkspaces(reorderedWorkspaces.map((workspace) => workspace.workspaceKey));
     },
-    [getWorkspaceOrder, setWorkspaceOrder],
+    [rankWorkspaces],
   );
 
   const handleWorktreeCreated = useCallback((workspaceId: string) => {
