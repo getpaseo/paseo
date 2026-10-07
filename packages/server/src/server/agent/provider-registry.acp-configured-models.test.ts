@@ -9,27 +9,32 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentSession } from "./agent-sdk-types.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 
-// An ACP agent that advertises two models but, like Cline, runs any model id it is given.
+// An ACP agent that advertises two models (or none, with ACP_ADVERTISE_MODELS=none) but,
+// like Cline, runs any model id it is given.
 const PERMISSIVE_MODEL_ACP_AGENT = `
 import { Readable, Writable } from "node:stream";
 const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
 let currentModelId = "advertised-default";
+const modelState = () =>
+  process.env.ACP_ADVERTISE_MODELS === "none"
+    ? undefined
+    : {
+        currentModelId,
+        availableModels: [
+          { modelId: "advertised-default", name: "Advertised default" },
+          { modelId: "advertised-other", name: "Advertised other" },
+        ],
+      };
 new AgentSideConnection(
   () => ({
     async initialize() {
-      return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+      return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: true } };
     },
     async newSession() {
-      return {
-        sessionId: "permissive-session",
-        models: {
-          currentModelId,
-          availableModels: [
-            { modelId: "advertised-default", name: "Advertised default" },
-            { modelId: "advertised-other", name: "Advertised other" },
-          ],
-        },
-      };
+      return { sessionId: "permissive-session", models: modelState() };
+    },
+    async loadSession() {
+      return { models: modelState() };
     },
     async unstable_setSessionModel({ modelId }) {
       currentModelId = modelId;
@@ -62,10 +67,13 @@ describe("custom ACP provider with configured models", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  function buildRegistry(override: {
-    models?: Array<{ id: string; label: string }>;
-    additionalModels?: Array<{ id: string; label: string }>;
-  }) {
+  function buildRegistry(
+    override: {
+      models?: Array<{ id: string; label: string }>;
+      additionalModels?: Array<{ id: string; label: string }>;
+    },
+    agentEnv: Record<string, string> = {},
+  ) {
     return buildProviderRegistry(createTestLogger(), {
       providerOverrides: {
         permissive: {
@@ -76,6 +84,7 @@ describe("custom ACP provider with configured models", () => {
             ACP_SDK_URL: pathToFileURL(
               createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
             ).href,
+            ...agentEnv,
           },
           ...override,
         },
@@ -110,6 +119,31 @@ describe("custom ACP provider with configured models", () => {
     const created = await createSessionOnModel(registry, "stealth/pixel-canary");
 
     expect((await created.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
+  });
+
+  test("runs on a model from additionalModels when the agent advertises no models", async () => {
+    const registry = buildRegistry(
+      { additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }] },
+      { ACP_ADVERTISE_MODELS: "none" },
+    );
+
+    const created = await createSessionOnModel(registry, "stealth/pixel-canary");
+
+    expect((await created.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
+  });
+
+  test("resumes on a model added through additionalModels that the agent does not advertise", async () => {
+    const registry = buildRegistry({
+      additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }],
+    });
+    const client = registry.permissive.createClient(createTestLogger());
+
+    session = await client.resumeSession(
+      { provider: "permissive", sessionId: "permissive-session", metadata: { cwd: dir } },
+      { model: "stealth/pixel-canary" },
+    );
+
+    expect((await session.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
   });
 
   test("keeps the agent's model when the requested model is neither advertised nor configured", async () => {
