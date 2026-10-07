@@ -100,7 +100,6 @@ describe("stopDaemonInstance requireLifecycleRpc", () => {
 
   afterEach(() => {
     for (const child of children.splice(0)) child.kill("SIGKILL");
-    vi.restoreAllMocks();
   });
 
   test("a refused lifecycle RPC does not fall through to SIGTERM", async () => {
@@ -111,17 +110,6 @@ describe("stopDaemonInstance requireLifecycleRpc", () => {
     children.push(child);
     const pid = child.pid;
     if (!pid) throw new Error("sleep child has no pid");
-    const signals: Array<NodeJS.Signals | number | undefined> = [];
-    const original = process.kill.bind(process);
-    vi.spyOn(process, "kill").mockImplementation(((
-      target: number,
-      signal?: NodeJS.Signals | number,
-    ) => {
-      signals.push(signal);
-      if (signal === "SIGTERM" || signal === "SIGKILL") return true;
-      return original(target, signal);
-    }) as typeof process.kill);
-
     try {
       await writeFile(
         join(home, "paseo.pid"),
@@ -144,9 +132,10 @@ describe("stopDaemonInstance requireLifecycleRpc", () => {
         }),
       ).rejects.toThrow(/Agents are busy/);
 
-      expect(signals).not.toContain("SIGTERM");
-      expect(signals).not.toContain("SIGKILL");
-      expect(original(pid, 0)).toBe(true);
+      // A fallthrough to the POSIX path would signal the child instead of rejecting.
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      expect(process.kill(pid, 0)).toBe(true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

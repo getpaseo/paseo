@@ -275,7 +275,7 @@ describe("daemon-manager commands", () => {
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
   });
 
-  it("does not install when cancel arrives while the idle stop is finishing", async () => {
+  it("installs when cancel arrives after the daemon accepted the idle stop", async () => {
     const supervisor = installFakeSupervisor(fixtureRoot);
     const stop = holdDaemonStop(supervisor.lockPath);
     const runtime = new FakeAppUpdateRuntime();
@@ -290,8 +290,8 @@ describe("daemon-manager commands", () => {
       stop.release({ action: "shutdown_requested" });
       supervisor.exit();
 
-      await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
-      expect(runtime.installedVersions).toEqual([]);
+      await expect(installing).resolves.toMatchObject({ installed: true });
+      expect(runtime.installedVersions).toEqual([UPDATE_INFO.version]);
     } finally {
       supervisor.kill();
       await handlers.stop_desktop_daemon().catch(() => undefined);
