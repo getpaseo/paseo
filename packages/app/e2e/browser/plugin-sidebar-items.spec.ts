@@ -241,6 +241,32 @@ test.describe("Plugin sidebar items", () => {
     });
   });
 
+  test("a plugin screen toggles the sidebar on a wide layout", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+    await expect(row).toBeVisible({ timeout: 30_000 });
+
+    await row.click();
+    await expect(page.getByText("Deploys screen body", { exact: true })).toBeVisible();
+    await visibleTestId(page, "menu-button").click();
+    await expect(row).not.toBeVisible();
+    await visibleTestId(page, "menu-button").click();
+    await expect(row).toBeVisible();
+    await closeScreen(page);
+
+    // With the sidebar closed elsewhere, the screen's own toggle is the way back to it.
+    await visibleTestId(page, "menu-button").click();
+    await expect(row).not.toBeVisible();
+    await page.keyboard.press("Control+k");
+    const panel = page.getByTestId("command-center-panel");
+    await panel.getByTestId("command-center-input").fill("Open deploys");
+    await panel.getByRole("button", { name: "Open deploys", exact: true }).click();
+    await expect(page.getByText("Deploys screen body", { exact: true })).toBeVisible();
+    await visibleTestId(page, "menu-button").click();
+    await expect(row).toBeVisible();
+  });
+
   test("a header row's shortcut hint presses the row", async ({ page }) => {
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);
