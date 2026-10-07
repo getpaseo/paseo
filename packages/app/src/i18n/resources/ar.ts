@@ -1558,8 +1558,6 @@ export const ar: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "شغّل الوكلاء على هذا الكمبيوتر. يبدأ Paseo الخدمة عند فتح التطبيق. يمكنك تغيير سلوك الإنهاء في الإعدادات.",
     title: "مرحبا بكم في Paseo",
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {

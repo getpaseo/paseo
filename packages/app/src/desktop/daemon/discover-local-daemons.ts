@@ -9,15 +9,25 @@ export interface DiscoveredLocalDaemon {
   host: string;
   port: number;
   hostname: string | null;
+  serverId: string | null;
   passwordRequired: boolean;
 }
 
 export async function discoverLocalDaemons(): Promise<DiscoveredLocalDaemon[]> {
+  return probeLocalDaemons(false);
+}
+
+export async function discoverStartupLocalDaemons(): Promise<DiscoveredLocalDaemon[]> {
+  return probeLocalDaemons(true);
+}
+
+async function probeLocalDaemons(forStartup: boolean): Promise<DiscoveredLocalDaemon[]> {
   const candidates = await invokeDesktopCommand<{ host: string; port: number }[]>(
     "desktop_local_daemon_candidates",
+    { forStartup },
   );
   const results = await Promise.all(
-    candidates.map(async (candidate) => {
+    candidates.map(async (candidate): Promise<DiscoveredLocalDaemon | null> => {
       try {
         // A real Paseo handshake distinguishes a daemon from an unrelated HTTP
         // service. Probing does not save a host or transfer lifecycle ownership.
@@ -27,7 +37,7 @@ export async function discoverLocalDaemons(): Promise<DiscoveredLocalDaemon[]> {
           endpoint: `${candidate.host}:${candidate.port}`,
           useTls: false,
         });
-        const { client, hostname } = await connectAndProbe(
+        const { client, hostname, serverId } = await connectAndProbe(
           {
             ...config,
             // Do not displace this app's live connection to an already saved host.
@@ -36,13 +46,20 @@ export async function discoverLocalDaemons(): Promise<DiscoveredLocalDaemon[]> {
           1500,
         );
         await client.close();
-        return { host: candidate.host, port: candidate.port, hostname, passwordRequired: false };
+        return {
+          host: candidate.host,
+          port: candidate.port,
+          hostname,
+          serverId,
+          passwordRequired: false,
+        };
       } catch (error) {
         if (getConnectionAuthFailureReason(error) === "password_required") {
           return {
             host: candidate.host,
             port: candidate.port,
             hostname: null,
+            serverId: null,
             passwordRequired: true,
           };
         }

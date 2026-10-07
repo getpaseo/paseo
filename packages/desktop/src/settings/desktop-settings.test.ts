@@ -41,7 +41,7 @@ describe("desktop-settings", () => {
 
     expect(settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
     expect(persisted.settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
-    expect(persisted.settings.daemon.manageBuiltInDaemon).toBe(false);
+    expect(persisted.settings.daemon.manageBuiltInDaemon).toBe(true);
   });
 
   it("handles concurrent first-launch reads without racing the settings write", async () => {
@@ -96,7 +96,7 @@ describe("desktop-settings", () => {
       releaseChannel: "stable",
       notifications: { playSound: true },
       daemon: {
-        manageBuiltInDaemon: false,
+        manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
     });
@@ -118,7 +118,7 @@ describe("desktop-settings", () => {
       releaseChannel: "beta",
       notifications: { playSound: true },
       daemon: {
-        manageBuiltInDaemon: false,
+        manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
     });

@@ -1575,8 +1575,6 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "このコンピューターでエージェントを実行します。有効にすると、アプリ起動時に Paseo がデーモンを起動します。終了時の動作は設定で変更できます。",
     title: "Paseoへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {

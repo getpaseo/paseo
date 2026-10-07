@@ -1609,8 +1609,6 @@ export const fr: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "Exécutez des agents sur cet ordinateur. Paseo démarre le daemon à l’ouverture de l’app. Son comportement à la fermeture se règle dans les paramètres.",
     title: "Bienvenue surPaseo",
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {

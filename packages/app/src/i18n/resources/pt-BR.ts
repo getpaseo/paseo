@@ -1590,8 +1590,6 @@ export const ptBR: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "Execute agentes neste computador. O Paseo inicia o daemon ao abrir o aplicativo. O comportamento ao sair pode ser alterado nas Configurações.",
     title: "Bem-vindo ao Paseo",
     subtitle: "Conecte seu computador para começar",
     actions: {

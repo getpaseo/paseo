@@ -1583,8 +1583,6 @@ export const en = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "Run agents on this computer. Paseo starts the daemon when you open the app. Quit behavior can be changed in Settings.",
     title: "Welcome to Paseo",
     subtitle: "Connect your computer to get started",
     actions: {

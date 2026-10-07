@@ -1568,8 +1568,6 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "이 컴퓨터에서 에이전트를 실행합니다. Paseo는 앱을 열 때 데몬을 시작합니다. 종료 시 동작은 설정에서 변경할 수 있습니다.",
     title: "Paseo에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {

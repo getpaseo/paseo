@@ -1,6 +1,10 @@
 import { startDesktopDaemon, type DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import { connectionFromListen } from "@/types/host-connection";
 import type { HostRuntimeStore } from "@/runtime/host-runtime";
+import {
+  discoverStartupLocalDaemons,
+  type DiscoveredLocalDaemon,
+} from "@/desktop/daemon/discover-local-daemons";
 
 export type DaemonStartResult = { ok: true } | { ok: false; error: string };
 export type DaemonStartCondition = boolean | (() => boolean | Promise<boolean>);
@@ -14,6 +18,7 @@ type DaemonConnectionStore = Pick<HostRuntimeStore, "getHosts" | "upsertConnecti
 export interface DaemonStartServiceDeps {
   store: DaemonConnectionStore;
   startDesktopDaemon?: () => Promise<DesktopDaemonStatus>;
+  discoverLocalDaemons?: () => Promise<DiscoveredLocalDaemon[]>;
 }
 
 export async function upsertDesktopDaemonConnection(
@@ -48,6 +53,8 @@ export async function upsertDesktopDaemonConnection(
 export class DaemonStartService {
   private readonly store: DaemonConnectionStore;
   private readonly invokeStartDesktopDaemon: () => Promise<DesktopDaemonStatus>;
+  private readonly discoverLocalDaemons: DaemonStartServiceDeps["discoverLocalDaemons"];
+  private pendingLocalConnection: DiscoveredLocalDaemon | null = null;
   private readonly listeners = new Set<() => void>();
   private lastError: string | null = null;
   private inFlightCount = 0;
@@ -55,6 +62,7 @@ export class DaemonStartService {
   constructor(deps: DaemonStartServiceDeps) {
     this.store = deps.store;
     this.invokeStartDesktopDaemon = deps.startDesktopDaemon ?? startDesktopDaemon;
+    this.discoverLocalDaemons = deps.discoverLocalDaemons;
   }
 
   async start(): Promise<DaemonStartResult> {
@@ -79,6 +87,28 @@ export class DaemonStartService {
         return { ok: true };
       }
 
+      if (this.discoverLocalDaemons) {
+        const existing = await this.discoverLocalDaemons();
+        const available = existing.find((daemon) => daemon.serverId && !daemon.passwordRequired);
+        if (available?.serverId) {
+          // Register a normal connection, including when this host was previously
+          // saved through a relay. Never call Desktop's lifecycle manager here.
+          await this.store.upsertConnectionFromListen({
+            listenAddress: `${available.host}:${available.port}`,
+            serverId: available.serverId,
+            hostname: available.hostname,
+          });
+          return { ok: true };
+        }
+        const requiresPassword = existing.find((daemon) => daemon.passwordRequired);
+        if (requiresPassword) {
+          // Let the existing connection UI collect credentials instead of starting
+          // another daemon at this occupied address. Keep the user's startup setting.
+          this.pendingLocalConnection = requiresPassword;
+          return { ok: true };
+        }
+      }
+
       const daemon = await this.invokeStartDesktopDaemon();
       const result = await upsertDesktopDaemonConnection(this.store, daemon);
       return result.ok ? result : this.fail(result.error);
@@ -91,6 +121,14 @@ export class DaemonStartService {
 
   getLastError(): string | null {
     return this.lastError;
+  }
+
+  getPendingLocalConnection(): DiscoveredLocalDaemon | null {
+    return this.pendingLocalConnection;
+  }
+
+  clearPendingLocalConnection(): void {
+    this.pendingLocalConnection = null;
   }
 
   isRunning(): boolean {
@@ -118,6 +156,7 @@ export class DaemonStartService {
   }
 
   private beginRequest(): void {
+    this.pendingLocalConnection = null;
     const becameRunning = this.inFlightCount === 0;
     this.inFlightCount += 1;
     const errorChanged = this.lastError !== null;
@@ -161,7 +200,10 @@ export function getDaemonStartService(deps: DaemonStartServiceDeps): DaemonStart
     }
   }
 
-  singletonDaemonStartService = new DaemonStartService(deps);
+  singletonDaemonStartService = new DaemonStartService({
+    ...deps,
+    discoverLocalDaemons: deps.discoverLocalDaemons ?? discoverStartupLocalDaemons,
+  });
   runtimeGlobal[DAEMON_START_SERVICE_GLOBAL_KEY] = singletonDaemonStartService;
   return singletonDaemonStartService;
 }

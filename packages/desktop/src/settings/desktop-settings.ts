@@ -35,7 +35,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
     playSound: true,
   },
   daemon: {
-    manageBuiltInDaemon: false,
+    manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
   },
 };

@@ -1541,8 +1541,6 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "在这台电脑上运行智能体。开启后，Paseo 会随应用启动 daemon；退出时的行为可在设置中调整。",
     title: "欢迎使用 Paseo",
     subtitle: "连接你的电脑即可开始",
     actions: {

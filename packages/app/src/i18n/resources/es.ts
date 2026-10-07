@@ -1605,8 +1605,6 @@ export const es: TranslationResources = {
     },
   },
   onboarding: {
-    localDaemonHint:
-      "Ejecuta agentes en este equipo. Paseo inicia el daemon al abrir la app. Puedes cambiar su comportamiento al salir en Ajustes.",
     title: "Bienvenido aPaseo",
     subtitle: "Conecte su computadora para comenzar",
     actions: {

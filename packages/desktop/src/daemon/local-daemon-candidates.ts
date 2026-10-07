@@ -10,9 +10,11 @@ export interface LocalDaemonCandidate {
 // daemon, scans the network, or changes ownership of an existing process.
 export function localDaemonCandidates(
   listens: (string | null | undefined)[],
+  includeDefaultPorts = true,
 ): LocalDaemonCandidate[] {
   const candidates = new Map<string, LocalDaemonCandidate>();
-  for (const listen of [...listens, "127.0.0.1:6767", "[::1]:6767"]) {
+  const addresses = includeDefaultPorts ? [...listens, "127.0.0.1:6767", "[::1]:6767"] : listens;
+  for (const listen of addresses) {
     if (!listen) continue;
     const match = listen
       .trim()
@@ -36,13 +38,25 @@ export function localDaemonCandidates(
   return [...candidates.values()];
 }
 
-export async function getLocalDaemonCandidates(home: string): Promise<LocalDaemonCandidate[]> {
+export async function getLocalDaemonCandidates(
+  home: string,
+  forStartup = false,
+): Promise<LocalDaemonCandidate[]> {
   const instance = await readDaemonInstance(home).catch(() => null);
+  // The manager already knows how to reuse this instance, including its local
+  // credentials and socket/pipe transport. Preserve that path unchanged.
+  if (forStartup && instance) return [];
   let listen: string | undefined;
   try {
     listen = loadPersistedConfig(home).daemon?.listen;
   } catch {
     // A broken config must not prevent connecting to a separate local daemon.
+  }
+  if (forStartup) {
+    // Preserve the original manager's socket/pipe reuse and explicit custom
+    // listen configuration. Broad discovery belongs to the connection picker.
+    const target = instance?.listen ?? listen ?? "127.0.0.1:6767";
+    return localDaemonCandidates([target], false);
   }
   return localDaemonCandidates([instance?.listen, listen]);
 }

@@ -71,10 +71,16 @@ This login-shell step runs on macOS and Linux. On Windows, Paseo uses the enviro
 
 ## Choosing a local server on Desktop
 
-A new Desktop profile opens the welcome screen without starting a daemon. Choose
-**Enable built-in daemon** to run agents on this computer, or **Direct connection**
-to connect to a daemon you already run. Existing profiles retain their saved
-built-in daemon setting.
+Desktop manages its built-in daemon by default. Before starting a new process,
+it checks the configured local TCP address for an existing Paseo daemon and uses
+that connection when available, including a daemon started with a different
+`PASEO_HOME`. An existing instance in Desktop's own home keeps its original reuse
+and authentication path. If a discovered daemon requires a password, Desktop
+opens the connection form instead of starting a conflicting process.
+
+An explicit custom listen address takes priority over the default port. If no
+local Paseo daemon is available, Desktop starts its built-in daemon as before.
+Disabling built-in daemon management in Settings still disables automatic startup.
 
 Direct connection automatically checks loopback TCP listeners at port `6767` and
 the local port recorded in Desktop's daemon config or running-instance file.
@@ -95,10 +101,10 @@ client and lets you open Settings or connect to an existing host. You can enable
 the built-in daemon again in Settings.
 
 `EADDRINUSE` means another process already holds the configured listen address.
-An independently started Paseo daemon using a different `PASEO_HOME` can cause
-this too: Desktop checks its own home for a running instance. To use the existing
-daemon, continue without the local server, then add its address with
-**Settings → Add host → Direct connection**. See [Connectivity](/docs/connectivity).
+If that process cannot be identified as an available Paseo daemon, Desktop may
+still report a startup error. Continue without the local server to inspect the
+connection or choose **Settings → Add host → Direct connection**.
+See [Connectivity](/docs/connectivity).
 
 ## Reading the logs
 
