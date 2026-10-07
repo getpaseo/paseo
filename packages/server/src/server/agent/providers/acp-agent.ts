@@ -77,6 +77,7 @@ import {
   type AgentPromptContentBlock,
   type AgentPromptInput,
   type AgentResumePurpose,
+  type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
@@ -512,6 +513,7 @@ interface ACPAgentSessionOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
+  configuredModelIds?: readonly string[];
   agentId?: string;
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
@@ -979,6 +981,7 @@ export class ACPAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     this.assertProvider(config);
     const providerOptions = ACPProviderOptionsSchema.parse(config.providerOptions ?? {});
@@ -1006,6 +1009,7 @@ export class ACPAgentClient implements AgentClient {
           supportsMcpServers:
             providerOptions.supportsMcpServers ?? this.capabilities.supportsMcpServers,
         },
+        configuredModelIds: options?.configuredModelIds,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
@@ -1064,6 +1068,7 @@ export class ACPAgentClient implements AgentClient {
       },
       handle,
       resumePurpose: options?.purpose,
+      configuredModelIds: options?.configuredModelIds,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
@@ -1692,6 +1697,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly configuredModelIds: ReadonlySet<string>;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -1760,6 +1766,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.configuredModelIds = new Set(options.configuredModelIds);
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -2194,12 +2201,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    await this.setModelWithSelection({ modelId, selection: this.resolveModelSelection(modelId) });
+  }
+
+  private resolveModelSelection(modelId: string): ACPModelSelection {
     const selection = resolveACPModelSelection({
       modelId,
       availableModels: this.availableModels,
       configOptions: this.configOptions,
     });
-    await this.setModelWithSelection({ modelId, selection });
+    if (selection.availableModel || !this.configuredModelIds.has(modelId)) {
+      return selection;
+    }
+    // A model the user added in provider config is applied even when the agent does not advertise it.
+    return { ...selection, availableModel: { modelId, name: modelId } };
   }
 
   private async setModelWithSelection({
@@ -2922,13 +2937,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const configuredModelId = this.config.model;
     let switchedModel = false;
     if (configuredModelId && configuredModelId !== this.currentModel) {
-      const selection = resolveACPModelSelection({
-        modelId: configuredModelId,
-        availableModels: this.availableModels,
-        configOptions: this.configOptions,
-      });
       try {
-        await this.setModelWithSelection({ modelId: configuredModelId, selection });
+        await this.setModelWithSelection({
+          modelId: configuredModelId,
+          selection: this.resolveModelSelection(configuredModelId),
+        });
         switchedModel = true;
       } catch (error) {
         if (!this.isModelSelectionUnavailableError(error)) {
