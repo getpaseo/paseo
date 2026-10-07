@@ -27,7 +27,6 @@ import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
 const MINIMUM_V2: readonly [number, number] = [0, 10];
 const VERSION_PATTERN = /^(?:opencode\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[-+][\w.-]+)?$/i;
 const VERSION_PROBE_TIMEOUT_MS = 30_000;
-const CUSTOM_COMMAND_PROBE_TIMEOUT_MS = 5_000;
 
 export function openCodeMajorVersion(output: string): 1 | 2 {
   const version = output.trim().match(VERSION_PATTERN);
@@ -123,8 +122,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
       launch.command = resolvedPath;
     }
 
-    const timeoutMs =
-      launch.source === "override" ? CUSTOM_COMMAND_PROBE_TIMEOUT_MS : VERSION_PROBE_TIMEOUT_MS;
+    const timeoutMs = VERSION_PROBE_TIMEOUT_MS;
     let output: string;
     try {
       ({ stdout: output } = await this.runVersionProbe(
