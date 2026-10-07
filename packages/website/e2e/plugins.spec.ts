@@ -353,7 +353,7 @@ test("keeps the directory unlinked until the coordinated announcement", async ({
   await expect(
     page.getByRole("contentinfo").getByRole("link", { name: "Plugins", exact: true }),
   ).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Community plugins" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "Browse plugins" })).toHaveAttribute(
     "href",
     "https://paseo.cafe",
   );
