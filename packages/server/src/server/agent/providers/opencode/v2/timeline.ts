@@ -8,6 +8,13 @@ function textPartKey(messageID: string, part: "text" | "reasoning", ordinal: num
   return `${messageID}:${part}:${ordinal}`;
 }
 
+// A `slice` can share its source's storage, so every streamed chunk kept by the timeline
+// store would hold the whole text it was cut from. Copying the UTF-16 code units makes
+// the chunk independent; UTF-8 would corrupt a surrogate pair split across chunks.
+function detachedSuffix(text: string, start: number): string {
+  return Buffer.from(text.slice(start), "utf16le").toString("utf16le");
+}
+
 // Text and reasoning each number parts from zero, independent of snapshot position.
 export class V2Timeline {
   private readonly content = new Map<string, string>();
@@ -36,7 +43,7 @@ export class V2Timeline {
     if (!text.startsWith(emitted))
       throw new Error("OpenCode changed previously emitted message content");
     this.content.set(key, text);
-    const suffix = text.slice(emitted.length);
+    const suffix = detachedSuffix(text, emitted.length);
     const item: AgentTimelineItem =
       event.type === "text"
         ? { type: "assistant_message", text: suffix, messageId: event.assistantMessageID }
@@ -139,7 +146,7 @@ export class V2Timeline {
     if (!part.text.startsWith(previous))
       throw new Error("OpenCode changed previously emitted message content");
     this.content.set(key, part.text);
-    const suffix = part.text.slice(previous.length);
+    const suffix = detachedSuffix(part.text, previous.length);
     if (part.type === "text")
       push({ type: "assistant_message", text: suffix, messageId: messageID });
     else push({ type: "reasoning", text: suffix });

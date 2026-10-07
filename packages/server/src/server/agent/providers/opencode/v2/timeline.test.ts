@@ -1,4 +1,6 @@
 import type { SessionMessageAssistant } from "@opencode/client";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { V2Timeline } from "./timeline.js";
 
@@ -54,3 +56,38 @@ test("a completed edit carries the replaced and replacement text", () => {
     },
   ]);
 });
+
+test("a surrogate pair split across deltas streams back intact", () => {
+  const timeline = new V2Timeline();
+  const part = { assistantMessageID: "answer", type: "text" as const, ordinal: 0 };
+  timeline.startPart(part);
+  const chunks = ["a\uD83D", "\uDE00b"].map((delta) => {
+    const event = timeline.delta({ ...part, delta });
+    return event?.type === "timeline" && event.item.type === "assistant_message"
+      ? event.item.text
+      : null;
+  });
+  expect(chunks).toEqual(["a\uD83D", "\uDE00b"]);
+  expect(chunks.join("")).toBe("a😀b");
+});
+
+function retainedBytesAfterStreaming(mode: "delta" | "snapshot", chunks: number): number {
+  const fixture = fileURLToPath(
+    new URL("../test-utils/v2-streamed-text-memory.ts", import.meta.url),
+  );
+  const output = execFileSync(
+    process.execPath,
+    ["--expose-gc", "--import", "tsx", fixture, mode, String(chunks)],
+    { encoding: "utf8" },
+  );
+  return Number(output);
+}
+
+test.each(["delta", "snapshot"] as const)(
+  "a long %s-streamed part holds memory in proportion to its text",
+  (mode) => {
+    const chunks = 2000;
+    const textBytes = chunks * 64;
+    expect(retainedBytesAfterStreaming(mode, chunks)).toBeLessThan(textBytes * 32);
+  },
+);
