@@ -26,7 +26,6 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { isFdroidBuild } from "@/constants/build-profile";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
-import { getDaemonStartService } from "@/runtime/daemon-start-service";
 
 interface WelcomeAction {
   key: "scan-qr" | "direct-connection" | "remote-ssh" | "paste-pairing-link";
@@ -174,12 +173,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const router = useRouter();
   const appVersion = resolveAppVersion();
   const appVersionText = formatVersionWithPrefix(appVersion);
-  const [pendingLocalConnection] = useState(() =>
-    isElectronRuntime()
-      ? getDaemonStartService({ store: getHostRuntimeStore() }).getPendingLocalConnection()
-      : null,
-  );
-  const [isDirectOpen, setIsDirectOpen] = useState(Boolean(pendingLocalConnection));
+  const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isRemoteSshOpen, setIsRemoteSshOpen] = useState(false);
   const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
   const hosts = useHosts();
@@ -205,8 +199,6 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const handleOpenDirect = useCallback(() => setIsDirectOpen(true), []);
   const handleCloseDirect = useCallback(() => {
     setIsDirectOpen(false);
-    if (isElectronRuntime())
-      getDaemonStartService({ store: getHostRuntimeStore() }).clearPendingLocalConnection();
   }, []);
   const handleOpenRemoteSsh = useCallback(() => setIsRemoteSshOpen(true), []);
   const handleCloseRemoteSsh = useCallback(() => setIsRemoteSshOpen(false), []);
@@ -329,7 +321,6 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
 
         <AddHostModal
           visible={isDirectOpen}
-          initialTarget={pendingLocalConnection ?? undefined}
           onClose={handleCloseDirect}
           onSaved={handleHostSaved}
         />

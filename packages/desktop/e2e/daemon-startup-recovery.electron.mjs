@@ -106,6 +106,9 @@ export async function verifyStartupFailureRecovery({
     // A healthy daemon in another home is reused before a bundled launch.
     await openDesktop();
     await expect(page.getByTestId("sidebar-settings")).toBeVisible({ timeout: 60_000 });
+    const externalProfile = await page.evaluate(
+      () => JSON.parse(localStorage.getItem("@paseo:daemon-registry"))[0],
+    );
     await expect(page.getByText("Something went wrong", { exact: true })).toHaveCount(0);
     assert.equal(
       JSON.parse(await readFile(path.join(userData, "desktop-settings.json"), "utf8")).settings
@@ -123,6 +126,51 @@ export async function verifyStartupFailureRecovery({
     await expectExternalDaemonAlive();
     await openDesktop();
     await expect(page.getByTestId("sidebar-settings")).toBeVisible({ timeout: 60_000 });
+    await assert.rejects(readFile(path.join(desktopHome, "daemon.log")), { code: "ENOENT" });
+    await closeDesktop();
+    await expectExternalDaemonAlive();
+
+    // A port reused by a different daemon must not migrate the old host's
+    // identity, relay connection, appearance or password into the new host.
+    await openDesktop();
+    await expect(page.getByTestId("sidebar-settings")).toBeVisible({ timeout: 60_000 });
+    const previousProfile = {
+      ...externalProfile,
+      serverId: "srv_previous_home",
+      label: "Previous daemon home",
+      password: "previous-password",
+      connections: [
+        { ...externalProfile.connections[0], useTls: false },
+        {
+          id: "relay:127.0.0.1:1",
+          type: "relay",
+          relayEndpoint: "127.0.0.1:1",
+          useTls: false,
+          daemonPublicKeyB64: Buffer.alloc(32, 1).toString("base64"),
+        },
+      ],
+    };
+    await page.evaluate((profile) => {
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([profile]));
+    }, previousProfile);
+    await closeDesktop();
+    await openDesktop();
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            JSON.parse(localStorage.getItem("@paseo:daemon-registry")).map((host) => host.serverId),
+          ),
+        { timeout: 30_000 },
+      )
+      .toEqual([previousProfile.serverId, externalProfile.serverId]);
+    const separatedProfiles = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("@paseo:daemon-registry")),
+    );
+    assert.deepEqual(separatedProfiles[0], previousProfile);
+    assert.equal(separatedProfiles[1].connections.length, 1);
+    assert.equal(separatedProfiles[1].connections[0].type, "directTcp");
+    assert.equal(separatedProfiles[1].password, undefined);
     await assert.rejects(readFile(path.join(desktopHome, "daemon.log")), { code: "ENOENT" });
     await closeDesktop();
     await expectExternalDaemonAlive();
@@ -224,13 +272,60 @@ export async function verifyStartupFailureRecovery({
     );
     await assert.rejects(readFile(path.join(desktopHome, "daemon.log")), { code: "ENOENT" });
     await page.screenshot({ path: path.join(root, "reuse-existing-password.png") });
+    await page.evaluate((profile) => {
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([profile]));
+    }, externalProfile);
+    await closeDesktop();
+    await openDesktop();
+    await expect(page.getByTestId("add-host-modal")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("direct-port-input")).toHaveValue(protectedPort);
+    await page.screenshot({ path: path.join(root, "password-with-saved-online-host.png") });
+    await page
+      .getByTestId("add-host-modal")
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
+    await expect(page.getByTestId("add-host-modal")).toHaveCount(0);
+    const offlineConnection = {
+      id: `direct:localhost:${blockedPort}`,
+      type: "directTcp",
+      endpoint: `localhost:${blockedPort}`,
+      useTls: false,
+    };
+    const offlineProfile = {
+      ...externalProfile,
+      serverId: "srv_saved_offline",
+      label: "Saved offline host",
+      connections: [offlineConnection],
+      preferredConnectionId: offlineConnection.id,
+    };
+    await page.evaluate((profile) => {
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([profile]));
+    }, offlineProfile);
+    await closeDesktop();
+    await openDesktop();
+    await expect(page.getByTestId("add-host-modal")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("direct-port-input")).toHaveValue(protectedPort);
+    await page.screenshot({ path: path.join(root, "password-with-saved-offline-host.png") });
     await page.getByTestId("direct-password-input").fill("correct-password");
     await page.getByTestId("direct-host-submit").click();
+    await expect(page.getByTestId("add-host-modal")).toHaveCount(0);
     await expect(page.getByTestId("sidebar-settings")).toBeVisible({ timeout: 30_000 });
     await closeDesktop();
     assert.equal((await readDaemonInstance(protectedHome)).pid, protectedLaunch.instance.pid);
     await openDesktop();
     await expect(page.getByTestId("sidebar-settings")).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const store = globalThis.__paseoHostRuntimeStore;
+          return store
+            .getHosts()
+            .filter((host) => store.getSnapshot(host.serverId)?.connectionStatus === "online")
+            .length;
+        }),
+      )
+      .toBe(1);
+    await expect(page.getByTestId("add-host-modal")).toHaveCount(0);
     await assert.rejects(readFile(path.join(desktopHome, "daemon.log")), { code: "ENOENT" });
     await closeDesktop();
     await stopDaemonInstance(protectedHome, { instance: protectedLaunch.instance, force: true });
@@ -266,7 +361,7 @@ export async function verifyStartupFailureRecovery({
     await expect.poll(async () => await readDaemonInstance(desktopHome)).toBeNull();
     await expectExternalDaemonAlive();
     console.log(
-      "PASS: automatic reuse across homes without spawning or owning a daemon; original auto-start and quit lifecycle preserved; password form and saved password work; explicit disable persists; unrelated HTTP services are ignored; startup errors and settings-write failures remain recoverable.",
+      "PASS: automatic reuse across homes without spawning or owning a daemon; reused ports preserve old host identities and credentials; password form works with saved online/offline hosts and can be dismissed; saved passwords reconnect without prompting; original auto-start and quit lifecycle preserved; explicit disable persists; unrelated HTTP services are ignored; startup errors and settings-write failures remain recoverable.",
     );
   } catch (error) {
     if (page && !page.isClosed()) {

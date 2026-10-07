@@ -112,6 +112,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
+import { LocalDaemonConnectionPrompt } from "@/desktop/components/local-daemon-connection-prompt";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
@@ -631,6 +632,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <AddProjectFlowHost />
         <HostChooserModal />
         <HostConfirmationSheet />
+        {shouldUseDesktopDaemon() ? <LocalDaemonConnectionPrompt /> : null}
         <ProviderSettingsHost />
         <WorkspaceSetupDialog />
         <KeyboardShortcutsDialog />

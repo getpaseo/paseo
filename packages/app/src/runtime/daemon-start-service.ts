@@ -129,6 +129,7 @@ export class DaemonStartService {
 
   clearPendingLocalConnection(): void {
     this.pendingLocalConnection = null;
+    this.notify();
   }
 
   isRunning(): boolean {

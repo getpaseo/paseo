@@ -135,8 +135,11 @@ describe("DaemonStartService", () => {
     expect(start).not.toHaveBeenCalled();
     expect(fake.upserts).toEqual([]);
     expect(service.getLastError()).toBeNull();
+    const pendingSnapshots: unknown[] = [];
+    service.subscribe(() => pendingSnapshots.push(service.getPendingLocalConnection()));
     service.clearPendingLocalConnection();
     expect(service.getPendingLocalConnection()).toBeNull();
+    expect(pendingSnapshots).toEqual([null]);
   });
 
   it("does not probe or start when management was explicitly disabled", async () => {
