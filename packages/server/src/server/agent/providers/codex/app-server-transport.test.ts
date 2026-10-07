@@ -92,6 +92,43 @@ describe("Codex app-server transport", () => {
     }
   });
 
+  test.each([0, 16, 1024])(
+    "drains the final response when the child exits with stdout split at %i",
+    async (splitAt) => {
+      const child = createCodexAppServerChildProcess();
+      const client = new CodexAppServerClient(child, createTestLogger());
+      const terminated = vi.fn();
+      client.setUnexpectedTerminationHandler(terminated);
+      const history = { text: "before\u2028middle\u2029after 🚀" };
+      const response = JSON.stringify({ id: 1, result: history });
+      const request = client.request("thread/read", { threadId: "thread-1" });
+      const unanswered = client.request("model/list", {}).catch((error: unknown) => error);
+
+      try {
+        child.stdout.write(response.slice(0, splitAt));
+        child.emit("exit", 17, null);
+        child.stdout.end(response.slice(splitAt));
+
+        await expect(request).resolves.toEqual(history);
+        expect(terminated).not.toHaveBeenCalled();
+
+        child.stderr.end("final diagnostics");
+        child.emit("close", 17, null);
+        child.emit("close", 17, null);
+
+        const error = new Error(
+          "Codex app-server exited with code 17 and signal null\nfinal diagnostics",
+        );
+        await expect(unanswered).resolves.toEqual(error);
+        expect(terminated).toHaveBeenCalledExactlyOnceWith(error);
+      } finally {
+        await client.dispose();
+        child.stdout.end();
+        child.stderr.end();
+      }
+    },
+  );
+
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());

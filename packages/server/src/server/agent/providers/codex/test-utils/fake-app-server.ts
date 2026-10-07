@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { finished } from "node:stream/promises";
 
 import type { AgentSession, AgentStreamEvent } from "../../../agent-sdk-types.js";
 
@@ -145,6 +146,15 @@ export function createFakeCodexAppServer(
   handlers: Record<string, FakeCodexAppServerHandler> = {},
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
+  child.once("exit", (code, signal) => {
+    void Promise.all([finished(child.stdout), finished(child.stderr)]).then(() =>
+      child.emit("close", code, signal),
+    );
+    child.stdout.end();
+    child.stderr.end();
+    child.stdout.resume();
+    child.stderr.resume();
+  });
   const recordedRollbacks: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),

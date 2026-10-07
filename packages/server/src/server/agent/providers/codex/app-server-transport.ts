@@ -224,7 +224,8 @@ export class CodexAppServerClient {
       this.handleUnexpectedTermination(err);
     });
 
-    child.on("exit", (code, signal) => {
+    // `exit` can precede the final stdout data/end events; `close` waits for stdio.
+    child.on("close", (code, signal) => {
       const message =
         code === 0 && !signal
           ? "Codex app-server exited"
