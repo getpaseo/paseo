@@ -33,6 +33,12 @@ export class SessionPermissions {
   list() {
     return [...this.pending.values()];
   }
+  isOwnedBy(requestId: string, sessionID: string) {
+    return (
+      this.forms.get(requestId)?.sessionID === sessionID ||
+      this.permissionOwners.get(requestId) === sessionID
+    );
+  }
   async respondToPermission(requestId: string, response: AgentPermissionResponse) {
     const form = this.forms.get(requestId);
     if (form) {

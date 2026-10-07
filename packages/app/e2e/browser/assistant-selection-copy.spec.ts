@@ -155,6 +155,49 @@ async function selectAssistantElementFromEndOf(
   );
 }
 
+/** A drag over an image alone selects it inside its rendered frame. */
+async function selectAssistantImage(page: Page): Promise<void> {
+  await assistantMessageBlocks(page)
+    .locator("img")
+    .evaluate((element) => {
+      const range = document.createRange();
+      range.selectNode(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+}
+
+/** Press in the gap below the image and drag to the end of `text` in the block after it. */
+async function dragFromBelowImageTo(page: Page, text: string): Promise<void> {
+  const blocks = assistantMessageBlocks(page);
+  const target = blocks.getByText(text);
+  await target.scrollIntoViewIfNeeded();
+  const frame = await blocks.locator('[data-paseo-markdown-tag="img"]').boundingBox();
+  const end = await target.evaluate((element, selectedText) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const offset = node.textContent?.indexOf(selectedText) ?? -1;
+      if (offset >= 0) {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.setEnd(node, offset + selectedText.length);
+        const box = range.getBoundingClientRect();
+        return { x: box.right - 1, y: box.top + box.height / 2, left: box.left };
+      }
+    }
+    throw new Error(`Could not find ${selectedText}`);
+  }, text);
+  if (!frame) {
+    throw new Error("Expected a rendered image");
+  }
+  await page.mouse.move(end.left + 5, frame.y + frame.height + 4);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 10 });
+  await page.mouse.up();
+}
+
 async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
 }
@@ -645,6 +688,58 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await bashFence.locator("[data-paseo-markdown-ignore]").click();
 
     expect(await readPlainClipboard(page)).toBe("echo trailing");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("copying a selection across an assistant image keeps its Markdown source and alt text", async ({
+  context,
+  page,
+}) => {
+  const image =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-selection-copy-image-",
+    title: "Assistant selection copy image",
+    initialPrompt: "Render the image fixture.",
+    featureValues: {
+      mockAssistantResponse: [
+        "Before the image.",
+        "",
+        `![chart](${image})`,
+        "",
+        "After the image.",
+      ].join("\n"),
+    },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+    await expect(assistantMessageBlocks(page).locator("img")).toHaveCount(1);
+
+    await selectAssistantTextRange(page, "Before the image.", "After the image.");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      `Before the image.\n\n![chart](${image})\n\nAfter the image.`,
+    );
+
+    await selectAssistantImage(page);
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(`![chart](${image})`);
+
+    await dragFromBelowImageTo(page, "After the");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe("After the");
   } finally {
     await agent.cleanup();
   }

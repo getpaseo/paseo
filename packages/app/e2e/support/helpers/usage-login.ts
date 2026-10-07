@@ -58,10 +58,6 @@ export default function contribute(server) {
   }
 }
 
-export async function openUsage(page: Page) {
-  await page.goto("/usage");
-}
-
 export async function refreshLoginUsage(page: Page) {
   await page.getByRole("button", { name: "Refresh Claude", exact: true }).click();
 }

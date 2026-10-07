@@ -143,6 +143,52 @@ describe("assistant selection copy ranges", () => {
     expect(copiedMarkdown(selectRange(blocks[0]!, 6, blocks[1]!, 6))).toBe("paragraph.\n\nSecond");
   });
 
+  // Chrome anchors a drag that starts in the gap below an image at the start of the
+  // image's rendered internals: the background-image layer, ahead of the hidden `img`.
+  // Only the text after it is highlighted.
+  it("leaves out an image when the selection starts in the gap below it", () => {
+    const transcript = mountTranscript([
+      {
+        messageId: "message-1",
+        blocks: [
+          "Before the image.",
+          '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><div><div style="background-image: url(blob:https://example.test/preview)"></div><img src="blob:https://example.test/preview" alt=""></div></div>',
+          "After the image.",
+        ],
+      },
+    ]);
+    const frame = fixtureElement(transcript, '[data-paseo-markdown-tag="img"]');
+    const range = document.createRange();
+    range.setStart(frame.firstElementChild!.firstElementChild!, 0);
+    range.setEnd(textNode(fixtureElement(transcript, '[data-paseo-markdown-tag="p"]', 2)), 9);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(copiedMarkdown(selection)).toBe("After the");
+  });
+
+  it("keeps a failed image when the selection starts in its error text", () => {
+    const transcript = mountTranscript([
+      {
+        messageId: "message-1",
+        blocks: [
+          '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><div>Image failed to load</div></div>',
+          "After the image.",
+        ],
+      },
+    ]);
+    const frame = fixtureElement(transcript, '[data-paseo-markdown-tag="img"]');
+    const selection = selectRange(
+      frame.firstElementChild!,
+      6,
+      fixtureElement(transcript, '[data-paseo-markdown-tag="p"]', 1),
+      9,
+    );
+
+    expect(copiedMarkdown(selection)).toBe("![chart](https://example.test/chart.png)\n\nAfter the");
+  });
+
   it("does not replace the browser clipboard for a selection reaching a second message", () => {
     const transcript = mountTranscript([
       { messageId: "message-1", blocks: ["First paragraph.", "Second paragraph."] },
@@ -320,6 +366,32 @@ describe("assistant selection copy ranges", () => {
     ).toBe("6. Second bullet text");
   });
 
+  it("keeps the next number when a drag crosses a code block nested in an item", () => {
+    const message = mountFixture();
+    const list = fixtureElement(message, '[data-paseo-markdown-tag="ul"]');
+    list.outerHTML = [
+      '<div data-paseo-markdown-tag="ol" data-paseo-markdown-list-start="1">',
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">1.</div>',
+      "<div><div><span>Install it:</span></div>",
+      '<div data-paseo-markdown-tag="pre" data-paseo-markdown-language="sh">',
+      '<div data-paseo-markdown-tag="code"><span>brew install foo</span></div>',
+      '<button data-paseo-markdown-ignore="true">Copy</button>',
+      "</div></div>",
+      "</div>",
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">2.</div>',
+      "<div><div><span>Done.</span></div></div>",
+      "</div>",
+      "</div>",
+    ].join("");
+
+    const content = copyAcross(message, "Install it:", "Done.");
+
+    expect(content?.plainText).toBe("Install it:\n\n```sh\nbrew install foo\n```\n\n2. Done.");
+    expect(content?.html).toContain("<div>2. Done.</div>");
+  });
+
   it("retains nested markers when a drag includes the complete outer item", () => {
     const message = mountFixture();
     const firstItem = fixtureElement(message, '[data-paseo-markdown-tag="li"]');
@@ -383,6 +455,20 @@ describe("assistant selection copy ranges", () => {
     expect(content?.plainText).toBe("answer");
     expect(content?.html).not.toContain("<code>");
     expect(content?.html).not.toContain("<pre>");
+  });
+
+  it("copies an image as its Markdown when the selection stays inside the rendered image", () => {
+    const message = mountFixture();
+    const frame = document.createElement("div");
+    frame.setAttribute("data-paseo-markdown-tag", "img");
+    frame.setAttribute("data-paseo-markdown-src", "https://example.test/chart.png");
+    frame.setAttribute("data-paseo-markdown-alt", "chart");
+    frame.innerHTML = '<div><div><img src="blob:https://example.test/preview" alt=""></div></div>';
+    message.prepend(frame);
+
+    expect(copiedMarkdown(selectNodeContents(fixtureElement(frame, "img").parentElement!))).toBe(
+      "![chart](https://example.test/chart.png)",
+    );
   });
 
   it("copies code without a fence when every character is selected inside the block", () => {
@@ -648,7 +734,9 @@ describe("assistant selection copy inside highlighted code", () => {
     const message = mountHighlighted();
     const image = document.createElement("div");
     image.setAttribute("data-paseo-markdown-tag", "p");
-    image.innerHTML = '<div><img src="https://example.test/chart.png" alt="chart"></div>';
+    // The rendered `img` shows a preview URL with no alt text; the frame carries the Markdown.
+    image.innerHTML =
+      '<div data-paseo-markdown-tag="img" data-paseo-markdown-src="https://example.test/chart.png" data-paseo-markdown-alt="chart"><img src="blob:https://example.test/preview" alt=""></div>';
     message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(image);
     const before = tokenText(message, "Before the block.");
 
