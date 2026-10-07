@@ -24,42 +24,64 @@ describe("daemon E2E", () => {
   }, 60000);
 
   describe("file download tokens", () => {
-    test("issues token over WS and downloads via HTTP", async () => {
-      const cwd = tmpCwd();
-      const filePath = path.join(cwd, "download.txt");
-      const fileContents = "download test payload";
-      writeFileSync(filePath, fileContents, "utf-8");
+    test.each([
+      { fileName: "download.txt", disposition: 'attachment; filename="download.txt"' },
+      {
+        fileName: "中文报告 (最终版).txt",
+        disposition:
+          "attachment; filename=\"???? (???).txt\"; filename*=UTF-8''%E4%B8%AD%E6%96%87%E6%8A%A5%E5%91%8A%20%28%E6%9C%80%E7%BB%88%E7%89%88%29.txt",
+      },
+      {
+        fileName: "報告書.md",
+        disposition:
+          "attachment; filename=\"???.md\"; filename*=UTF-8''%E5%A0%B1%E5%91%8A%E6%9B%B8.md",
+      },
+      {
+        fileName: "report-📄.txt",
+        disposition:
+          "attachment; filename=\"report-??.txt\"; filename*=UTF-8''report-%F0%9F%93%84.txt",
+      },
+    ])(
+      "issues token over WS and downloads $fileName via HTTP",
+      async ({ fileName, disposition }) => {
+        const cwd = tmpCwd();
+        try {
+          const filePath = path.join(cwd, fileName);
+          const fileContents = "download test payload";
+          writeFileSync(filePath, fileContents, "utf-8");
 
-      const agent = await ctx.client.createAgent({
-        provider: "codex",
-        model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-        cwd,
-        title: "Download Token Test Agent",
-      });
+          const agent = await ctx.client.createAgent({
+            provider: "codex",
+            model: CODEX_TEST_MODEL,
+            thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+            cwd,
+            title: "Download Token Test Agent",
+          });
 
-      expect(agent.id).toBeTruthy();
+          expect(agent.id).toBeTruthy();
 
-      const tokenResponse = await ctx.client.requestDownloadToken(cwd, "download.txt");
+          const tokenResponse = await ctx.client.requestDownloadToken(cwd, fileName);
 
-      expect(tokenResponse.error).toBeNull();
-      expect(tokenResponse.token).toBeTruthy();
-      expect(tokenResponse.fileName).toBe("download.txt");
+          expect(tokenResponse.error).toBeNull();
+          expect(tokenResponse.token).toBeTruthy();
+          expect(tokenResponse.fileName).toBe(fileName);
 
-      const response = await fetch(
-        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
-      );
+          const response = await fetch(
+            `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
+          );
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toBe(tokenResponse.mimeType);
-      const disposition = response.headers.get("content-disposition") ?? "";
-      expect(disposition).toContain("download.txt");
+          expect(response.status).toBe(200);
+          expect(response.headers.get("content-type")).toBe(tokenResponse.mimeType);
+          expect(response.headers.get("content-disposition")).toBe(disposition);
 
-      const body = await response.text();
-      expect(body).toBe(fileContents);
-
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000);
+          const body = await response.text();
+          expect(body).toBe(fileContents);
+        } finally {
+          rmSync(cwd, { recursive: true, force: true });
+        }
+      },
+      60000,
+    );
 
     test("rejects invalid token", async () => {
       const response = await fetch(
