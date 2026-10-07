@@ -91,8 +91,8 @@ describe("ClaudeAgentSession persisted history load", () => {
     );
   });
 
-  // chmod does not remove read access on Windows.
-  test.skipIf(process.platform === "win32")(
+  // chmod does not remove read access on Windows, or for root.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "logs a warning with the error when Claude's project folders cannot be listed",
     async () => {
       // The transcript is not under cwd's folder, so the lookup lists the other project folders.
