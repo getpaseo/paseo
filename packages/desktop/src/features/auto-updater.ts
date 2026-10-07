@@ -10,6 +10,7 @@ import {
   type AppUpdateCheckResult,
   type AppUpdateInstallRequest,
   type AppUpdateInstallResult,
+  type BeforeInstall,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
   type RuntimeUpdateCheckResult,
@@ -310,11 +311,11 @@ export async function downloadAndInstallUpdate(
     releaseChannel: AppReleaseChannel;
     signal?: AbortSignal;
   },
-  onBeforeQuit?: () => Promise<boolean>,
+  beforeInstall?: BeforeInstall,
 ): Promise<AppUpdateInstallResult> {
   return appUpdateService.downloadAndInstallUpdate(
     { currentVersion, releaseChannel, signal },
-    onBeforeQuit,
+    beforeInstall,
   );
 }
 

@@ -161,10 +161,11 @@ describe("downloadAndInstallUpdate", () => {
       return new Promise(() => undefined);
     });
     const controller = new AbortController();
-    const pending = downloadAndInstallUpdate(
-      { currentVersion: "1.2.3", releaseChannel: "stable", signal: controller.signal },
-      async () => true,
-    );
+    const pending = downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: controller.signal,
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     controller.abort();
 

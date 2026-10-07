@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createAppUpdateService } from "./app-update-service";
+import { createAppUpdateService, type BeforeInstall } from "./app-update-service";
 import { FakeAppUpdateRuntime } from "./fake-app-update-runtime";
 
 function createService(input?: { now?: () => number; bucket?: () => Promise<number> }) {
@@ -12,6 +12,15 @@ function createService(input?: { now?: () => number; bucket?: () => Promise<numb
     bucket: input?.bucket ?? (async () => 0.99),
   });
   return { runtime, service };
+}
+
+const noStop = async (): Promise<void> => undefined;
+
+// Stands in for the desktop idle wait: installs once `wait` allows it.
+function installAfterWait(wait: Promise<boolean>, stop = noStop): BeforeInstall {
+  return async (installAfterStop) => {
+    if (await wait) await installAfterStop(stop);
+  };
 }
 
 const rolledOutUpdate = {
@@ -337,12 +346,12 @@ describe("app update service", () => {
     });
     const installing = service.downloadAndInstallUpdate(
       { currentVersion: "1.2.3", releaseChannel: "stable" },
-      () => waiting,
+      installAfterWait(waiting),
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(runtime.installedVersions).toEqual([]);
     finishWait(false);
-    expect(await installing).toMatchObject({ installed: false });
+    expect(await installing).toMatchObject({ installed: false, cancelled: true });
     expect(runtime.installedVersions).toEqual([]);
   });
 
@@ -351,10 +360,11 @@ describe("app update service", () => {
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
     runtime.beginUpdateDownload(rolledOutUpdate);
     const controller = new AbortController();
-    const installing = service.downloadAndInstallUpdate(
-      { currentVersion: "1.2.3", releaseChannel: "stable", signal: controller.signal },
-      async () => true,
-    );
+    const installing = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: controller.signal,
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     controller.abort();
 
@@ -402,12 +412,110 @@ describe("app update service", () => {
     });
     const installing = service.downloadAndInstallUpdate(
       { currentVersion: "1.2.3", releaseChannel: "stable" },
-      () => waiting,
+      installAfterWait(waiting),
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(runtime.installedVersions).toEqual([]);
     finishWait(true);
     expect(await installing).toMatchObject({ installed: true });
+    expect(runtime.installedVersions).toEqual([rolledOutUpdate.version]);
+  });
+
+  it("does not stop or install when another window's check replaces the update during the wait", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishWait!: (proceed: boolean) => void;
+    const waiting = new Promise<boolean>((resolve) => {
+      finishWait = resolve;
+    });
+    let stopped = false;
+    const stop = async () => {
+      stopped = true;
+    };
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable" },
+      installAfterWait(waiting, stop),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.3.0-beta.1" },
+    });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "beta",
+      intent: "manual",
+    });
+    finishWait(true);
+
+    await expect(installing).resolves.toMatchObject({ installed: false });
+    expect(stopped).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("holds other update checks from the stop until the install", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishStop!: () => void;
+    const stopping = new Promise<void>((resolve) => {
+      finishStop = resolve;
+    });
+    let stopStarted!: () => void;
+    const stopRequested = new Promise<void>((resolve) => {
+      stopStarted = resolve;
+    });
+    const stop = async () => {
+      stopStarted();
+      await stopping;
+    };
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable" },
+      installAfterWait(Promise.resolve(true), stop),
+    );
+    await stopRequested;
+    const checksBeforeStop = runtime.checkCount;
+
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
+    });
+    const otherWindowCheck = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.checkCount).toBe(checksBeforeStop);
+
+    finishStop();
+    await expect(installing).resolves.toMatchObject({ installed: true });
+    expect(runtime.installedVersions).toEqual([rolledOutUpdate.version]);
+    await otherWindowCheck;
+    expect(runtime.checkCount).toBe(checksBeforeStop + 1);
+  });
+
+  it("stops waiting for a slow update check when the install is cancelled", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    const slowCheck = runtime.deferNextCheck();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const controller = new AbortController();
+    const cancelled = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(cancelled).resolves.toMatchObject({ installed: false, cancelled: true });
+
+    // The abandoned check finishes before the replacement's own check, so its
+    // late result cannot decide what the replacement installs.
+    const replacement = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    slowCheck.resolve(null);
+    await expect(replacement).resolves.toMatchObject({ installed: true });
     expect(runtime.installedVersions).toEqual([rolledOutUpdate.version]);
   });
 

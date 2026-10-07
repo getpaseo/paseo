@@ -22,7 +22,7 @@ import {
   writeAttachmentBase64,
   writeAttachmentBytes,
 } from "../features/attachments.js";
-import type { AppUpdateService } from "../features/app-update-service.js";
+import type { AppUpdateService, InstallAfterStop } from "../features/app-update-service.js";
 import {
   checkForAppUpdate,
   downloadAndInstallUpdate,
@@ -422,18 +422,21 @@ async function resolveRequestedReleaseChannel(
 // IPC registration
 // ---------------------------------------------------------------------------
 
-async function waitForAgentsToStop(signal: AbortSignal): Promise<boolean> {
+async function installWhenAgentsIdle(
+  signal: AbortSignal,
+  installAfterStop: InstallAfterStop,
+): Promise<void> {
   while (!signal.aborted) {
     try {
-      await stopDesktopDaemon("app_update", undefined, {
-        onlyIfIdle: true,
-        signal,
-      });
-      // The daemon accepted the stop and has exited. A cancel that arrives now
+      // Resolves after the install, or without stopping when the update was
+      // replaced. Once the daemon accepts the stop and exits, a late Cancel
       // cannot bring it back, so the install proceeds and restarts both.
-      return true;
+      await installAfterStop(async () => {
+        await stopDesktopDaemon("app_update", undefined, { onlyIfIdle: true, signal });
+      });
+      return;
     } catch (error) {
-      if (signal.aborted) return false;
+      if (signal.aborted) return;
       if (!(error instanceof AgentsBusyError)) throw error;
     }
     try {
@@ -442,7 +445,6 @@ async function waitForAgentsToStop(signal: AbortSignal): Promise<boolean> {
       if (!signal.aborted) throw error;
     }
   }
-  return false;
 }
 
 export function createDaemonCommandHandlers(deps?: {
@@ -519,12 +521,14 @@ export function createDaemonCommandHandlers(deps?: {
             releaseChannel: await resolveRequestedReleaseChannel(args),
             signal: controller.signal,
           },
-          async () => {
-            if (args?.whenIdle !== true) {
-              await stopDesktopDaemon("app_update");
-              return true;
+          async (installAfterStop) => {
+            if (args?.whenIdle === true) {
+              await installWhenAgentsIdle(controller.signal, installAfterStop);
+              return;
             }
-            return waitForAgentsToStop(controller.signal);
+            await installAfterStop(async () => {
+              await stopDesktopDaemon("app_update");
+            });
           },
         );
       } finally {
