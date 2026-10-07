@@ -58,6 +58,7 @@ export class BrowserToolsBroker {
   private readonly browserHostByBrowserId = new Map<string, string>();
   private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
   private registrationSequence = 0;
+  private readonly newTabQueues = new Map<string, Promise<unknown>>();
 
   public constructor(options: BrowserToolsBrokerOptions) {
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_BROWSER_TOOLS_TIMEOUT_MS;
@@ -116,6 +117,25 @@ export class BrowserToolsBroker {
   }
 
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
+    const { command } = input;
+    if (command.command !== "new_tab" || !command.args.url || input.separateTab || input.hostId) {
+      return this.executeUnqueued(input);
+    }
+    const key = input.workspaceId ?? "";
+    const previous = this.newTabQueues.get(key) ?? Promise.resolve();
+    const run = previous.then(() => this.executeUnqueued(input));
+    const settled = (): undefined => {
+      if (this.newTabQueues.get(key) === tail) this.newTabQueues.delete(key);
+      return undefined;
+    };
+    const tail: Promise<undefined> = run.then(settled, settled);
+    this.newTabQueues.set(key, tail);
+    return run;
+  }
+
+  private async executeUnqueued(
+    input: BrowserToolsExecuteInput,
+  ): Promise<BrowserToolsResponsePayload> {
     const requestId = input.requestId ?? this.createRequestId();
 
     const request = BrowserAutomationExecuteRequestSchema.safeParse({

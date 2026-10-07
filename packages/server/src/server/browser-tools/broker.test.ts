@@ -391,6 +391,66 @@ describe("BrowserToolsBroker", () => {
     });
   });
 
+  test("parallel new tab calls for one application open a single tab", async () => {
+    const broker = createBroker();
+    const host = new FakeBrowserHostClient("host-1");
+    broker.registerClient(host);
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const call = () =>
+      broker.execute({
+        command: { command: "new_tab", args: { url: "https://app.example/" } },
+        workspaceId: "workspace-1",
+      });
+    const tab = {
+      browserId: BROWSER_ID,
+      workspaceId: "workspace-1",
+      url: "https://app.example/",
+      title: "App",
+      isActive: true,
+      isLoading: false,
+    };
+
+    const first = call();
+    const second = call();
+    await flush();
+    expect(host.receivedRequests.map((request) => request.command.command)).toEqual(["list_tabs"]);
+    host.resolveLatestWith(broker, {
+      requestId: "req-1:reuse",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    await flush();
+    expect(host.receivedRequests.map((request) => request.command.command)).toEqual([
+      "list_tabs",
+      "new_tab",
+    ]);
+    host.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: tab.url,
+      },
+    });
+    await flush();
+    host.resolveLatestWith(broker, {
+      requestId: "req-2:reuse",
+      ok: true,
+      result: { command: "list_tabs", tabs: [tab] },
+    });
+
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(second).resolves.toMatchObject({
+      ok: true,
+      result: { command: "new_tab", browserId: BROWSER_ID },
+    });
+    expect(
+      host.receivedRequests.filter((request) => request.command.command === "new_tab"),
+    ).toHaveLength(1);
+  });
+
   test("new tab opens a fresh tab for another application or when separateTab is set", async () => {
     const broker = createBroker();
     const host = new FakeBrowserHostClient("host-1");
