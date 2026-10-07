@@ -10,6 +10,8 @@ category: Orchestration
 
 Paseo lets your coding agents coordinate other agents, split work across providers and machines, and keep tasks moving automatically.
 
+You can also start and supervise each task yourself in the desktop app. [Run parallel tasks in separate worktrees](/docs/parallel-development), inspect their diffs, and test each app in a terminal and browser before choosing what to merge.
+
 ## What your agents can do
 
 - **Choose providers and models:** launch other agents using any provider and model configured on the host.

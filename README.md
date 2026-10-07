@@ -50,6 +50,8 @@ Paseo is a desktop, mobile, web, and CLI app for coding agents. Open the desktop
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
 
+[Run parallel tasks in Paseo](https://paseo.sh/docs/parallel-development): start agents in separate worktrees, review their diffs, run each app, and check it in the built-in browser.
+
 ## Plugins
 
 Plugins run on the daemon and show up in every client you connect, with the same UI on desktop, web,
