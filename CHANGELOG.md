@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.2-beta.1 - 2026-10-07
+
+### Fixed
+
+- Fixed Pi turns failing with "Pi RPC request timed out" while a huge session was auto-compacting; the turn now runs to completion and persists
+- Fixed archived agents reopening when a send to them failed ([#6255](https://github.com/getpaseo/paseo/pull/6255))
+- Fixed an archived ACP agent's history disappearing after its worktree was removed ([#6228](https://github.com/getpaseo/paseo/pull/6228))
+- Stopped the provider when archiving an ACP agent that never answers close ([#6213](https://github.com/getpaseo/paseo/pull/6213))
+- Fixed OMP chats showing a compaction row instead of "Unsupported history record" after reopening ([#6215](https://github.com/getpaseo/paseo/pull/6215))
+- Fixed OMP chats showing extra "Custom message" rows after reopening ([#6198](https://github.com/getpaseo/paseo/pull/6198))
+- Fixed OpenCode agents going idle after a v2 tool permission is denied ([#6188](https://github.com/getpaseo/paseo/pull/6188))
+- Fixed OpenCode agents going idle after a v2 question is dismissed ([#6177](https://github.com/getpaseo/paseo/pull/6177))
+- Fixed copied selections losing an image's alt text and source ([#6181](https://github.com/getpaseo/paseo/pull/6181))
+- Fixed copying highlighted text when a selection starts below an image ([#6195](https://github.com/getpaseo/paseo/pull/6195))
+- Fixed Astro expressions losing colors through nested template strings ([#6219](https://github.com/getpaseo/paseo/pull/6219))
+- Fixed Vue (.vue) file highlighting ([#6205](https://github.com/getpaseo/paseo/pull/6205))
+- Fixed chat rows preserving position across virtual layout changes ([#6172](https://github.com/getpaseo/paseo/pull/6172))
+- Fixed a hover card staying open when a pressed button disabled itself ([#6185](https://github.com/getpaseo/paseo/pull/6185))
+- Fixed browser_type text landing in the focused composer ([#6207](https://github.com/getpaseo/paseo/pull/6207))
+- Fixed local speech model reinstalls after interrupted extraction ([#6210](https://github.com/getpaseo/paseo/pull/6210))
+- Fixed the CLI resolving local plugin directories from its working directory ([#6239](https://github.com/getpaseo/paseo/pull/6239))
+- Fixed the French translation ([#6004](https://github.com/getpaseo/paseo/pull/6004))
+- Sanitized plugin overview rendering: no raw HTML, https links only, no relative links ([#6244](https://github.com/getpaseo/paseo/pull/6244))
+- Showed a Claude subagent's auto-mode report as markdown instead of a raw SubagentHandback card ([#6248](https://github.com/getpaseo/paseo/pull/6248))
+
+### Added
+
+- Enabled plugin registry installs by default ([#6224](https://github.com/getpaseo/paseo/pull/6224)), with author overviews ([#6226](https://github.com/getpaseo/paseo/pull/6226)), per-IP install counting ([#6230](https://github.com/getpaseo/paseo/pull/6230)), and Cloudflare thumbnail transforms ([#6240](https://github.com/getpaseo/paseo/pull/6240))
+- Localized the PR panel's state, activity verbs, thread badges, checks summary, and "Worked for" line ([#6225](https://github.com/getpaseo/paseo/pull/6225), [#6208](https://github.com/getpaseo/paseo/pull/6208), [#6196](https://github.com/getpaseo/paseo/pull/6196))
+- Built the paseo.sh plugin gallery: browse and search pages, featured section, viewer, and plugin display metadata ([#6254](https://github.com/getpaseo/paseo/pull/6254), [#6256](https://github.com/getpaseo/paseo/pull/6256), [#6261](https://github.com/getpaseo/paseo/pull/6261), [#6263](https://github.com/getpaseo/paseo/pull/6263))
+
 ## 0.11.1 - 2026-10-07
 
 ### Added
