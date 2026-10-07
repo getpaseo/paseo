@@ -327,6 +327,34 @@ test("fails an auto mode turn when Claude Code uses Vertex", async () => {
   }
 });
 
+test("switches an auto mode session to another mode when Claude Code uses Bedrock", async () => {
+  const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
+  process.env.CLAUDE_CODE_USE_BEDROCK = "1";
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    modeId: "auto",
+  });
+
+  try {
+    await session.setMode("acceptEdits");
+
+    expect(await session.getCurrentMode()).toBe("acceptEdits");
+    expect(sdkQueryFactory).toHaveBeenCalledTimes(1);
+    expect(sdkQueryFactory.mock.calls[0]?.[0]?.options?.permissionMode).toBe("acceptEdits");
+  } finally {
+    restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
+    await session.close();
+  }
+});
+
 test("logs redacted query summary and never leaks sentinel secrets", async () => {
   const envSecret = "PASEO_ENV_SENTINEL_SECRET";
   const runtimeSecret = "PASEO_RUNTIME_SENTINEL_SECRET";
@@ -1037,11 +1065,11 @@ test("preserves bypass capability across query restarts triggered by thinking ch
 
     expect(capturedOptions).toHaveLength(2);
     expect(capturedOptions[0]).toMatchObject({
-      permissionMode: "default",
+      permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
     });
     expect(capturedOptions[1]).toMatchObject({
-      permissionMode: "acceptEdits",
+      permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       effort: "high",
     });
