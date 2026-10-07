@@ -27,6 +27,10 @@ describe("daemon E2E", () => {
     test.each([
       { fileName: "download.txt", disposition: 'attachment; filename="download.txt"' },
       {
+        fileName: "café.txt",
+        disposition: "attachment; filename=\"caf?.txt\"; filename*=UTF-8''caf%C3%A9.txt",
+      },
+      {
         fileName: "中文报告 (最终版).txt",
         disposition:
           "attachment; filename=\"???? (???).txt\"; filename*=UTF-8''%E4%B8%AD%E6%96%87%E6%8A%A5%E5%91%8A%20%28%E6%9C%80%E7%BB%88%E7%89%88%29.txt",
