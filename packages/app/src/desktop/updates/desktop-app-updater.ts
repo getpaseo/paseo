@@ -329,6 +329,11 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         lastCheckedAt: nextLastCheckedAt,
         isInstalling: false,
       });
+      // A newer release can replace the update while it waits for agents. Look
+      // again so the callout shows the replacement instead of "Up to date".
+      if (!result.installed && !cancelled) {
+        await checkForUpdates({ releaseChannel: options.releaseChannel, silent: true });
+      }
       return result;
     } catch (error) {
       const message = getErrorMessage(error);

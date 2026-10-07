@@ -138,6 +138,20 @@ function installFakeSupervisor(fixtureRoot: string): {
   return { lockPath, exit: () => signal("SIGTERM"), kill: () => signal("SIGKILL") };
 }
 
+function daemonStatusFromLock(lockPath: string) {
+  const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number; startedAt: string };
+  return {
+    localDaemon: "running",
+    pid: lock.pid,
+    startedAt: lock.startedAt,
+    listen: "127.0.0.1:6799",
+    hostname: hostname(),
+    daemonVersion: "1.2.3",
+    desktopManaged: true,
+    serverId: "srv_test",
+  };
+}
+
 // Answers `daemon status` from the lock file and keeps `daemon stop` open
 // until the test releases it, so a cancel can land mid-stop.
 function holdDaemonStop(lockPath: string): {
@@ -150,22 +164,7 @@ function holdDaemonStop(lockPath: string): {
     markRequested = resolve;
   });
   mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
-    if (args[1] === "status") {
-      const lock = JSON.parse(readFileSync(lockPath, "utf8")) as {
-        pid: number;
-        startedAt: string;
-      };
-      return {
-        localDaemon: "running",
-        pid: lock.pid,
-        startedAt: lock.startedAt,
-        listen: "127.0.0.1:6799",
-        hostname: hostname(),
-        daemonVersion: "1.2.3",
-        desktopManaged: true,
-        serverId: "srv_test",
-      };
-    }
+    if (args[1] === "status") return daemonStatusFromLock(lockPath);
     if (args[1] === "stop") {
       markRequested();
       return await new Promise<{ action: string }>((resolve) => {
@@ -291,6 +290,54 @@ describe("daemon-manager commands", () => {
       supervisor.exit();
 
       await expect(installing).resolves.toMatchObject({ installed: true });
+      expect(runtime.installedVersions).toEqual([UPDATE_INFO.version]);
+    } finally {
+      supervisor.kill();
+      await handlers.stop_desktop_daemon().catch(() => undefined);
+    }
+  });
+
+  it("shares a When idle wait with a second window, and either window can cancel it", async () => {
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
+
+    const first = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
+    await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+    const second = handlers.install_app_update({ whenIdle: true }, { senderId: 2 });
+    handlers.cancel_app_update(undefined, { senderId: 2 });
+
+    await expect(first).resolves.toMatchObject({ installed: false, cancelled: true });
+    await expect(second).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(runtime.installedVersions).toEqual([]);
+    download.resolve();
+  });
+
+  it("ends a When idle wait when another window chooses Install & restart", async () => {
+    const supervisor = installFakeSupervisor(fixtureRoot);
+    let idleStops = 0;
+    mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
+      if (args[1] === "status") return daemonStatusFromLock(supervisor.lockPath);
+      if (args[1] === "stop" && args.includes("--if-idle")) {
+        idleStops += 1;
+        return { action: "busy" };
+      }
+      throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
+    });
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    try {
+      await handlers.start_desktop_daemon();
+      const waiting = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
+      await vi.waitFor(() => expect(idleStops).toBe(1));
+
+      const now = handlers.install_app_update(undefined, { senderId: 2 });
+
+      await expect(waiting).resolves.toMatchObject({ installed: true });
+      await expect(now).resolves.toMatchObject({ installed: true });
+      expect(idleStops).toBe(1);
       expect(runtime.installedVersions).toEqual([UPDATE_INFO.version]);
     } finally {
       supervisor.kill();

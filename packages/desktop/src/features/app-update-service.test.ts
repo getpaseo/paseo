@@ -495,6 +495,42 @@ describe("app update service", () => {
     expect(runtime.checkCount).toBe(checksBeforeStop + 1);
   });
 
+  it("lets Cancel skip an install queued behind another window's slow check", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishWait!: (proceed: boolean) => void;
+    const waiting = new Promise<boolean>((resolve) => {
+      finishWait = resolve;
+    });
+    let stopped = false;
+    const stop = async () => {
+      stopped = true;
+    };
+    const controller = new AbortController();
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable", signal: controller.signal },
+      installAfterWait(waiting, stop),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const slowCheck = runtime.deferNextCheck();
+    const otherWindowCheck = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    finishWait(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
+    slowCheck.resolve({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await otherWindowCheck;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stopped).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
   it("stops waiting for a slow update check when the install is cancelled", async () => {
     const { runtime, service } = createService({ bucket: async () => 0 });
     const slowCheck = runtime.deferNextCheck();
@@ -584,6 +620,29 @@ describe("app update service", () => {
     expect(runtime.downloadedVersions).toEqual(["1.2.4", "1.2.5"]);
     expect(runtime.requestedDownloadVersions).toEqual(["1.2.5"]);
     expect(runtime.installedVersions).toEqual(["1.2.5"]);
+  });
+
+  it("does not install another channel's download that finishes during the install", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    const betaUpdate = { ...rolledOutUpdate, version: "1.3.0-beta.1" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: betaUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "beta",
+      intent: "manual",
+    });
+    const betaDownload = runtime.beginUpdateDownload(betaUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const installing = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    betaDownload.resolve();
+
+    await expect(installing).resolves.toMatchObject({ installed: true });
+    expect(runtime.installedVersions).toEqual([rolledOutUpdate.version]);
   });
 
   it("installs the rechecked version when the stale active download fails", async () => {

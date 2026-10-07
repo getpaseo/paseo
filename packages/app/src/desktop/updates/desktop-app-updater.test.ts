@@ -340,6 +340,27 @@ describe("desktop app updater — install", () => {
     expect(updater.getSnapshot().status).toBe("up-to-date");
   });
 
+  it("checks again and shows the newer release when it replaced the update during the wait", async () => {
+    const { updater, port } = createUpdater();
+    port.nextInstallResult(
+      buildFakeInstallResult({
+        installed: false,
+        message: "A newer update was found and will be installed later.",
+      }),
+    );
+    port.nextCheckResult(
+      buildFakeCheckResult({ hasUpdate: true, readyToInstall: false, latestVersion: "1.2.5" }),
+    );
+
+    await updater.installUpdate({ releaseChannel: "stable", whenIdle: true });
+
+    expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "manual" }]);
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "pending",
+      availableUpdate: { latestVersion: "1.2.5" },
+    });
+  });
+
   it("reports the install error and moves to 'error' when the install throws", async () => {
     const { updater, port, reportedInstallErrors } = createUpdater();
     const error = new Error("install failed");

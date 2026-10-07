@@ -19,6 +19,8 @@ import { openChangelog } from "@/changelog";
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const CHANGELOG_LINK_STYLE = { textDecorationLine: "underline" } as const;
+// Keeps the press target on the link text instead of the full callout width.
+const CHANGELOG_LINK_HIT_AREA_STYLE = { alignSelf: "flex-start" } as const;
 
 function renderBody(body: UpdateCalloutBody, t: ReturnType<typeof useTranslation>["t"]): ReactNode {
   if (body.kind === "waiting")
@@ -150,7 +152,11 @@ function UpdateAvailableDescription({
       <SidebarCalloutDescriptionText>
         {t("desktop.updates.callout.restartWarning")}
       </SidebarCalloutDescriptionText>
-      <Pressable onPress={openChangelog} accessibilityRole="button">
+      <Pressable
+        onPress={openChangelog}
+        accessibilityRole="link"
+        style={CHANGELOG_LINK_HIT_AREA_STYLE}
+      >
         <SidebarCalloutDescriptionText>
           <Text style={CHANGELOG_LINK_STYLE}>{t("desktop.updates.callout.whatsNew")}</Text>
         </SidebarCalloutDescriptionText>

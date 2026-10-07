@@ -22,7 +22,11 @@ import {
   writeAttachmentBase64,
   writeAttachmentBytes,
 } from "../features/attachments.js";
-import type { AppUpdateService, InstallAfterStop } from "../features/app-update-service.js";
+import type {
+  AppUpdateInstallResult,
+  AppUpdateService,
+  InstallAfterStop,
+} from "../features/app-update-service.js";
 import {
   checkForAppUpdate,
   downloadAndInstallUpdate,
@@ -58,12 +62,25 @@ import {
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
-let pendingUpdate: { controller: AbortController; senderId: number | undefined } | null = null;
+let pendingUpdate: {
+  controller: AbortController;
+  installNow: AbortController;
+  senderIds: Set<number | undefined>;
+  result: Promise<AppUpdateInstallResult>;
+} | null = null;
 
-// Cancel belongs to the renderer that started the wait. A late Cancel from
-// another window must not stop an update it did not request.
+// Every window that asked for the pending install shares it, and any of them
+// can cancel it. A window that never asked cannot stop an update it did not
+// request.
 function cancelPendingUpdate(senderId: number | undefined): void {
-  if (pendingUpdate && pendingUpdate.senderId === senderId) pendingUpdate.controller.abort();
+  if (pendingUpdate?.senderIds.has(senderId)) pendingUpdate.controller.abort();
+}
+
+// A window that reloads or closes drops its own request. The wait ends when no
+// window still wants it, so an invisible request cannot restart the app later.
+function leavePendingUpdate(senderId: number | undefined): void {
+  if (!pendingUpdate?.senderIds.delete(senderId)) return;
+  if (pendingUpdate.senderIds.size === 0) pendingUpdate.controller.abort();
 }
 
 class AgentsBusyError extends Error {
@@ -422,17 +439,25 @@ async function resolveRequestedReleaseChannel(
 // IPC registration
 // ---------------------------------------------------------------------------
 
+// `installNow` ends the wait: Install & restart from any window stops the
+// daemon without the idle check.
 async function installWhenAgentsIdle(
   signal: AbortSignal,
+  installNow: AbortSignal,
   installAfterStop: InstallAfterStop,
 ): Promise<void> {
   while (!signal.aborted) {
+    const onlyIfIdle = !installNow.aborted;
     try {
       // Resolves after the install, or without stopping when the update was
       // replaced. Once the daemon accepts the stop and exits, a late Cancel
       // cannot bring it back, so the install proceeds and restarts both.
       await installAfterStop(async () => {
-        await stopDesktopDaemon("app_update", undefined, { onlyIfIdle: true, signal });
+        await stopDesktopDaemon(
+          "app_update",
+          undefined,
+          onlyIfIdle ? { onlyIfIdle: true, signal } : {},
+        );
       });
       return;
     } catch (error) {
@@ -440,9 +465,9 @@ async function installWhenAgentsIdle(
       if (!(error instanceof AgentsBusyError)) throw error;
     }
     try {
-      await delay(5_000, undefined, { signal });
+      await delay(5_000, undefined, { signal: AbortSignal.any([signal, installNow]) });
     } catch (error) {
-      if (!signal.aborted) throw error;
+      if (!signal.aborted && !installNow.aborted) throw error;
     }
   }
 }
@@ -510,27 +535,41 @@ export function createDaemonCommandHandlers(deps?: {
       });
     },
     install_app_update: async (args, context) => {
-      const currentVersion = resolveDesktopAppVersion();
-      if (pendingUpdate) throw new Error("An update installation is already pending.");
+      const whenIdle = args?.whenIdle === true;
+      // Another window already started this install. Join it instead of
+      // failing, and let Install & restart end a When idle wait.
+      if (pendingUpdate) {
+        pendingUpdate.senderIds.add(context?.senderId);
+        if (!whenIdle) pendingUpdate.installNow.abort();
+        return await pendingUpdate.result;
+      }
       const controller = new AbortController();
-      pendingUpdate = { controller, senderId: context?.senderId };
-      try {
-        return await installAppUpdate(
+      const installNow = new AbortController();
+      const result = (async () =>
+        installAppUpdate(
           {
-            currentVersion,
+            currentVersion: resolveDesktopAppVersion(),
             releaseChannel: await resolveRequestedReleaseChannel(args),
             signal: controller.signal,
           },
           async (installAfterStop) => {
-            if (args?.whenIdle === true) {
-              await installWhenAgentsIdle(controller.signal, installAfterStop);
+            if (whenIdle) {
+              await installWhenAgentsIdle(controller.signal, installNow.signal, installAfterStop);
               return;
             }
             await installAfterStop(async () => {
               await stopDesktopDaemon("app_update");
             });
           },
-        );
+        ))();
+      pendingUpdate = {
+        controller,
+        installNow,
+        senderIds: new Set([context?.senderId]),
+        result,
+      };
+      try {
+        return await result;
       } finally {
         pendingUpdate = null;
       }
@@ -560,9 +599,9 @@ export function registerDaemonManager(): void {
       if (command !== "install_app_update" || args?.whenIdle !== true) {
         return await handler(args, context);
       }
-      // A one-time request belongs to its renderer. Reloading or closing it cancels
-      // the wait so an invisible request cannot restart the app later.
-      const cancel = () => cancelPendingUpdate(context.senderId);
+      // A one-time request belongs to its renderer. Reloading or closing it
+      // drops that window's request.
+      const cancel = () => leavePendingUpdate(context.senderId);
       const cancelOnNavigation = (
         _: Electron.Event,
         _url: string,

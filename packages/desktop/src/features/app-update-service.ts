@@ -161,6 +161,25 @@ function supersededInstallResult(currentVersion: string): AppUpdateInstallResult
   };
 }
 
+// Cancel stops waiting for a queued install that has not started; the queued
+// job then sees the abort and stops nothing. A started stop runs to the end,
+// because an accepted stop cannot be undone.
+function whenAbortedBeforeStart(
+  work: Promise<boolean>,
+  signal: AbortSignal | undefined,
+  hasStarted: () => boolean,
+): Promise<boolean> {
+  if (!signal) return work;
+  if (signal.aborted && !hasStarted()) return Promise.resolve(false);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      if (!hasStarted()) resolve(false);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 function buildDeferredInstallResult(currentVersion: string): AppUpdateInstallResult {
   return {
     installed: false,
@@ -424,6 +443,22 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     return () => signal.removeEventListener("abort", stopDownload);
   }
 
+  // electron-updater can return an older, already-running download, even one
+  // from another channel. Its event records that version, then the next
+  // iteration starts the newly validated release instead of treating the stale
+  // artifact as ready. Only a download that reported nothing else counts as
+  // this version.
+  function markDownloadedWithoutEvent(attemptedVersion: string, readyVersion: string): void {
+    if (
+      attemptedVersion === readyVersion &&
+      !isReadyToInstallVersion(readyVersion) &&
+      downloadedUpdateVersion === null
+    ) {
+      downloadedUpdateVersion = readyVersion;
+      preparingUpdateVersion = null;
+    }
+  }
+
   async function downloadReadyUpdate(
     readyVersion: string,
     signal?: AbortSignal,
@@ -448,13 +483,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         throw error;
       }
 
-      // electron-updater can return an older, already-running download. Its
-      // event clears that version, then the next iteration starts the newly
-      // validated release instead of treating the stale artifact as ready.
-      if (attemptedVersion === readyVersion && !isReadyToInstallVersion(readyVersion)) {
-        downloadedUpdateVersion = readyVersion;
-        preparingUpdateVersion = null;
-      }
+      markDownloadedWithoutEvent(attemptedVersion, readyVersion);
     }
 
     return signal?.aborted ? "aborted" : "ready";
@@ -478,15 +507,21 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   async function quitAndInstall(
     targetVersion: string,
     releaseChannel: AppReleaseChannel,
-    restart: boolean,
-    beforeInstall: BeforeInstall = (installAfterStop) =>
-      installAfterStop(async () => undefined).then(() => undefined),
+    {
+      restart,
+      signal,
+      beforeInstall = (installAfterStop) =>
+        installAfterStop(async () => undefined).then(() => undefined),
+    }: { restart: boolean; signal?: AbortSignal; beforeInstall?: BeforeInstall },
   ): Promise<"installed" | "cancelled" | "superseded"> {
     let outcome: "installed" | "superseded" | null = null;
     // Holding the check queue keeps a check from another window from changing
     // the channel or the target between the stop and the install.
-    const installAfterStop: InstallAfterStop = (stop) =>
-      runCheckExclusively(async () => {
+    const installAfterStop: InstallAfterStop = (stop) => {
+      let started = false;
+      const install = runCheckExclusively(async () => {
+        started = true;
+        if (signal?.aborted) return false;
         if (!isCurrentUpdate(targetVersion, releaseChannel)) {
           outcome = "superseded";
           return false;
@@ -500,6 +535,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         outcome = "installed";
         return true;
       });
+      return whenAbortedBeforeStart(install, signal, () => started);
+    };
     await beforeInstall(installAfterStop);
     return outcome ?? "cancelled";
   }
@@ -550,7 +587,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      const outcome = await quitAndInstall(readyVersion, releaseChannel, restart, beforeInstall);
+      const outcome = await quitAndInstall(readyVersion, releaseChannel, {
+        restart,
+        signal,
+        beforeInstall,
+      });
       return buildInstallResult(outcome, currentVersion, readyVersion);
     }
 
@@ -566,7 +607,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           : buildDeferredInstallResult(currentVersion);
       }
       if (preparation === "superseded") return supersededInstallResult(currentVersion);
-      const outcome = await quitAndInstall(readyVersion, releaseChannel, restart, beforeInstall);
+      const outcome = await quitAndInstall(readyVersion, releaseChannel, {
+        restart,
+        signal,
+        beforeInstall,
+      });
       return buildInstallResult(outcome, currentVersion, readyVersion);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
