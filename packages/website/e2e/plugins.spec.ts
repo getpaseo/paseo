@@ -114,19 +114,32 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
 });
 
 test("searches for a term typed before the page finished loading", async ({ page }) => {
-  let loadScripts!: () => void;
-  const scriptsHeld = new Promise<void>((resolve) => (loadScripts = resolve));
-  await page.route(/\.js($|\?)/, async (route) => {
-    await scriptsHeld;
-    await route.continue();
-  });
+  const loadScripts = await holdScripts(page);
   await page.goto("/plugins?window=month", { waitUntil: "domcontentloaded" });
   await searchPlugins(page, "graphite");
-  loadScripts();
-  await page.waitForLoadState("load");
+  await loadScripts();
   await expect(page.getByRole("button", { name: "Clear search" })).toBeVisible();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/plugins\/all\?q=graphite&window=month$/);
+});
+
+test("filters browse results for a term typed before the page finished loading", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const loadScripts = await holdScripts(page);
+  await page.goto("/plugins/all", { waitUntil: "domcontentloaded" });
+  const entries = await historyLength(page);
+  await searchPlugins(page, "gra");
+  await loadScripts();
+  await expect(page).toHaveURL(/\/plugins\/all\?q=gra$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^Results for “gra”/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
+  expect(await historyLength(page)).toBe(entries + 1);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/plugins\/all$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
 });
 
 test("clears the search with the clear button", async ({ page }) => {
@@ -319,6 +332,20 @@ test.describe("search engine visits without JavaScript", () => {
     expect(sitemap).toContain("<loc>https://paseo.sh/plugins/omercnet/fresh-worktrees</loc>");
   });
 });
+
+/** Holds the page's scripts so typing lands before hydration; the returned function loads them. */
+async function holdScripts(page: Page): Promise<() => Promise<void>> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\.js($|\?)/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  return async () => {
+    release();
+    await page.waitForLoadState("load");
+  };
+}
 
 async function searchPlugins(page: Page, term: string) {
   await page.getByRole("searchbox", { name: "Search plugins" }).fill(term);
