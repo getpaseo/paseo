@@ -4,6 +4,9 @@ import {
   PublishedPluginDetailSchema,
 } from "@getpaseo/protocol/plugin-registry";
 import { getBlockingColdCache, type WebsiteCacheContext } from "../github-cache";
+import { handlePluginThumbnailRequest } from "./thumbnails";
+import { CATEGORIES } from "./categories";
+import { type InstallCounts, readInstallCounts, recordClientInstall } from "./installs";
 export interface RegistryEnvironment {
   PLUGINS_REGISTRY_URL?: string;
   WEBSITE_CACHE?: KVNamespace;
@@ -21,6 +24,20 @@ export function loadRegistryIndex(base: string, context: WebsiteCacheContext) {
     isValue: (value): value is ReturnType<typeof PluginRegistryIndexSchema.parse> =>
       PluginRegistryIndexSchema.safeParse(value).success,
     fetchFresh: async () => PluginRegistryIndexSchema.parse(await documentAt(base, "index.json")),
+  });
+}
+/** Install counts per window for every listed plugin, refreshed with the index cache. */
+export async function loadInstallCounts(base: string, context: WebsiteCacheContext) {
+  const index = await loadRegistryIndex(base, context);
+  const ids = index.plugins.map((plugin) => plugin.id);
+  return getBlockingColdCache({
+    context,
+    key: `plugins:installs:v1:${base}`,
+    isValue: (value): value is Record<string, InstallCounts> =>
+      typeof value === "object" &&
+      value !== null &&
+      Object.values(value).every((counts) => typeof counts?.all === "number"),
+    fetchFresh: () => readInstallCounts(context.cache, ids, new Date()),
   });
 }
 export async function loadRegistryPlugin(base: string, id: string, context: WebsiteCacheContext) {
@@ -47,12 +64,20 @@ export async function handlePluginRegistryRequest(
   const url = new URL(request.url);
   if (request.method !== "GET") return null;
   const base = env.PLUGINS_REGISTRY_URL ?? "https://getpaseo.github.io/plugins";
+  if (url.pathname.startsWith("/plugins/thumb/")) {
+    const index = await loadRegistryIndex(base, context);
+    return handlePluginThumbnailRequest(request, index.plugins);
+  }
   if (url.hostname === "plugins.paseo.sh" && url.pathname === "/index.json")
     return Response.json(await loadRegistryIndex(base, context));
   if (url.pathname === "/sitemap-plugins.xml") {
     const index = await loadRegistryIndex(base, context);
     // IDs are validated owner/slug strings, so these paths contain no XML metacharacters.
-    const paths = new Set<string>(["/plugins"]);
+    const paths = new Set<string>(["/plugins", "/plugins/all"]);
+    for (const category of CATEGORIES) {
+      if (index.plugins.some((plugin) => plugin.categories.includes(category.slug)))
+        paths.add(`/plugins/category/${category.slug}`);
+    }
     for (const plugin of index.plugins) {
       paths.add(`/plugins/${plugin.id.split("/")[0]}`);
       paths.add(`/plugins/${plugin.id}`);
@@ -70,16 +95,14 @@ export async function handlePluginRegistryRequest(
   }
   if (url.pathname === "/api/plugins/installs") {
     const index = await loadRegistryIndex(base, context);
-    const entries = await Promise.all(
-      index.plugins.map(
-        async (plugin) =>
-          [
-            plugin.id,
-            Number((await context.cache?.get(`plugin-installs:${plugin.id}`)) ?? 0),
-          ] as const,
-      ),
+    const counts = await readInstallCounts(
+      context.cache,
+      index.plugins.map((plugin) => plugin.id),
+      new Date(),
     );
-    return Response.json(Object.fromEntries(entries));
+    return Response.json(
+      Object.fromEntries(Object.entries(counts).map(([id, count]) => [id, count.all])),
+    );
   }
   const match =
     /^\/api\/plugins\/resolve\/([^/]+\/[^/]+)$/.exec(url.pathname) ??
@@ -95,11 +118,9 @@ export async function handlePluginRegistryRequest(
     const cache = context.cache;
     if (cache)
       context.waitUntil(
-        (async () => {
-          const key = `plugin-installs:${id}`;
-          const count = Number((await cache.get(key)) ?? 0);
-          await cache.put(key, String(count + 1));
-        })().catch(() => undefined),
+        recordClientInstall({ cache, id, ip: request.headers.get("CF-Connecting-IP") }).catch(
+          () => undefined,
+        ),
       );
   }
   return Response.json(plugin);

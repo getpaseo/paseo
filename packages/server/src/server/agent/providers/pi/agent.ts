@@ -1,3 +1,4 @@
+import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -2368,12 +2369,16 @@ export class PiRpcAgentSession implements AgentSession {
       const customMapping = this.extensionHost.mapCustomMessage(event.message);
       this.emitExtensionOutput(customMapping, turnId);
       const text = getUserMessageText(event.message.content);
-      if (text) {
+      if (event.message.display !== false && text) {
         this.emit({
           type: "timeline",
           provider: this.provider,
           turnId,
-          item: { type: "assistant_message", text },
+          item: mapCustomMessageToToolCall(
+            event.message,
+            text,
+            `${this.provider}-custom-${randomUUID()}`,
+          ),
         });
       }
       if (!this.activeTurnStarted) {

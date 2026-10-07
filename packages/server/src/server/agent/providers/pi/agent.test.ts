@@ -1036,6 +1036,47 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("keeps custom context in separate tools while a turn continues", async () => {
+    const { pi, session, events } = await createSession();
+    const runtime = pi.latestSession();
+    await session.startTurn("Explain the project");
+    runtime.emit({ type: "agent_start" });
+    runtime.emit({ type: "turn_start" });
+    for (const display of [true, false, true]) {
+      runtime.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "project-context",
+          content: [{ type: "text", text: "Project instructions" }],
+          details: { project: "example" },
+          display,
+        },
+      });
+    }
+    const items = events.timelineItems();
+    expect(items).toEqual(
+      [1, 2].map(() => ({
+        type: "tool_call",
+        callId: expect.stringMatching(/^pi-custom-/),
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: {
+          synthetic: true,
+          customType: "project-context",
+          details: { project: "example" },
+        },
+        error: null,
+      })),
+    );
+    expect(new Set(items.map((item) => item.type === "tool_call" && item.callId)).size).toBe(2);
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    runtime.finishTurn();
+    await events.nextTurnCompletion();
+    await session.close();
+  });
+
   test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1052,7 +1093,15 @@ describe("PiRpcAgentSession", () => {
     expect(events.timelineAndCompletionEvents()).toEqual([
       {
         type: "timeline",
-        item: { type: "assistant_message", text: "Extension command output" },
+        item: {
+          type: "tool_call",
+          callId: expect.stringMatching(/^pi-custom-/),
+          name: "custom-message",
+          status: "completed",
+          detail: { type: "plain_text", text: "Extension command output" },
+          metadata: { synthetic: true, customType: "custom-message" },
+          error: null,
+        },
       },
       { type: "turn_completed" },
     ]);
@@ -1081,7 +1130,18 @@ describe("PiRpcAgentSession", () => {
     });
 
     expect(events.timelineItems()).toEqual([
-      { type: "assistant_message", text: "Background process completed" },
+      {
+        type: "tool_call",
+        callId: expect.stringMatching(/^pi-custom-/),
+        name: "custom-message",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          text: "Background process completed",
+        },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
     expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
 

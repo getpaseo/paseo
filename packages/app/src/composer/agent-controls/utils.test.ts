@@ -3,6 +3,7 @@ import {
   getFeatureHighlightColor,
   getFeatureTooltip,
   getAgentControlHintKey,
+  isFeatureActive,
   normalizeModelId,
   resolveAgentModelSelection,
 } from "./utils";
@@ -35,8 +36,31 @@ describe("feature metadata helpers", () => {
 
   it("maps feature highlight colors by feature id", () => {
     expect(getFeatureHighlightColor("fast_mode")).toBe("yellow");
+    expect(getFeatureHighlightColor("service_tier")).toBe("yellow");
     expect(getFeatureHighlightColor("plan_mode")).toBe("blue");
     expect(getFeatureHighlightColor("other")).toBe("default");
+  });
+
+  it("treats a select feature as active when a non-default option is selected", () => {
+    const speed = {
+      type: "select" as const,
+      id: "service_tier",
+      label: "Speed",
+      options: [
+        { id: "default", label: "Normal", isDefault: true },
+        { id: "fast", label: "Fast" },
+      ],
+    };
+    expect(isFeatureActive({ ...speed, value: "default" })).toBe(false);
+    expect(isFeatureActive({ ...speed, value: "fast" })).toBe(true);
+    expect(
+      isFeatureActive({
+        type: "toggle",
+        id: "fast_mode",
+        label: "Fast",
+        value: true,
+      }),
+    ).toBe(true);
   });
 });
 

@@ -149,7 +149,11 @@ export class ManagedPluginSources {
   ): Promise<ManagedPluginCandidate> {
     const registry = parsePluginRegistryReference(input.source, this.registryOptions.defaultUrl);
     if (registry) {
-      if (input.ref || input.pluginPath)
+      if (input.ref)
+        throw new Error(
+          "Registry installs pin the reviewed revision. Drop --ref, or install from an explicit github:owner/repository source to choose a revision.",
+        );
+      if (input.pluginPath)
         throw new Error("Registry sources use their reviewed artifact path and revision");
       const resolved = await resolveRegistryPlugin(registry, this.registryOptions, true);
       const candidate = await this.prepareInstall(resolved.input, resolved.target);
@@ -434,8 +438,9 @@ function reviewLinks(current: PluginInstallation, target: PluginUpdateTarget): s
   }
   return [];
 }
+/** Only explicit Git prefixes expand GitHub shorthand. */
 function normalizeGitSource(source: string): string {
-  const explicit = source.startsWith("github:") || source.startsWith("git:");
+  const expandsShorthand = source.startsWith("github:") || source.startsWith("git:");
   if (source.startsWith("github:")) {
     const shorthand = source.slice(7);
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(shorthand)) {
@@ -446,7 +451,7 @@ function normalizeGitSource(source: string): string {
     source = source.slice(4);
   }
   const github = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(source);
-  if (github && explicit) {
+  if (github && expandsShorthand) {
     const repository = github[2].replace(/\.git$/, "");
     return `https://github.com/${github[1]}/${repository}.git`;
   }

@@ -6289,6 +6289,17 @@ export const UsageReportEntrySchema = z.object({
   sourceLabel: z.string(),
   icon: z.string().optional(),
   report: UsageReportSchema,
+  loginErrors: z
+    .array(
+      z.object({
+        harness: z.string(),
+        report: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("unavailable"), problem: UsageProblemSchema }),
+          z.object({ status: z.literal("error"), error: z.string() }),
+        ]),
+      }),
+    )
+    .optional(),
 });
 export const UsageListReportsUpdateMessageSchema = z.object({
   type: z.literal("usage.list_reports.update"),
@@ -6621,6 +6632,9 @@ export const PluginNpmInstallationSchema = z.object({
 
 export const PluginListItemSchema = z.object({
   id: PluginIdSchema,
+  name: z.string().optional(),
+  icon: z.string().optional(),
+  media: z.array(z.string()).optional(),
   description: z.string().optional(),
   path: z.string(),
   enabled: z.boolean(),

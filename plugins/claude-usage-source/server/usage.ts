@@ -380,7 +380,10 @@ export async function discover(
   for (const input of candidates) {
     const credentials = await resolveClaudeCredentials(input, lookup);
     if (!credentials) continue;
-    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), input };
+    const harness = { pi: "Pi", omp: "OMP", claude: "Claude", keychain: "Claude" }[
+      input.route.store
+    ];
+    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), harness, input };
     if (credentials.expires !== undefined && credentials.expires <= (lookup.now ?? Date.now)()) {
       accounts.push(fallback);
       continue;
@@ -391,7 +394,7 @@ export async function discover(
         fetchApi,
         lookup.now ?? Date.now,
       );
-      accounts.push("status" in profile ? fallback : { ...profile, input });
+      accounts.push("status" in profile ? fallback : { ...profile, harness, input });
     } catch {
       // Keep the login visible; fetching usage reports the vendor failure.
       accounts.push(fallback);
@@ -521,7 +524,16 @@ export async function fetchUsage(
     return parsed;
   }
 
-  async function callClaudeApi(token: string): Promise<ClaudeUsageResponse | number> {
+  async function callClaudeApi(token: string, now: number): Promise<ClaudeUsageResponse | number> {
+    for (const [key, until] of rateLimitedUntil) {
+      if (until <= now) rateLimitedUntil.delete(key);
+    }
+    const tokenKey = hashAccountKey(token);
+    const limitedUntil = rateLimitedUntil.get(tokenKey);
+    if (limitedUntil !== undefined && limitedUntil > now)
+      throw rateLimitedError(limitedUntil - now);
+    rateLimitedUntil.delete(tokenKey);
+
     const res = await fetchApi("https://api.anthropic.com/api/oauth/usage", {
       signal: AbortSignal.timeout(15_000),
       headers: {
@@ -531,6 +543,11 @@ export async function fetchUsage(
       },
     });
     if (res.status === 401 || res.status === 403) return res.status;
+    if (res.status === 429) {
+      const waitMs = retryAfterMs(res.headers.get("retry-after"), now);
+      if (waitMs !== null) rateLimitedUntil.set(tokenKey, now + waitMs);
+      throw rateLimitedError(waitMs);
+    }
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }
@@ -559,7 +576,7 @@ export async function fetchUsage(
 
   const { oauth } = credentials;
   const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-  const resp = await callClaudeApi(oauth.accessToken);
+  const resp = await callClaudeApi(oauth.accessToken, (credentialLookup.now ?? Date.now)());
 
   if (typeof resp === "number") return unavailable({ kind: "rejected", status: resp, refreshedBy });
 
@@ -593,6 +610,28 @@ export async function fetchUsage(
     balances: [],
     details,
   };
+}
+
+// A 429 from the usage endpoint carries Retry-After, observed in the tens of minutes. Until it
+// passes, a fetch (including a forced Refresh) answers from here instead of calling again.
+const rateLimitedUntil = new Map<string, number>();
+
+function retryAfterMs(header: string | null, now: number): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
+}
+
+function rateLimitedError(waitMs: number | null): Error {
+  const when = waitMs === null ? "later" : `in ${formatWait(waitMs)}`;
+  return new Error(`Rate limited by Claude. Try again ${when}.`);
+}
+
+function formatWait(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return minutes < 60 ? `${minutes}m` : `${Math.ceil(minutes / 60)}h`;
 }
 
 // The OAuth usage endpoint meters the active organization selected by the token.

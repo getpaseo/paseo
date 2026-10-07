@@ -21,6 +21,7 @@ import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
+import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
@@ -215,7 +216,12 @@ export class PluginService {
           }),
         };
         const manifest = await readPluginManifest(path.resolve(source.path)).catch(() => null);
-        if (manifest?.description) item.description = manifest.description;
+        if (manifest) {
+          item.name = manifest.name;
+          item.description = manifest.description;
+          item.icon = manifest.icon;
+          item.media = manifest.media;
+        }
         item.installation = await this.managedSources
           ?.describe(id, source.path)
           .catch(() => undefined);
@@ -286,16 +292,11 @@ export class PluginService {
     if (input.id && this.builtinPluginIds.has(input.id)) {
       throw new Error(`Plugin ID "${input.id}" is reserved for a built-in plugin`);
     }
-    const directDirectory = path.resolve(input.source);
-    const explicit = /^(npm:|github:|git:(?!\/\/))/.test(input.source);
-    const directInfo = await stat(directDirectory).catch(() => null);
-    const reference = directInfo?.isDirectory()
-      ? { source: input.source, pluginPath: undefined }
-      : parsePluginSourceReference(input.source);
-    const directory = path.resolve(reference.source);
-    let info = directInfo;
-    if (!info?.isDirectory() && !explicit) info = await stat(directory).catch(() => null);
-    if (info?.isDirectory()) {
+    const reference = parsePluginSourceReference(input.source);
+    if (reference.kind === "directory") {
+      const directory = path.resolve(expandTilde(reference.source));
+      const info = await stat(directory).catch(() => null);
+      if (!info?.isDirectory()) throw new Error(`Plugin directory does not exist: ${directory}`);
       if (input.ref) throw new Error("Plugin --ref is only valid for Git sources");
       const pluginDirectory = resolveLocalPluginPath(directory, reference.pluginPath);
       return this.installDirectory({ path: pluginDirectory, id: input.id });
