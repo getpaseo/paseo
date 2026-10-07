@@ -16,6 +16,7 @@ import {
   selectWorkspaceFields,
   selectWorkspaceKeys,
   selectWorkspaceMoveTargets,
+  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   workspaceEqualityFns,
   type WorkspaceMoveTarget,
@@ -116,9 +117,20 @@ export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
     (state) => selectProjectOrder(state),
     workspaceEqualityFns.deep,
   );
+  const workspaceOrderByScope = useStoreWithEqualityFn(
+    useSidebarOrderStore,
+    (state) => selectWorkspaceOrderByScope(state),
+    workspaceEqualityFns.deep,
+  );
+
   return useMemo(
-    () => composeWorkspaceStructure({ projects, projectOrder }),
-    [projectOrder, projects],
+    () =>
+      composeWorkspaceStructure({
+        projects,
+        projectOrder,
+        workspaceOrderByScope,
+      }),
+    [projectOrder, projects, workspaceOrderByScope],
   );
 }
 
