@@ -2867,8 +2867,8 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.error).toBe("network blip");
   });
 
-  // chmod cannot make a directory unwritable on Windows.
-  test.skipIf(process.platform === "win32")(
+  // chmod cannot make a directory unwritable on Windows or for root.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "fires again after a tick whose run could not be recorded",
     async () => {
       const service = createScheduleService({
