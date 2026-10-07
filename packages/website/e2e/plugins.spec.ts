@@ -41,14 +41,14 @@ test("browses from the directory into a category, a plugin, and its author", asy
   await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
   await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
   await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
-  await expect(page.getByText("paseo plugin install omercnet/fresh-worktrees")).toHaveCount(1);
+  await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
   await expect(
     page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Copy to clipboard" }).click();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied))
-    .toBe("paseo plugin install omercnet/fresh-worktrees");
+    .toBe("paseo plugin add omercnet/fresh-worktrees");
   await expect(page.getByRole("link", { name: "Git", exact: true })).toHaveAttribute(
     "href",
     "/plugins/category/git",
@@ -111,6 +111,35 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
     "aria-current",
     "true",
   );
+});
+
+test("searches for a term typed before the page finished loading", async ({ page }) => {
+  const loadScripts = await holdScripts(page);
+  await page.goto("/plugins?window=month", { waitUntil: "domcontentloaded" });
+  await searchPlugins(page, "graphite");
+  await loadScripts();
+  await expect(page.getByRole("button", { name: "Clear search" })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite&window=month$/);
+});
+
+test("filters browse results for a term typed before the page finished loading", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const loadScripts = await holdScripts(page);
+  await page.goto("/plugins/all", { waitUntil: "domcontentloaded" });
+  const entries = await historyLength(page);
+  await searchPlugins(page, "gra");
+  await loadScripts();
+  await expect(page).toHaveURL(/\/plugins\/all\?q=gra$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^Results for “gra”/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
+  expect(await historyLength(page)).toBe(entries + 1);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/plugins\/all$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
 });
 
 test("clears the search with the clear button", async ({ page }) => {
@@ -213,7 +242,7 @@ test.describe("search engine visits without JavaScript", () => {
     expect(response?.status()).toBe(200);
     expect(response?.headers()["cache-control"]).toBe("private, no-store");
     expect(response?.headers()["x-robots-tag"]).toBeUndefined();
-    await expect(page.getByText("paseo plugin install omercnet/fresh-worktrees")).toBeVisible();
+    await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toBeVisible();
     await expect(
       page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
     ).toBeVisible();
@@ -303,6 +332,20 @@ test.describe("search engine visits without JavaScript", () => {
     expect(sitemap).toContain("<loc>https://paseo.sh/plugins/omercnet/fresh-worktrees</loc>");
   });
 });
+
+/** Holds the page's scripts so typing lands before hydration; the returned function loads them. */
+async function holdScripts(page: Page): Promise<() => Promise<void>> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\.js($|\?)/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  return async () => {
+    release();
+    await page.waitForLoadState("load");
+  };
+}
 
 async function searchPlugins(page: Page, term: string) {
   await page.getByRole("searchbox", { name: "Search plugins" }).fill(term);

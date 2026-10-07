@@ -152,3 +152,42 @@ describe("stopDaemonInstance requireLifecycleRpc", () => {
     }
   });
 });
+
+// Linux keeps a boot's id while a VM is paused for a host sleep, though the VM's wall clock
+// runs ahead of its uptime once it resumes. A sleep longer than the time between boot and
+// the supervisor's start puts the wall-clock boot instant after the lock's startedAt.
+describe.runIf(process.platform === "linux")("daemon instance identity on Linux", () => {
+  let paseoHome: string;
+
+  beforeEach(async () => {
+    paseoHome = await mkdtemp(join(tmpdir(), "paseo-daemon-instance-linux-"));
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await rm(paseoHome, { recursive: true, force: true });
+  });
+
+  test("a supervisor still holds the lock after its paused VM resumes", async () => {
+    await acquirePidLock(paseoHome, null, { ownerPid: process.pid });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + uptime() * 1000 + 12 * 60 * 60_000);
+
+    expect(await readDaemonInstance(paseoHome)).toMatchObject({ pid: process.pid });
+    expect(await isLocked(paseoHome)).toMatchObject({ locked: true });
+    await expect(
+      acquirePidLock(paseoHome, null, { ownerPid: process.pid + 10_000 }),
+    ).rejects.toThrow("Another Paseo daemon is already running");
+  });
+
+  test("a lock written during another boot has no running owner", async () => {
+    await writeLock(paseoHome, {
+      ...lockFor(process.pid, new Date()),
+      bootId: "00000000-0000-0000-0000-000000000000",
+    });
+
+    expect(await readDaemonInstance(paseoHome)).toBeNull();
+    expect(await isLocked(paseoHome)).toMatchObject({ locked: false });
+  });
+});
