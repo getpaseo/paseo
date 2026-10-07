@@ -35,13 +35,14 @@ export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOpti
 // one `cwd` encodes to when the project moved, the daemon migrated, or Claude Code sees the
 // cwd under another name (a Windows binary under WSL). Returns the expected path when no
 // transcript exists anywhere.
-export function claudeTranscriptPathSync(
-  cwd: string,
-  sessionId: string,
-  options?: ClaudeProjectDirOptions,
-): string {
-  const fileName = `${sessionId}.jsonl`;
-  const expected = join(claudeProjectDirSync(cwd, options), fileName);
+export function claudeTranscriptPathSync(input: {
+  cwd: string;
+  sessionId: string;
+  configDir?: string;
+}): string {
+  const options = { configDir: input.configDir };
+  const fileName = `${input.sessionId}.jsonl`;
+  const expected = join(claudeProjectDirSync(input.cwd, options), fileName);
   if (existsSync(expected)) {
     return expected;
   }
@@ -49,8 +50,11 @@ export function claudeTranscriptPathSync(
   let projectDirs: string[];
   try {
     projectDirs = readdirSync(projectsRoot);
-  } catch {
-    return expected;
+  } catch (error) {
+    if (isMissingDirectoryError(error)) {
+      return expected;
+    }
+    throw error;
   }
   for (const projectDir of projectDirs) {
     const candidate = join(projectsRoot, projectDir, fileName);
@@ -59,6 +63,11 @@ export function claudeTranscriptPathSync(
     }
   }
   return expected;
+}
+
+function isMissingDirectoryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 async function canonicalize(input: string): Promise<string> {

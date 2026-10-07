@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import pino from "pino";
@@ -90,4 +90,29 @@ describe("ClaudeAgentSession persisted history load", () => {
       }),
     );
   });
+
+  // chmod does not remove read access on Windows.
+  test.skipIf(process.platform === "win32")(
+    "logs a warning with the error when Claude's project folders cannot be listed",
+    async () => {
+      // The transcript is not under cwd's folder, so the lookup lists the other project folders.
+      mkdirSync(path.join(configDir, "projects"), { recursive: true });
+      chmodSync(path.join(configDir, "projects"), 0o000);
+
+      try {
+        await resume();
+      } finally {
+        chmodSync(path.join(configDir, "projects"), 0o755);
+      }
+
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          level: pino.levels.values.warn,
+          msg: "Failed to load Claude history from transcript",
+          sessionId: SESSION_ID,
+          err: expect.objectContaining({ message: expect.stringContaining("EACCES") }),
+        }),
+      );
+    },
+  );
 });

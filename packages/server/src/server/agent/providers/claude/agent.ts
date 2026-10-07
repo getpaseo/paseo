@@ -5124,7 +5124,9 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    return claudeTranscriptPathSync(cwd, sessionId, {
+    return claudeTranscriptPathSync({
+      cwd,
+      sessionId,
       configDir: claudeConfigDir(this.harnessEnvironment),
     });
   }
