@@ -95,6 +95,11 @@ highest painted scope alone receives overlay keys, traps focus, and restores
 focus when it closes. Hover cards register with `manageFocus={false}`: they claim overlay keys without moving or trapping focus on pointer hover. Do not add component-local global Escape listeners: two
 stacked overlays would both close on one keypress.
 
+When deferring workspace terminal autofocus, distinguish movement within the
+top registered overlay scope from a new focus owner outside it. Internal focus
+movement must keep the request pending until the overlay closes; an outside
+control cancels it so its next keystroke is not sent to the terminal.
+
 If an overlay is rendered by a global host rather than beneath its opener in
 the React tree, carry the opener's current layer through the host store and
 restore it with `OverlayLayerProvider`. Otherwise painting and keyboard

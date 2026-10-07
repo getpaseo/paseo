@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { createTempGitRepo } from "./workspace";
 import { navigateToTerminal, setupDeterministicPrompt } from "./terminal-perf";
@@ -30,6 +30,7 @@ export class TerminalE2EHarness {
   readonly tempRepo: TempRepo;
   readonly projectId: string;
   readonly workspaceId: string;
+  private readonly otherWorkspaces: TerminalE2EHarness[] = [];
 
   private constructor(input: {
     client: SeedDaemonClient;
@@ -63,6 +64,7 @@ export class TerminalE2EHarness {
   }
 
   async cleanup(): Promise<void> {
+    for (const workspace of this.otherWorkspaces) await workspace.cleanup();
     await this.client.removeProject(this.projectId).catch(() => {});
     await this.client.close().catch(() => {});
     await this.tempRepo.cleanup().catch(() => {});
@@ -129,6 +131,77 @@ export class TerminalE2EHarness {
       workspaceId: this.workspaceId,
       terminalId: input.terminalId,
     });
+  }
+
+  async createOtherWorkspace(): Promise<TerminalE2EHarness> {
+    const workspace = await TerminalE2EHarness.create({ tempPrefix: "terminal-workspace-focus-" });
+    this.otherWorkspaces.push(workspace);
+    return workspace;
+  }
+
+  async switchToWorkspaceByShortcut(page: Page): Promise<void> {
+    const rows = page.locator('[data-testid^="sidebar-workspace-row-"]').filter({ visible: true });
+    const rowIds = await rows.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-testid")),
+    );
+    const index = rowIds.findIndex((id) => id?.endsWith(`:${this.workspaceId}`)) + 1;
+    expect(index).toBeGreaterThan(0);
+    expect(index).toBeLessThanOrEqual(9);
+    // Browser Alt+Digit routes the same workspace action as desktop Cmd+Digit.
+    await page.keyboard.press(`Alt+${index}`);
+    await expect(page).toHaveURL(new RegExp(`/workspace/${this.workspaceId}`));
+  }
+
+  async rememberWorkspaceForHistoryReturn(page: Page): Promise<void> {
+    // Workspace shortcuts replace the current route; preserve an in-app history entry.
+    await page.evaluate(() =>
+      window.history.pushState(window.history.state, "", window.location.href),
+    );
+  }
+
+  async returnToWorkspaceThroughHistory(page: Page): Promise<void> {
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${this.workspaceId}`));
+  }
+
+  async moveFocusWithinCommandCenter(page: Page): Promise<void> {
+    const panel = page.getByTestId("command-center-panel");
+    await expect(panel.getByTestId("command-center-input")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(panel.getByRole("button").first()).toBeFocused();
+  }
+
+  async closeOverlayAndFocusButtonBeforeRetry(page: Page): Promise<void> {
+    await page.clock.install();
+    await page.clock.pauseAt(new Date());
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("command-center-panel")).toBeHidden();
+    await page.getByTestId("sidebar-search").focus();
+    await page.clock.runFor(100);
+    await page.clock.resume();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+  }
+
+  async expectTerminalFocused(page: Page): Promise<void> {
+    await expect(
+      this.terminalSurface(page).filter({ visible: true }).locator(".xterm-helper-textarea"),
+    ).toBeFocused();
+  }
+
+  async typeCommandAndExpectOutput(
+    page: Page,
+    input: { terminalId: string; command: string; output: string },
+  ): Promise<void> {
+    await page.keyboard.type(input.command);
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(async () => (await this.client.captureTerminal(input.terminalId)).lines)
+      .toContain(input.output);
   }
 
   terminalSurface(page: Page) {
