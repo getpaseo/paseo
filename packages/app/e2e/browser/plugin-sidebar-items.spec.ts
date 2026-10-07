@@ -3,6 +3,7 @@ import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { gotoAppShell } from "../support/helpers/app";
+import { openCommandCenterWithShortcut } from "../support/helpers/command-center";
 import {
   BOTS_PLUGIN_ID,
   COMPACT,
@@ -370,6 +371,38 @@ test.describe("Plugin sidebar items", () => {
     await expect(screenTitle(page)).toHaveText("Workspaces");
     await expect(page.getByText(`Workspace ${workspaceId}`, { exact: true })).toBeVisible();
     await expect(page.getByText("Plugin failed", { exact: false })).toHaveCount(0);
+  });
+
+  test("a plugin screen toggles the sidebar on a wide layout", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+    const closeMenu = page.getByRole("button", { name: "Close menu", exact: true });
+    const openMenu = page.getByRole("button", { name: "Open menu", exact: true });
+
+    await test.step("close and reopen the sidebar from a plugin screen", async () => {
+      await row.click();
+      await expect(screenTitle(page)).toHaveText("Deploys");
+      await closeMenu.click();
+      await expect(row).not.toBeVisible();
+      await openMenu.click();
+      await expect(row).toBeVisible();
+    });
+
+    await test.step("reopen a sidebar that was closed from the workspace", async () => {
+      await closeScreen(page);
+      await closeMenu.click();
+      await expect(row).not.toBeVisible();
+      await openCommandCenterWithShortcut(page);
+      const commandCenter = page.getByTestId("command-center-panel");
+      await commandCenter
+        .getByPlaceholder("Search workspaces, files, and actions...")
+        .fill("Open deploys");
+      await commandCenter.getByRole("button", { name: "Open deploys", exact: true }).click();
+      await expect(screenTitle(page)).toHaveText("Deploys");
+      await openMenu.click();
+      await expect(row).toBeVisible();
+    });
   });
 
   test("a header row's shortcut hint presses the row", async ({ page }) => {
