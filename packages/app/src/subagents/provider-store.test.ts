@@ -18,7 +18,7 @@ afterEach(() => {
     descriptors: new Map(),
     timelines: new Map(),
     hiddenFromTrack: new Set(),
-    listedParents: new Set(),
+    trackedParents: new Set(),
   });
 });
 
@@ -789,6 +789,28 @@ describe("resyncing after the update feed resubscribes", () => {
 
     expect(status(PARENT_ID, "child-1")).toBe("completed");
     expect(status(PARENT_ID, "child-2")).toBe("completed");
+  });
+
+  test("catches up on a parent whose first list failed while disconnected", async () => {
+    const daemon = fakeDaemon({});
+    const disconnected = {
+      listProviderSubagents: async () => {
+        throw new DaemonConnectionError("Transport not connected");
+      },
+    };
+    await expect(
+      refreshProviderSubagents(disconnected, SERVER_ID, PARENT_ID),
+    ).rejects.toBeInstanceOf(DaemonConnectionError);
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: child("child-1", PARENT_ID, "running"),
+    });
+
+    // The connection dropped again: the daemon finished child-1 without telling us.
+    daemon.lists[PARENT_ID] = [child("child-1", PARENT_ID, "completed")];
+    await resyncProviderSubagents(daemon.client, SERVER_ID);
+
+    expect(status(PARENT_ID, "child-1")).toBe("completed");
   });
 
   test("lists again only the parents this server was showing", async () => {

@@ -28,8 +28,9 @@ interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
-  /** Parents whose list this client holds, so a resubscribed update feed can catch them up. */
-  listedParents: Set<string>;
+  /** Parents whose list this client asked for, so a resubscribed update feed can catch them up. */
+  trackedParents: Set<string>;
+  trackParent(serverId: string, parentAgentId: string): void;
   hideFromTrack(serverId: string, parentAgentId: string, subagentIds: readonly string[]): void;
   replaceList(
     serverId: string,
@@ -86,6 +87,7 @@ export function refreshProviderSubagents(
   const pending = clientRequests.get(requestKey);
   if (pending) return pending;
 
+  useProviderSubagentStore.getState().trackParent(serverId, parentAgentId);
   const request = client
     .listProviderSubagents(parentAgentId)
     .then((payload) => {
@@ -113,7 +115,7 @@ export async function resyncProviderSubagents(
   serverId: string,
 ): Promise<void> {
   const serverPrefix = `${serverId}\0`;
-  const parentAgentIds = [...useProviderSubagentStore.getState().listedParents]
+  const parentAgentIds = [...useProviderSubagentStore.getState().trackedParents]
     .filter((key) => key.startsWith(serverPrefix))
     .map((key) => key.slice(serverPrefix.length, -1));
   await Promise.all(
@@ -170,7 +172,14 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
-  listedParents: new Set(),
+  trackedParents: new Set(),
+  trackParent(serverId, parentAgentId) {
+    set((state) => {
+      const prefix = parentPrefix(serverId, parentAgentId);
+      if (state.trackedParents.has(prefix)) return state;
+      return { trackedParents: new Set(state.trackedParents).add(prefix) };
+    });
+  },
   hideFromTrack(serverId, parentAgentId, subagentIds) {
     set((state) => {
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
@@ -207,10 +216,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           timelines.set(key, settleTimeline(current, subagent));
         }
       }
-      const listedParents = state.listedParents.has(prefix)
-        ? state.listedParents
-        : new Set(state.listedParents).add(prefix);
-      return { descriptors, timelines, hiddenFromTrack, listedParents };
+      return { descriptors, timelines, hiddenFromTrack };
     });
   },
   applyUpdate(serverId, payload) {
