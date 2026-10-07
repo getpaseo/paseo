@@ -54,11 +54,13 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
   public lastLanguage?: string;
+  public lastPrompt?: string;
   constructor(private readonly session: FakeRealtimeSession) {}
   createSession(
     params: Parameters<SpeechToTextProvider["createSession"]>[0],
   ): StreamingTranscriptionSession {
     this.lastLanguage = params.language;
+    this.lastPrompt = params.prompt;
     return this.session;
   }
 }
@@ -161,6 +163,11 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     const sttProvider = await startWithResolvedDictationLanguage({});
 
     expect(sttProvider.lastLanguage).toBe("en");
+  });
+
+  it("does not supply instruction text as transcription context by default", async () => {
+    const sttProvider = await startWithResolvedDictationLanguage({});
+    expect(sttProvider.lastPrompt).toBeUndefined();
   });
 
   it("uses PASEO_DICTATION_LANGUAGE when set", async () => {
