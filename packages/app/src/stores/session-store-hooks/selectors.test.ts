@@ -617,36 +617,3 @@ describe("selectWorkspaceStatusesForBadges", () => {
     tracked.stop();
   });
 });
-
-describe("composeWorkspaceStructure promotion", () => {
-  const project = (workspaceActivityAt: Record<string, number>) => ({
-    viewKey: "p",
-    projectKey: "p",
-    projectName: "P",
-    projectKind: "git" as const,
-    iconWorkingDir: "/p",
-    hosts: [],
-    workspaceKeys: Object.keys(workspaceActivityAt).sort(
-      (a, b) => workspaceActivityAt[b]! - workspaceActivityAt[a]!,
-    ),
-    workspaceActivityAt,
-  });
-
-  it("puts a promoted workspace above newer activity and keeps the rest in order", () => {
-    const result = composeWorkspaceStructure({
-      projects: [project({ a: 300, b: 200, c: 100 })],
-      projectOrder: [],
-      workspacePromotedAt: { c: 1000 },
-    });
-    expect(result.projects[0]?.workspaceKeys).toEqual(["c", "a", "b"]);
-  });
-
-  it("lets new activity float a workspace above an older promotion", () => {
-    const result = composeWorkspaceStructure({
-      projects: [project({ a: 2000, b: 200, c: 100 })],
-      projectOrder: [],
-      workspacePromotedAt: { c: 1000 },
-    });
-    expect(result.projects[0]?.workspaceKeys).toEqual(["a", "c", "b"]);
-  });
-});

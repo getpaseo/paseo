@@ -18,7 +18,6 @@ export interface WorkspaceStructureProject {
   iconWorkingDir: string;
   hosts: WorkspaceStructureHostPlacement[];
   workspaceKeys: string[];
-  workspaceActivityAt?: Record<string, number>;
 }
 
 export interface WorkspaceStructure {
@@ -109,9 +108,6 @@ export function buildWorkspaceStructureProjects(input: {
       workspaceKeys: draft.workspaces
         .sort(compareWorkspaceStructureItems)
         .map((workspace) => workspace.workspaceKey),
-      workspaceActivityAt: Object.fromEntries(
-        draft.workspaces.map((workspace) => [workspace.workspaceKey, workspace.activityAt]),
-      ),
     }))
     .sort(
       (left, right) =>
