@@ -60,26 +60,27 @@ export interface TranscriptionClient {
   ): Promise<unknown>;
 }
 
+interface OpenAISTTOptions {
+  config: STTConfig;
+  logger: pino.Logger;
+  createClient?: (options: ClientOptions) => TranscriptionClient;
+}
+
 export class OpenAISTT implements SpeechToTextProvider {
   private readonly transcriptions: TranscriptionClient;
   private readonly config: STTConfig;
   private readonly logger: pino.Logger;
   public readonly id = "openai" as const;
 
-  constructor(
-    sttConfig: STTConfig,
-    parentLogger: pino.Logger,
-    dependencies?: { createClient: (options: ClientOptions) => TranscriptionClient },
-  ) {
-    this.config = sttConfig;
-    this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "stt" });
+  constructor({ config, logger, createClient }: OpenAISTTOptions) {
+    this.config = config;
+    this.logger = logger.child({ module: "agent", provider: "openai", component: "stt" });
     const options: ClientOptions = {
-      apiKey: sttConfig.apiKey,
-      ...(sttConfig.baseUrl ? { baseURL: sttConfig.baseUrl } : {}),
+      apiKey: config.apiKey,
+      ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
     };
-    this.transcriptions =
-      dependencies?.createClient(options) ?? new OpenAI(options).audio.transcriptions;
-    this.logger.info({ model: sttConfig.model || "whisper-1" }, "STT (OpenAI) initialized");
+    this.transcriptions = createClient?.(options) ?? new OpenAI(options).audio.transcriptions;
+    this.logger.info({ model: config.model || "whisper-1" }, "STT (OpenAI) initialized");
   }
 
   public createSession(params: {
@@ -226,13 +227,18 @@ export class OpenAISTT implements SpeechToTextProvider {
 
       const request: TranscriptionCreateParamsNonStreaming<"json"> = {
         file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
-        ...(modelToUse === "gpt-transcribe" ? {} : { language }),
         model: modelToUse,
         ...(prompt ? { prompt } : {}),
         ...(supportsLogprobs ? { include: includeLogprobs } : {}),
         response_format: "json",
       };
-      // The installed SDK predates gpt-transcribe's plural language hints.
+      let requestOptions: Parameters<TranscriptionClient["create"]>[1];
+      if (modelToUse === "gpt-transcribe") {
+        // The installed SDK predates gpt-transcribe's plural language hints.
+        requestOptions = { body: { ...request, languages: [language] } };
+      } else {
+        request.language = language;
+      }
       const response = z
         .object({
           text: z.string(),
@@ -240,14 +246,7 @@ export class OpenAISTT implements SpeechToTextProvider {
           languages: z.array(z.object({ code: z.string() })).optional(),
         })
         .passthrough()
-        .parse(
-          await this.transcriptions.create(
-            request,
-            modelToUse === "gpt-transcribe"
-              ? { body: { ...request, languages: [language] } }
-              : undefined,
-          ),
-        );
+        .parse(await this.transcriptions.create(request, requestOptions));
 
       const duration = Date.now() - startTime;
       const confidenceThreshold = this.config.confidenceThreshold ?? -3.0;

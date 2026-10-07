@@ -10,14 +10,16 @@ import type {
 
 const logger = pino({ level: "silent" });
 
+interface ControlledTranscriptionRequest {
+  pcm: Buffer;
+  request: Parameters<TranscriptionClient["create"]>[0];
+  body?: unknown;
+  resolve: (response: unknown) => void;
+  reject: (error: Error) => void;
+}
+
 class ControlledTranscriptions implements TranscriptionClient {
-  readonly requests: Array<{
-    pcm: Buffer;
-    request: Parameters<TranscriptionClient["create"]>[0];
-    body?: unknown;
-    resolve: (response: unknown) => void;
-    reject: (error: Error) => void;
-  }> = [];
+  readonly requests: ControlledTranscriptionRequest[] = [];
 
   async create(
     request: Parameters<TranscriptionClient["create"]>[0],
@@ -36,7 +38,9 @@ class ControlledTranscriptions implements TranscriptionClient {
 
 function setup(model = "whisper-1") {
   const client = new ControlledTranscriptions();
-  const provider = new OpenAISTT({ apiKey: "sk-test", model }, logger, {
+  const provider = new OpenAISTT({
+    config: { apiKey: "sk-test", model },
+    logger,
     createClient: () => client,
   });
   const session = provider.createSession({ logger, language: "en", prompt: "Paseo, TypeScript" });
@@ -49,55 +53,70 @@ function setup(model = "whisper-1") {
   return { client, session, committed, transcripts, errors };
 }
 
+async function startPendingSegment() {
+  const scenario = setup();
+  await scenario.session.connect();
+  scenario.session.appendPcm16(Buffer.from([1, 0, 2, 0]));
+  scenario.session.commit();
+  await expect.poll(() => scenario.client.requests.length).toBe(1);
+  scenario.session.appendPcm16(Buffer.from([3, 0, 4, 0]));
+  return scenario;
+}
+
+async function stopBeforePreviousResponse() {
+  const scenario = await startPendingSegment();
+  scenario.session.commit();
+  await expect.poll(() => scenario.client.requests.length).toBe(2);
+  scenario.client.requests[1]!.resolve({ text: "last" });
+  scenario.client.requests[0]!.resolve({ text: "first" });
+  await expect.poll(() => scenario.transcripts.length).toBe(2);
+  return scenario;
+}
+
+async function stopAfterPreviousResponse() {
+  const scenario = await startPendingSegment();
+  scenario.client.requests[0]!.resolve({ text: "first" });
+  await expect.poll(() => scenario.transcripts.length).toBe(1);
+  scenario.session.commit();
+  await expect.poll(() => scenario.client.requests.length).toBe(2);
+  scenario.client.requests[1]!.resolve({ text: "last" });
+  await expect.poll(() => scenario.transcripts.length).toBe(2);
+  return scenario;
+}
+
 describe("OpenAISTT", () => {
   test("passes configured baseUrl to the client factory", () => {
     let received: unknown;
     const client = new ControlledTranscriptions();
-    const provider = new OpenAISTT(
-      { apiKey: "sk-test", baseUrl: "https://speech.example.com/v1" },
+    const provider = new OpenAISTT({
+      config: { apiKey: "sk-test", baseUrl: "https://speech.example.com/v1" },
       logger,
-      {
-        createClient: (options) => {
-          received = options;
-          return client;
-        },
+      createClient: (options) => {
+        received = options;
+        return client;
       },
-    );
+    });
     expect(provider.id).toBe("openai");
     expect(received).toEqual({ apiKey: "sk-test", baseURL: "https://speech.example.com/v1" });
   });
 
-  test.each(["before", "after"])(
-    "keeps the final chunk when stop is %s the previous response",
-    async (stop) => {
-      const { client, session, committed, transcripts, errors } = setup();
-      await session.connect();
-      session.appendPcm16(Buffer.from([1, 0, 2, 0]));
-      session.commit();
-      await expect.poll(() => client.requests.length).toBe(1);
-      session.appendPcm16(Buffer.from([3, 0, 4, 0]));
-      if (stop === "after") {
-        client.requests[0]!.resolve({ text: "first" });
-        await expect.poll(() => transcripts.length).toBe(1);
-      }
-      session.commit();
-      await expect.poll(() => client.requests.length).toBe(2);
-      expect(client.requests.map((request) => [...request.pcm])).toEqual([
-        [1, 0, 2, 0],
-        [3, 0, 4, 0],
-      ]);
-      expect(new Set(committed.map((event) => event.segmentId)).size).toBe(2);
-      expect(committed[1]!.previousSegmentId).toBe(committed[0]!.segmentId);
-      client.requests[1]!.resolve({ text: "last" });
-      if (stop === "before") client.requests[0]!.resolve({ text: "first" });
-      await expect.poll(() => transcripts.length).toBe(2);
-      expect(
-        transcripts.find((event) => event.segmentId === committed[1]!.segmentId)?.transcript,
-      ).toBe("last");
-      expect(errors).toEqual([]);
-      session.close();
-    },
-  );
+  test.each([
+    { stop: "before", record: stopBeforePreviousResponse },
+    { stop: "after", record: stopAfterPreviousResponse },
+  ])("keeps the final chunk when stop is $stop the previous response", async ({ record }) => {
+    const { client, session, committed, transcripts, errors } = await record();
+    expect(client.requests.map((request) => Array.from(request.pcm))).toEqual([
+      [1, 0, 2, 0],
+      [3, 0, 4, 0],
+    ]);
+    expect(new Set(committed.map((event) => event.segmentId)).size).toBe(2);
+    expect(committed[1]!.previousSegmentId).toBe(committed[0]!.segmentId);
+    expect(
+      transcripts.find((event) => event.segmentId === committed[1]!.segmentId)?.transcript,
+    ).toBe("last");
+    expect(errors).toEqual([]);
+    session.close();
+  });
 
   test("keeps three overlapping commits distinct when responses finish in reverse order", async () => {
     const { client, session, committed, transcripts } = setup();
@@ -108,7 +127,7 @@ describe("OpenAISTT", () => {
       await expect.poll(() => client.requests.length).toBe(sample);
     }
     await expect.poll(() => client.requests.length).toBe(3);
-    expect(client.requests.map((request) => [...request.pcm])).toEqual([
+    expect(client.requests.map((request) => Array.from(request.pcm))).toEqual([
       [1, 0],
       [2, 0],
       [3, 0],
