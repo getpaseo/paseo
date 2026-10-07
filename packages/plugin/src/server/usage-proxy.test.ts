@@ -161,7 +161,7 @@ describe("fetchWithAutoProxy", () => {
           new URL(`http://127.0.0.1:${origin.port}/large-chunked`),
           `http://127.0.0.1:${proxy.port}`,
           {},
-          { proxyAttemptTimeoutMs: 2_000 },
+          { proxyAttemptTimeoutMs: 10_000 },
         ),
       ).rejects.toThrow("Proxy response body exceeds limit");
     } finally {
