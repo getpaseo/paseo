@@ -63,12 +63,16 @@ describe("daemon E2E", () => {
             title: "Download Token Test Agent",
           });
 
-          expect(agent.id).toBeTruthy();
+          expect(agent.id).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+          );
 
           const tokenResponse = await ctx.client.requestDownloadToken(cwd, fileName);
 
           expect(tokenResponse.error).toBeNull();
-          expect(tokenResponse.token).toBeTruthy();
+          expect(tokenResponse.token).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+          );
           expect(tokenResponse.fileName).toBe(fileName);
 
           const response = await fetch(
