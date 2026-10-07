@@ -113,11 +113,18 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
-    const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
-    });
+    // Pi answers `prompt` only after accepting it, and turn-start auto-compaction
+    // can delay that acceptance for minutes on huge sessions. The turn itself is
+    // event-driven, so a slow acceptance must not reject — a dead process still
+    // fails the request via process exit. Same reasoning as `compact` below.
+    const { id: requestId, promise } = this.process.startRequest(
+      {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+      },
+      JSONL_RPC_NO_TIMEOUT,
+    );
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       const { agentInvoked } = data as Record<string, unknown>;

@@ -376,6 +376,48 @@ describe("PiCliRuntime", () => {
     await rejection;
   });
 
+  test("prompt waits beyond the default control-plane timeout for a late acceptance", async () => {
+    vi.useFakeTimers();
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    try {
+      const promptPromise = session.prompt("hello");
+      const promptCommand = await pendingPrompt;
+      // Pi accepts a prompt only after finishing turn-start auto-compaction,
+      // which runs for minutes on huge sessions.
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      expect(promptCommand).toMatchObject({
+        type: "prompt",
+        message: "hello",
+        id: expect.any(String),
+      });
+
+      writePiResponse(child, promptCommand, { disposition: "started" });
+
+      await expect(promptPromise).resolves.toMatchObject({ requestId: promptCommand.id });
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("prompt without a wall-clock timeout rejects when the session closes", async () => {
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const promptPromise = session.prompt("hello");
+    await pendingPrompt;
+
+    const rejection = expect(promptPromise).rejects.toThrow("Pi RPC session is closed");
+    await session.close();
+
+    await rejection;
+  });
+
   test("disposes the Pi process", async () => {
     const child = createPiChild();
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
