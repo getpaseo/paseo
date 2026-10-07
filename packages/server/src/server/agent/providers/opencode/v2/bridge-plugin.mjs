@@ -45,7 +45,10 @@ export default {
               `/sessions/${encodeURIComponent(binding.sessionID)}/tools/${encodeURIComponent(definition.name)}`,
               input,
             );
-            return { content: result.content, metadata: { paseoTool: definition.name } };
+            return {
+              content: result.content.map(toOpenCodeContent),
+              metadata: { paseoTool: definition.name },
+            };
           },
         });
       }
@@ -65,3 +68,11 @@ export default {
     };
   },
 };
+
+// OpenCode tool content is text or a file; MCP images arrive as base64 data.
+function toOpenCodeContent(part) {
+  if (part.type === "image") {
+    return { type: "file", uri: `data:${part.mimeType};base64,${part.data}`, mime: part.mimeType };
+  }
+  return part;
+}
