@@ -245,7 +245,7 @@ describe("searchDirectoryEntries", () => {
     expect(suffixRootBrowses).toEqual([rootEntries, rootEntries]);
   });
 
-  it("matches rooted queries against the full path at any depth", async () => {
+  it("anchors rooted directory queries to their named parent", async () => {
     mkdirSync(path.join(searchRoot, "nested", "pso-global"), { recursive: true });
     mkdirSync(path.join(searchRoot, "pso-root"), { recursive: true });
     const absoluteQuery = path.join(configuredSearchRoot, "pso");
@@ -258,11 +258,7 @@ describe("searchDirectoryEntries", () => {
       pathQueryPolicy: "rooted" as const,
       rootAliases: ["~"],
     };
-    const expected = [
-      { path: "pso-root", kind: "directory" },
-      { path: "nested/pso-global", kind: "directory" },
-      { path: "projects/paseo-desktop", kind: "directory" },
-    ];
+    const expected = [{ path: "pso-root", kind: "directory" }];
 
     await expect(searchDirectoryEntries({ ...common, query: "~/pso" })).resolves.toEqual(expected);
     await expect(searchDirectoryEntries({ ...common, query: "./pso" })).resolves.toEqual(expected);
@@ -652,6 +648,47 @@ describe("absolute directory-path configuration", () => {
       realpathSync.native(path.join(homeDir, "projects", "paseo")),
       realpathSync.native(path.join(homeDir, "projects", "playground")),
     ]);
+  });
+
+  it.each([
+    { syntax: "~/projects/", createQuery: () => "~/projects/" },
+    { syntax: "./projects/", createQuery: () => "./projects/" },
+    { syntax: "absolute", createQuery: () => `${path.join(homeDir, "projects")}${path.sep}` },
+  ])(
+    "browses only the named directory for $syntax without a recursive scan budget",
+    async ({ createQuery }) => {
+      mkdirSync(path.join(homeDir, "projects", "paseo", "nested"));
+      mkdirSync(path.join(homeDir, "archive", "projects", "unrelated"), { recursive: true });
+
+      const result = await searchAbsoluteDirectoryPaths({
+        homeDir,
+        query: createQuery(),
+        limit: 10,
+        maxDirectoriesScanned: 1,
+      });
+
+      expect(result).toEqual([
+        path.join(homeDir, "projects"),
+        path.join(homeDir, "projects", "paseo"),
+        path.join(homeDir, "projects", "playground"),
+      ]);
+    },
+  );
+
+  it("does not fall back to a recursive search when an explicit parent is missing", async () => {
+    mkdirSync(path.join(homeDir, "archive", "missing", "project"), { recursive: true });
+
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/missing/proj", limit: 10 }),
+    ).resolves.toEqual([]);
+  });
+
+  it.skipIf(isWindows)("refuses to browse a parent symlink outside home", async () => {
+    mkdirSync(path.join(outsideDir, "outside-match", "project"));
+
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/outside-link/", limit: 10 }),
+    ).resolves.toEqual([]);
   });
 
   it("prioritizes partial matches that appear earlier in the path", async () => {
