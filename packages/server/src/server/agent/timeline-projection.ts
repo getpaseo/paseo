@@ -87,7 +87,8 @@ function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail)
   return incoming;
 }
 
-function mergeToolCallItems(
+/** Fold a later update for the same tool call into the one it follows. */
+export function mergeToolCallItems(
   existing: Extract<AgentTimelineItem, { type: "tool_call" }>,
   incoming: Extract<AgentTimelineItem, { type: "tool_call" }>,
 ): Extract<AgentTimelineItem, { type: "tool_call" }> {

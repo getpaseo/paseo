@@ -42,11 +42,12 @@ function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
   ) {
     return item;
   }
+  const notice = "\n\n[Content truncated]";
   return {
     ...item,
     detail: {
       ...item.detail,
-      text: item.detail.text.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+      text: item.detail.text.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH - notice.length) + notice,
     },
   };
 }

@@ -199,6 +199,49 @@ async function quitVim(page: Page) {
   });
 }
 
+interface TerminalChord {
+  key: string;
+  bytes: string;
+}
+
+async function openKeyboardCapture(page: Page) {
+  await test.step("Open a real terminal process that reports received bytes", async () => {
+    const terminal = await harness.createTerminal({
+      name: "Keyboard bytes",
+      command: process.execPath,
+      args: [
+        "-e",
+        `
+        process.stdin.setRawMode(true);
+        let received = Buffer.alloc(0);
+        process.stdin.on('data', chunk => {
+          received = Buffer.concat([received, chunk]);
+          process.stdout.write('\\r\\nBYTES:' + received.toString('hex') + ':END\\r\\n');
+        });
+        console.log('KEYBOARD_READY');
+      `,
+      ],
+    });
+    await harness.openTerminal(page, { terminalId: terminal.id });
+    await expect.poll(() => getTerminalBufferText(page)).toContain("KEYBOARD_READY");
+  });
+}
+
+async function expectTerminalChords(page: Page, chords: TerminalChord[]) {
+  let received = "";
+  for (const chord of chords) {
+    await test.step(`${chord.key} sends ${JSON.stringify(chord.bytes)}`, async () => {
+      await pressTerminalShortcut(page, chord.key);
+      // A printable sentinel proves delivery even for chords expected to send nothing.
+      await input(page).pressSequentially("x");
+      received += Buffer.from(chord.bytes + "x").toString("hex");
+      await expect.poll(() => getTerminalBufferText(page)).toContain(`BYTES:${received}:END`);
+    });
+  }
+  await recordTerminalEvidence("keyboard-bytes", await getTerminalBufferText(page));
+  await page.screenshot({ path: test.info().outputPath("keyboard-chords.png") });
+}
+
 let harness: TerminalE2EHarness;
 test.beforeEach(async () => {
   harness = await TerminalE2EHarness.create({ tempPrefix: "terminal-find-" });
@@ -211,6 +254,28 @@ test.describe("macOS terminal shortcuts", () => {
   test.use({
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  });
+
+  test("encodes editing chords without confusing Control and Command", async ({ page }) => {
+    await openKeyboardCapture(page);
+    await expectTerminalChords(page, [
+      { key: "Meta+ArrowLeft", bytes: "\x01" },
+      { key: "Meta+ArrowRight", bytes: "\x05" },
+      { key: "Alt+ArrowLeft", bytes: "\x1bb" },
+      { key: "Alt+ArrowRight", bytes: "\x1bf" },
+      { key: "Meta+Backspace", bytes: "\x15" },
+      { key: "Control+c", bytes: "\x03" },
+      { key: "Control+a", bytes: "\x01" },
+      { key: "Control+e", bytes: "\x05" },
+      { key: "Control+v", bytes: "\x16" },
+      { key: "Control+f", bytes: "\x06" },
+      { key: "ArrowLeft", bytes: "\x1b[D" },
+      { key: "ArrowRight", bytes: "\x1b[C" },
+      { key: "Alt+Backspace", bytes: "\x1b\x7f" },
+      { key: "Control+Alt+ArrowLeft", bytes: "\x1b[1;7D" },
+    ]);
+    await pressTerminalShortcut(page, "Meta+f");
+    await expect(query(page)).toBeFocused();
   });
 
   test("sends Control+f to cat and opens Find with Meta+f", async ({ page }) => {
@@ -232,7 +297,40 @@ test.describe("macOS terminal shortcuts", () => {
   });
 });
 
+async function useLinuxKeyboardPlatform(page: Page) {
+  // A user agent alone leaves navigator.platform as MacIntel on macOS hosts.
+  // Emulate both browser identity fields before the app reads its keyboard policy.
+  const session = await page.context().newCDPSession(page);
+  await session.send("Emulation.setUserAgentOverride", {
+    userAgent:
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    platform: "Linux x86_64",
+  });
+}
+
+test("Linux terminal chords keep Control, Alt and Meta distinct", async ({ page }) => {
+  await useLinuxKeyboardPlatform(page);
+  await openKeyboardCapture(page);
+  await expectTerminalChords(page, [
+    { key: "Meta+ArrowLeft", bytes: "" },
+    { key: "Meta+ArrowRight", bytes: "" },
+    { key: "Alt+ArrowLeft", bytes: "\x1b[1;3D" },
+    { key: "Alt+ArrowRight", bytes: "\x1b[1;3C" },
+    { key: "Meta+Backspace", bytes: "\x7f" },
+    { key: "Control+c", bytes: "\x03" },
+    { key: "Control+a", bytes: "\x01" },
+    { key: "Control+e", bytes: "\x05" },
+    { key: "Control+ArrowLeft", bytes: "\x1b[1;5D" },
+    { key: "Control+ArrowRight", bytes: "\x1b[1;5C" },
+    { key: "Control+Backspace", bytes: "\x08" },
+    { key: "Alt+Backspace", bytes: "\x1b\x7f" },
+  ]);
+  await pressTerminalShortcut(page, "Control+f");
+  await expect(query(page)).toBeFocused();
+});
+
 test("opens Find with Control+f on Linux without sending ^F to cat", async ({ page }) => {
+  await useLinuxKeyboardPlatform(page);
   await openControlCharacterTerminal(page);
   await pressTerminalShortcut(page, "Control+f");
   await expect(query(page)).toBeFocused();

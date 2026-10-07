@@ -39,6 +39,8 @@ vi.mock("../icons", () => ({
 import { pluginRegistry } from "../registry";
 import { PluginTimelineItemView } from "./view";
 
+const audio = { play: async () => 0 };
+
 const bundle = `(function(require) {
   const React = require("react");
   return { default: function(plugin) {
@@ -122,6 +124,7 @@ describe("PluginTimelineItemView", () => {
       [{ id: "reports", requirements: { paseo: `>=${appPackage.version}` }, clientBundle: bundle }],
       {
         client: daemonClient,
+        audio,
       },
     );
 
@@ -151,6 +154,7 @@ describe("PluginTimelineItemView", () => {
       ],
       {
         client: daemonClient,
+        audio,
       },
     );
     const container = document.createElement("div");
@@ -188,6 +192,7 @@ describe("PluginTimelineItemView", () => {
       ],
       {
         client: daemonClient,
+        audio,
       },
     );
     const container = document.createElement("div");
@@ -310,7 +315,7 @@ it("a renderer releases its observation on the plugin's client when it crashes, 
         clientBundle: liveBundle,
       },
     ],
-    { client },
+    { client, audio },
   );
   const container = document.createElement("div");
   containers.push(container);

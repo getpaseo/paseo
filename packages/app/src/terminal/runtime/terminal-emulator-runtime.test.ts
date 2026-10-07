@@ -241,6 +241,8 @@ describe("terminal-emulator-runtime", () => {
         hasSelection: () => false,
         getSelection: () => "",
         paste: () => {},
+        input: () => {},
+        scrollToBottom: () => {},
       });
       expect(passedToXterm).toBe(!opensFind);
       expect(findRequests).toBe(opensFind ? 1 : 0);

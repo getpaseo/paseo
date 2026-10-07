@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonServerInfo } from "@/stores/session-store";
-import type { AudioEngine } from "@/voice/audio-engine-types";
+import type { AudioEngine } from "@/audio";
 import { createVoiceRuntime, type VoiceSessionAdapter } from "@/voice/voice-runtime";
 import { REALTIME_VOICE_VAD_CONFIG } from "@/voice/realtime-voice-config";
 
@@ -307,8 +307,9 @@ describe("voice runtime", () => {
 
     runtime.onServerSpeechStateChanged("server-1", true);
 
-    expect(engine.stop).toHaveBeenCalledTimes(1);
-    expect(engine.clearQueue).toHaveBeenCalledTimes(1);
+    expect(engine.stop).not.toHaveBeenCalled();
+    expect(engine.clearQueue).not.toHaveBeenCalled();
+    expect(vi.mocked(engine.play).mock.calls[0][1]?.aborted).toBe(true);
 
     resolvePlay(0.1);
   });

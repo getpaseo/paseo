@@ -26,6 +26,7 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
+  type ScriptStatusUpdateMessage,
   type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type WorkspaceScriptListRequest,
@@ -450,6 +451,7 @@ export interface SessionOptions {
   getTransportBufferedAmount?: (source?: object) => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
@@ -810,6 +812,7 @@ export class Session {
       getTransportBufferedAmount,
       onLifecycleIntent,
       onWorkspaceRecovered,
+      publishScriptStatusUpdate,
       logger,
       downloadTokenStore,
       pushNotifications,
@@ -1148,8 +1151,11 @@ export class Session {
       resolveScriptHealth: this.resolveScriptHealth,
       logger: this.sessionLogger,
       emit: (message) => this.emit(message),
+      publishStatusUpdate: (message) => {
+        if (publishScriptStatusUpdate) publishScriptStatusUpdate(message);
+        else this.emit(message);
+      },
       spawnWorkspaceScript,
-      wantsStatusUpdates: () => this.wantsEvent("script_status_update"),
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(this.paseoHome).worktrees?.servicePorts,
@@ -5210,10 +5216,10 @@ export class Session {
 
   private async resolveAgentIdentifier(
     identifier: string,
-  ): Promise<{ ok: true; agentId: string } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; agentId: string } | { ok: false; notFound: boolean; error: string }> {
     const trimmed = identifier.trim();
     if (!trimmed) {
-      return { ok: false, error: "Agent identifier cannot be empty" };
+      return { ok: false, notFound: false, error: "Agent identifier cannot be empty" };
     }
 
     const stored = await this.agentStorage.list();
@@ -5237,6 +5243,7 @@ export class Session {
     if (prefixMatches.length > 1) {
       return {
         ok: false,
+        notFound: false,
         error: `Agent identifier "${trimmed}" is ambiguous (${prefixMatches
           .slice(0, 5)
           .map((id) => id.slice(0, 8))
@@ -5251,6 +5258,7 @@ export class Session {
     if (titleMatches.length > 1) {
       return {
         ok: false,
+        notFound: false,
         error: `Agent title "${trimmed}" is ambiguous (${titleMatches
           .slice(0, 5)
           .map((r) => r.id.slice(0, 8))
@@ -5258,7 +5266,7 @@ export class Session {
       };
     }
 
-    return { ok: false, error: `Agent not found: ${trimmed}` };
+    return { ok: false, notFound: true, error: `Agent not found: ${trimmed}` };
   }
 
   private async getAgentPayloadById(agentId: string): Promise<AgentSnapshotPayload | null> {
@@ -7247,7 +7255,6 @@ export class Session {
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
         serviceProxy: this.serviceProxy,
         scriptRuntimeStore: this.scriptRuntimeStore,
         getDaemonTcpPort: this.getDaemonTcpPort,
@@ -7294,7 +7301,6 @@ export class Session {
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
         serviceProxy: this.serviceProxy,
         scriptRuntimeStore: this.scriptRuntimeStore,
         getDaemonTcpPort: this.getDaemonTcpPort,
@@ -7570,11 +7576,17 @@ export class Session {
   }
 
   private async handleFetchAgent(agentIdOrIdentifier: string, requestId: string): Promise<void> {
+    // An unknown agent is a null agent, not an error. Errors are for empty or ambiguous identifiers.
     const resolved = await this.resolveAgentIdentifier(agentIdOrIdentifier);
     if (!resolved.ok) {
       this.emit({
         type: "fetch_agent_response",
-        payload: { requestId, agent: null, project: null, error: resolved.error },
+        payload: {
+          requestId,
+          agent: null,
+          project: null,
+          error: resolved.notFound ? null : resolved.error,
+        },
       });
       return;
     }
@@ -7583,12 +7595,7 @@ export class Session {
     if (!agent) {
       this.emit({
         type: "fetch_agent_response",
-        payload: {
-          requestId,
-          agent: null,
-          project: null,
-          error: `Agent not found: ${resolved.agentId}`,
-        },
+        payload: { requestId, agent: null, project: null, error: null },
       });
       return;
     }

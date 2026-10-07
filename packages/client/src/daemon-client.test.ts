@@ -7206,11 +7206,15 @@ test("uses modern usage RPC when both capabilities are advertised", async () => 
   const connected = client.connect();
   mock.triggerOpen({ features: { usageSources: true, providerUsageList: true } });
   await connected;
-  const result = client.listUsageReports({
-    requestId: "modern-usage",
-    reportIds: ["claude:work"],
-    forceRefresh: true,
-  });
+  const updates: unknown[] = [];
+  const result = client.listUsageReports(
+    {
+      requestId: "modern-usage",
+      reportIds: ["claude:work"],
+      forceRefresh: true,
+    },
+    (report) => updates.push(report),
+  );
   expect(parseSentFrame(mock.sent[0])).toEqual({
     type: "usage.list_reports.request",
     requestId: "modern-usage",
@@ -7230,8 +7234,35 @@ test("uses modern usage RPC when both capabilities are advertised", async () => 
       },
     ],
   };
-  mock.triggerMessage(wrapSessionMessage({ type: "usage.list_reports.response", payload }));
+  const report = payload.reports[0];
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.update",
+      payload: { requestId: "foreign", report },
+    }),
+  );
+  expect(updates).toEqual([]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.update",
+      payload: { requestId: payload.requestId, report },
+    }),
+  );
+  expect(updates).toEqual([report]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.response",
+      payload: { requestId: payload.requestId, error: null },
+    }),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.update",
+      payload: { requestId: payload.requestId, report },
+    }),
+  );
   expect(await result).toStrictEqual(payload);
+  expect(updates).toEqual([report]);
 });
 
 test("rejects usage requests when the host has neither capability", async () => {
@@ -7249,4 +7280,48 @@ test("rejects usage requests when the host has neither capability", async () => 
   await connected;
   await expect(client.listUsageReports()).rejects.toThrow("Update the host to see usage.");
   expect(mock.sent).toEqual([]);
+});
+
+test("usage request timeout detaches its update listener", async () => {
+  vi.useFakeTimers();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { usageSources: true } });
+    await connected;
+    const updates: unknown[] = [];
+    const result = client.listUsageReports({ requestId: "timeout-usage" }, (report) =>
+      updates.push(report),
+    );
+    const rejected = expect(result).rejects.toThrow("Timeout waiting for message (60000ms)");
+    await vi.advanceTimersByTimeAsync(60_001);
+    await rejected;
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "usage.list_reports.update",
+        payload: {
+          requestId: "timeout-usage",
+          report: {
+            id: "source:late",
+            account: {},
+            sourceId: "source",
+            sourceLabel: "Source",
+            fetchedAt: "2026-01-01T00:00:00.000Z",
+            report: { status: "available", windows: [] },
+          },
+        },
+      }),
+    );
+    expect(updates).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
 });

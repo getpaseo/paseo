@@ -1,3 +1,4 @@
+import { ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO } from "@/utils/assistant-image-metadata";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -73,6 +74,7 @@ import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
@@ -107,6 +109,7 @@ import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assist
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   markdownCopyDataSet,
+  markdownCopyImageDataSet,
   markdownCopyOrderedListDataSet,
   markdownCopyTableCellDataSet,
   type MarkdownCopyInlineTag,
@@ -627,6 +630,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   durationMs,
   onFork,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -642,10 +646,8 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   const durationLabel = useMemo(
     () =>
-      durationMs !== undefined && durationMs !== null
-        ? `Worked for ${formatDuration(durationMs)}`
-        : "",
-    [durationMs],
+      durationMs !== undefined && durationMs !== null ? getTurnDurationLabel(durationMs, t) : "",
+    [durationMs, t],
   );
   const timestampLabel = useMemo(
     () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
@@ -814,8 +816,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
-
 function AssistantMarkdownImage({
   source,
   occurrenceKey,
@@ -860,11 +860,9 @@ function AssistantMarkdownImage({
     [containerStyle],
   );
   const imageSizeStyle = useMemo<ViewStyle>(() => {
-    if (aspectRatio) {
-      return { aspectRatio };
-    }
-    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
-  }, [aspectRatio]);
+    if (image.status === "failed") return { height: 160 };
+    return { aspectRatio: aspectRatio ?? ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO };
+  }, [aspectRatio, image.status]);
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
     () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
     [imageSizeStyle],
@@ -882,15 +880,16 @@ function AssistantMarkdownImage({
     () => [
       assistantMessageStylesheet.imageFrame,
       containerStyle,
-      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      imageSizeStyle,
       assistantMessageStylesheet.imageState,
     ],
-    [containerStyle],
+    [containerStyle, imageSizeStyle],
   );
+  const copyDataSet = useMemo(() => markdownCopyImageDataSet(source, alt), [source, alt]);
 
   if (image.status === "failed") {
     return (
-      <View style={stateFrameStyle}>
+      <View style={stateFrameStyle} dataSet={copyDataSet}>
         <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
       </View>
     );
@@ -898,14 +897,14 @@ function AssistantMarkdownImage({
 
   if (!binding) {
     return (
-      <View style={stateFrameStyle}>
+      <View style={stateFrameStyle} dataSet={copyDataSet}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
 
   return (
-    <View style={frameStyle}>
+    <View style={frameStyle} dataSet={copyDataSet}>
       <Pressable
         accessibilityLabel={t("composer.attachments.openImage")}
         accessibilityRole="button"

@@ -587,4 +587,75 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     expect(latest.detail.log).toContain("[Read] file-6.md");
     expect(latest.detail.log).toContain("[Read] file-205.md");
   });
+
+  test("keeps a long main-thread tool call out of the subagents track", async () => {
+    // Claude Code sends a heartbeat every 30 s while a tool runs, with the tool's own id as
+    // parent_tool_use_id. Frames captured from Claude Code 2.1.291 for a 40 s MCP call.
+    queryFactory.mockImplementation(() =>
+      buildQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "heartbeat-session",
+          permissionMode: "bypassPermissions",
+          model: "opus",
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            id: "msg-heartbeat-1",
+            role: "assistant",
+            content: [
+              { type: "tool_use", id: "toolu_slow", name: "mcp__slow__slow_check", input: {} },
+            ],
+          },
+        },
+        {
+          type: "tool_progress",
+          tool_use_id: "toolu_slow-heartbeat-0",
+          tool_name: "mcp__slow__slow_check",
+          parent_tool_use_id: "toolu_slow",
+          elapsed_time_seconds: 30,
+          heartbeat: true,
+        },
+        {
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_slow",
+                content: [{ type: "text", text: "SLOW_CHECK_OK" }],
+                is_error: false,
+              },
+            ],
+          },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+
+    const events = await collectUntilTerminal(streamSession(session, "run the slow check"));
+    await session.close();
+
+    expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    const toolCallNames = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "tool_call" ? [event.item.name] : [],
+    );
+    expect(toolCallNames).toContain("mcp__slow__slow_check");
+    expect(toolCallNames).not.toContain("Task");
+  });
 });
