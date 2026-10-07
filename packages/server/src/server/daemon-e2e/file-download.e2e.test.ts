@@ -37,6 +37,11 @@ describe("daemon E2E", () => {
           "attachment; filename=\"???.md\"; filename*=UTF-8''%E5%A0%B1%E5%91%8A%E6%9B%B8.md",
       },
       {
+        fileName: "보고서.txt",
+        disposition:
+          "attachment; filename=\"???.txt\"; filename*=UTF-8''%EB%B3%B4%EA%B3%A0%EC%84%9C.txt",
+      },
+      {
         fileName: "report-📄.txt",
         disposition:
           "attachment; filename=\"report-??.txt\"; filename*=UTF-8''report-%F0%9F%93%84.txt",
