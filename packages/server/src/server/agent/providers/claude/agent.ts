@@ -4138,8 +4138,9 @@ class ClaudeAgentSession implements AgentSession {
       );
       return;
     }
-    if (!claudeStartedTurn) {
-      await this.withdrawUnstartedMessages(queryToInterrupt);
+    // Claude can dequeue a message for its next turn before announcing it started; withdrawing it
+    // is then a no-op, and only an interrupt stops it.
+    if (!claudeStartedTurn && (await this.withdrawUnstartedMessages(queryToInterrupt))) {
       return;
     }
     this.pendingInterruptAbort = true;
@@ -4157,13 +4158,13 @@ class ClaudeAgentSession implements AgentSession {
   /**
    * Interrupt means interrupt: a message Claude never started dies with the turn instead of
    * resuming it. One already dequeued cannot be recalled, and does not need to be, since the
-   * interrupt kills it.
+   * interrupt kills it. Returns whether Claude confirmed every message withdrawn.
    */
-  private async withdrawUnstartedMessages(query: Query): Promise<void> {
+  private async withdrawUnstartedMessages(query: Query): Promise<boolean> {
     const uuids = [...this.unstartedMessageUuids];
     this.unstartedMessageUuids.clear();
     this.permissionClearingSteerUuids.clear();
-    if (uuids.length === 0) return;
+    if (uuids.length === 0) return true;
     // The SDK runtime supports this, but its public Query type has not caught up. Keep the
     // compatibility escape hatch inside the Claude adapter.
     const cancelAsyncMessage = (
@@ -4171,14 +4172,17 @@ class ClaudeAgentSession implements AgentSession {
         cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
       }
     ).cancelAsyncMessage;
-    if (!cancelAsyncMessage) return;
+    if (!cancelAsyncMessage) return false;
+    let withdrewAll = true;
     for (const uuid of uuids) {
       try {
-        await cancelAsyncMessage.call(query, uuid);
+        if (!(await cancelAsyncMessage.call(query, uuid))) withdrewAll = false;
       } catch (error) {
+        withdrewAll = false;
         this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
       }
     }
+    return withdrewAll;
   }
 
   private translateMessageToEvents(

@@ -1519,6 +1519,25 @@ test("an interrupt before Claude starts the message withdraws it instead of inte
   await session.close();
 });
 
+test("an interrupt after Claude took the message but before it started stops it", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  // Claude has dequeued the message for its next turn, so withdrawing it is a no-op.
+  queryMock.cancelAsyncMessage.mockImplementation(async () => false);
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+
+  await session.startTurn("hello");
+  // No command_lifecycle "started" or init has reached Paseo yet.
+  await session.interrupt();
+
+  await vi.waitFor(() => expect(queryMock.interrupt).toHaveBeenCalledTimes(1));
+  expect(queryMock.cancelAsyncMessage).toHaveBeenCalledWith(await readFirstPromptUuid());
+  expect(internal.pendingInterruptAbort).toBe(true);
+
+  await session.close();
+});
+
 test("an interrupt while only background subagents run never reaches Claude", async () => {
   const queryMock = createInterruptibleQueryMock();
   sdkQueryFactory.mockImplementation(() => queryMock);
