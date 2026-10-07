@@ -8249,6 +8249,35 @@ test("idle shutdown claim stays held across a second request and queued session 
   }
 });
 
+test("admitted agent work keeps an idle claim busy, and a claim refuses new admitted work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-admitted-work-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    let finishWork!: () => void;
+    const work = manager.runAdmittedAgentWork(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWork = resolve;
+        }),
+    );
+    expect(manager.tryClaimIdleShutdown()).toBe(false);
+
+    finishWork();
+    await work;
+    expect(manager.tryClaimIdleShutdown()).toBe(true);
+    await expect(manager.runAdmittedAgentWork(async () => "after claim")).rejects.toBeInstanceOf(
+      AgentManagerShuttingDownError,
+    );
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");

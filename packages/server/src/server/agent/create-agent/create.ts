@@ -176,6 +176,17 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
+  // Workspace and worktree setup run before the agent registers. Admitting the
+  // whole creation keeps an idle shutdown from landing in that gap.
+  return dependencies.agentManager.runAdmittedAgentWork(() =>
+    createAdmittedAgent(dependencies, input),
+  );
+}
+
+async function createAdmittedAgent(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentCommandInput,
+): Promise<CreateAgentCommandResult> {
   const resolved =
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)

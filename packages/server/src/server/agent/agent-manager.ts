@@ -755,6 +755,7 @@ export class AgentManager {
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
   private idleShutdownHeld = false;
+  private admittedAgentWork = 0;
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
@@ -965,11 +966,42 @@ export class AgentManager {
     return true;
   }
 
+  /**
+   * Admits agent work that starts before a run exists: a prompt whose receipt
+   * is written first, agent creation, a schedule preparing its target, an
+   * out-of-band command, or a rewind. Refuses it once an idle shutdown is
+   * claimed, and keeps the idle check busy until the work settles.
+   */
+  async runAdmittedAgentWork<T>(work: () => Promise<T>): Promise<T> {
+    const release = this.admitAgentWork();
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  }
+
+  private admitAgentWork(): () => void {
+    if (this.idleShutdownHeld) {
+      throw new AgentManagerShuttingDownError();
+    }
+    this.admittedAgentWork += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.admittedAgentWork -= 1;
+    };
+  }
+
   private hasInterruptibleAgentWork(): boolean {
     if (
+      this.admittedAgentWork > 0 ||
       this.agentRegistrationTasks.size > 0 ||
       this.sessionEventTails.size > 0 ||
-      this.lifecycleMutationTails.size > 0
+      this.lifecycleMutationTails.size > 0 ||
+      this.foregroundMutationTails.size > 0 ||
+      this.steerEventBarriers.size > 0
     ) {
       return true;
     }
@@ -2409,6 +2441,9 @@ export class AgentManager {
     if (!handler) {
       return false;
     }
+    // The handler runs without a run or a lifecycle change, so the idle check
+    // only sees it through this admission.
+    const release = this.admitAgentWork();
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
       this.emitState(agent);
@@ -2438,6 +2473,8 @@ export class AgentManager {
           provider: agent.provider,
           item: { type: "assistant_message", text: `[Error] ${text}` },
         });
+      } finally {
+        release();
       }
     })();
     return true;
@@ -2834,6 +2871,10 @@ export class AgentManager {
     expectedTurnId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
+    // Cancels still run after an idle claim; a new steer does not.
+    if (this.idleShutdownHeld) {
+      throw new AgentManagerShuttingDownError();
+    }
     return this.runForegroundMutation(agent.id, async () => {
       await this.drainSessionEvents(agent.id);
       this.agentStreamCoalescer.flushFor(agent.id);
@@ -3194,6 +3235,16 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    // Admitted before the cancel, so an idle claim cannot land between the
+    // cancel and the rewind run.
+    return this.runAdmittedAgentWork(() => this.rewindAdmitted(agentId, messageId, mode));
+  }
+
+  private async rewindAdmitted(
+    agentId: string,
+    messageId: string,
+    mode: RewindMode,
+  ): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
     const submittedRow = this.timelineStore
       .getRows(agentId)

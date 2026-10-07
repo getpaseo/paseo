@@ -216,6 +216,7 @@ interface TestDeps {
 
 function buildAgentManagerSpies() {
   return {
+    runAdmittedAgentWork: <T>(work: () => Promise<T>): Promise<T> => work(),
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
       status: "idle",

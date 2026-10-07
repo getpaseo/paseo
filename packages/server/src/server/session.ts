@@ -8114,19 +8114,24 @@ export class Session {
           );
         }
       };
-      if (msg.messageId) {
-        await this.messageReceipts.send({
-          agentId,
-          messageId: msg.messageId,
-          request: { prompt, activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt" },
-          prepare: async () => {
-            await this.prepareAgentMessage(agentId, msg.text);
-          },
-          send,
-        });
-      } else {
-        await send();
-      }
+      // The receipt is written before a run exists. Admission refuses the send
+      // before that write once an idle shutdown is claimed, and keeps the idle
+      // check busy until the run starts, so no receipt is left pending.
+      await this.agentManager.runAdmittedAgentWork(async () => {
+        if (msg.messageId) {
+          await this.messageReceipts.send({
+            agentId,
+            messageId: msg.messageId,
+            request: { prompt, activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt" },
+            prepare: async () => {
+              await this.prepareAgentMessage(agentId, msg.text);
+            },
+            send,
+          });
+        } else {
+          await send();
+        }
+      });
 
       this.emit({
         type: "send_agent_message_response",

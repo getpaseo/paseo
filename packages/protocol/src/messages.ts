@@ -1834,9 +1834,9 @@ export const RestartServerRequestMessageSchema = z.object({
 export const ShutdownServerRequestMessageSchema = z.object({
   type: z.literal("shutdown_server_request"),
   requestId: z.string(),
-  // COMPAT(shutdownIfIdle): added in v0.11.0, remove optional after 2027-03-22.
-  // Absent on older clients. An old daemon strips this field and would shut
-  // down anyway, so clients must not send it unless features.shutdownIfIdle.
+  // Added in v0.11.0. Stays optional: absent means an unconditional shutdown,
+  // which older clients rely on. An old daemon strips this field and would shut
+  // down anyway, so clients send it only when features.shutdownIfIdle is true.
   onlyIfIdle: z.boolean().optional(),
 });
 
