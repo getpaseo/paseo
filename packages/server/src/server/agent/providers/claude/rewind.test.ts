@@ -103,9 +103,15 @@ interface TranscriptLine {
   text: string;
 }
 
-function writeTranscript(transcriptPath: string, sessionId: string, lines: TranscriptLine[]): void {
-  const entries = lines.map(({ type, uuid, parentUuid, text }) =>
-    JSON.stringify({
+function writeTranscript(
+  transcriptPath: string,
+  sessionId: string,
+  lines: Array<TranscriptLine | string>,
+): void {
+  const entries = lines.map((line) => {
+    if (typeof line === "string") return line;
+    const { type, uuid, parentUuid, text } = line;
+    return JSON.stringify({
       type,
       uuid,
       parentUuid,
@@ -113,8 +119,8 @@ function writeTranscript(transcriptPath: string, sessionId: string, lines: Trans
       cwd: "/repo",
       timestamp: new Date().toISOString(),
       message: { role: type, content: text },
-    }),
-  );
+    });
+  });
   writeFileSync(transcriptPath, `${entries.join("\n")}\n`, "utf8");
 }
 
@@ -170,6 +176,42 @@ describe("Claude rewind against the Claude SDK", () => {
     });
 
     expect(currentSessionId).not.toBe(sessionId);
+    expect(readMessageTexts(path.join(projectDir, `${currentSessionId}.jsonl`))).toEqual([
+      "first",
+      "first reply",
+    ]);
+  });
+
+  test("skips transcript lines that are not entries when forking", async () => {
+    tempRoot = mkdtempSync(path.join(tmpdir(), "claude-rewind-config-dir-"));
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const projectDir = path.join(tempRoot, "custom-claude-dir", "projects", "-repo");
+    mkdirSync(projectDir, { recursive: true });
+    const sessionId = randomUUID();
+    const firstUser = randomUUID();
+    const firstReply = randomUUID();
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+    writeTranscript(transcriptPath, sessionId, [
+      "null",
+      { type: "user", uuid: firstUser, parentUuid: null, text: "first" },
+      "[1, 2]",
+      '"text"',
+      "{}",
+      { type: "assistant", uuid: firstReply, parentUuid: firstUser, text: "first reply" },
+      { type: "user", uuid: randomUUID(), parentUuid: firstReply, text: "second" },
+    ]);
+    let currentSessionId = sessionId;
+
+    await revertClaudeConversation({
+      sdk: realClaudeRewindSdk,
+      sessionId,
+      transcriptPath,
+      messageId: firstReply,
+      setSessionId: (nextSessionId) => {
+        currentSessionId = nextSessionId;
+      },
+    });
+
     expect(readMessageTexts(path.join(projectDir, `${currentSessionId}.jsonl`))).toEqual([
       "first",
       "first reply",

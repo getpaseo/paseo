@@ -49,13 +49,25 @@ function parseTranscriptEntries(text: string): SessionStoreEntry[] {
   const entries: SessionStoreEntry[] = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
+    let parsed: unknown;
     try {
-      entries.push(JSON.parse(line) as SessionStoreEntry);
+      parsed = JSON.parse(line);
     } catch {
       // Skip a line that is not JSON, as the SDK's own transcript reader does.
+      continue;
     }
+    if (isSessionStoreEntry(parsed)) entries.push(parsed);
   }
   return entries;
+}
+
+function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
 }
 
 export async function revertClaudeConversation(input: {
