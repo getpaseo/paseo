@@ -71,6 +71,7 @@ The image runs the daemon and serves the bundled web UI. It does not bundle agen
 
 ## Where next
 
+- [Run parallel tasks](/docs/parallel-development), use separate worktrees, review diffs, and test changes in the desktop app.
 - [Connectivity](/docs/connectivity), connect through the relay or Tailscale.
 - [Docker](/docs/docker), run the daemon and bundled web UI in a container.
 - [Workspaces](/docs/workspaces), the project, workspace, and session model Paseo is built around.

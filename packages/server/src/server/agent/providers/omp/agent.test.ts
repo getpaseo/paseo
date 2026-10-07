@@ -459,7 +459,9 @@ describe("OMP agent client and session", () => {
 
   test("fails a turn when the provider idle gate passes its deadline", async () => {
     const scheduler = new ManualIdleScheduler();
-    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 1 });
+    // Long enough that the gate's first check, made right after the turn ends, cannot already
+    // be past it on a slow runner.
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 50 });
     await omp.start();
     const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
       isStreaming: true,
@@ -473,7 +475,7 @@ describe("OMP agent client and session", () => {
       args: { command: "sleep 30" },
     });
     expect(omp.runningToolCallIds()).toEqual(["tool-at-deadline"]);
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    await new Promise((resolve) => setTimeout(resolve, 60));
     scheduler.retry();
     await expect(completion).rejects.toThrow(/provider idle/i);
     expect(omp.runningToolCallIds()).toEqual([]);

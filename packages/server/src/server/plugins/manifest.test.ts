@@ -24,6 +24,69 @@ describe("plugin manifest", () => {
     });
   });
 
+  it("reads display metadata and ignores future top-level fields", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
+    directories.push(directory);
+    const manifest = {
+      id: "review",
+      name: "Review tools",
+      icon: "assets/icon.png",
+      media: ["assets/screenshot.webp", "demo.mp4", "https://example.com/media?id=1"],
+    };
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ ...manifest, futureField: { enabled: true } }),
+    );
+    await expect(readPluginManifest(directory)).resolves.toEqual(manifest);
+  });
+
+  it.each([
+    { name: "   " },
+    { name: 42 },
+    { icon: "" },
+    { icon: 42 },
+    { icon: "icon.svg" },
+    { icon: "/icon.png" },
+    { icon: "../icon.png" },
+    { icon: "assets/../../icon.png" },
+    { icon: "https://example.com/icon.png" },
+    { icon: "C:/icon.png" },
+    { icon: "assets\\icon.png" },
+    { icon: "icon.png?query" },
+    { media: "screenshot.png" },
+    { media: [42] },
+    { media: [""] },
+    { media: ["../demo.mp4"] },
+    { media: ["/demo.mp4"] },
+    { media: ["http://example.com/demo.mp4"] },
+    { media: ["https://"] },
+    { media: ["//example.com/demo.mp4"] },
+    { media: ["file:///demo.mp4"] },
+    { media: ["data:image/png;base64,abc"] },
+    { media: ["."] },
+    { media: ["assets/"] },
+    { id: "INVALID" },
+    { description: 42 },
+    { requirements: { paseoo: ">=0.11.0" } },
+  ])("rejects invalid known fields: %j", async (fields) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
+    directories.push(directory);
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "example", futureField: true, ...fields }),
+    );
+    await expect(readPluginManifest(directory)).rejects.toThrow();
+  });
+
+  it("accepts omitted metadata and empty media", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
+    directories.push(directory);
+    for (const manifest of [{ id: "example" }, { id: "example", media: [] }]) {
+      await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify(manifest));
+      await expect(readPluginManifest(directory)).resolves.toEqual(manifest);
+    }
+  });
+
   it("reads and validates requirements before any plugin code runs", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
     directories.push(directory);

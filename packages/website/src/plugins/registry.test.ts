@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
+  addedAgo,
+  featuredPlugins,
   formatInstalls,
   installCommand,
   mostInstalled,
@@ -10,7 +13,7 @@ import {
   searchPlugins,
 } from "./registry";
 import { readInstallCounts, recordInstall } from "./installs";
-import { loadRegistryIndex, loadRegistryPlugin } from "./published";
+import { handlePluginRegistryRequest, loadRegistryIndex, loadRegistryPlugin } from "./published";
 const plugin: Plugin = {
   id: "acme/example",
   name: "Example",
@@ -25,7 +28,7 @@ const plugin: Plugin = {
     resolved: "https://registry.npmjs.org/example.tgz",
     integrity: "sha512-YWJj",
   },
-  screenshots: [],
+  media: [],
   submittedAt: "2026-10-03",
   reviewedAt: "2026-10-03",
   updatedAt: "2026-10-03",
@@ -39,6 +42,7 @@ describe("plugin registry", () => {
       registry: { name: "Internal", url: "https://example.test" },
       categories: [],
       plugins: [plugin],
+      featured: [plugin.id],
       generatedAt: "2026-10-03",
     };
     const detail = { ...plugin, readme: "# Example" };
@@ -59,8 +63,46 @@ describe("plugin registry", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
-  it("orders by submission date and by installs in a window, keeping index order for ties", () => {
-    const older = { ...plugin, id: "acme/older", submittedAt: "2026-09-01" };
+  it("features listed plugins once each, in the registry's order, dropping IDs that are not listed", () => {
+    const listed = [
+      { ...plugin, id: "acme/first" },
+      { ...plugin, id: "acme/second" },
+      { ...plugin, id: "acme/third" },
+    ];
+    const featured = ["acme/third", "acme/not-published", "acme/first", "acme/third"];
+    expect(featuredPlugins(listed, featured).map((p) => p.id)).toEqual([
+      "acme/third",
+      "acme/first",
+    ]);
+    expect(featuredPlugins(listed, ["acme/not-published"])).toEqual([]);
+  });
+  it("lists what's new by first-listing date, not submission or update dates", () => {
+    const listedFirst = {
+      ...plugin,
+      id: "acme/listed-first",
+      submittedAt: "2026-09-20",
+      reviewedAt: "2026-09-21",
+      updatedAt: "2026-10-02",
+      publishedAt: "2026-09-02",
+    };
+    const listedLater = {
+      ...plugin,
+      id: "acme/listed-later",
+      submittedAt: "2026-09-01",
+      reviewedAt: "2026-09-01",
+      updatedAt: "2026-09-01",
+      publishedAt: "2026-09-30",
+    };
+    expect(newestFirst([listedFirst, listedLater]).map((p) => p.id)).toEqual([
+      "acme/listed-later",
+      "acme/listed-first",
+    ]);
+    const now = "2026-10-03T12:00:00.000Z";
+    expect(addedAgo(listedLater, now)).toBe("3d ago");
+    expect(addedAgo(listedFirst, now)).toBe("4w ago");
+  });
+  it("orders by listing date and by installs in a window, keeping index order for ties", () => {
+    const older = { ...plugin, id: "acme/older", publishedAt: "2026-09-01" };
     const twin = { ...plugin, id: "acme/twin" };
     expect(newestFirst([older, plugin, twin]).map((p) => p.id)).toEqual([
       "acme/example",
@@ -94,6 +136,82 @@ describe("plugin registry", () => {
       Object.keys(JSON.parse((await cache.get("plugin-installs-daily:acme/example")) ?? "{}")),
     ).toEqual(["2026-09-10", "2026-09-30", "2026-10-04"]);
   });
+  it("counts repeated install reports from the same IP once per hour", async () => {
+    let now = Date.now();
+    const cache = memoryKv(() => now);
+    const headers = { "X-Paseo-Install": "1", "CF-Connecting-IP": "192.0.2.1" };
+    await resolvePlugin(cache, headers);
+    now += 3_599_000;
+    await resolvePlugin(cache, headers);
+    expect(await readInstallCounts(cache, [plugin.id], new Date())).toEqual({
+      [plugin.id]: { week: 1, month: 1, all: 1 },
+    });
+    now += 1_000;
+    await resolvePlugin(cache, headers);
+    expect(await readInstallCounts(cache, [plugin.id], new Date())).toEqual({
+      [plugin.id]: { week: 2, month: 2, all: 2 },
+    });
+  });
+  it("counts different IPs and plugins independently, including query install intent", async () => {
+    const cache = memoryKv();
+    const first = { "X-Paseo-Install": "1", "CF-Connecting-IP": "192.0.2.1" };
+    await resolvePlugin(cache, first);
+    await resolvePlugin(cache, { "CF-Connecting-IP": "2001:db8::1" }, { query: "?intent=install" });
+    await resolvePlugin(cache, first, { id: "acme/other" });
+    await resolvePlugin(cache, first, { query: "?intent=install" });
+    await resolvePlugin(cache, first, { id: "acme/other", staticDetail: true });
+    expect(await readInstallCounts(cache, [plugin.id, "acme/other"], new Date())).toEqual({
+      [plugin.id]: { week: 2, month: 2, all: 2 },
+      "acme/other": { week: 1, month: 1, all: 1 },
+    });
+    const hash = createHash("sha256").update(first["CF-Connecting-IP"]).digest("hex");
+    expect(await cache.get(`plugin-installs-client:${plugin.id}:${hash}`)).toBe("1");
+    expect(JSON.stringify([...cache.values])).not.toContain("192.0.2.1");
+    expect(JSON.stringify([...cache.values])).not.toContain("2001:db8::1");
+  });
+  it("does not count without a Cloudflare IP or install intent", async () => {
+    const cache = memoryKv();
+    await resolvePlugin(cache, { "X-Paseo-Install": "1", "X-Forwarded-For": "192.0.2.1" });
+    await resolvePlugin(cache, {}, { query: "?intent=install" });
+    await resolvePlugin(cache, { "X-Paseo-Install": "1", "CF-Connecting-IP": "" });
+    await resolvePlugin(cache, { "CF-Connecting-IP": "192.0.2.1" });
+    expect(await readInstallCounts(cache, [plugin.id], new Date())).toEqual({
+      [plugin.id]: { week: 0, month: 0, all: 0 },
+    });
+    expect([...cache.values.keys()].filter((key) => key.startsWith("plugin-installs"))).toEqual([]);
+  });
+  it("preserves historical totals and the installs endpoint response", async () => {
+    const cache = memoryKv();
+    await cache.put(`plugin-installs:${plugin.id}`, "40");
+    const headers = { "X-Paseo-Install": "1", "CF-Connecting-IP": "192.0.2.1" };
+    await resolvePlugin(cache, headers);
+    await resolvePlugin(cache, headers);
+    const base = "https://registry.example.test";
+    await cache.put(
+      `plugins:index:v1:${base}`,
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        value: {
+          schemaVersion: 1,
+          registry: { name: "Internal", url: base },
+          categories: [],
+          plugins: [plugin],
+          featured: [],
+          generatedAt: "2026-10-03",
+        },
+      }),
+    );
+    const response = await handlePluginRegistryRequest(
+      new Request("https://paseo.sh/api/plugins/installs"),
+      { PLUGINS_REGISTRY_URL: base },
+      { cache, waitUntil: () => undefined },
+    );
+    expect(response?.status).toBe(200);
+    expect(await response?.json()).toEqual({ [plugin.id]: 41 });
+    expect(await readInstallCounts(cache, [plugin.id], new Date())).toEqual({
+      [plugin.id]: { week: 1, month: 1, all: 41 },
+    });
+  });
   it("searches name, description, ID, and author, ignoring case", () => {
     const other = {
       ...plugin,
@@ -110,6 +228,32 @@ describe("plugin registry", () => {
     expect(searchPlugins(plugins, "  ")).toEqual(plugins);
     expect(searchPlugins(plugins, "nothing")).toEqual([]);
   });
+  it("ranks name, then author, then description matches, keeping the given order on ties", () => {
+    const named = (id: string, name: string, description: string, github = "acme"): Plugin => ({
+      ...plugin,
+      id,
+      name,
+      description,
+      author: { github },
+    });
+    // Given in install order: description-only matches first, the exact name last.
+    const plugins = [
+      named("acme/editor", "Remote Editor", "Composer pill to open a workspace"),
+      named("acme/kit", "PromptKit", "Rewrite prompts"),
+      named("omp/tools", "Tools", "Helpers", "omp"),
+      named("acme/history", "History", "Inspect raw composer records"),
+      named("acme/omp", "OMP", "Paseo integration for OMP"),
+    ];
+    expect(searchPlugins(plugins, "omp").map((p) => p.id)).toEqual([
+      "acme/omp",
+      "acme/kit",
+      "omp/tools",
+      "acme/editor",
+      "acme/history",
+    ]);
+    expect(searchPlugins(plugins, "prompt").map((p) => p.id)).toEqual(["acme/kit"]);
+    expect(searchPlugins(plugins, "tools omp").map((p) => p.id)).toEqual(["omp/tools"]);
+  });
 
   it("strips the README title and quoted description that the page already shows", () => {
     expect(readmeBody("# Example\n\n> An example\n> plugin\n\n## Usage\n")).toBe("## Usage\n");
@@ -125,16 +269,43 @@ describe("plugin registry", () => {
 });
 
 /** In-memory stand-in for the website KV namespace, covering the calls the counter makes. */
-function memoryKv(): KVNamespace {
+function memoryKv(now = Date.now): KVNamespace & { values: Map<string, string> } {
   const values = new Map<string, string>();
+  const expiresAt = new Map<string, number>();
   const kv = {
+    values,
     get: async (key: string, options?: { type?: string }) => {
+      if (now() >= (expiresAt.get(key) ?? Infinity)) values.delete(key);
       const value = values.get(key) ?? null;
       return options?.type === "json" && value !== null ? JSON.parse(value) : value;
     },
-    put: async (key: string, value: string) => {
+    put: async (key: string, value: string, options?: { expirationTtl?: number }) => {
       values.set(key, value);
+      expiresAt.set(key, options?.expirationTtl ? now() + options.expirationTtl * 1000 : Infinity);
     },
   };
-  return kv as unknown as KVNamespace;
+  return kv as unknown as KVNamespace & { values: Map<string, string> };
+}
+
+async function resolvePlugin(
+  cache: KVNamespace,
+  headers: HeadersInit,
+  { id = plugin.id, query = "", staticDetail = false } = {},
+): Promise<void> {
+  const base = "https://registry.example.test";
+  const detail = { ...plugin, id, readme: "# Example" };
+  await cache.put(
+    `plugins:detail:v1:${base}:${id}`,
+    JSON.stringify({ fetchedAt: Date.now(), value: detail }),
+  );
+  const pending: Promise<unknown>[] = [];
+  const path = staticDetail ? `/plugins/${id}.json` : `/api/plugins/resolve/${id}`;
+  const response = await handlePluginRegistryRequest(
+    new Request(`https://paseo.sh${path}${query}`, { headers }),
+    { PLUGINS_REGISTRY_URL: base },
+    { cache, waitUntil: (promise) => pending.push(promise) },
+  );
+  expect(response?.status).toBe(200);
+  expect(await response?.json()).toEqual(detail);
+  await Promise.all(pending);
 }

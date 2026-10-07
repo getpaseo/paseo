@@ -1,3 +1,4 @@
+import { PluginContentLink } from "~/plugins/overview";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { useMemo } from "react";
@@ -15,6 +16,7 @@ import {
 } from "~/plugins";
 import { AuthorAvatar } from "~/plugins/author-link";
 import { PluginsNotFound } from "~/plugins/not-found";
+import { InstallCount } from "~/plugins/install-count";
 import { PluginCard } from "~/plugins/plugin-card";
 import "~/styles.css";
 
@@ -64,21 +66,16 @@ function AuthorPage() {
           </p>
           <div className="flex items-center gap-4 pt-1">
             {authorNpmUrl(author) && (
-              <a
-                href={authorNpmUrl(author)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK_CLASS}
-              >
+              <PluginContentLink href={authorNpmUrl(author)} className={LINK_CLASS}>
                 npm
                 <ExternalLink className="h-3 w-3" />
-              </a>
+              </PluginContentLink>
             )}
             {github && (
-              <a href={github} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+              <PluginContentLink href={github} className={LINK_CLASS}>
                 GitHub
                 <ExternalLink className="h-3 w-3" />
-              </a>
+              </PluginContentLink>
             )}
           </div>
         </div>
@@ -86,7 +83,9 @@ function AuthorPage() {
 
       <div className="mt-12 grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
         {plugins.map((plugin) => (
-          <PluginCard key={plugin.id} plugin={plugin} installs={installs[plugin.id]?.all ?? 0} />
+          <PluginCard key={plugin.id} plugin={plugin}>
+            <InstallCount count={installs[plugin.id]?.all ?? 0} />
+          </PluginCard>
         ))}
       </div>
     </SiteShell>
