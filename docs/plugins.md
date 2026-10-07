@@ -117,14 +117,18 @@ the bundled integration; an entry with `extends` shadows it with a custom provid
 
 ## Install from a registry
 
-Registry installs are off by default. Set `pluginRegistryEnabled: true` in daemon config or
-`PASEO_PLUGIN_REGISTRY_ENABLED=1`, then restart the daemon. While they are off, bare
-`owner/repo` is GitHub shorthand and the daemon never contacts a registry.
-
-With registry installs on, `paseo plugin install owner/slug` installs the registry's reviewed
-artifact, and GitHub shorthand requires `github:`. Registry installs
+`paseo plugin add owner/slug` installs the registry's reviewed artifact by default.
+Browse published plugins at [paseo.sh/plugins](https://paseo.sh/plugins).
+Use `git:owner/repository` or a full Git URL for a Git source. Registry installs
 keep the registry URL and ID, so update checks use its approved pin. Explicit version/ref
 selection is unavailable for registry installs; install an explicit source to select your own.
+
+Registry overviews are untrusted author content, even before installation. Render them with
+`@getpaseo/protocol/plugin-overview`: no raw HTML, HTTPS-only links and images, no relative
+URLs, and isolated external links. The website adapter and corpus tests live in
+`packages/website/src/plugins/overview.tsx` and `overview.test.tsx`; the reusable corpus is
+`packages/protocol/tests/fixtures/plugin-overview.json`. A future app overview must share
+this policy. Installed-plugin descriptions in the app remain plain text.
 
 Use `host/owner/slug` for a registry at `https://host`, or set
 `PASEO_PLUGIN_REGISTRY` to change the default base (including a path prefix).
@@ -138,13 +142,13 @@ owns static hosting, record shapes, pins, and advisory install counts.
 
 ## Install a Git source
 
-GitHub repositories use `owner/repository` or `github:owner/repository`. Other hosts use a Git
-URL. An existing directory still wins over source resolution.
+GitHub repositories use `git:owner/repository` or `github:owner/repository`. Other hosts use a Git
+URL.
 
 ```bash
-paseo plugin install owner/repository
+paseo plugin install git:owner/repository
 paseo plugin install https://gitlab.com/group/repository.git
-paseo plugin install owner/monorepo:plugins/review
+paseo plugin install git:owner/monorepo:plugins/review
 paseo plugin install github:owner/repository --ref main
 ```
 
@@ -155,8 +159,9 @@ and ask for approval. `ls` reports the installed commit without contacting the r
 ## Managed source ownership
 
 The [public source reference](../public-docs/plugins/reference.md#plugin-sources) owns identifier
-syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. Both clients send the source unchanged
-through `installPluginSource`; only the daemon resolves host paths and acquires sources.
+syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. The CLI resolves directory sources before
+calling `installPluginSource`; see the public source reference for CLI and app path semantics.
+Only the daemon reads plugin files and acquires sources.
 
 `ManagedPluginSources` owns acquisition and offline source description. Config stores the active
 directory; sources.json stores managed kind and the Git acquisition remote. The remote is needed

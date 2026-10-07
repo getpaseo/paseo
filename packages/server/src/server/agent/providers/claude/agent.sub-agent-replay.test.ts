@@ -712,4 +712,56 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(timeline.length).toBeGreaterThan(0);
     expect(timeline[0]).toMatchObject({ id: TOOL_USE_ID });
   });
+
+  test("replays a SubagentHandback report as the subagent's final message", async () => {
+    const handbackId = "toolu_handback";
+    const report = "## Verdict\n\n- **Coherent**";
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: handbackId,
+                name: "SubagentHandback",
+                input: { message: report },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: handbackId,
+                content: [
+                  {
+                    type: "text",
+                    text: '{"success":true,"message":"Report delivered to your caller."}',
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    const items = (await replayDescriptors()).flatMap((event) =>
+      event.event.type === "timeline" ? [event.event.item] : [],
+    );
+    expect(items).toEqual([{ type: "assistant_message", text: report }]);
+  });
 });

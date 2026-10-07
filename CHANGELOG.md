@@ -27,6 +27,8 @@
 
 ### Changed
 
+- Enabled the plugin registry by default: `paseo plugin add owner/slug` installs a reviewed artifact even when a local directory matches; use explicit local paths (including `.`, `..`, and Windows drive or UNC paths), and use `github:owner/repository` for direct GitHub installs. Registry connection, missing-ID, and `--ref` errors include recovery steps.
+
 - Changed the context window details to show usage for the account the agent runs under, including custom `CLAUDE_CONFIG_DIR` and `CODEX_HOME` homes ([#5465](https://github.com/getpaseo/paseo/pull/5465))
 - Changed the context window details on desktop to a hover card with Refresh ([#5975](https://github.com/getpaseo/paseo/pull/5975))
 - Changed the context window meter to show before an agent's first turn ([#6089](https://github.com/getpaseo/paseo/pull/6089))

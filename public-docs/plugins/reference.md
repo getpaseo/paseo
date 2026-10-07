@@ -52,12 +52,24 @@ The required root manifest is `paseo-plugin.json`:
 }
 ```
 
-| Field          | Required | Behavior                                                               |
-| -------------- | -------- | ---------------------------------------------------------------------- |
-| `id`           | Yes      | Default installation ID.                                               |
-| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**. |
-| `requirements` | No       | Supported Paseo versions, described below.                             |
-| `build`        | No       | Preparation commands, described in the CLI reference.                  |
+| Field          | Required | Behavior                                                                                  |
+| -------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `id`           | Yes      | Default installation ID.                                                                  |
+| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.  |
+| `icon`         | No       | Relative path to a PNG inside the plugin package.                                         |
+| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid. |
+| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                    |
+| `requirements` | No       | Supported Paseo versions, described below.                                                |
+| `build`        | No       | Preparation commands, described in the CLI reference.                                     |
+
+Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
+segments. See [icons and screenshots](/docs/plugins/publishing#icons-and-screenshots) for an example.
+Paseo validates the references without opening local assets or fetching URLs.
+
+Unknown top-level fields are ignored. Known fields still validate, and unknown keys inside
+`requirements` are rejected so a misspelled constraint cannot silently skip a compatibility check.
+Manifests using `name`, `icon`, or `media` require Paseo 0.11.0 or later; older daemons reject
+these fields during installation.
 
 ### Requirements
 
@@ -2258,16 +2270,20 @@ failures stay inside the plugin error boundary.
 
 Paste one of these source identifiers into **Settings → Plugins**, or pass it to
 `paseo plugin install`. `paseo plugin add <source>` and `paseo plugin install <source>` are aliases.
-Absolute host paths are recommended because relative paths resolve against the daemon's working
-directory. The app does not expand `~`; your shell may expand it before the CLI runs.
+The CLI resolves relative directory paths from your current working directory and expands `~`
+to your local home directory, preserving any `:plugin/path` suffix. With `--host`, use an absolute
+path that exists on the daemon host; plugin files are read there and are never uploaded by the CLI.
+Paths entered in Settings resolve relative to the daemon's working directory, and `~` expands to
+the daemon's home directory.
 
 | Source                     | Accepted form                                                              | Example                                       |
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
+| Plugin registry            | `owner/slug` or `host/owner/slug`                                          | `acme/review`                                 |
 | Host directory             | Absolute or relative path on the daemon host                               | `/srv/paseo/plugins/review`                   |
-| GitHub repository          | `github:owner/repository` or `owner/repository`                            | `github:acme/paseo-review`                    |
+| GitHub repository          | `git:owner/repository` or `github:owner/repository`                        | `github:acme/paseo-review`                    |
 | Git repository             | `git:<URL or SCP source>`; the prefix is optional for URLs and SCP sources | `git:https://git.example.com/acme/review.git` |
 | npm package                | `npm:<name>[@<version, tag, or range>]`; `npm:` is optional                | `npm:@acme/paseo-review@^1.2.0`               |
-| Plugin below a source root | Append `:relative/plugin/path` to any source                               | `github:acme/monorepo:plugins/review`         |
+| Plugin below a source root | Append `:relative/plugin/path` to a directory, Git, or npm source          | `github:acme/monorepo:plugins/review`         |
 
 Git URLs use `https://`, `http://`, `ssh://`, `git://`, or `file://`. SCP sources use
 `user@host:path`. `file://` selects Git acquisition, not directory installation.
@@ -2283,24 +2299,27 @@ The package registry validates the selected version, tag, or range.
 
 Paseo resolves an identifier in this order:
 
-1. An existing directory matching the complete identifier on the daemon host wins, including a
-   literal directory containing `:`.
+1. A bare `owner/slug` is a registry id; local directory sources are `.` or `..`, or start with `./`, `../`, `.\`, `..\`, `/`, `~`, a Windows drive (`C:\` or `C:/`), or a UNC (`\\server\share`) prefix.
 2. Otherwise, recognize `npm:`, `github:`, or `git:` before interpreting a subdirectory suffix.
    `git://` is a Git URL scheme. An explicit prefix selects acquisition of that kind.
 3. Recognize a final `:relative/plugin/path` only when its suffix contains no empty, `.` or `..`
    segments. A lone `.` selects the source root. Both `/` and `\` separate suffix segments; use `/`
    across hosts. URL ports and the separator in an SCP source stay part of the source. A suffix
    that does not satisfy these rules stays part of the identifier.
-4. Without an explicit prefix, an existing directory matching the remaining source wins.
-5. Resolve Git URLs and SCP sources as Git; expand exact `owner/repository` shorthand to GitHub
-   HTTPS. `github:` requires that shorthand; `git:` accepts it as well as URLs and SCP sources.
-6. Resolve a remaining npm package name with its optional selector through the host's registry.
+4. Resolve bare `owner/slug` through the default plugin registry and `host/owner/slug` through
+   that registry host. Resolve Git URLs and SCP sources as Git. `github:` requires
+   `owner/repository` shorthand; `git:` accepts it as well as URLs and SCP sources.
+5. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
 
-Plugin registry installs are off by default. When the daemon enables them with
-`pluginRegistryEnabled: true` or `PASEO_PLUGIN_REGISTRY_ENABLED=1`, bare `owner/slug` and
-`host/owner/slug` resolve through the plugin registry instead of GitHub, the registry record owns
-the revision and plugin path, and GitHub shorthand requires `github:`.
+The default registry is `https://plugins.paseo.sh`. Browse [published plugins](https://paseo.sh/plugins)
+and install with `paseo plugin add owner/slug`. Registry records own the revision and plugin path.
+Use `git:owner/repository` for explicit GitHub shorthand or a full Git URL.
+Set `PASEO_PLUGIN_REGISTRY` to use a self-hosted default URL, including a path prefix.
+Private registry credentials use `pluginRegistries: { "host": { "authorization": "Bearer token" } }`
+in daemon config. Restart the daemon after changing these startup settings. Credentials go only
+to that registry, never to artifact hosts or redirects. Installed plugins retain their recorded
+source and registry URL when defaults change.
 
 Directory lookup happens on the daemon host. The app uses the `paseo-plugin.json` ID; the CLI
 accepts `--id <runtime-id>` to override it. An existing installation ID is rejected without changing
@@ -2347,9 +2366,10 @@ deletes its managed files; removing a directory plugin keeps your source directo
 paseo plugin init /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
-paseo plugin add owner/repository
+paseo plugin add owner/slug
+paseo plugin add git:owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
-paseo plugin add owner/monorepo:plugins/review
+paseo plugin add git:owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update <id>
 paseo plugin update --all --check

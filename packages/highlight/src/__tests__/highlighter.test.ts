@@ -144,6 +144,19 @@ const title = "Hello";
     );
   });
 
+  it("keeps an Astro expression open through nested template strings", () => {
+    const code = "<p>{`a ${`}`} b`}</p>";
+
+    const tokens = highlightCode(code, "Nested.astro").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "`}`", style: "string" },
+        { text: " b`", style: "string" },
+      ]),
+    );
+  });
+
   it("highlights Vue SFCs across script, template, and style", () => {
     const code = [
       '<script lang="ts">',

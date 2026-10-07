@@ -1,6 +1,8 @@
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import type { Plugin } from "./registry";
 
 const SIZE_CLASS = {
+  xs: "h-6 w-6 rounded-md text-xs",
   sm: "h-9 w-9 rounded-lg text-sm",
   lg: "h-14 w-14 rounded-xl text-xl",
 } as const;
@@ -12,7 +14,7 @@ export function PluginTile({ plugin, size }: { plugin: Plugin; size: keyof typeo
       aria-hidden
       className={`flex flex-shrink-0 items-center justify-center border border-white/10 bg-white/[0.06] font-medium text-white/80 ${SIZE_CLASS[size]}`}
     >
-      {plugin.icon ? (
+      {pluginOverviewUrl(plugin.icon) ? (
         <img src={plugin.icon} alt="" className="h-full w-full rounded-[inherit] object-cover" />
       ) : (
         plugin.name.charAt(0).toUpperCase()

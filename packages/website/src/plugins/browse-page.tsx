@@ -3,8 +3,10 @@ import { SiteShell } from "~/components/site-shell";
 import { ContributeLinks } from "./contribute-links";
 import type { InstallCounts } from "./installs";
 import { type BrowseQuery, browseHref } from "./links";
+import { InstallCount } from "./install-count";
 import { PLUGIN_GRID_CLASS, PluginCard } from "./plugin-card";
 import { PluginSearch } from "./plugin-search";
+import { PluginSection } from "./section";
 import {
   addedAgo,
   CATEGORIES,
@@ -45,17 +47,18 @@ export function BrowsePage({
   query: BrowseQuery;
 }) {
   const category = query.category ? getCategory(query.category) : null;
-  const matches = query.q ? searchPlugins(plugins, query.q) : plugins;
-  const scoped = category ? getPluginsInCategory(matches, category.slug) : matches;
-  const results =
-    query.sort === "new" ? newestFirst(scoped) : mostInstalled(scoped, installs, query.window);
+  const ordered =
+    query.sort === "new" ? newestFirst(plugins) : mostInstalled(plugins, installs, query.window);
+  // Search ranks by relevance; the tab's order breaks ties.
+  const matches = query.q ? searchPlugins(ordered, query.q) : ordered;
+  const results = category ? getPluginsInCategory(matches, category.slug) : matches;
   const title = category?.label ?? "All plugins";
   const clearHref = browseHref({ ...query, q: undefined });
   return (
     <SiteShell width="wide">
       <div className="lg:flex lg:gap-12">
         <aside className="mb-8 lg:mb-0 lg:w-48 lg:flex-shrink-0">
-          <PluginSearch scope={query} className="mb-4 lg:mb-6" />
+          <PluginSearch scope={query} live className="mb-4 lg:mb-6" />
           <CategoryNav plugins={matches} query={query} />
         </aside>
         <div className="min-w-0 flex-1">
@@ -63,7 +66,7 @@ export function BrowsePage({
             <h1 className="text-3xl font-medium tracking-tight">
               {query.q ? `Results for “${query.q}”${category ? ` in ${title}` : ""}` : title}
               <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
-                {scoped.length}
+                {results.length}
               </span>
             </h1>
             {query.q && (
@@ -72,36 +75,38 @@ export function BrowsePage({
               </a>
             )}
           </div>
-          <SortTabs query={query} />
-          {results.length === 0 && query.q && (
-            <div className="mt-8 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-10 text-center">
-              <p className="text-sm text-muted-foreground">No plugins match.</p>
-              <a
-                href={clearHref}
-                className="mt-2 inline-block text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground"
-              >
-                Clear filters
-              </a>
-            </div>
-          )}
-          {results.length === 0 && !query.q && (
-            <p className="mt-8 text-sm text-muted-foreground">No plugins in this category yet.</p>
-          )}
-          {results.length > 0 && (
-            <div className={`mt-8 ${PLUGIN_GRID_CLASS}`}>
-              {results.map((plugin) =>
-                query.sort === "new" ? (
-                  <PluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
-                ) : (
-                  <PluginCard
-                    key={plugin.id}
-                    plugin={plugin}
-                    installs={installs[plugin.id]?.[query.window] ?? 0}
-                  />
-                ),
-              )}
-            </div>
-          )}
+          <PluginSection>
+            <SortTabs query={query} />
+            {results.length === 0 && query.q && (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-10 text-center">
+                <p className="text-sm text-muted-foreground">No plugins match.</p>
+                <a
+                  href={clearHref}
+                  className="mt-2 inline-block text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground"
+                >
+                  Clear filters
+                </a>
+              </div>
+            )}
+            {results.length === 0 && !query.q && (
+              <p className="text-sm text-muted-foreground">No plugins in this category yet.</p>
+            )}
+            {results.length > 0 && (
+              <div className={PLUGIN_GRID_CLASS}>
+                {results.map((plugin) =>
+                  query.sort === "new" ? (
+                    <PluginCard key={plugin.id} plugin={plugin}>
+                      {addedAgo(plugin, now)}
+                    </PluginCard>
+                  ) : (
+                    <PluginCard key={plugin.id} plugin={plugin}>
+                      <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />
+                    </PluginCard>
+                  ),
+                )}
+              </div>
+            )}
+          </PluginSection>
         </div>
       </div>
     </SiteShell>
@@ -186,7 +191,7 @@ function SortTabs({ query }: { query: BrowseQuery }) {
     <WindowSwitch current={query.window} hrefs={windowHrefs} />
   );
   return (
-    <>
+    <div>
       <div className="flex items-baseline justify-between gap-6 border-b border-white/10">
         <div className="flex gap-6">
           <a
@@ -207,6 +212,6 @@ function SortTabs({ query }: { query: BrowseQuery }) {
         {windowSwitch && <div className="hidden pb-2 sm:block">{windowSwitch}</div>}
       </div>
       {windowSwitch && <div className="mt-4 sm:hidden">{windowSwitch}</div>}
-    </>
+    </div>
   );
 }

@@ -829,6 +829,64 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("replays a compaction entry as a completed compaction row", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-compaction-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "answer-1",
+          parentId: "root",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Before." }],
+            responseId: "resp-1",
+          },
+        },
+        {
+          type: "compaction",
+          id: "compaction-1",
+          parentId: "answer-1",
+          timestamp: "2026-10-05T04:31:19.537Z",
+          summary: "## Goal\nSummary",
+          shortSummary: "Summary",
+          firstKeptEntryId: "answer-1",
+          tokensBefore: 77611,
+          tokensAfter: 37526,
+          method: "snapcompact",
+          details: { readFiles: [], modifiedFiles: [] },
+          fromExtension: false,
+        },
+        {
+          type: "message",
+          id: "answer-2",
+          parentId: "compaction-1",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "After." }],
+            responseId: "resp-2",
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "assistant_message", text: "Before.", messageId: "resp-1" },
+      { type: "compaction", status: "completed", preTokens: 77611 },
+      { type: "assistant_message", text: "After.", messageId: "resp-2" },
+    ]);
+    expect(events[1]).toMatchObject({ type: "timeline", timestamp: "2026-10-05T04:31:19.537Z" });
+  });
+
   test("maps omp 18.1 custom_message entries like live custom messages", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-custom-message-history-"));
     const sessionFile = join(dir, "session.jsonl");
