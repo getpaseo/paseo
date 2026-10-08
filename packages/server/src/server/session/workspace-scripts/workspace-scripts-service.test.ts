@@ -25,6 +25,7 @@ import type {
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
+import { createPersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 // The production module reads only WorkspaceGitService.{peekSnapshot,getProjectSlug},
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
@@ -217,6 +218,47 @@ describe("buildSnapshot", () => {
     );
     await service.start({ ...request, workspaceId: workspace.workspaceId });
     expect(spawnCalls[0]?.branchName).toBe(workspace.branch);
+  });
+});
+
+describe("list", () => {
+  test("publishes fresh configuration after scripts are added and removed without changing the workspace", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "workspace-scripts-"));
+    tempDirs.push(directory);
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-1",
+      projectId: "project-1",
+      cwd: directory,
+      kind: "directory",
+      displayName: "Scripts",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const original = structuredClone(workspace);
+    const { service, published, emitted, spawnCalls } = buildService({ workspace });
+    expect(await service.list(workspace.workspaceId)).toEqual([]);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({ scripts: { build: { command: "npm run build" } } }),
+    );
+    const scripts = await service.list(workspace.workspaceId);
+    expect(scripts.map((script) => script.scriptName)).toEqual(["build"]);
+    rmSync(join(directory, "paseo.json"));
+    expect(await service.list(workspace.workspaceId)).toEqual([]);
+    expect(published).toEqual([
+      {
+        type: "script_status_update",
+        payload: { workspaceId: workspace.workspaceId, scripts: [] },
+      },
+      { type: "script_status_update", payload: { workspaceId: workspace.workspaceId, scripts } },
+      {
+        type: "script_status_update",
+        payload: { workspaceId: workspace.workspaceId, scripts: [] },
+      },
+    ]);
+    expect(workspace).toEqual(original);
+    expect(emitted).toEqual([]);
+    expect(spawnCalls).toEqual([]);
   });
 });
 
