@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execCommand } from "../utils/spawn.js";
@@ -74,13 +74,10 @@ export class TerminalImageStore {
     if (!this.options.isActive(input.terminalId)) throw new Error("Terminal no longer exists");
     const directory = join(this.options.directory, directoryName(input.terminalId));
     await privateDirectory(directory);
-    await writeFile(
-      join(directory, "terminal.json"),
-      JSON.stringify({ terminalId: input.terminalId }),
-      {
-        mode: 0o600,
-      },
-    );
+    const ownerPath = join(directory, "terminal.json");
+    if (metadataOwner(await readMetadata(ownerPath)) !== input.terminalId) {
+      await writeMetadata(ownerPath, { terminalId: input.terminalId });
+    }
     const path = join(
       directory,
       `${randomUUID()}.${input.mimeType === "image/png" ? "png" : "jpg"}`,
@@ -95,27 +92,28 @@ export class TerminalImageStore {
     for (const entry of await readdir(this.options.directory, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^[a-f0-9]{64}$/.test(entry.name)) continue;
       const directory = join(this.options.directory, entry.name);
-      const metadata: { terminalId?: unknown } = JSON.parse(
-        await readFile(join(directory, "terminal.json"), "utf8"),
-      );
-      if (typeof metadata.terminalId !== "string") throw new Error("Invalid terminal image owner");
-      const retiredPath = join(directory, "retired.json");
-      if (this.options.isActive(metadata.terminalId)) {
-        await rm(retiredPath, { force: true });
-      } else {
-        let retiredAt: number;
-        try {
-          retiredAt = JSON.parse(await readFile(retiredPath, "utf8")) as number;
-          if (!Number.isFinite(retiredAt))
-            throw new Error("Invalid terminal image retirement time");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          retiredAt = now;
-          await writeFile(retiredPath, JSON.stringify(now), { flag: "wx", mode: 0o600 });
-        }
-        if (now - retiredAt >= (this.options.retentionMs ?? RETENTION_MS)) {
-          await rm(directory, { recursive: true, force: true });
-          continue;
+      const ownerPath = join(directory, "terminal.json");
+      let owner = metadataOwner(await readMetadata(ownerPath));
+      if (owner !== undefined && directoryName(owner) !== entry.name) owner = undefined;
+      const matchesRequestedTerminal = entry.name === directoryName(terminalId);
+      let recoveredOwner = false;
+      if (owner === undefined && matchesRequestedTerminal) {
+        owner = terminalId;
+        await writeMetadata(ownerPath, { terminalId });
+        recoveredOwner = true;
+      }
+      // An unreadable owner cannot establish inactivity. Keep its images and
+      // include them in quotas until ownership can be recovered safely.
+      if (owner !== undefined) {
+        const retiredPath = join(directory, "retired.json");
+        if (this.options.isActive(owner)) {
+          await rm(retiredPath, { force: true });
+        } else {
+          const retiredAt = await readOrStartRetirement(retiredPath, now, recoveredOwner);
+          if (now - retiredAt >= (this.options.retentionMs ?? RETENTION_MS)) {
+            await rm(directory, { recursive: true, force: true });
+            continue;
+          }
         }
       }
       for (const file of await readdir(directory, { withFileTypes: true })) {
@@ -123,10 +121,52 @@ export class TerminalImageStore {
         const info = await lstat(join(directory, file.name));
         usage.bytes += info.size;
         usage.files++;
-        if (metadata.terminalId === terminalId) usage.terminalBytes += info.size;
+        if (matchesRequestedTerminal) usage.terminalBytes += info.size;
       }
     }
     return usage;
+  }
+}
+
+async function readOrStartRetirement(path: string, now: number, reset: boolean): Promise<number> {
+  const metadata = await readMetadata(path);
+  if (!reset && typeof metadata === "number" && Number.isFinite(metadata)) return metadata;
+  await writeMetadata(path, now);
+  return now;
+}
+
+async function readMetadata(path: string): Promise<unknown> {
+  let contents: string;
+  try {
+    contents = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    return JSON.parse(contents) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
+function metadataOwner(metadata: unknown): string | undefined {
+  return typeof metadata === "object" &&
+    metadata !== null &&
+    "terminalId" in metadata &&
+    typeof metadata.terminalId === "string"
+    ? metadata.terminalId
+    : undefined;
+}
+
+async function writeMetadata(path: string, value: unknown): Promise<void> {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600, flush: true });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
   }
 }
 
