@@ -2,8 +2,13 @@
 
 The screenshots show the actual Providers settings route with an isolated daemon and a disabled Hermes ACP provider fixture. No model or Hermes process ran. The UI uses the production icon component. Both themes render the full silhouette in a 16 by 16 slot, matching adjacent provider icon slots.
 
-![Light Providers route](providers-light.png)
-![Dark Providers route](providers-dark.png)
+Baseline `29db2b7` renders the generic bot icon. The same real Providers route was exercised in a separate unmodified source worktree: 2 passed (17.7s). The baseline assertions verify the Hermes path is absent; no production files were altered to manufacture this comparison.
+
+![Before, light Providers route](providers-light-before.png)
+![Before, dark Providers route](providers-dark-before.png)
+
+![After, light Providers route](providers-light.png)
+![After, dark Providers route](providers-dark.png)
 
 Validation on macOS, Chrome browser:
 
