@@ -49,7 +49,12 @@ the provider cannot (there is no replace fallback); `reject` refuses with `turn_
 Results: `accepted`, `duplicate`, `rejected` (with `reason`), `outcome_unknown`. Reasons: `disabled`,
 `agent_not_found`, `agent_not_live`, `agent_archived`, `stale_incarnation`, `stale_generation`,
 `permission_pending`, `turn_active`, `steer_unavailable`, `admission_busy`, `idempotency_conflict`,
-`send_failed`. `rejected` always means zero side effects; retry after a fresh snapshot.
+`send_failed`. `rejected` always means zero side effects; retry after a fresh snapshot. A receipt that appears
+between the pre-check and the reserve answers `duplicate` or `outcome_unknown` and is never sent.
+The receipt lookup runs before any agent-existence check, so a retry after an unknown outcome
+still answers `outcome_unknown`. A failed receipt release is retried once; if it fails again the reply is `outcome_unknown`, never `rejected`,
+because the pending receipt is still on disk. A provider error after the start was dispatched stays
+`outcome_unknown`, since the daemon cannot tell whether the provider acted.
 
 ## What an acknowledgement means
 
@@ -87,9 +92,17 @@ epoch, or one older than retention, returns `resyncRequired: true`: take a fresh
 
 The feed and receipts survive a restart; incarnations, generations and in-flight sends do not. After a
 restart every agent has a new incarnation (sessions are reloaded) and a new boot ID, so all old guards
-are stale. Events buffered but not flushed at a crash are lost, which is why reads never expose them.
+are stale. An agent whose close outlives the shutdown timeout gets a `lifecycle.close_timeout` event instead of
+its closure event. If the feed cannot write (disk full, I/O error) it stops advancing for the rest of the process, and
+`keeper.events.read` and `keeper.agent.get_snapshot` answer with `error: "event feed stalled: ..."`;
+treat that as "restart the daemon". Events buffered but not flushed at a crash are lost, which is why reads never expose them.
 
 ## Known races
+
+The guarded send holds the agent's lifecycle lane as well as its foreground lane, so reload, archive
+and detach queue behind it. The archive flag is re-read after the receipt is reserved; the tiny window
+between that read and the provider call is not closed. With the flag off, pending permissions stay a
+plain map and no generation is counted.
 
 The daemon cannot exclude the provider emitting a question at the same moment it accepts the turn; it
 preserves that question rather than excluding it. Turn events from a session that was just replaced may

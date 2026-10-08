@@ -948,6 +948,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    trackPermissions: config.keeperControlEnabled === true,
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
@@ -1830,17 +1831,18 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
-    await keeperControl?.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
-    await closeAllAgents(logger, agentManager);
+    const unclosed = await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
       timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
       label: "drain plugin lifecycle events",
     }).catch((error) => logger.warn({ err: error }, "Plugin lifecycle events did not finish"));
     await agentManager.flushForShutdown().catch(() => undefined);
+    keeperControl?.noteUnclosed(unclosed);
+    await keeperControl?.close();
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
@@ -1893,19 +1895,29 @@ export async function createPaseoDaemon(
  */
 const AGENT_CLOSE_TIMEOUT_MS = 5_000;
 
-async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
+async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<string[]> {
   const agents = agentManager.listAgents();
+  const unclosed: string[] = [];
   await Promise.all(
     agents.map(async (agent) => {
+      let settled = false;
       try {
+        const closing = agentManager.closeAgent(agent.id);
+        closing
+          .finally(() => {
+            settled = true;
+          })
+          .catch(() => undefined);
         await withTimeout({
-          promise: agentManager.closeAgent(agent.id),
+          promise: closing,
           timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
           label: `close agent ${agent.id}`,
         });
       } catch (err) {
+        if (!settled) unclosed.push(agent.id);
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
       }
     }),
   );
+  return unclosed;
 }

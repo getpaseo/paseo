@@ -19,7 +19,7 @@ export function dispatchKeeperMessage(
             agentId: msg.agentId,
             bootId: enabled ? control.bootId : "",
             snapshot: enabled ? control.snapshot(msg.agentId) : null,
-            error: enabled ? null : "disabled",
+            error: enabled ? control.feedError() : "disabled",
           },
         });
       })();
@@ -71,7 +71,7 @@ export function dispatchKeeperMessage(
           payload: {
             requestId: msg.requestId,
             ...page,
-            error: control?.enabled ? null : "disabled",
+            error: control?.enabled ? control.feedError() : "disabled",
           },
         });
       })();

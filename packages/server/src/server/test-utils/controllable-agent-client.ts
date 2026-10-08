@@ -55,6 +55,7 @@ export class ControllableAgentClient implements AgentClient {
   readonly sessions: ControllableSession[] = [];
   heldStarts = 0;
   heldSteers = 0;
+  finishOnStart = false;
   private startHold: Gate | null = null;
   private steerHold: Gate | null = null;
 
@@ -149,6 +150,7 @@ export class ControllableSession implements AgentSession {
     }
     this.client.calls.push({ kind: "startTurn", text: String(prompt) });
     this.activeTurnId = `ctl-turn-${this.turn++}`;
+    if (this.client.finishOnStart) queueMicrotask(() => this.completeTurn());
     return { turnId: this.activeTurnId };
   }
 

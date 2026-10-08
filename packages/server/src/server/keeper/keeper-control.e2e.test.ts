@@ -73,6 +73,16 @@ describe("keeper atomic send", () => {
     expect(h.provider.callsOf("interrupt")).toEqual([]);
   });
 
+  test("a send queued behind a session reload is rejected against the new incarnation", async () => {
+    const h = await setup();
+    const seen = await observe(h);
+    const reloading = h.ctx.daemon.daemon.agentManager.reloadAgentSession(h.agentId);
+    const reply = await h.ctx.client.keeperSendMessage(sendParams(h, seen, "k3b"));
+    await reloading;
+    expect(reply).toMatchObject({ result: "rejected", reason: "stale_incarnation" });
+    expectNoSideEffects(h);
+  });
+
   test("a question that arrived before admission rejects the stale send untouched", async () => {
     const h = await setup();
     const seen = await observe(h);
@@ -106,6 +116,33 @@ describe("keeper atomic send", () => {
     await until(async () => (await observe(h)).pending.length === 1, "question B pending");
     expect(h.provider.callsOf("respondToPermission")).toEqual([]);
     expect(h.provider.callsOf("interrupt")).toEqual([]);
+    expect(h.provider.callsOf("startTurn")).toHaveLength(1);
+  });
+
+  test("a close queued behind a held start waits for the acknowledgement", async () => {
+    const h = await setup();
+    const seen = await observe(h);
+    const release = h.provider.holdStartTurn();
+    const sending = h.ctx.client.keeperSendMessage(sendParams(h, seen, "k3c"));
+    await until(() => h.provider.heldStarts === 1, "provider to hold the start");
+    let closed = false;
+    const closing = (async () => {
+      await h.ctx.daemon.daemon.agentManager.closeAgent(h.agentId);
+      closed = true;
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(closed).toBe(false);
+    release();
+    expect(await sending).toMatchObject({ result: "accepted", delivery: "turn_started" });
+    await closing;
+  });
+
+  test("a turn that finishes at once still reports the acknowledgement", async () => {
+    const h = await setup();
+    const seen = await observe(h);
+    h.provider.finishOnStart = true;
+    const reply = await h.ctx.client.keeperSendMessage(sendParams(h, seen, "k3d"));
+    expect(reply).toMatchObject({ result: "accepted", delivery: "turn_started" });
     expect(h.provider.callsOf("startTurn")).toHaveLength(1);
   });
 

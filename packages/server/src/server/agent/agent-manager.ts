@@ -320,6 +320,8 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  /** Counts pending-permission changes per agent; only the keeper control API reads them. */
+  trackPermissions?: boolean;
   pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
@@ -800,11 +802,13 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly trackPermissions: boolean;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
+    this.trackPermissions = options.trackPermissions ?? false;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
@@ -2795,6 +2799,18 @@ export class AgentManager {
     guard: AgentAdmissionGuard,
     commit: (context: AgentAdmissionContext) => Promise<T>,
   ): Promise<AgentAdmissionResult<T>> {
+    // The lifecycle lane is held too, so reload, archive and detach cannot tear the session down
+    // between the comparison and the send.
+    return this.runLifecycleMutation(agentId, () =>
+      this.admitGuardedInLane(agentId, guard, commit),
+    );
+  }
+
+  private async admitGuardedInLane<T>(
+    agentId: string,
+    guard: AgentAdmissionGuard,
+    commit: (context: AgentAdmissionContext) => Promise<T>,
+  ): Promise<AgentAdmissionResult<T>> {
     return this.runForegroundMutation(agentId, async () => {
       const check = async (): Promise<AgentAdmissionRejection | AgentAdmissionContext> => {
         await this.drainSessionEvents(agentId);
@@ -3850,10 +3866,9 @@ export class AgentManager {
       updatedAt: options?.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
-      pendingPermissions: new TrackedPermissionMap(
-        this.permissionLedgerFor(resolvedAgentId),
-        sessionIncarnation,
-      ),
+      pendingPermissions: this.trackPermissions
+        ? new TrackedPermissionMap(this.permissionLedgerFor(resolvedAgentId), sessionIncarnation)
+        : new Map(),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
