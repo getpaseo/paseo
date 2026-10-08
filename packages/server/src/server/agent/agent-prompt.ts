@@ -350,16 +350,22 @@ export async function sendPromptToAgent(
   });
 }
 
+export interface StartedCreatedAgentInitialPrompt {
+  liveSnapshot: ManagedAgent;
+  /** The initial prompt started a run and this call observed it start. */
+  runStarted: boolean;
+}
+
 export async function startCreatedAgentInitialPrompt(
   params: StartCreatedAgentInitialPromptParams,
-): Promise<ManagedAgent> {
+): Promise<StartedCreatedAgentInitialPrompt> {
   const currentSnapshot = params.agentManager.getAgent(params.agentId) ?? params.snapshot ?? null;
   if (!currentSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
 
   if (params.prompt === null) {
-    return currentSnapshot;
+    return { liveSnapshot: currentSnapshot, runStarted: false };
   }
 
   const dispatchResult = await startAgentRun(
@@ -372,7 +378,8 @@ export async function startCreatedAgentInitialPrompt(
     },
   );
 
-  if (dispatchResult.disposition === "turn_started") {
+  const runStarted = dispatchResult.disposition === "turn_started";
+  if (runStarted) {
     await waitForAgentRunStartWithTimeout(params.agentManager, params.agentId);
   }
 
@@ -380,7 +387,7 @@ export async function startCreatedAgentInitialPrompt(
   if (!refreshedSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
-  return refreshedSnapshot;
+  return { liveSnapshot: refreshedSnapshot, runStarted };
 }
 
 export interface SetupFinishNotificationParams {
@@ -389,6 +396,11 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
+  /**
+   * The caller already observed the child's run start, so an idle child has finished
+   * that run, even when it finished before this notification was armed.
+   */
+  runStarted?: boolean;
   logger: Logger;
 }
 
@@ -449,9 +461,10 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     childAgentId,
     callerAgentId,
     requireParentOwnership = false,
+    runStarted = false,
     logger,
   } = params;
-  let hasSeenRunning = false;
+  let hasSeenRunning = runStarted;
   let stopped = false;
   const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
@@ -584,9 +597,9 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
 
   // Check if the child is already running (catches the case where
   // the lifecycle flipped before our subscribe call was processed).
-  // Do NOT treat an immediate "idle" as "finished" — the agent may
-  // not have started yet (streamAgent sets a pending run before
-  // transitioning to "running").
+  // Do NOT treat an immediate "idle" as "finished" unless the caller
+  // observed the run start — otherwise the agent may not have started
+  // yet (streamAgent sets a pending run before transitioning to "running").
   const childSnapshot = agentManager.getAgent(childAgentId);
   if (!childSnapshot || childSnapshot.lifecycle === "closed") {
     stop();
@@ -596,5 +609,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
     notifySafely("errored");
+  } else if (childSnapshot.lifecycle === "idle" && hasSeenRunning) {
+    notifySafely("finished");
   }
 }
