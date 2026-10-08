@@ -1,12 +1,33 @@
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { UseAgentFormStateResult } from "@/hooks/use-agent-form-state";
+import type { AgentSettingsProfiles } from "@getpaseo/protocol/agent-settings-profile";
 
 export interface DraftKeyContext {
   selectedServerId: string | null;
 }
 
 export type DraftKeyInput = string | ((context: DraftKeyContext) => string);
+
+interface InitialSettingsProfileSelection {
+  selectedServerId: string | null;
+  initialServerId: string | null | undefined;
+  settingsProfileId: string | undefined;
+  profileChoice: string | undefined;
+  bundle: AgentSettingsProfiles | undefined;
+}
+
+export function resolveDraftSettingsProfileId(
+  input: InitialSettingsProfileSelection,
+): string | undefined {
+  const initialProfileId =
+    input.selectedServerId === input.initialServerId ? input.settingsProfileId : undefined;
+  const profileId = input.profileChoice ?? initialProfileId ?? input.bundle?.activeProfileId;
+  if (input.bundle && !input.bundle.profiles.some((profile) => profile.id === profileId)) {
+    return input.bundle.activeProfileId;
+  }
+  return profileId;
+}
 
 export function resolveDraftKey(input: {
   draftKey: DraftKeyInput;
@@ -24,9 +45,13 @@ export function buildDraftAgentControls(input: {
   onSetFeature?: DraftAgentControlsProps["onSetFeature"];
   onApplyAgentProfile: DraftAgentControlsProps["onApplyAgentProfile"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
+  settingsProfileId?: string;
+  onSelectSettingsProfile?: (id: string) => void;
 }): DraftAgentControlsProps {
   const { formState, features, onSetFeature, onApplyAgentProfile, onDropdownClose } = input;
   return {
+    settingsProfileId: input.settingsProfileId,
+    onSelectSettingsProfile: input.onSelectSettingsProfile,
     providerDefinitions: formState.providerDefinitions,
     selectedProvider: formState.selectedProvider,
     modeOptions: formState.modeOptions,

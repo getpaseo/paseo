@@ -5,8 +5,8 @@ import type { DaemonConfigStore } from "../../daemon-config-store.js";
 export type SkillSelection = AgentSkillSelection;
 
 export interface SkillSelectionStore {
-  get(): Promise<SkillSelection>;
-  set(selection: unknown): Promise<SkillSelection>;
+  get(profileId?: string): Promise<SkillSelection>;
+  set(selection: unknown, profileId?: string): Promise<SkillSelection>;
   isSet(): Promise<boolean>;
 }
 
@@ -35,15 +35,26 @@ export function coerceSkillSelection(value: unknown): SkillSelection {
 }
 
 export function createSkillSelectionStore(
-  configStore: Pick<DaemonConfigStore, "get" | "setAgentSkillSelection">,
+  configStore: Pick<DaemonConfigStore, "get" | "patch" | "setAgentSkillSelection">,
 ): SkillSelectionStore {
   return {
-    async get() {
-      return coerceSkillSelection(configStore.get().skills?.selection);
+    async get(profileId) {
+      if (!profileId) return coerceSkillSelection(configStore.get().skills?.selection);
+      const profile = configStore
+        .get()
+        .agentSettingsProfiles?.profiles.find((candidate) => candidate.id === profileId);
+      if (!profile) throw new Error("Agent settings profile does not exist");
+      return coerceSkillSelection(profile.settings.skills?.selection);
     },
-    async set(selection) {
+    async set(selection, profileId) {
       const parsed = coerceSkillSelection(selection);
-      configStore.setAgentSkillSelection(parsed);
+      if (profileId) {
+        configStore.patch({
+          agentSettingsProfilePatch: { profileId, skills: { selection: parsed } },
+        });
+      } else {
+        configStore.setAgentSkillSelection(parsed);
+      }
       return parsed;
     },
     async isSet() {

@@ -140,8 +140,12 @@ test.describe("Host agent skills", () => {
     const firstSelection = { mode: "custom" as const, skills: [skills.available[0]!] };
     const secondSelection = { mode: "custom" as const, skills: [skills.available[1]!] };
 
-    const first = skills.client.saveAgentSkillsSelection(firstSelection, skills.available);
-    const second = skills.client.saveAgentSkillsSelection(secondSelection, skills.available);
+    const first = skills.client.saveAgentSkillsSelection(firstSelection, {
+      confirmedRemovals: skills.available,
+    });
+    const second = skills.client.saveAgentSkillsSelection(secondSelection, {
+      confirmedRemovals: skills.available,
+    });
     await expect(Promise.all([first, second])).resolves.toMatchObject([
       { confirmationRequired: null, selection: firstSelection },
       { confirmationRequired: null, selection: secondSelection },

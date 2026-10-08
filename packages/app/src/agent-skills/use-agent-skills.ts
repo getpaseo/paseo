@@ -7,6 +7,7 @@ import type {
   AgentSkillsStatus,
 } from "@getpaseo/protocol/messages";
 import { useToast } from "@/contexts/toast-context";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -18,7 +19,13 @@ export function useAgentSkills(serverId: string) {
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "skillManagement");
-  const queryKey = useMemo(() => ["host", serverId, "agent-skills"] as const, [serverId]);
+  const { config } = useDaemonConfig(serverId);
+  const activeProfileId = config?.agentSettingsProfiles?.activeProfileId;
+  const selectedSkills = config?.skills?.selection;
+  const queryKey = useMemo(
+    () => ["host", serverId, "agent-skills", activeProfileId, selectedSkills] as const,
+    [serverId, activeProfileId, selectedSkills],
+  );
   const reportedQueryError = useRef<Error | null>(null);
   const report = useCallback(
     (message: string, error: Error) => {
@@ -31,7 +38,7 @@ export function useAgentSkills(serverId: string) {
     queryKey,
     queryFn: () => {
       if (!client) throw new Error(t("settings.host.skills.unavailable"));
-      return client.getAgentSkillsStatus();
+      return client.getAgentSkillsStatus(activeProfileId);
     },
     enabled: supported && client !== null,
     retry: false,
@@ -70,7 +77,10 @@ export function useAgentSkills(serverId: string) {
   >({
     mutationFn: async ({ selection, confirmedRemovals }) => {
       if (!client) throw new Error(t("settings.host.skills.unavailable"));
-      return client.saveAgentSkillsSelection(selection, confirmedRemovals);
+      return client.saveAgentSkillsSelection(selection, {
+        confirmedRemovals,
+        ...(activeProfileId ? { profileId: activeProfileId } : {}),
+      });
     },
     onSuccess: setStatus,
     onError: (error) => report(t("settings.host.skills.saveSelectionFailed"), error),

@@ -62,6 +62,7 @@ describe("createWorkspaceAgentInBackground", () => {
         },
       });
       useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+        serverId: "local",
         draftId: DRAFT_ID,
         setup: {
           cwd: "/work/new-repo",
@@ -82,6 +83,7 @@ describe("createWorkspaceAgentInBackground", () => {
   it("creates one agent and clears the consumed draft setup, attachments and input", async () => {
     let calls = 0;
     useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+      serverId: "local",
       draftId: DRAFT_ID,
       setup: {
         cwd: "/work/repo",

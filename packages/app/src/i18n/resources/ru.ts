@@ -2595,6 +2595,12 @@ export const ru: TranslationResources = {
         emptyState:
           "Профилей пока нет. Добавьте профиль, чтобы запускать терминалы с заданной командой.",
       },
+      agentSettingsProfiles: {
+        promptHint: "Инструкции для новых чатов с этим профилем",
+        title: "Профиль настроек",
+        defaultName: "По умолчанию",
+        manage: "Управление профилями",
+      },
       agentProfiles: {
         sectionTitle: "Профили агентов",
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агентов",

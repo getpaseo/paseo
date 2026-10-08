@@ -2341,7 +2341,7 @@ export class Session {
         return emitStatus(
           "agent.skills.get_status.response",
           msg.requestId,
-          this.orchestrationSkills.getStatus(),
+          this.orchestrationSkills.getStatus(msg.profileId),
         );
       case "agent.skills.reconcile.request":
         return emitStatus(
@@ -2357,7 +2357,10 @@ export class Session {
         );
       case "agent.skills.save_selection.request":
         return this.orchestrationSkills
-          .saveSelection(msg.selection, msg.confirmedRemovals)
+          .saveSelection(msg.selection, {
+            ...(msg.confirmedRemovals ? { confirmedRemovals: msg.confirmedRemovals } : {}),
+            ...(msg.profileId ? { profileId: msg.profileId } : {}),
+          })
           .then((result) => {
             this.emit({
               type: "agent.skills.save_selection.response",

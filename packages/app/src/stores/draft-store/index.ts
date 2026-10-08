@@ -45,6 +45,11 @@ interface DraftStoreActions {
   saveDraftInput: (input: { draftKey: string; draft: DraftInput }) => void;
   editDraftText: (input: { draftKey: string; text: string }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
+  setDraftSettingsProfileChoice: (input: {
+    draftKey: string;
+    serverId: string;
+    settingsProfileId: string;
+  }) => void;
   clearDraftInput: (input: {
     draftKey: string;
     lifecycle?: Exclude<DraftLifecycleState, "active">;
@@ -78,12 +83,15 @@ function createDraftRecord(input: {
   lifecycle: DraftLifecycleState;
   previousVersion?: number;
 }): DraftRecord {
+  const hasContent = input.draft.text.length > 0 || input.draft.attachments.length > 0;
+  const isEmptyActiveDraft = input.lifecycle === "active" && !hasContent;
+  const lifecycle = isEmptyActiveDraft ? "abandoned" : input.lifecycle;
   return {
     input: {
       text: input.draft.text,
       attachments: input.draft.attachments.map(normalizeComposerAttachment),
     },
-    lifecycle: input.lifecycle,
+    lifecycle,
     updatedAt: Date.now(),
     version: (input.previousVersion ?? 0) + 1,
   };
@@ -255,6 +263,7 @@ export const useDraftStore = create<DraftStore>()(
     (set, get) => ({
       drafts: {},
       createModalDraft: null,
+      settingsProfileChoices: {},
       attachmentFocusRequestByDraftKey: {},
 
       getDraftInput: (draftKey) => {
@@ -347,12 +356,28 @@ export const useDraftStore = create<DraftStore>()(
         scheduleAttachmentGc();
       },
 
+      setDraftSettingsProfileChoice: ({ draftKey, serverId, settingsProfileId }) => {
+        set((state) => ({
+          settingsProfileChoices: {
+            ...state.settingsProfileChoices,
+            [draftKey]: {
+              ...state.settingsProfileChoices[draftKey],
+              [serverId]: settingsProfileId,
+            },
+          },
+        }));
+      },
+
       clearDraftInput: ({ draftKey, lifecycle }) => {
         set((state) => {
           const existing = state.drafts[draftKey];
-          if (!existing) {
+          const hasProfileChoice = draftKey in state.settingsProfileChoices;
+          if (!existing && !hasProfileChoice) {
             return state;
           }
+          const settingsProfileChoices = { ...state.settingsProfileChoices };
+          delete settingsProfileChoices[draftKey];
+          if (!existing) return { settingsProfileChoices };
           const cleared = applyClearDraftRecord({
             record: existing,
             lifecycle,
@@ -364,11 +389,12 @@ export const useDraftStore = create<DraftStore>()(
                 ...state.drafts,
                 [draftKey]: cleared,
               },
+              settingsProfileChoices,
             };
           }
           const nextDrafts = { ...state.drafts };
           delete nextDrafts[draftKey];
-          return { drafts: nextDrafts };
+          return { drafts: nextDrafts, settingsProfileChoices };
         });
 
         scheduleAttachmentGc();
@@ -429,7 +455,11 @@ export const useDraftStore = create<DraftStore>()(
       name: "paseo-drafts",
       version: DRAFT_STORE_VERSION,
       storage: draftPersistStorage,
-      partialize: ({ drafts, createModalDraft }) => ({ drafts, createModalDraft }),
+      partialize: ({ drafts, createModalDraft, settingsProfileChoices }) => ({
+        drafts,
+        createModalDraft,
+        settingsProfileChoices,
+      }),
       migrate: (state) =>
         migratePersistedState(state, {
           migrateLegacyImages,

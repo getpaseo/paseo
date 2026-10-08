@@ -410,6 +410,7 @@ export interface PaseoDaemonConfig {
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
+  agentSettingsProfiles?: MutableDaemonConfig["agentSettingsProfiles"];
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
@@ -565,6 +566,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    agentSettingsProfiles: config.agentSettingsProfiles,
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -948,6 +950,24 @@ export async function createPaseoDaemon(
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
+    resolveSettingsProfile: (id) => {
+      const current = daemonConfigStore.get();
+      const bundle = current.agentSettingsProfiles;
+      if (bundle)
+        return bundle.profiles.find((profile) => profile.id === (id ?? bundle.activeProfileId));
+      if (id && id !== "default") return undefined;
+      return {
+        id: "default",
+        name: "Default",
+        settings: {
+          appendSystemPrompt: current.appendSystemPrompt,
+          agentProfiles: current.agentProfiles ?? [],
+          skills: { selection: current.skills?.selection ?? { mode: "all" } },
+          mcp: { injectIntoAgents: current.mcp.injectIntoAgents },
+          browserTools: { enabled: current.browserTools.enabled },
+        },
+      };
+    },
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
@@ -1431,7 +1451,12 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
-    browserToolsEnabled: browserToolsPolicy.isEnabled(),
+    browserToolsEnabled:
+      runtime.browserToolsEnabled ??
+      (runtime.callerAgentId
+        ? agentManager.getSettingsProfile(runtime.callerAgentId)?.settings.browserTools.enabled
+        : undefined) ??
+      browserToolsPolicy.isEnabled(),
     browserToolsBroker,
     paseoToolPolicy:
       runtime.paseoToolPolicy ??
@@ -1455,6 +1480,7 @@ export async function createPaseoDaemon(
   setAgentProviderToolsEnabled(config.mcpEnabled !== false && config.mcpInjectIntoAgents !== false);
 
   let mcpEnabled = config.mcpEnabled ?? true;
+  agentManager.setPaseoToolsAvailable(mcpEnabled);
   let agentMcpBaseUrl: string | null = null;
   {
     const agentMcpRoute = "/mcp/agents";
@@ -1622,19 +1648,19 @@ export async function createPaseoDaemon(
           const logAndResolve = async () => {
             boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
             const mcpBaseUrl = createAgentMcpBaseUrl(boundListenTarget);
-            agentMcpBaseUrl =
-              !mcpEnabled || config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
+            agentMcpBaseUrl = !mcpEnabled ? null : mcpBaseUrl;
             agentManager.setMcpBaseUrl(agentMcpBaseUrl);
             agentManager.setPaseoToolsEnabled(mcpEnabled && config.mcpInjectIntoAgents !== false);
             daemonConfigStore.onFieldChange("mcp.enabled", (value) => {
               mcpEnabled = value !== false;
+              agentManager.setPaseoToolsAvailable(mcpEnabled);
               const inject = daemonConfigStore.get().mcp.injectIntoAgents !== false;
-              agentManager.setMcpBaseUrl(mcpEnabled && inject ? mcpBaseUrl : null);
+              agentManager.setMcpBaseUrl(mcpEnabled ? mcpBaseUrl : null);
               agentManager.setPaseoToolsEnabled(mcpEnabled && inject);
               setAgentProviderToolsEnabled(mcpEnabled && inject);
             });
             daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
-              agentManager.setMcpBaseUrl(mcpEnabled && value ? mcpBaseUrl : null);
+              agentManager.setMcpBaseUrl(mcpEnabled ? mcpBaseUrl : null);
               agentManager.setPaseoToolsEnabled(mcpEnabled && value !== false);
               setAgentProviderToolsEnabled(mcpEnabled && value !== false);
             });

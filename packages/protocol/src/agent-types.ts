@@ -1,3 +1,4 @@
+import type { AgentSettingsProfile } from "./agent-settings-profile.js";
 import type { AgentAttachment } from "./messages.js";
 
 export type AgentProvider = string;
@@ -518,6 +519,9 @@ export interface AgentSessionConfig {
    * Mapped by each provider to its native instruction field.
    */
   systemPrompt?: string;
+  settingsProfileId?: string;
+  /** Settings captured at creation; changing or deleting the host profile does not change this chat. */
+  settingsProfile?: AgentSettingsProfile;
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;

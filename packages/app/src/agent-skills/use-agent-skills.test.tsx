@@ -8,7 +8,14 @@ import { useAgentSkills } from "./use-agent-skills";
 const runtime = vi.hoisted(() => ({
   connected: true,
   supported: true,
-  clients: new Map<string, { getAgentSkillsStatus: ReturnType<typeof vi.fn> }>(),
+  activeProfileId: undefined as string | undefined,
+  clients: new Map<
+    string,
+    {
+      getAgentSkillsStatus: ReturnType<typeof vi.fn>;
+      saveAgentSkillsSelection?: ReturnType<typeof vi.fn>;
+    }
+  >(),
 }));
 
 vi.mock("@/runtime/host-features", () => ({
@@ -21,6 +28,16 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ error: vi.fn() }),
+}));
+vi.mock("@/hooks/use-daemon-config", () => ({
+  useDaemonConfig: () => ({
+    config: {
+      agentSettingsProfiles: runtime.activeProfileId
+        ? { activeProfileId: runtime.activeProfileId, profiles: [] }
+        : undefined,
+      skills: { selection: { mode: "all" } },
+    },
+  }),
 }));
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -37,6 +54,7 @@ describe("host agent skills", () => {
   beforeEach(() => {
     runtime.connected = true;
     runtime.supported = true;
+    runtime.activeProfileId = undefined;
     runtime.clients.clear();
   });
 
@@ -68,5 +86,43 @@ describe("host agent skills", () => {
     const { result } = renderHook(() => useAgentSkills("old-host"), { wrapper });
     expect(result.current.supported).toBe(false);
     expect(client.getAgentSkillsStatus).not.toHaveBeenCalled();
+  });
+
+  it("reads and saves the settings profile captured before the host active profile changes", async () => {
+    runtime.activeProfileId = "coding";
+    const client = {
+      getAgentSkillsStatus: vi.fn(async () => ({
+        state: "up-to-date",
+        ops: [],
+        available: ["paseo"],
+        installed: ["paseo"],
+        selection: { mode: "custom" as const, skills: ["paseo"] },
+      })),
+      saveAgentSkillsSelection: vi.fn(async () => ({
+        state: "up-to-date",
+        ops: [],
+        available: ["paseo"],
+        installed: ["paseo"],
+        selection: { mode: "custom" as const, skills: ["paseo"] },
+        confirmationRequired: null,
+      })),
+    };
+    runtime.clients.set("host", client);
+
+    const { result } = renderHook(() => useAgentSkills("host"), { wrapper });
+    await waitFor(() =>
+      expect(result.current.status?.selection).toEqual({
+        mode: "custom",
+        skills: ["paseo"],
+      }),
+    );
+    runtime.activeProfileId = "reverse";
+    await result.current.saveSelection({ mode: "custom", skills: ["paseo"] });
+
+    expect(client.getAgentSkillsStatus).toHaveBeenCalledWith("coding");
+    expect(client.saveAgentSkillsSelection).toHaveBeenCalledWith(
+      { mode: "custom", skills: ["paseo"] },
+      { confirmedRemovals: [], profileId: "coding" },
+    );
   });
 });

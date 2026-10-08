@@ -6,6 +6,7 @@ import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 export interface PendingWorkspaceDraftSubmission {
+  settingsProfileId?: string;
   /** Already-running creation. Mounting the draft only observes its result. */
   agentCreation?: {
     result: Promise<AgentSnapshotPayload>;
@@ -28,6 +29,7 @@ export interface PendingWorkspaceDraftSubmission {
 }
 
 export interface PendingWorkspaceDraftSetup {
+  serverId: string;
   setup: WorkspaceDraftTabSetup;
   sourceDirectory?: string | null;
 }
@@ -38,6 +40,7 @@ interface WorkspaceDraftSubmissionState {
   creationByDraftId: Record<string, NonNullable<PendingWorkspaceDraftSubmission["agentCreation"]>>;
   setPending: (submission: PendingWorkspaceDraftSubmission) => void;
   setDraftSetup: (input: {
+    serverId: string;
     draftId: string;
     setup: WorkspaceDraftTabSetup;
     sourceDirectory?: string | null;
@@ -80,13 +83,13 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
           [submission.draftId]: submission,
         },
       })),
-    setDraftSetup: ({ draftId, setup, sourceDirectory }) => {
+    setDraftSetup: ({ draftId, setup, sourceDirectory, serverId }) => {
       const normalizedDraftId = normalizeDraftId(draftId);
       if (!normalizedDraftId) return;
       set((state) => ({
         setupByDraftId: {
           ...state.setupByDraftId,
-          [normalizedDraftId]: { setup, sourceDirectory: sourceDirectory ?? null },
+          [normalizedDraftId]: { setup, sourceDirectory: sourceDirectory ?? null, serverId },
         },
       }));
     },

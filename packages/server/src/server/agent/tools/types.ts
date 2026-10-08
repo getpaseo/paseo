@@ -37,6 +37,7 @@ export interface PaseoToolCatalog {
 
 export interface PaseoToolRuntimeContext {
   callerAgentId?: string;
+  browserToolsEnabled?: boolean;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;

@@ -94,6 +94,31 @@ describe("draft-store lifecycle", () => {
       version: 2,
     });
   });
+
+  it("prunes old empty active records while retaining whitespace and attachment-only drafts", () => {
+    const empty: DraftRecord = {
+      input: { text: "", attachments: [] },
+      lifecycle: "active",
+      updatedAt: 0,
+      version: 1,
+    };
+    const whitespace: DraftRecord = { ...empty, input: { text: "\n", attachments: [] } };
+    const attachmentOnly: DraftRecord = {
+      ...empty,
+      input: {
+        text: "",
+        attachments: [
+          { kind: "workspace_file", path: "README.md", selection: { kind: "whole_file" } },
+        ],
+      },
+    };
+    expect(
+      pruneFinalizedDraftRecords({
+        drafts: { empty, whitespace, attachmentOnly },
+        nowMs: 6 * 60 * 1000,
+      }),
+    ).toEqual({ whitespace, attachmentOnly });
+  });
 });
 
 describe("draft-store normalization", () => {

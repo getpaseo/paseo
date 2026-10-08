@@ -68,6 +68,7 @@ export interface SheetHeader {
   back?: SheetHeaderBack;
   leading?: ReactNode;
   actions?: ReactNode;
+  controls?: ReactNode;
   search?: SheetHeaderSearch;
 }
 
@@ -368,6 +369,7 @@ export function SheetHeaderView({
           </Pressable>
         ) : null}
       </View>
+      {header.controls}
       {search ? (
         <View style={styles.searchRow}>
           <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
@@ -396,7 +398,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
   const back = header.back;
   const handleBackPress = back?.onPress;
   const hasInlineRow = Boolean(handleBackPress || header.leading || header.actions);
-  if (!hasInlineRow && !header.search) return null;
+  if (!hasInlineRow && !header.search && !header.controls) return null;
   return (
     <View>
       {hasInlineRow ? (
@@ -427,6 +429,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
           {header.actions ? <View style={styles.headerActions}>{header.actions}</View> : null}
         </View>
       ) : null}
+      {header.controls}
       {header.search ? (
         <View style={styles.inlineSearchRow}>
           <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />

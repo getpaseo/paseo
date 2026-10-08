@@ -2559,6 +2559,12 @@ export const ko: TranslationResources = {
         save: "저장",
         emptyState: "아직 프로필이 없습니다. 특정 명령으로 터미널을 실행하려면 하나 추가하세요.",
       },
+      agentSettingsProfiles: {
+        promptHint: "이 프로필로 시작하는 새 채팅의 지침",
+        title: "설정 프로필",
+        defaultName: "기본",
+        manage: "프로필 관리",
+      },
       agentProfiles: {
         sectionTitle: "에이전트 프로필",
         unavailable: "에이전트 프로필을 관리하려면 이 호스트에 연결하세요",

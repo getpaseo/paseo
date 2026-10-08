@@ -46,6 +46,7 @@ export interface AgentProfilePicker {
 
 export interface UseAgentProfilePickerInput {
   serverId: string | null;
+  settingsProfileId?: string;
   /**
    * Providers this composer can actually run; pass a stable reference. A profile
    * naming anything else is hidden rather than shown as a row that cannot do
@@ -67,7 +68,7 @@ export function useAgentProfilePicker(
 ): AgentProfilePicker | null {
   const { serverId, availableProviders, target } = input;
   const { t } = useTranslation();
-  const { profiles, isSupported } = useAgentProfiles(serverId);
+  const { profiles, isSupported } = useAgentProfiles(serverId, input.settingsProfileId);
   // Profiles are host config, so their labels read from the host-wide catalog
   // rather than a workspace's. That is also the key the settings section uses,
   // so every composer on a host shares one query instead of adding its own.

@@ -64,4 +64,89 @@ describe("daemon agent skill selection", () => {
     expect(await store.isSet()).toBe(false);
     expect(loadPersistedConfig(root).agents?.skills).toBeUndefined();
   });
+
+  it("reads and saves the requested settings profile after another profile becomes active", async () => {
+    const { config, store } = await createStore();
+    const base = {
+      appendSystemPrompt: "",
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      agentProfiles: [],
+    };
+    config.patch({
+      agentSettingsProfiles: {
+        activeProfileId: "coding",
+        profiles: [
+          {
+            id: "coding",
+            name: "Coding",
+            settings: {
+              ...base,
+              skills: { selection: { mode: "custom", skills: ["paseo"] } },
+            },
+          },
+          {
+            id: "reverse",
+            name: "Reverse",
+            settings: {
+              ...base,
+              skills: { selection: { mode: "custom", skills: ["hexrays-ida"] } },
+            },
+          },
+        ],
+      },
+    });
+    expect(await store.get("coding")).toEqual({ mode: "custom", skills: ["paseo"] });
+    config.patch({
+      agentSettingsProfiles: { ...config.get().agentSettingsProfiles!, activeProfileId: "reverse" },
+    });
+    await store.set({ mode: "custom", skills: ["paseo", "paseo-loop"] }, "coding");
+
+    expect(
+      config.get().agentSettingsProfiles?.profiles.find((profile) => profile.id === "coding")
+        ?.settings.skills?.selection,
+    ).toEqual({ mode: "custom", skills: ["paseo", "paseo-loop"] });
+    expect(
+      config.get().agentSettingsProfiles?.profiles.find((profile) => profile.id === "reverse")
+        ?.settings.skills?.selection,
+    ).toEqual({ mode: "custom", skills: ["hexrays-ida"] });
+    expect(config.get().skills?.selection).toEqual({
+      mode: "custom",
+      skills: ["hexrays-ida"],
+    });
+  });
+
+  it("rejects a requested settings profile that was deleted", async () => {
+    const { config, store } = await createStore();
+    const settings = {
+      appendSystemPrompt: "",
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      agentProfiles: [],
+      skills: { selection: { mode: "all" as const } },
+    };
+    config.patch({
+      agentSettingsProfiles: {
+        activeProfileId: "coding",
+        profiles: [
+          { id: "coding", name: "Coding", settings },
+          { id: "deleted", name: "Deleted", settings },
+        ],
+      },
+    });
+    config.patch({
+      agentSettingsProfiles: {
+        activeProfileId: "coding",
+        profiles: config
+          .get()
+          .agentSettingsProfiles!.profiles.filter((profile) => profile.id !== "deleted"),
+      },
+    });
+
+    await expect(store.get("deleted")).rejects.toThrow("does not exist");
+    await expect(store.set({ mode: "all" }, "deleted")).rejects.toThrow("does not exist");
+    expect(config.get().agentSettingsProfiles?.profiles.map((profile) => profile.id)).toEqual([
+      "coding",
+    ]);
+  });
 });

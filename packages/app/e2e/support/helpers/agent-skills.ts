@@ -83,7 +83,9 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
       await mkdir(targets.agents, { recursive: true });
     },
     install: async (selection) => {
-      const result = await client.saveAgentSkillsSelection(selection, available);
+      const result = await client.saveAgentSkillsSelection(selection, {
+        confirmedRemovals: available,
+      });
       if (result.confirmationRequired) {
         throw new Error(`Unexpected removal confirmation: ${result.confirmationRequired.removals}`);
       }

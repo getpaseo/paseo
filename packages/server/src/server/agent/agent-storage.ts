@@ -1,5 +1,6 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
+import { AgentSettingsProfileSchema } from "@getpaseo/protocol/agent-settings-profile";
 import { z } from "zod";
 import type { Logger } from "pino";
 
@@ -27,6 +28,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .nullable()
       .optional(),
     systemPrompt: z.string().nullable().optional(),
+    settingsProfile: AgentSettingsProfileSchema.optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
   .nullable()
@@ -86,6 +88,7 @@ export type SerializableAgentConfig = Pick<
   | "providerOptions"
   | "toolPolicy"
   | "systemPrompt"
+  | "settingsProfile"
   | "mcpServers"
 >;
 

@@ -2587,6 +2587,12 @@ export const ptBR: TranslationResources = {
         emptyState:
           "Nenhum perfil ainda. Adicione um para abrir terminais com um comando específico.",
       },
+      agentSettingsProfiles: {
+        promptHint: "Instruções para novos chats com este perfil",
+        title: "Perfil de configurações",
+        defaultName: "Padrão",
+        manage: "Gerenciar perfis",
+      },
       agentProfiles: {
         sectionTitle: "Perfis de agente",
         unavailable: "Conecte-se a este host para gerenciar perfis de agente",

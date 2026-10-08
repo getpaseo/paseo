@@ -1,10 +1,25 @@
 import { spawn, execFileSync, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { connectDaemonClient } from "./daemon-client-loader";
 import { withDisabledE2ESpeechEnv } from "./speech-env";
 import { killProcessTree, spawnTsx } from "./spawn-node";
+
+const SHUTDOWN_REQUEST_TIMEOUT_MS = 5_000;
+const DAEMON_EXIT_TIMEOUT_MS = 10_000;
+
+interface ShutdownDaemonClient {
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  shutdownServer(options: { timeout: number }): Promise<unknown>;
+}
+
+interface GracefulShutdownAttempt {
+  cancelled: boolean;
+}
 
 export interface IsolatedHostDaemon {
   serverId: string;
@@ -82,6 +97,62 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
+}
+
+function isChildRunning(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+async function resolvesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function requestGracefulShutdown(
+  port: number,
+  serverId: string,
+  attempt: GracefulShutdownAttempt,
+): Promise<void> {
+  const client = await connectDaemonClient<ShutdownDaemonClient>({
+    clientIdPrefix: `isolated-daemon-shutdown-${serverId}`,
+    port,
+  });
+  try {
+    if (attempt.cancelled) return;
+    await client.shutdownServer({ timeout: SHUTDOWN_REQUEST_TIMEOUT_MS });
+  } finally {
+    await client.close();
+  }
+}
+
+async function stopOwnedDaemon(child: ChildProcess, port: number, serverId: string): Promise<void> {
+  if (!isChildRunning(child)) return;
+
+  // Listen first because an acknowledged shutdown may exit the supervisor immediately.
+  const exited = once(child, "exit");
+  const attempt: GracefulShutdownAttempt = { cancelled: false };
+  const shutdownRequested = await resolvesWithin(
+    requestGracefulShutdown(port, serverId, attempt),
+    SHUTDOWN_REQUEST_TIMEOUT_MS,
+  );
+  attempt.cancelled = !shutdownRequested;
+  if (shutdownRequested && (await resolvesWithin(exited, DAEMON_EXIT_TIMEOUT_MS))) return;
+
+  // Preserve the existing hard-stop behavior for unsupported/failed shutdown RPCs.
+  // Any failure here remains a teardown failure rather than being hidden.
+  if (isChildRunning(child)) await killProcessTree(child);
 }
 
 export async function startIsolatedHostDaemon(
@@ -218,7 +289,7 @@ export async function startIsolatedHostDaemon(
     close: async () => {
       if (closed) return;
       closed = true;
-      await killProcessTree(child);
+      await stopOwnedDaemon(child, port, serverId);
       if (!options.preserveHome) {
         await rm(paseoHome, { recursive: true, force: true });
       }

@@ -29,7 +29,7 @@ export interface SkillsSaveResult extends SkillsSnapshot {
 }
 
 export interface SkillsController {
-  status(): Promise<SkillsSnapshot>;
+  status(profileId?: string): Promise<SkillsSnapshot>;
   install(): Promise<SkillsSnapshot>;
   update(): Promise<SkillsSnapshot>;
   uninstall(): Promise<SkillsSnapshot>;
@@ -75,8 +75,8 @@ export function createSkillsController({
     return next;
   }
 
-  async function converge(apply: Converge): Promise<SkillsSnapshot> {
-    const selection = await selectionStore.get();
+  async function converge(apply: Converge, profileId?: string): Promise<SkillsSnapshot> {
+    const selection = await selectionStore.get(profileId);
     await recoverInterruptedSkillTransactions(resolveTargets(), selection);
     return { ...(await apply(resolveTargets(), selection)), selection };
   }
@@ -84,7 +84,9 @@ export function createSkillsController({
   async function saveSelection(request: unknown): Promise<SkillsSaveResult> {
     const targets = resolveTargets();
     const next = coerceSkillSelection(request);
-    const previous = await selectionStore.get();
+    const profileId =
+      isRecord(request) && typeof request.profileId === "string" ? request.profileId : undefined;
+    const previous = await selectionStore.get(profileId);
     await recoverInterruptedSkillTransactions(targets, previous);
     const confirmed = new Set(
       coerceSkillNames(isRecord(request) ? request.confirmedRemovals : null),
@@ -125,7 +127,7 @@ export function createSkillsController({
       // state; zero remaining operations is the invariant, not the label.
       if (status.ops.length === 0) {
         try {
-          await selectionStore.set(next);
+          await selectionStore.set(next, profileId);
         } catch (error) {
           await transaction.rollback();
           throw error;
@@ -159,7 +161,7 @@ export function createSkillsController({
   }
 
   return {
-    status: () => serialize(() => converge(getSkillsStatus)),
+    status: (profileId) => serialize(() => converge(getSkillsStatus, profileId)),
     install: () => serialize(() => converge(updateSkills)),
     update: () => serialize(() => converge(updateSkills)),
     uninstall: () => serialize(() => converge(uninstallSkills)),

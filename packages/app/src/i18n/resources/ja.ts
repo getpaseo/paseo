@@ -2573,6 +2573,12 @@ export const ja: TranslationResources = {
         emptyState:
           "プロファイルがまだありません。特定のコマンドでターミナルを起動するために追加してください。",
       },
+      agentSettingsProfiles: {
+        promptHint: "このプロファイルで開始する新しいチャットへの指示",
+        title: "設定プロファイル",
+        defaultName: "デフォルト",
+        manage: "プロファイル管理",
+      },
       agentProfiles: {
         sectionTitle: "エージェントプロファイル",
         unavailable: "エージェントプロファイルを管理するにはこのホストに接続してください",

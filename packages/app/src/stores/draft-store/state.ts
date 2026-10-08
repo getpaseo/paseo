@@ -6,7 +6,7 @@ import {
 import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
 
-export const DRAFT_STORE_VERSION = 5;
+export const DRAFT_STORE_VERSION = 6;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {
@@ -50,6 +50,7 @@ export function editDraftRecordText(
 export interface DraftStoreState {
   drafts: Record<string, DraftRecord>;
   createModalDraft: DraftRecord | null;
+  settingsProfileChoices: Record<string, Record<string, string>>;
 }
 
 export const AttachmentMetadataSchema = z.strictObject({
@@ -134,6 +135,7 @@ const DraftRecordSchema: z.ZodType<DraftRecord> = z.strictObject({
 export const DraftStoreStateSchema: z.ZodType<DraftStoreState> = z.strictObject({
   drafts: z.record(z.string(), DraftRecordSchema),
   createModalDraft: DraftRecordSchema.nullable(),
+  settingsProfileChoices: z.record(z.string(), z.record(z.string(), z.string())),
 });
 
 export function isAttachmentMetadata(value: unknown): value is AttachmentMetadata {
@@ -241,7 +243,12 @@ export function pruneFinalizedDraftRecords(input: {
   let changed = false;
   const next: Record<string, DraftRecord> = {};
   for (const [draftKey, record] of Object.entries(input.drafts)) {
-    if (record.lifecycle !== "active" && input.nowMs - record.updatedAt >= FINALIZED_DRAFT_TTL_MS) {
+    const isEmpty =
+      isCanonicalDraftInput(record.input) &&
+      record.input.text.length === 0 &&
+      record.input.attachments.length === 0;
+    const isFinalized = record.lifecycle !== "active" || isEmpty;
+    if (isFinalized && input.nowMs - record.updatedAt >= FINALIZED_DRAFT_TTL_MS) {
       changed = true;
       continue;
     }

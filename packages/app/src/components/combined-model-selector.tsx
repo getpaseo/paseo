@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -24,6 +24,7 @@ const foregroundMutedMapping = (theme: Theme) => ({
 function noop() {}
 
 interface CombinedModelSelectorProps {
+  settingsProfileControl?: ReactNode;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
@@ -66,6 +67,7 @@ interface CombinedModelSelectorProps {
 }
 
 export function CombinedModelSelector({
+  settingsProfileControl,
   providers,
   selectedProvider,
   selectedModel,
@@ -103,6 +105,10 @@ export function CombinedModelSelector({
     serverId,
   });
   const { prepareToOpen, reset } = browser;
+  const header = useMemo(
+    () => ({ ...browser.header, controls: settingsProfileControl }),
+    [browser.header, settingsProfileControl],
+  );
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -277,7 +283,7 @@ export function CombinedModelSelector({
         desktopLockWidth
         desktopFixedHeight={browser.desktopFixedHeight}
         desktopChildrenScrollEnabled={false}
-        header={browser.header}
+        header={header}
         mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
         mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
       >

@@ -1,3 +1,4 @@
+import type { AgentSettingsProfile } from "@getpaseo/protocol/agent-settings-profile";
 import type {
   AgentFeature,
   AgentFeatureSelect,
@@ -592,6 +593,9 @@ export interface AgentSessionConfig {
    * Mapped by each provider to its native instruction field.
    */
   systemPrompt?: string;
+  settingsProfileId?: string;
+  /** Settings captured at creation; changing or deleting the host profile does not change this chat. */
+  settingsProfile?: AgentSettingsProfile;
   /**
    * Daemon-level instructions appended at runtime. This is deliberately not
    * persisted into agent config so daemon setting changes apply cleanly.

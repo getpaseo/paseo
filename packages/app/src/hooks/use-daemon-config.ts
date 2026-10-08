@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 import { useReplicaQuery } from "@/data/query";
-import { daemonConfigQueryKey } from "@/data/daemon-config";
+import { daemonConfigQueryKey, scopeDaemonConfigPatch } from "@/data/daemon-config";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
 interface UseDaemonConfigResult {
@@ -35,13 +35,17 @@ export function useDaemonConfig(serverId: string | null): UseDaemonConfigResult 
   const patchConfig = useCallback(
     async (patch: MutableDaemonConfigPatch) => {
       if (!client) {
-        return undefined;
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const result = await client.patchDaemonConfig(patch);
+      const request = scopeDaemonConfigPatch({
+        patch,
+        settingsProfileId: configQuery.data?.agentSettingsProfiles?.activeProfileId,
+      });
+      const result = await client.patchDaemonConfig(request);
       queryClient.setQueryData(queryKey, result.config);
       return result.config;
     },
-    [client, queryClient, queryKey],
+    [client, configQuery.data?.agentSettingsProfiles?.activeProfileId, queryClient, queryKey, t],
   );
 
   return {

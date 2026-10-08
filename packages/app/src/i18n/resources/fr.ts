@@ -2605,6 +2605,12 @@ export const fr: TranslationResources = {
         emptyState:
           "Aucun profil pour le moment. Ajoutez-en un pour lancer des terminaux avec une commande précise.",
       },
+      agentSettingsProfiles: {
+        promptHint: "Instructions pour les nouveaux chats utilisant ce profil",
+        title: "Profil de paramètres",
+        defaultName: "Par défaut",
+        manage: "Gérer les profils",
+      },
       agentProfiles: {
         sectionTitle: "Profils d’agent",
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d’agent",

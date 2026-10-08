@@ -22,8 +22,11 @@ type EditorRequest =
  * The model chooser's create/edit surface. Owns the write path so call sites
  * never see `saveProfiles` or construct profile records themselves.
  */
-export function useAgentProfileEditor(serverId: string | null): AgentProfileEditorControls {
-  const { profiles, saveProfiles } = useAgentProfiles(serverId);
+export function useAgentProfileEditor(
+  serverId: string | null,
+  settingsProfileId?: string,
+): AgentProfileEditorControls {
+  const { profiles, saveProfiles } = useAgentProfiles(serverId, settingsProfileId);
   const [request, setRequest] = useState<EditorRequest | null>(null);
 
   const openCreateFromModel = useCallback((seed: AgentProfileSeed) => {

@@ -11,6 +11,10 @@ const { asyncStorage } = vi.hoisted(() => ({
   asyncStorage: new Map<string, string>(),
 }));
 
+vi.mock("@/hooks/use-daemon-config", () => ({
+  useDaemonConfig: () => ({ config: null }),
+}));
+
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
 });
@@ -147,6 +151,7 @@ describe("useAgentInputDraft live contract", () => {
     useDraftStore.setState({
       drafts: {},
       createModalDraft: null,
+      settingsProfileChoices: {},
       attachmentFocusRequestByDraftKey: {},
     });
   });

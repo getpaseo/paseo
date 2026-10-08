@@ -661,14 +661,23 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return parentAgent;
   };
 
-  const resolveInheritedProviderConfig = (
+  const resolveInheritedAgentConfig = (
     selectedProvider: string,
-  ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
+  ): Pick<AgentSessionConfig, "providerOptions" | "settingsProfile"> | undefined => {
     const callerAgent = resolveCallerAgent();
-    if (callerAgent?.provider !== selectedProvider || !callerAgent.config?.providerOptions) {
+    if (!callerAgent) {
       return undefined;
     }
-    return { providerOptions: callerAgent.config.providerOptions };
+    const settingsProfile = callerAgent.config?.settingsProfile;
+    const providerOptions =
+      callerAgent.provider === selectedProvider ? callerAgent.config?.providerOptions : undefined;
+    if (!settingsProfile && !providerOptions) {
+      return undefined;
+    }
+    return {
+      ...(settingsProfile ? { settingsProfile: structuredClone(settingsProfile) } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
+    };
   };
 
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
@@ -1460,7 +1469,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const inheritedConfig = resolveInheritedAgentConfig(selectedProvider);
       const {
         snapshot,
         background: createdInBackground,
@@ -2980,7 +2989,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async () => {
-      const profiles = daemonConfigStore?.get().agentProfiles ?? [];
+      const profiles =
+        (callerAgentId
+          ? agentManager.getSettingsProfile(callerAgentId)?.settings.agentProfiles
+          : undefined) ??
+        daemonConfigStore?.get().agentProfiles ??
+        [];
       return {
         content: [],
         structuredContent: ensureValidJson({ profiles }),

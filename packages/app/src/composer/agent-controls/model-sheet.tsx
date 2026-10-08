@@ -24,6 +24,7 @@ const FIXED_MODEL_VIEWPORT_HEIGHT =
   MODEL_LIST_TOP_INSET + MODEL_ROW_STRIDE * MODEL_VIEWPORT_VISIBLE_ROWS;
 
 interface CompactModelSheetProps {
+  settingsProfileControl?: ReactNode;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
@@ -76,6 +77,7 @@ function resolveModelSheetProfileActions(
 }
 
 export function CompactModelSheet({
+  settingsProfileControl,
   providers,
   selectedProvider,
   selectedModel,
@@ -134,6 +136,7 @@ export function CompactModelSheet({
   const rootHeader = useMemo(
     () => ({
       ...rootBrowser.header,
+      controls: settingsProfileControl,
       title: t("modelSelector.selectModel"),
       search:
         rootBrowser.header.search && !canSwitchProvider
@@ -143,7 +146,7 @@ export function CompactModelSheet({
             }
           : rootBrowser.header.search,
     }),
-    [canSwitchProvider, rootBrowser.header, t],
+    [canSwitchProvider, rootBrowser.header, settingsProfileControl, t],
   );
 
   const open = useCallback(() => {

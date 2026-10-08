@@ -2548,6 +2548,12 @@ export const ar: TranslationResources = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentSettingsProfiles: {
+        promptHint: "تعليمات للمحادثات الجديدة التي تستخدم هذا الملف",
+        title: "ملف الإعدادات",
+        defaultName: "الافتراضي",
+        manage: "إدارة الملفات",
+      },
       agentProfiles: {
         sectionTitle: "ملفات تعريف الوكيل",
         unavailable: "اتصل بهذا المضيف لإدارة ملفات تعريف الوكيل",

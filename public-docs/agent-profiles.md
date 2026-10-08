@@ -23,6 +23,36 @@ Save the settings you use together as a named profile. Choose **UI work**, **Pla
 
 Profiles are saved on that host. The available settings depend on the provider and model you choose.
 
+## Save general agent settings
+
+At the top of **Settings → your host → Agents**, use **Settings profile** to switch
+between named system prompts, Paseo/browser tool settings, agent profile lists and
+orchestration skill selections. **New profile** copies
+the current settings. Select the new profile, then edit the system prompt and tool
+switches below it. Your changes are saved to that profile. Rename or remove a profile
+under **Manage profiles**; at least one profile remains.
+
+Each settings profile owns its provider/model profile list. Switching loads that list
+and its selected orchestration skills. Skill files live in the providers’ shared
+directories; use the existing skill install/update actions to apply a selection to disk.
+Switching profiles alone does not install or delete skill files.
+
+When starting a chat, open the model menu and choose a settings profile from the tabs
+at the top. Profiles belong to the host running the chat and are available from any
+connected device. The selected host's profile is the default.
+Each chat keeps the settings captured when it starts,
+so you can run a reverse engineering chat alongside a coding or review chat. Editing,
+switching or removing a host profile does not change existing chats. The captured
+profile name appears inside the chat's model menu.
+
+Imported provider sessions also capture the host's selected settings profile.
+Subagents created through a chat's Paseo tools inherit that chat's captured profile,
+even if the host default has since changed.
+
+Saving settings or model presets targets the profile you were editing. If another
+client changed the profiles while you were managing them, Paseo asks you to reload
+before applying an outdated change.
+
 ## Apply settings in one click
 
 When creating an agent, open the model picker and select a saved profile under **Profiles**. Paseo applies its settings together; you can still adjust them before sending your prompt.

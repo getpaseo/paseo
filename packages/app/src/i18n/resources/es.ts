@@ -2604,6 +2604,12 @@ export const es: TranslationResources = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentSettingsProfiles: {
+        promptHint: "Instrucciones para nuevos chats con este perfil",
+        title: "Perfil de ajustes",
+        defaultName: "Predeterminado",
+        manage: "Gestionar perfiles",
+      },
       agentProfiles: {
         sectionTitle: "Perfiles de agente",
         unavailable: "Conéctese a este host para administrar perfiles de agente",

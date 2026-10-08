@@ -11,8 +11,8 @@ import {
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import {
   buildDraftAgentControls,
-  hasDraftContent,
   resolveDraftKey,
+  resolveDraftSettingsProfileId,
   type DraftKeyInput,
 } from "@/composer/draft/input-draft-core";
 import {
@@ -25,6 +25,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { isWeb } from "@/constants/platform";
 
 type AttachmentUpdater =
@@ -33,6 +34,7 @@ type AttachmentUpdater =
 
 interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
+  initialSettingsProfileServerId?: string;
   initialValues?: CreateAgentInitialValues;
   initialFeatureValues?: Record<string, unknown>;
   isVisible?: boolean;
@@ -45,6 +47,7 @@ interface UseAgentInputDraftInput {
 }
 
 type DraftComposerState = UseAgentFormStateResult & {
+  settingsProfileId?: string;
   workingDir: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
@@ -83,6 +86,32 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         selectedServerId: formState.selectedServerId,
       }),
     [formState.selectedServerId, input.draftKey],
+  );
+  const { config: hostConfig } = useDaemonConfig(formState.selectedServerId);
+  const settingsProfileChoice = useDraftStore(
+    (state) =>
+      state.settingsProfileChoices[draftKey]?.[formState.selectedServerId ?? ""] ?? undefined,
+  );
+  const initialValues = composerOptions?.initialValues;
+  const settingsProfileId = resolveDraftSettingsProfileId({
+    selectedServerId: formState.selectedServerId,
+    initialServerId:
+      composerOptions?.initialSettingsProfileServerId ?? composerOptions?.initialServerId,
+    settingsProfileId: initialValues?.settingsProfileId,
+    profileChoice: settingsProfileChoice,
+    bundle: hostConfig?.agentSettingsProfiles,
+  });
+  const selectSettingsProfile = useCallback(
+    (id: string) => {
+      const serverId = formState.selectedServerId;
+      if (!serverId) return;
+      useDraftStore.getState().setDraftSettingsProfileChoice({
+        draftKey,
+        serverId,
+        settingsProfileId: id,
+      });
+    },
+    [draftKey, formState.selectedServerId],
   );
   const attachments = useDraftStore(
     useShallow((state) =>
@@ -140,10 +169,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       const store = useDraftStore.getState();
       const current = store.getDraftInput(draftKey) ?? { text: "", attachments: [] };
       const next = update(current);
-      if (!hasDraftContent(next)) {
-        store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
-        return;
-      }
       store.saveDraftInput({ draftKey, draft: next });
     },
     [draftKey],
@@ -312,6 +337,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
     return {
       ...formState,
+      settingsProfileId,
       workingDir,
       effectiveModelId,
       effectiveThinkingOptionId,
@@ -321,10 +347,14 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         features: draftFeatures,
         onSetFeature: setDraftFeatureValue,
         onApplyAgentProfile: applyDraftAgentProfile,
+        settingsProfileId,
+        onSelectSettingsProfile: selectSettingsProfile,
       }),
       commandDraft,
     };
   }, [
+    settingsProfileId,
+    selectSettingsProfile,
     commandDraft,
     composerOptions,
     effectiveModelId,

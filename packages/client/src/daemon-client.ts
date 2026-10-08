@@ -5432,10 +5432,14 @@ export class DaemonClient {
     return payload.entries;
   }
 
-  async getAgentSkillsStatus(): Promise<AgentSkillsStatus> {
+  async getAgentSkillsStatus(profileId?: string): Promise<AgentSkillsStatus> {
     const requestId = this.createRequestId();
     return this.sendCorrelatedSessionRequest({
-      message: { type: "agent.skills.get_status.request", requestId },
+      message: {
+        type: "agent.skills.get_status.request",
+        requestId,
+        ...(profileId ? { profileId } : {}),
+      },
       responseType: "agent.skills.get_status.response",
     });
   }
@@ -5458,15 +5462,20 @@ export class DaemonClient {
 
   async saveAgentSkillsSelection(
     selection: AgentSkillSelection,
-    confirmedRemovals?: readonly string[],
+    options: {
+      confirmedRemovals?: readonly string[];
+      profileId?: string;
+    } = {},
   ): Promise<AgentSkillsSaveResult> {
     const requestId = this.createRequestId();
+    const { confirmedRemovals, profileId } = options;
     return this.sendCorrelatedSessionRequest({
       message: {
         type: "agent.skills.save_selection.request",
         requestId,
         selection,
         ...(confirmedRemovals ? { confirmedRemovals: [...confirmedRemovals] } : {}),
+        ...(profileId ? { profileId } : {}),
       },
       responseType: "agent.skills.save_selection.response",
     });

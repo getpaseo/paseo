@@ -116,6 +116,30 @@ function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "revie
 }
 
 describe("draft-store migration", () => {
+  it("preserves profile choices while defaulting older draft stores to none", async () => {
+    const ports = { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1 };
+
+    await expect(
+      migratePersistedState({ drafts: {}, createModalDraft: null }, ports),
+    ).resolves.toMatchObject({ settingsProfileChoices: {} });
+    await expect(
+      migratePersistedState(
+        {
+          drafts: {},
+          createModalDraft: null,
+          settingsProfileChoices: {
+            "new-workspace": { "host-1": "reverse" },
+          },
+        },
+        ports,
+      ),
+    ).resolves.toMatchObject({
+      settingsProfileChoices: {
+        "new-workspace": { "host-1": "reverse" },
+      },
+    });
+  });
+
   it("keeps a supported legacy draft for migration", async () => {
     const backing = createMemoryStorage();
     const legacyState = {

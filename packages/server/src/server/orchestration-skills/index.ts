@@ -11,12 +11,12 @@ import { resolveSkillTargets } from "./internal/paths.js";
 import { createSkillSelectionStore } from "./internal/selection-store.js";
 
 export interface OrchestrationSkills {
-  getStatus(): Promise<SkillsSnapshot>;
+  getStatus(profileId?: string): Promise<SkillsSnapshot>;
   reconcile(): Promise<SkillsSnapshot>;
   uninstall(): Promise<SkillsSnapshot>;
   saveSelection(
     selection: AgentSkillSelection,
-    confirmedRemovals?: readonly string[],
+    options?: { confirmedRemovals?: readonly string[]; profileId?: string },
   ): Promise<SkillsSaveResult>;
   importLegacySelectionIfUnset(selection: AgentSkillSelection): Promise<{
     imported: boolean;
@@ -34,11 +34,15 @@ export function createOrchestrationSkills(
     selectionStore: createSkillSelectionStore(configStore),
   });
   return {
-    getStatus: () => controller.status(),
+    getStatus: (profileId) => controller.status(profileId),
     reconcile: () => controller.update(),
     uninstall: () => controller.uninstall(),
-    saveSelection: (selection, confirmedRemovals = []) =>
-      controller.save({ ...selection, confirmedRemovals }),
+    saveSelection: (selection, options = {}) =>
+      controller.save({
+        ...selection,
+        confirmedRemovals: options.confirmedRemovals ?? [],
+        ...(options.profileId ? { profileId: options.profileId } : {}),
+      }),
     importLegacySelectionIfUnset: (selection) => controller.importLegacySelectionIfUnset(selection),
     autoUpdate: () => controller.autoUpdate(),
   };

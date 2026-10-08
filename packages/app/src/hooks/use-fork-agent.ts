@@ -142,6 +142,11 @@ export function useForkAgent(
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const draftSetup = buildForkDraftSetup(agent);
+      if (draftSetup) {
+        draftSetup.settingsProfileId = useSessionStore
+          .getState()
+          .sessions[serverId]?.agents.get(agentId)?.settingsProfileId;
+      }
       const prepareForkDraft = async () => {
         const draftId = generateDraftId();
         const payload = await client.buildAgentForkContext(agentId, boundary);
@@ -177,6 +182,7 @@ export function useForkAgent(
         agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
       if (draftSetup) {
         useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+          serverId,
           draftId,
           setup: draftSetup,
           sourceDirectory,

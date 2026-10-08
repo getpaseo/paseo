@@ -3433,6 +3433,69 @@ describe("create_agent MCP tool", () => {
     }
   });
 
+  it("inherits the caller's captured settings profile after the host profile changes", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-settings-profile-inherit-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const reverseProfile = {
+      id: "reverse",
+      name: "Reverse engineering",
+      settings: {
+        appendSystemPrompt: "Analyze binaries.",
+        mcp: { injectIntoAgents: true },
+        browserTools: { enabled: true },
+      },
+    };
+    const codingProfile = {
+      id: "coding",
+      name: "Coding",
+      settings: {
+        appendSystemPrompt: "Write tested code.",
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+      },
+    };
+    const profiles = new Map([
+      [reverseProfile.id, reverseProfile],
+      [codingProfile.id, codingProfile],
+    ]);
+    let activeProfile = reverseProfile;
+    const agentManager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      resolveSettingsProfile: (id) => profiles.get(id ?? activeProfile.id),
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd, settingsProfileId: reverseProfile.id },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      profiles.delete(reverseProfile.id);
+      activeProfile = codingProfile;
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const result = await registeredTool(server, "create_agent").handler({
+        ...subagentCurrentWorkspace(),
+        title: "Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+      });
+
+      const childId = z.object({ agentId: z.string() }).parse(result.structuredContent).agentId;
+      expect((await storage.get(childId))?.config?.settingsProfile).toEqual(reverseProfile);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
   it("delegates MCP injection to AgentManager and passes through an undefined agent ID", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({

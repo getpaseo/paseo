@@ -3,6 +3,7 @@ import {
   savePersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
+import { isDeepStrictEqual } from "node:util";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import {
   MutableDaemonConfigSchema,
@@ -28,9 +29,134 @@ interface SupportedMutableConfigPatch {
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
+  agentSettingsProfiles?: MutableDaemonConfig["agentSettingsProfiles"];
+  agentSettingsProfilePatch?: MutableDaemonConfigPatch["agentSettingsProfilePatch"];
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
+}
+
+function normalizeAgentSettingsProfileBundle(
+  current: MutableDaemonConfig,
+  bundle: NonNullable<MutableDaemonConfig["agentSettingsProfiles"]>,
+): NonNullable<MutableDaemonConfig["agentSettingsProfiles"]> {
+  // COMPAT(agentSettingsProfileScope): development profiles initially saved
+  // only prompt/tools. Keep the former shared lists in Default; remove after 2027-04-05.
+  const legacyOwner =
+    bundle.profiles.find((profile) => profile.id === "default")?.id ?? bundle.activeProfileId;
+  return {
+    ...bundle,
+    profiles: bundle.profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      settings: {
+        ...profile.settings,
+        agentProfiles:
+          profile.settings.agentProfiles ??
+          (profile.id === legacyOwner ? (current.agentProfiles ?? []) : []),
+        skills: profile.settings.skills ?? {
+          selection:
+            profile.id === legacyOwner
+              ? (current.skills?.selection ?? { mode: "all" as const })
+              : { mode: "custom" as const, skills: [] },
+        },
+      },
+    })),
+  };
+}
+
+function applyAgentSettingsProfileSettingsPatch(
+  bundle: NonNullable<MutableDaemonConfig["agentSettingsProfiles"]>,
+  patch: MutableDaemonConfigPatch["agentSettingsProfilePatch"],
+): NonNullable<MutableDaemonConfig["agentSettingsProfiles"]> {
+  if (!patch) return bundle;
+  const profileIndex = bundle.profiles.findIndex((profile) => profile.id === patch.profileId);
+  if (profileIndex < 0) throw new Error("Agent settings profile does not exist");
+  const profile = bundle.profiles[profileIndex];
+  const { profileId: _profileId, ...settingsPatch } = patch;
+  const profiles = [...bundle.profiles];
+  profiles[profileIndex] = {
+    ...profile,
+    settings: { ...profile.settings, ...settingsPatch },
+  };
+  return { ...bundle, profiles };
+}
+
+function requireActiveAgentSettingsProfile(
+  bundle: NonNullable<MutableDaemonConfig["agentSettingsProfiles"]>,
+) {
+  const active = bundle.profiles.find((profile) => profile.id === bundle.activeProfileId);
+  if (!active) throw new Error("The active agent settings profile does not exist");
+  if (new Set(bundle.profiles.map((profile) => profile.id)).size !== bundle.profiles.length) {
+    throw new Error("Agent settings profile IDs must be unique");
+  }
+  if (bundle.profiles.some((profile) => !profile.name.trim())) {
+    throw new Error("Agent settings profile names must not be blank");
+  }
+  return active;
+}
+
+export class AgentSettingsProfileConflictError extends Error {
+  readonly code = "AGENT_SETTINGS_PROFILE_CONFLICT";
+
+  constructor() {
+    super("Agent settings profiles changed. Reload the settings and try again.");
+    this.name = "AgentSettingsProfileConflictError";
+  }
+}
+
+function resolveAgentSettingsProfilePatch(
+  current: MutableDaemonConfig,
+  patch: SupportedMutableConfigPatch,
+): SupportedMutableConfigPatch {
+  const incoming = patch.agentSettingsProfiles ?? current.agentSettingsProfiles;
+  if (!incoming) {
+    if (patch.agentSettingsProfilePatch) {
+      throw new Error("Agent settings profile does not exist");
+    }
+    return patch;
+  }
+  const bundle = applyAgentSettingsProfileSettingsPatch(
+    normalizeAgentSettingsProfileBundle(current, incoming),
+    patch.agentSettingsProfilePatch,
+  );
+  const active = requireActiveAgentSettingsProfile(bundle);
+  const updatesActiveProfile = patch.agentSettingsProfilePatch?.profileId === active.id;
+  const base = patch.agentSettingsProfiles || updatesActiveProfile ? active.settings : current;
+  const settings = {
+    appendSystemPrompt: patch.appendSystemPrompt ?? base.appendSystemPrompt,
+    mcp: { injectIntoAgents: patch.mcp?.injectIntoAgents ?? base.mcp.injectIntoAgents },
+    browserTools: { enabled: patch.browserTools?.enabled ?? base.browserTools.enabled },
+    agentProfiles: patch.agentProfiles ?? base.agentProfiles ?? [],
+    skills: {
+      selection: patch.skills?.selection ?? base.skills?.selection ?? { mode: "all" as const },
+    },
+  };
+  if (
+    [
+      patch.agentSettingsProfiles,
+      patch.agentSettingsProfilePatch,
+      patch.appendSystemPrompt,
+      patch.mcp,
+      patch.browserTools,
+      patch.agentProfiles,
+      patch.skills,
+    ].every((value) => value === undefined)
+  )
+    return patch;
+  // Keep the ordinary settings as the live projection, so existing clients and
+  // runtime owners use the same config path when a profile changes.
+  const { agentSettingsProfilePatch: _agentSettingsProfilePatch, ...rest } = patch;
+  return {
+    ...rest,
+    ...settings,
+    agentSettingsProfiles: {
+      ...bundle,
+      profiles: bundle.profiles.map((profile) =>
+        profile.id === active.id ? { id: profile.id, name: profile.name, settings } : profile,
+      ),
+    },
+  };
 }
 
 interface LoggerLike {
@@ -183,6 +309,7 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
+  "daemon.agentSettingsProfiles",
   "app.baseUrl",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
@@ -206,6 +333,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
+  ["daemon.agentSettingsProfiles", "agentSettingsProfiles"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
@@ -274,6 +402,12 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...(patch.agentSettingsProfiles !== undefined
+      ? { agentSettingsProfiles: patch.agentSettingsProfiles }
+      : {}),
+    ...(patch.agentSettingsProfilePatch !== undefined
+      ? { agentSettingsProfilePatch: patch.agentSettingsProfilePatch }
+      : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
   };
@@ -332,8 +466,13 @@ export class DaemonConfigStore {
   ) {
     this.paseoHome = paseoHome;
     this.logger = getLogger(logger);
+    const profilePatch = resolveAgentSettingsProfilePatch(initial, {
+      agentSettingsProfiles: initial.agentSettingsProfiles,
+    });
     this.current = MutableDaemonConfigSchema.parse({
       ...initial,
+      ...profilePatch,
+      mcp: { ...initial.mcp, ...profilePatch.mcp },
       relay: initial.relay ?? { enabled: true },
     });
     this.relayEnabledMutable = options.relayEnabledMutable ?? true;
@@ -347,7 +486,15 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
+    const { expectedAgentSettingsProfiles, ...request } =
+      MutableDaemonConfigPatchSchema.parse(partial);
+    if (
+      expectedAgentSettingsProfiles !== undefined &&
+      !isDeepStrictEqual(expectedAgentSettingsProfiles, this.current.agentSettingsProfiles ?? null)
+    ) {
+      throw new AgentSettingsProfileConflictError();
+    }
+    const parsedPatch = pickSupportedPatchFields(request);
     return this.applySupportedPatch(parsedPatch);
   }
 
@@ -361,11 +508,14 @@ export class DaemonConfigStore {
         "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
       );
     }
-    const { removeProviders = [], ...configPatch } = parsedPatch;
+    const { removeProviders = [], ...configPatch } = resolveAgentSettingsProfilePatch(
+      this.current,
+      parsedPatch,
+    );
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
-    if (parsedPatch.skills?.selection !== undefined) {
-      merged.skills = { selection: parsedPatch.skills.selection };
+    if (configPatch.skills?.selection !== undefined) {
+      merged.skills = { selection: configPatch.skills.selection };
     }
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
     const next = MutableDaemonConfigSchema.parse(
@@ -410,8 +560,13 @@ export class DaemonConfigStore {
     const resolved = this.reloadSource.resolve(persisted);
     // Plugin source changes require the plugin lifecycle operation or a daemon
     // restart. The global switch is independently reloadable.
+    const profilePatch = resolveAgentSettingsProfilePatch(resolved.mutable, {
+      agentSettingsProfiles: resolved.mutable.agentSettingsProfiles,
+    });
     const desired = MutableDaemonConfigSchema.parse({
       ...resolved.mutable,
+      ...profilePatch,
+      mcp: { ...resolved.mutable.mcp, ...profilePatch.mcp },
       plugins: this.current.plugins,
     });
     const changedSinceLastApply = diffPaths(this.lastKnownPersisted, persisted);
@@ -661,5 +816,7 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  if (patch.agentSettingsProfiles !== undefined)
+    next.agentSettingsProfiles = patch.agentSettingsProfiles;
   return Object.keys(next).length > 0 ? next : undefined;
 }

@@ -7,8 +7,10 @@ export function buildWorkspaceDraftAgentConfig(input: {
   model?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  settingsProfileId?: string;
 }): AgentSessionConfig {
   return {
+    settingsProfileId: input.settingsProfileId,
     provider: input.provider,
     cwd: input.cwd,
     ...(input.modeId ? { modeId: input.modeId } : {}),

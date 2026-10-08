@@ -2675,6 +2675,12 @@ export const en = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentSettingsProfiles: {
+        promptHint: "Instructions for new chats using this profile",
+        title: "Settings profile",
+        defaultName: "Default",
+        manage: "Manage profiles",
+      },
       agentProfiles: {
         sectionTitle: "Agent profiles",
         unavailable: "Connect to this host to manage agent profiles",

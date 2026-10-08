@@ -2520,6 +2520,12 @@ export const zhCN: TranslationResources = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentSettingsProfiles: {
+        promptHint: "使用此配置的新聊天的指令",
+        title: "设置配置",
+        defaultName: "默认",
+        manage: "管理配置",
+      },
       agentProfiles: {
         sectionTitle: "Agent 配置",
         unavailable: "连接到这个 Host 以管理 Agent 配置",
