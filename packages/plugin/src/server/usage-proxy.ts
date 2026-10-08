@@ -1,5 +1,5 @@
 import { request as httpRequest, type ClientRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { connect as tcpConnect, isIP } from "node:net";
 import type { Duplex } from "node:stream";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
@@ -240,20 +240,26 @@ function readResponse(response: IncomingMessage): Promise<Response> {
     });
     response.once("end", () => {
       if (settled) return;
-      settled = true;
       const status = response.statusCode ?? 0;
       if (status < 200 || status > 599) {
+        settled = true;
         reject(new Error(`Proxy returned invalid status ${status}`));
         return;
       }
-      const noBody = status === 204 || status === 304;
-      resolve(
-        new Response(noBody ? null : new Uint8Array(Buffer.concat(chunks, size)), {
+      try {
+        // Fetch treats 204, 205, and 304 as null-body statuses. Passing even an
+        // empty Uint8Array to Response for these statuses throws synchronously.
+        const noBody = status === 204 || status === 205 || status === 304;
+        const result = new Response(noBody ? null : new Uint8Array(Buffer.concat(chunks, size)), {
           status,
           statusText: response.statusMessage ?? "",
           headers: responseHeaders(response),
-        }),
-      );
+        });
+        settled = true;
+        resolve(result);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   });
 }
@@ -365,6 +371,16 @@ function secureTargetSocket(socket: Duplex, target: URL, signal: AbortSignal): P
   });
 }
 
+function singleSocketHttpsAgent(socket: TLSSocket): HttpsAgent {
+  const agent = new HttpsAgent({ keepAlive: false, maxSockets: 1 });
+  const createConnection: typeof agent.createConnection = (_options, callback) => {
+    callback?.(null, socket);
+    return socket;
+  };
+  agent.createConnection = createConnection;
+  return agent;
+}
+
 async function requestHttpTargetThroughProxy(
   target: URL,
   proxy: URL,
@@ -401,8 +417,10 @@ async function requestHttpsTargetThroughProxy(
 ): Promise<Response> {
   const tunnel = await connectTunnel(proxy, target, signal);
   let secure: TLSSocket | null = null;
+  let agent: HttpsAgent | null = null;
   try {
     secure = await secureTargetSocket(tunnel, target, signal);
+    agent = singleSocketHttpsAgent(secure);
     const headers = targetHeaders(target, init);
     if (body && !headers.has("content-length")) headers.set("content-length", String(body.length));
     const hostname = stripIpv6Brackets(target.hostname);
@@ -414,13 +432,13 @@ async function requestHttpsTargetThroughProxy(
         method: (init.method ?? "GET").toUpperCase(),
         path: `${target.pathname}${target.search}` || "/",
         headers: headersObject(headers),
-        agent: false,
+        agent,
         signal,
-        createConnection: () => secure!,
       },
       body,
     );
   } finally {
+    agent?.destroy();
     secure?.destroy();
     tunnel.destroy();
   }
