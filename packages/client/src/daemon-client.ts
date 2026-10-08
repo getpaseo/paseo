@@ -13,6 +13,7 @@ import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   AgentCreateFailedStatusPayloadSchema,
   AgentCreatedStatusPayloadSchema,
@@ -1127,6 +1128,25 @@ function getTransportFrameSize(frame: string | Uint8Array | ArrayBuffer): number
   return frame.byteLength;
 }
 
+function assertTransportFrameFits(frame: string | Uint8Array | ArrayBuffer): void {
+  if (typeof frame !== "string") {
+    if (frame.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES)
+      throw messageTooLargeError(frame.byteLength);
+    return;
+  }
+  // UTF-8 needs at most three bytes per UTF-16 unit, so only a string near the limit is measured.
+  if (frame.length * 3 <= MAX_WEBSOCKET_MESSAGE_BYTES) return;
+  const size = new TextEncoder().encode(frame).byteLength;
+  if (size > MAX_WEBSOCKET_MESSAGE_BYTES) throw messageTooLargeError(size);
+}
+
+function messageTooLargeError(size: number): Error {
+  const toMiB = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
+  return new Error(
+    `Message is too large to send (${toMiB(size)} MiB). The limit is ${toMiB(MAX_WEBSOCKET_MESSAGE_BYTES)} MiB, so send fewer or smaller attachments.`,
+  );
+}
+
 function describeInboundTransportFrame(
   frame: unknown,
   rawBytes: Uint8Array | null,
@@ -1743,6 +1763,8 @@ export class DaemonClient {
     if (!this.transport) {
       throw new DaemonConnectionError("Transport not connected");
     }
+    // The daemon closes the connection on an oversized message, and creations resubmit on reconnect.
+    assertTransportFrameFits(frame);
     const isOpen = this.beginTraceSection("paseo.ws.frame.outbound", {
       kind: typeof frame === "string" ? "text" : "binary",
       size: String(getTransportFrameSize(frame)),

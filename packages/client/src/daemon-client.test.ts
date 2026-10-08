@@ -7325,3 +7325,29 @@ test("usage request timeout detaches its update listener", async () => {
     vi.useRealTimers();
   }
 });
+
+test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "message_limit_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const mib = 1024 * 1024;
+
+  // "é" is one UTF-16 unit but two UTF-8 bytes, so this text is ~98 MiB on the wire.
+  void client.sendMessage("agent-1", "é".repeat(49 * mib)).catch(() => undefined);
+  expect(mock.sent).toHaveLength(1);
+
+  // ~60M characters is under the 100 MiB limit; ~120 MiB of UTF-8 is over it.
+  await expect(client.sendMessage("agent-1", "é".repeat(60 * mib))).rejects.toThrow(
+    "Message is too large to send (120.0 MiB). The limit is 100.0 MiB",
+  );
+  expect(mock.sent).toHaveLength(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});
