@@ -8258,16 +8258,11 @@ test("admitted agent work keeps an idle claim busy, and a claim refuses new admi
   });
 
   try {
-    let finishWork!: () => void;
-    const work = manager.runAdmittedAgentWork(
-      () =>
-        new Promise<void>((resolve) => {
-          finishWork = resolve;
-        }),
-    );
+    const pendingWork = deferred<void>();
+    const work = manager.runAdmittedAgentWork(() => pendingWork.promise);
     expect(manager.tryClaimIdleShutdown()).toBe(false);
 
-    finishWork();
+    pendingWork.resolve();
     await work;
     expect(manager.tryClaimIdleShutdown()).toBe(true);
     await expect(manager.runAdmittedAgentWork(async () => "after claim")).rejects.toBeInstanceOf(

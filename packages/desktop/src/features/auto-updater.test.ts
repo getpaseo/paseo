@@ -166,11 +166,11 @@ describe("downloadAndInstallUpdate", () => {
       releaseChannel: "stable",
       signal: controller.signal,
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(passed).toBe(token));
+
     controller.abort();
 
     await expect(pending).resolves.toMatchObject({ installed: false, cancelled: true });
-    expect(passed).toBe(token);
     expect(token.cancelled).toBe(true);
   });
 });
