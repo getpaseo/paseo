@@ -2481,6 +2481,7 @@ export const DirectorySuggestionsRequestSchema = z.object({
 
 export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
+  includeAll: z.boolean().optional(),
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),
   requestId: z.string(),
@@ -2657,6 +2658,8 @@ export const WorkspaceCreateRequestSchema = z.object({
       // the supported client floor is >= v0.2.0.
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
+      // Reject name conflicts instead of choosing a different branch or path.
+      exactNames: z.boolean().optional(),
     }),
   ]),
 });
@@ -3634,6 +3637,7 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        workspaceWorktreeOptions: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.

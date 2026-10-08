@@ -432,7 +432,7 @@ export async function handlePaseoWorktreeListRequest(
   try {
     const worktrees = await listPaseoWorktreesCommand(
       { workspaceGitService: dependencies.workspaceGitService },
-      { cwd },
+      { cwd, includeAll: msg.includeAll },
     );
     dependencies.emit({
       type: "paseo_worktree_list_response",

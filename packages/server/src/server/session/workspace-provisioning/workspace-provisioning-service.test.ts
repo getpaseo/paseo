@@ -526,6 +526,31 @@ test("directory creation persists the live branch and a trimmed title", async ()
   expect(workspace).toMatchObject({ branch: "main", title: "Focused work" });
 });
 
+test("adopting a checkout preserves fork script restrictions, including archived workspaces", async () => {
+  const repo = path.join(tmpDir, "fork-checkout");
+  const otherRepo = path.join(tmpDir, "other-checkout");
+  gitRoots.add(repo);
+  gitRoots.add(otherRepo);
+  const first = await provisioning.createWorkspaceForDirectory(repo);
+  const untrustedSource = {
+    kind: "change_request" as const,
+    forge: "github",
+    number: 42,
+    headRepository: "contributor/fork",
+  };
+  await workspaceRegistry.update(first.workspaceId, (record) => ({
+    ...record,
+    archivedAt: ARCHIVED_AT,
+    untrustedSource,
+  }));
+
+  const adopted = await provisioning.createWorkspaceForDirectory(path.join(repo, "src"));
+  expect(adopted.workspaceId).not.toBe(first.workspaceId);
+  expect(adopted.untrustedSource).toEqual(untrustedSource);
+  const unrelated = await provisioning.createWorkspaceForDirectory(otherRepo);
+  expect(unrelated.untrustedSource).toBeUndefined();
+});
+
 test("createWorkspaceForDirectory honors an explicit active project without cwd containment", async () => {
   const project = await projectRegistry.getOrCreateActiveByRoot({
     rootPath: path.join(tmpDir, "elsewhere"),

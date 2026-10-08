@@ -6,6 +6,26 @@ import {
 } from "./new-workspace-fork-context";
 
 describe("remapDraftCwdToWorkspace", () => {
+  it("maps the project root to the chosen existing checkout", () => {
+    expect(
+      remapDraftCwdToWorkspace({
+        cwd: "/repo",
+        sourceDirectory: "/repo",
+        workspaceDirectory: "/worktrees/existing",
+      }),
+    ).toBe("/worktrees/existing");
+  });
+
+  it("preserves the first agent's subdirectory in the chosen existing checkout", () => {
+    expect(
+      remapDraftCwdToWorkspace({
+        cwd: "/repo/packages/app",
+        sourceDirectory: "/repo",
+        workspaceDirectory: "/worktrees/existing",
+      }),
+    ).toBe("/worktrees/existing/packages/app");
+  });
+
   it("preserves a Windows subdirectory when source path casing differs", () => {
     expect(
       remapDraftCwdToWorkspace({

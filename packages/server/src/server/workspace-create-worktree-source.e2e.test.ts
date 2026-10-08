@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import { DaemonClient } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
@@ -428,3 +429,179 @@ async function expectMissingLocalMergeTarget({ client, cwd }: RestorableWorkspac
     ).error?.message,
   ).toContain("No local merge target is recorded");
 }
+
+test("exact workspace worktree choices preserve names, reject conflicts and adopt actual checkouts", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0-beta.5",
+  });
+  try {
+    await client.connect();
+    const opened = await client.openProject(repoDir);
+    const projectId = opened.workspace!.projectId;
+    const source = { kind: "worktree" as const, cwd: repoDir, projectId, exactNames: true };
+    const checkout = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "checkout",
+        refName: "feature/existing-branch",
+        worktreeSlug: "existing-checkout",
+      },
+    });
+    expect(checkout.error).toBeNull();
+    expect(checkout.workspace!.gitRuntime?.currentBranch).toBe("feature/existing-branch");
+    expect(path.basename(checkout.workspace!.workspaceDirectory)).toBe("existing-checkout");
+
+    const occupied = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "checkout",
+        refName: "feature/existing-branch",
+        worktreeSlug: "another-checkout",
+      },
+    });
+    expect(occupied.error).toContain("Select its existing worktree");
+    expect(occupied.workspace).toBeNull();
+
+    const branchOff = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "branch-off",
+        refName: "refs/heads/main",
+        branchName: "Feature/New.Branch",
+        worktreeSlug: "feature-new-branch",
+      },
+      firstAgentContext: { prompt: "Do not rename my branch", attachments: [] },
+    });
+    expect(branchOff.error).toBeNull();
+    expect(branchOff.workspace!.gitRuntime?.currentBranch).toBe("Feature/New.Branch");
+    expect(path.basename(branchOff.workspace!.workspaceDirectory)).toBe("feature-new-branch");
+    expect(
+      readPaseoWorktreeMetadata(branchOff.workspace!.workspaceDirectory)?.firstAgentBranchAutoName,
+    ).toBeUndefined();
+
+    const collision = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "branch-off",
+        refName: "main",
+        branchName: "another-branch",
+        worktreeSlug: "feature-new-branch",
+      },
+    });
+    expect(collision.error).toContain("Choose another worktree name");
+    // An occupied directory must not create a local tracking branch as a side effect.
+    runGit(repoDir, "update-ref", "refs/remotes/origin/remote-only", "HEAD");
+    const checkoutCollision = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "checkout",
+        refName: "remote-only",
+        worktreeSlug: "feature-new-branch",
+      },
+    });
+    expect(checkoutCollision.error).toContain("Choose another worktree name");
+    expect(runGit(repoDir, "branch", "--list", "remote-only")).toBe("");
+    const branchCollision = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "branch-off",
+        refName: "main",
+        branchName: "Feature/New.Branch",
+        worktreeSlug: "unique-name",
+      },
+    });
+    expect(branchCollision.error).toContain("Branch already exists");
+    for (const name of ["../escape", "UPPER", "", "two--hyphens"]) {
+      const invalid = await client.createWorkspace({
+        source: {
+          ...source,
+          action: "branch-off",
+          refName: "main",
+          branchName: "unused",
+          worktreeSlug: name,
+        },
+      });
+      expect(invalid.error).toContain("Invalid worktree name");
+    }
+    const concurrent = await Promise.all(
+      ["concurrent-a", "concurrent-b"].map((branchName) =>
+        client.createWorkspace({
+          source: {
+            ...source,
+            action: "branch-off",
+            refName: "main",
+            branchName,
+            worktreeSlug: "same-path",
+          },
+        }),
+      ),
+    );
+    expect(concurrent.filter((result) => result.error === null)).toHaveLength(1);
+    expect(concurrent.filter((result) => result.error !== null)).toHaveLength(1);
+    const successful = concurrent.find((result) => result.workspace !== null)!;
+    expect(path.basename(successful.workspace!.workspaceDirectory)).toBe("same-path");
+    const invalidBranch = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "branch-off",
+        refName: "main",
+        branchName: "bad..branch",
+        worktreeSlug: "valid-name",
+      },
+    });
+    expect(invalidBranch.error).not.toBeNull();
+
+    const externalPath = path.join(tempRoot, "external-checkout");
+    execFileSync("git", ["worktree", "add", "-b", "external", externalPath, "main"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const listed = await client.getPaseoWorktreeList({ cwd: repoDir, includeAll: true });
+    expect(listed.error).toBeNull();
+    expect(listed.worktrees.map((entry) => entry.worktreePath)).toContain(externalPath);
+    const before = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: repoDir,
+    }).toString();
+    for (const existingPath of [externalPath, checkout.workspace!.workspaceDirectory]) {
+      const adopted = await client.createWorkspace({
+        source: { kind: "directory", projectId, path: existingPath },
+      });
+      expect(adopted.error).toBeNull();
+      expect(adopted.workspace!.workspaceDirectory).toBe(existingPath);
+      expect(adopted.workspace!.projectId).toBe(projectId);
+    }
+    expect(
+      execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir }).toString(),
+    ).toBe(before);
+    rmSync(externalPath, { recursive: true, force: true });
+    const withoutMissing = await client.getPaseoWorktreeList({ cwd: repoDir, includeAll: true });
+    expect(withoutMissing.error).toBeNull();
+    expect(withoutMissing.worktrees.map((entry) => entry.worktreePath)).not.toContain(externalPath);
+    const staleCheckout = await client.createWorkspace({
+      source: {
+        ...source,
+        action: "checkout",
+        refName: "external",
+        worktreeSlug: "external-retry",
+      },
+    });
+    expect(staleCheckout.error).toContain("git worktree prune");
+    expect(staleCheckout.workspace).toBeNull();
+    expect(
+      execFileSync(
+        "git",
+        ["branch", "--list", "feature/existing-branch-1", "another-branch", "Feature/New.Branch-1"],
+        { cwd: repoDir },
+      )
+        .toString()
+        .trim(),
+    ).toBe("");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);

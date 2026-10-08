@@ -852,29 +852,28 @@ describe("runWorktreeSetupInBackground", () => {
     const emitWorkspaceUpdateForWorkspaceId = vi.fn(async () => {});
     const workspaceId = "ws-broken-feature";
 
-    await runWorktreeSetupInBackground(
-      {
-        paseoHome,
-        emitWorkspaceUpdateForWorkspaceId,
-        cacheWorkspaceSetupSnapshot: (snapshotWorkspaceId, snapshot) =>
-          snapshots.set(snapshotWorkspaceId, snapshot),
-        emit: (message) => emitted.push(message),
-        sessionLogger: logger,
-        terminalManager: null,
-      },
-      {
-        requestCwd: repoDir,
-        repoRoot: repoDir,
-        workspaceId,
-        worktree: {
-          branchName: "broken-feature",
-          worktreePath,
-        },
-        shouldBootstrap: true,
-        slug: "broken-feature",
+    const dependencies: Parameters<typeof runWorktreeSetupInBackground>[0] = {
+      paseoHome,
+      emitWorkspaceUpdateForWorkspaceId,
+      cacheWorkspaceSetupSnapshot: (snapshotWorkspaceId, snapshot) =>
+        snapshots.set(snapshotWorkspaceId, snapshot),
+      emit: (message) => emitted.push(message),
+      sessionLogger: logger,
+      terminalManager: null,
+    };
+    const options: Parameters<typeof runWorktreeSetupInBackground>[1] = {
+      requestCwd: repoDir,
+      repoRoot: repoDir,
+      workspaceId,
+      worktree: {
+        branchName: "broken-feature",
         worktreePath,
       },
-    );
+      shouldBootstrap: true,
+      slug: "broken-feature",
+      worktreePath,
+    };
+    await runWorktreeSetupInBackground(dependencies, options);
 
     const progressMessages = emitted.filter(
       (message): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
@@ -895,6 +894,23 @@ describe("runWorktreeSetupInBackground", () => {
     expect(existsSync(worktreePath)).toBe(true);
     expect(existsSync(path.join(worktreePath, "paseo.json"))).toBe(true);
     expect(emitWorkspaceUpdateForWorkspaceId).toHaveBeenCalledWith(workspaceId);
+
+    // Repair the config and retry the existing asynchronous setup lifecycle.
+    // Recovery must use the same checkout without another Git worktree creation.
+    writeFileSync(
+      path.join(worktreePath, "paseo.json"),
+      JSON.stringify({
+        worktree: { setup: "node -e \"require('fs').writeFileSync('setup-retried', 'ran')\"" },
+      }),
+    );
+    await runWorktreeSetupInBackground(dependencies, options);
+    expect(readFileSync(path.join(worktreePath, "setup-retried"), "utf8")).toBe("ran");
+    expect(snapshots.get(workspaceId)).toMatchObject({ status: "completed", error: null });
+    const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: repoDir,
+      encoding: "utf8",
+    });
+    expect(worktrees.match(/^worktree /gm)).toHaveLength(2);
   });
 
   // POSIX-only: setup command is hardcoded to sh, printf, and sleep.

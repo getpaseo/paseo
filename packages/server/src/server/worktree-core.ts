@@ -20,6 +20,7 @@ import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 export interface CreateWorktreeCoreInput {
   cwd: string;
   worktreeSlug?: string;
+  exactNames?: boolean;
   branchName?: string;
   refName?: string;
   action?: "branch-off" | "checkout";
@@ -59,9 +60,12 @@ async function createWorktreeCoreWithPriority(
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
   const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
-  const requestedWorktreeSlug = input.worktreeSlug
-    ? normalizeWorktreeSlug(input.worktreeSlug)
-    : undefined;
+  let requestedWorktreeSlug: string | undefined;
+  if (input.worktreeSlug !== undefined) {
+    requestedWorktreeSlug = input.exactNames
+      ? validateExactWorktreeName(input.worktreeSlug)
+      : normalizeWorktreeSlug(input.worktreeSlug);
+  }
   const requestedBranchName = input.branchName?.trim();
 
   let intentInput: ResolveWorktreeCreationIntentInput;
@@ -120,6 +124,7 @@ async function createWorktreeCoreWithPriority(
       cwd: repoRoot,
       worktreeSlug: normalizedSlug,
       source: intent,
+      exactNames: input.exactNames,
       runSetup: input.runSetup ?? true,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
@@ -180,4 +185,14 @@ function validateWorktreeSlug(slug: string): string {
 
 function normalizeWorktreeSlug(value: string): string {
   return validateWorktreeSlug(slugify(value));
+}
+
+/** Validate an explicitly chosen directory name without changing it. */
+function validateExactWorktreeName(value: string): string {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) || value.length > 50) {
+    throw new Error(
+      "Invalid worktree name: use lowercase letters, numbers and single hyphens (max 50 characters)",
+    );
+  }
+  return value;
 }

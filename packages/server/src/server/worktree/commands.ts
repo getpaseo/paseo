@@ -21,12 +21,20 @@ export interface ListPaseoWorktreesCommandDependencies {
 export interface ListPaseoWorktreesCommandInput {
   cwd: string;
   reason?: string;
+  includeAll?: boolean;
 }
 
 export async function listPaseoWorktreesCommand(
   dependencies: ListPaseoWorktreesCommandDependencies,
   input: ListPaseoWorktreesCommandInput,
 ): Promise<WorkspaceGitWorktreeInfo[]> {
+  if (input.includeAll) {
+    return dependencies.workspaceGitService.listWorktrees(input.cwd, {
+      includeAll: true,
+      force: true,
+      reason: input.reason ?? "worktree-picker",
+    });
+  }
   if (input.reason) {
     return dependencies.workspaceGitService.listWorktrees(input.cwd, { reason: input.reason });
   }

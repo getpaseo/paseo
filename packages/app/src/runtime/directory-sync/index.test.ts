@@ -1209,6 +1209,41 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
+  it("retains a newly created workspace accepted while an older snapshot is loading", async () => {
+    const serverId = "created-workspace-during-refresh";
+    const { client, directory } = createDirectory(serverId);
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true },
+    });
+    const completeFetch = client.holdWorkspaceFetch();
+    const refresh = directory.refreshWorkspaces();
+    await expect.poll(() => client.fetchWorkspacesCalls).toBe(1);
+
+    const created = normalizeWorkspaceDescriptor(createWorkspaceEntry("just-created"));
+    directory.acceptWorkspaces([created]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(created.id)).toEqual(
+      created,
+    );
+
+    completeFetch({
+      requestId: "workspaces",
+      entries: [],
+      emptyProjects: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    await refresh;
+
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(created.id)).toEqual(
+      created,
+    );
+    directory.dispose();
+  });
+
   it("buffers workspace and project updates in the same hydration transaction", async () => {
     const serverId = "workspace-project-transaction";
     const { client, directory } = createDirectory(serverId);

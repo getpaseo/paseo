@@ -4494,13 +4494,14 @@ export class DaemonClient {
   }
 
   async getPaseoWorktreeList(
-    input: { cwd?: string; repoRoot?: string },
+    input: { cwd?: string; repoRoot?: string; includeAll?: boolean },
     requestId?: string,
   ): Promise<PaseoWorktreeListPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "paseo_worktree_list_request",
+        includeAll: input.includeAll,
         cwd: input.cwd,
         repoRoot: input.repoRoot,
       },

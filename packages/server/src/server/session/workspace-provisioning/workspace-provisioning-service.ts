@@ -228,6 +228,9 @@ export function createWorkspaceProvisioningService(deps: {
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
+    const untrustedSource = await findCheckoutAutomationRestriction(
+      checkout.worktreeRoot ?? normalizedCwd,
+    );
     const workspace = createPersistedWorkspaceRecord({
       workspaceId: context?.workspaceId ?? generateWorkspaceId(),
       projectId: project.projectId,
@@ -235,10 +238,24 @@ export function createWorkspaceProvisioningService(deps: {
       title: title?.trim() || null,
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(untrustedSource ? { untrustedSource } : {}),
     });
     await workspaceRegistry.upsert(workspace, context);
     deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
     return workspace;
+  }
+
+  /** Preserve recorded fork restrictions when another workspace adopts the same checkout. */
+  async function findCheckoutAutomationRestriction(
+    checkoutRoot: string,
+  ): Promise<UntrustedWorkspaceSource | undefined> {
+    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+    const workspaces = await workspaceRegistry.list();
+    // Include archived records: archiving a workspace does not approve its scripts.
+    return workspaces.find(
+      (workspace) =>
+        workspace.untrustedSource && matchesCheckout(workspace.worktreeRoot ?? workspace.cwd),
+    )?.untrustedSource;
   }
 
   async function createWorkspaceForWorktree(

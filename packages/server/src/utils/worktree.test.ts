@@ -5,6 +5,8 @@ import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
+  listPaseoWorktrees,
+  runWorktreeSetupCommands,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
@@ -278,6 +280,93 @@ describe("paseo worktree manager", () => {
     });
 
     expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
+  it("exact setup failures retain checkouts for setup retry and preserve existing, advanced or occupied branches", async () => {
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+    writeFileSync(
+      join(repoDir, "setup.cjs"),
+      `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const root = process.env.PASEO_SOURCE_CHECKOUT_PATH;
+      const git = (...args) => require("node:child_process").execFileSync("git", args);
+      if (fs.existsSync(path.join(root, "advance-branch"))) {
+        git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "setup-commit");
+      }
+      if (fs.existsSync(path.join(root, "reuse-branch"))) {
+        git("checkout", "--detach");
+        git("worktree", "add", path.join(root, "reused-checkout"), process.env.PASEO_BRANCH_NAME);
+      }
+      if (!fs.existsSync(path.join(root, "allow-setup"))) process.exit(1);
+    `,
+    );
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({ worktree: { setup: ["node setup.cjs"] } }),
+    );
+    git("add", "setup.cjs", "paseo.json");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "setup fixture");
+    git("branch", "existing-branch");
+    const initialTip = git("rev-parse", "main");
+    const options = {
+      cwd: repoDir,
+      paseoHome,
+      runSetup: true,
+      exactNames: true,
+      source: { kind: "branch-off" as const, baseBranch: "main", branchName: "retry-branch" },
+      worktreeSlug: "retry-directory",
+    };
+    await expect(createWorktreePrimitive(options)).rejects.toThrow("Worktree setup command failed");
+    const retained = (await listPaseoWorktrees({ cwd: repoDir, paseoHome })).find(
+      (worktree) => worktree.branchName === "retry-branch",
+    );
+    expect(retained).toBeDefined();
+    expect(git("rev-parse", "retry-branch")).toBe(initialTip);
+    await expect(createWorktreePrimitive(options)).rejects.toThrow(
+      "Worktree directory already exists",
+    );
+    await expect(
+      createWorktreePrimitive({ ...options, worktreeSlug: "another-directory" }),
+    ).rejects.toThrow("Branch already exists");
+    writeFileSync(join(repoDir, "allow-setup"), "");
+    await runWorktreeSetupCommands({
+      worktreePath: retained!.path,
+      branchName: "retry-branch",
+      cleanupOnFailure: false,
+    });
+    expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(2);
+    rmSync(join(repoDir, "allow-setup"));
+    await expect(
+      createWorktreePrimitive({
+        ...options,
+        worktreeSlug: "existing-directory",
+        source: { kind: "checkout-branch", branchName: "existing-branch" },
+      }),
+    ).rejects.toThrow("Worktree setup command failed");
+    expect(git("rev-parse", "existing-branch")).toBe(initialTip);
+    writeFileSync(join(repoDir, "advance-branch"), "");
+    await expect(
+      createWorktreePrimitive({
+        ...options,
+        worktreeSlug: "advanced-directory",
+        source: { ...options.source, branchName: "advanced-branch" },
+      }),
+    ).rejects.toThrow("Worktree setup command failed");
+    expect(git("log", "-1", "--format=%s", "advanced-branch")).toBe("setup-commit");
+    expect(git("rev-parse", "advanced-branch^")).toBe(initialTip);
+    rmSync(join(repoDir, "advance-branch"));
+    writeFileSync(join(repoDir, "reuse-branch"), "");
+    await expect(
+      createWorktreePrimitive({
+        ...options,
+        worktreeSlug: "occupied-directory",
+        source: { ...options.source, branchName: "occupied-branch" },
+      }),
+    ).rejects.toThrow("Worktree setup command failed");
+    expect(git("rev-parse", "occupied-branch")).toBe(initialTip);
+    expect(existsSync(join(repoDir, "reused-checkout"))).toBe(true);
   });
 
   describe("branch-off from a remote-tracking base", () => {

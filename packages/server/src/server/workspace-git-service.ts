@@ -239,7 +239,7 @@ export interface WorkspaceGitService {
   ): Promise<WorkspaceGitStashEntry[]>;
   listWorktrees(
     cwdOrRepoRoot: string,
-    options?: WorkspaceGitReadOptions,
+    options?: WorkspaceGitReadOptions & { includeAll?: boolean },
   ): Promise<WorkspaceGitWorktreeInfo[]>;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -893,14 +893,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async listWorktrees(
     cwdOrRepoRoot: string,
-    options?: WorkspaceGitReadOptions,
+    options?: WorkspaceGitReadOptions & { includeAll?: boolean },
   ): Promise<WorkspaceGitWorktreeInfo[]> {
     this.assertNotDisposed();
     const repoRoot = await this.resolveRepoRoot(cwdOrRepoRoot, options);
-    const key = JSON.stringify(["worktrees", repoRoot]);
+    const key = JSON.stringify(["worktrees", repoRoot, options?.includeAll === true]);
     return this.readAuxiliaryCache(this.worktreeListCache, key, options, () =>
       this.deps.listPaseoWorktrees({
         cwd: repoRoot,
+        ...(options?.includeAll ? { includeAll: true } : {}),
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
       }),

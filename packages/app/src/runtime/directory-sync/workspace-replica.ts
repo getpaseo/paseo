@@ -20,6 +20,7 @@ import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 
 export type WorkspaceDirectoryDelta =
   | Extract<SessionOutboundMessage, { type: "workspace_update" | "project.update" }>["payload"]
+  | { kind: "accepted_workspace"; workspace: WorkspaceDescriptor }
   | { kind: "script_status"; update: ScriptStatusUpdateMessage["payload"] };
 
 export interface WorkspaceDirectorySnapshot {
@@ -41,6 +42,7 @@ export class WorkspaceDirectoryReplica {
   constructor(private readonly serverId: string) {}
 
   applyDelta(delta: WorkspaceDirectoryDelta): DirectoryReplicaMutation[] {
+    if (delta.kind === "accepted_workspace") return this.upsertWorkspace(delta.workspace);
     if (delta.kind === "script_status") return this.applyScriptStatus(delta.update);
     if ("projectId" in delta || "project" in delta) return this.applyProjectDelta(delta);
     if (delta.kind === "remove") return this.removeWorkspace(delta);

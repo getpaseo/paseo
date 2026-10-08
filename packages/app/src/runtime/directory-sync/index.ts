@@ -265,7 +265,7 @@ export class DirectorySync {
     this.workspaceRevision += 1;
     if (this.workspaceTransactions.record(source, delta)) return;
     this.applyWorkspaceDelta(delta);
-    if (delta.kind !== "script_status")
+    if (delta.kind !== "script_status" && delta.kind !== "accepted_workspace")
       this.noteLiveCursor(
         "projectId" in delta || "project" in delta ? "projects" : "workspaces",
         delta,
@@ -595,7 +595,15 @@ export class DirectorySync {
     });
   }
 
+  /** Publishes creation results immediately and keeps them over any older in-flight snapshot. */
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {
+    const source = this.getOnlineConnection()?.source;
+    if (source) {
+      for (const workspace of workspaces) {
+        // Creation responses may arrive after a refresh captured its snapshot but before it commits.
+        this.workspaceTransactions.record(source, { kind: "accepted_workspace", workspace });
+      }
+    }
     const mutations = this.workspaces.acceptWorkspaces(workspaces);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
@@ -798,7 +806,7 @@ export class DirectorySync {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
     for (const delta of completion.deltas) {
-      if (delta.kind === "script_status") continue;
+      if (delta.kind === "script_status" || delta.kind === "accepted_workspace") continue;
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
       this.noteLiveCursor(entity, delta);
     }
