@@ -2,6 +2,7 @@ import {
   AgentStreamEventPayloadSchema,
   AgentTimelineEntryPayloadSchema,
   SendAgentMessageRequestSchema,
+  SendAgentMessageResponseMessageSchema,
 } from "./messages";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -26,6 +27,32 @@ describe("send_agent_message_request active-turn behavior", () => {
         text: "Keep the old behavior",
       }).activeTurnBehavior,
     ).toBeUndefined();
+  });
+});
+
+describe("send_agent_message_request queue behavior", () => {
+  it("accepts a queue intent and an optional queued response flag", () => {
+    expect(
+      SendAgentMessageRequestSchema.parse({
+        type: "send_agent_message_request",
+        requestId: "request-3",
+        agentId: "agent-1",
+        text: "Run this after the current turn",
+        activeTurnBehavior: "queue",
+      }).activeTurnBehavior,
+    ).toBe("queue");
+
+    const response = {
+      type: "send_agent_message_response" as const,
+      payload: { requestId: "request-3", agentId: "agent-1", accepted: true, error: null },
+    };
+    expect(SendAgentMessageResponseMessageSchema.parse(response).payload.queued).toBeUndefined();
+    expect(
+      SendAgentMessageResponseMessageSchema.parse({
+        ...response,
+        payload: { ...response.payload, queued: true },
+      }).payload.queued,
+    ).toBe(true);
   });
 });
 

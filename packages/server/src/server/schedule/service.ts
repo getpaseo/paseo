@@ -207,6 +207,7 @@ type ScheduleAgentManager = Pick<
   | "hasInFlightRun"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
+  | "queueMessageIfRunning"
   | "streamAgent"
 > &
   Pick<

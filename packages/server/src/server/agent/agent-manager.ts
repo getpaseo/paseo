@@ -340,12 +340,12 @@ export interface AgentManagerOptions {
 }
 
 export type ActiveTurnSteerDispatchResult =
-  | { status: "inactive" | "steered" }
+  | { status: "inactive" | "steered" | "unavailable" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
 
 function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
-  const { clearPendingPermissions: _, ...runOptions } = options;
+  const { clearPendingPermissions: _, steerFallback: __, ...runOptions } = options;
   return runOptions;
 }
 
@@ -574,6 +574,12 @@ interface SteerEventBarrier {
   events: AgentStreamEvent[];
 }
 
+/** A message the daemon holds until the agent's running turn ends. */
+interface QueuedMessage {
+  prompt: AgentPromptInput;
+  options?: AgentRunOptions;
+}
+
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.guid();
 
@@ -726,6 +732,7 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
+  private readonly queuedMessages = new Map<string, QueuedMessage[]>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1708,6 +1715,8 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
+    // Queued messages belong to the live session; a closed or archived agent drops them.
+    this.queuedMessages.delete(agentId);
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
@@ -2611,7 +2620,11 @@ export class AgentManager {
     mutableAgent.activeForegroundTurnId = null;
     this.applyActiveTurnTerminal(mutableAgent, turnId);
     const terminalError = mutableAgent.lastError;
-    const shouldHoldBusyForReplacement = mutableAgent.pendingReplacement && !terminalError;
+    // A replacement or a queued message starts the next turn right away, so the agent
+    // stays busy instead of flashing idle between the two turns.
+    const shouldHoldBusyForReplacement =
+      (mutableAgent.pendingReplacement || this.hasQueuedMessages(mutableAgent.id)) &&
+      !terminalError;
     let nextLifecycle: "running" | "error" | "idle";
     if (shouldHoldBusyForReplacement) {
       nextLifecycle = "running";
@@ -2697,6 +2710,113 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Hold a message until the agent's running turn ends, then start it as the next turn.
+   * Returns false, and holds nothing, when the agent has no running turn: the caller
+   * starts the turn itself. Queued messages run in FIFO order and stay queued when the
+   * running turn is interrupted. Closing or archiving the agent drops them. They live in
+   * memory only, so a daemon restart drops them too.
+   */
+  queueMessageIfRunning(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): boolean {
+    const agent = this.requireSessionAgent(agentId);
+    const running =
+      agent.lifecycle === "running" ||
+      agent.pendingReplacement ||
+      Boolean(agent.activeForegroundTurnId) ||
+      Boolean(agent.activeTurnId) ||
+      this.runs.hasRun(agentId) ||
+      this.hasQueuedMessages(agentId);
+    if (!running) {
+      return false;
+    }
+    const queue = this.queuedMessages.get(agentId) ?? [];
+    queue.push({ prompt, options });
+    this.queuedMessages.set(agentId, queue);
+    return true;
+  }
+
+  /** Drop every message the daemon holds for this agent. */
+  clearQueuedMessages(agentId: string): void {
+    this.queuedMessages.delete(agentId);
+  }
+
+  private hasQueuedMessages(agentId: string): boolean {
+    return (this.queuedMessages.get(agentId)?.length ?? 0) > 0;
+  }
+
+  /**
+   * Start the next queued message once the turn that just ended has settled. Runs behind
+   * the same foreground mutation lane as steers and cancels so it never races them.
+   */
+  private scheduleQueuedMessage(agentId: string): void {
+    if (!this.hasQueuedMessages(agentId)) {
+      return;
+    }
+    void this.runForegroundMutation(agentId, async () => {
+      await this.drainSessionEvents(agentId);
+      this.startQueuedMessage(agentId);
+    }).catch((error) => {
+      this.logger.error({ err: error, agentId }, "Failed to start queued message");
+    });
+  }
+
+  private startQueuedMessage(agentId: string): void {
+    const activeAgent = this.agents.get(agentId);
+    if (!activeAgent) {
+      this.queuedMessages.delete(agentId);
+      return;
+    }
+    // Another turn owns the agent (a replacement, or a send that won the race). Its end
+    // schedules the queue again.
+    if (
+      activeAgent.pendingReplacement ||
+      activeAgent.activeForegroundTurnId ||
+      activeAgent.activeTurnId ||
+      this.runs.hasRun(agentId)
+    ) {
+      return;
+    }
+    const queue = this.queuedMessages.get(agentId);
+    const next = queue?.shift();
+    if (queue && queue.length === 0) {
+      this.queuedMessages.delete(agentId);
+    }
+    if (!next) {
+      this.releaseQueueHold(activeAgent);
+      return;
+    }
+    let iterator: AsyncGenerator<AgentStreamEvent>;
+    try {
+      iterator = this.streamAgent(agentId, next.prompt, next.options);
+    } catch (error) {
+      this.logger.error({ err: error, agentId }, "Failed to start queued message");
+      this.releaseQueueHold(activeAgent);
+      this.scheduleQueuedMessage(agentId);
+      return;
+    }
+    void (async () => {
+      for await (const _ of iterator) {
+        // Events are broadcast via AgentManager subscribers.
+      }
+    })().catch((error) => {
+      this.logger.error({ err: error, agentId }, "Queued message stream failed");
+    });
+  }
+
+  /** The agent was held busy for a queued message that did not start. */
+  private releaseQueueHold(agent: ActiveManagedAgent): void {
+    if (agent.lifecycle !== "running") {
+      return;
+    }
+    (agent as ActiveManagedAgent).lifecycle = agent.lastError ? "error" : "idle";
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
   async steerAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
@@ -2756,6 +2876,12 @@ export class AgentManager {
     // admission may recognize the turn, but only an accepted steer can own it without replacement.
     if (agent.activeForegroundTurnId === null && agent.activeTurnId === expectedTurnId) {
       return { status: "inactive" };
+    }
+
+    // Callers that asked to steer and nothing else must never have their request
+    // turned into a cancel-and-restart of the turn they were steering.
+    if (options?.steerFallback === "reject") {
+      return { status: "unavailable" };
     }
 
     await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
@@ -3055,11 +3181,12 @@ export class AgentManager {
         "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
       );
       this.runs.settleForegroundRun(agentId, run.token);
-      if (!agent.pendingReplacement) {
+      if (!agent.pendingReplacement && !this.hasQueuedMessages(agentId)) {
         agent.lifecycle = "idle";
         this.touchUpdatedAt(agent);
         this.emitState(agent);
       }
+      this.scheduleQueuedMessage(agentId);
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -4230,6 +4357,7 @@ export class AgentManager {
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
         }
+        this.scheduleQueuedMessage(agent.id);
       }
 
       if (flags.shouldDispatchEvent) {
@@ -4488,7 +4616,8 @@ export class AgentManager {
       !isForegroundEvent &&
       !agent.activeForegroundTurnId &&
       agent.lifecycle !== "idle" &&
-      !agent.pendingReplacement
+      !agent.pendingReplacement &&
+      !this.hasQueuedMessages(agent.id)
     ) {
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
@@ -4563,7 +4692,12 @@ export class AgentManager {
       "agent.manager.turn.canceled",
     );
     if (terminalDisposition === "stale") return;
-    if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
+    if (
+      !isForegroundEvent &&
+      !agent.activeForegroundTurnId &&
+      !agent.pendingReplacement &&
+      !this.hasQueuedMessages(agent.id)
+    ) {
       agent.lifecycle = "idle";
     }
     agent.lastError = undefined;

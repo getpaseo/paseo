@@ -19,6 +19,10 @@ import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/mo
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
 
+// The composer holds queued messages client-side in the Queue track, so it only ever
+// asks the daemon to interrupt or steer.
+type ComposerActiveTurnBehavior = Exclude<ActiveTurnBehavior, "queue">;
+
 export interface QueuedComposerMessage {
   id: string;
   text: string;
@@ -50,11 +54,11 @@ export interface ComposerSendClient {
     text: string,
     options: {
       messageId: string;
-      activeTurnBehavior?: ActiveTurnBehavior;
+      activeTurnBehavior?: ComposerActiveTurnBehavior;
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
     requestId: string;
     file: {
@@ -194,7 +198,7 @@ export interface DispatchComposerAgentMessageInput {
     images: AttachmentMetadata[],
   ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
   submission: MessageSubmissionWriter;
-  activeTurnBehavior?: ActiveTurnBehavior;
+  activeTurnBehavior?: ComposerActiveTurnBehavior;
   activeTurnId?: string;
 }
 

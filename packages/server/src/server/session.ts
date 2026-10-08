@@ -8088,6 +8088,7 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
+      let queued = false;
       const send = async () => {
         const result = await sendPromptToAgent({
           agentManager: this.agentManager,
@@ -8096,9 +8097,12 @@ export class Session {
           prompt,
           messageId: msg.messageId,
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          // Absent, the server keeps the steer-then-replace fallback the UI relies on.
+          steerFallback: msg.steerFallback,
           clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
+        queued = result.disposition === "queued";
         if (result.disposition === "turn_started") {
           await waitForAgentRunStartWithTimeout(
             this.agentManager,
@@ -8128,6 +8132,7 @@ export class Session {
           agentId,
           accepted: true,
           error: null,
+          ...(queued ? { queued } : {}),
         },
       });
     } catch (error) {
