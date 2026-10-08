@@ -158,12 +158,12 @@ describe("fetchWithAutoProxy", () => {
     const proxy = await startForwardProxy();
     try {
       await expect(
-        requestThroughProxy(
-          new URL(`http://127.0.0.1:${origin.port}/large-chunked`),
-          `http://127.0.0.1:${proxy.port}`,
-          {},
-          { proxyAttemptTimeoutMs: 10_000 },
-        ),
+        requestThroughProxy({
+          target: new URL(`http://127.0.0.1:${origin.port}/large-chunked`),
+          proxyUrl: `http://127.0.0.1:${proxy.port}`,
+          init: {},
+          options: { proxyAttemptTimeoutMs: 10_000 },
+        }),
       ).rejects.toThrow("Proxy response body exceeds limit");
     } finally {
       await proxy.close();
@@ -175,10 +175,10 @@ describe("fetchWithAutoProxy", () => {
     const origin = await startOrigin();
     const proxy = await startForwardProxy();
     try {
-      const response = await requestThroughProxy(
-        new URL(`http://127.0.0.1:${origin.port}/reset`),
-        `http://127.0.0.1:${proxy.port}`,
-      );
+      const response = await requestThroughProxy({
+        target: new URL(`http://127.0.0.1:${origin.port}/reset`),
+        proxyUrl: `http://127.0.0.1:${proxy.port}`,
+      });
       expect(response.status).toBe(205);
       expect(await response.text()).toBe("");
     } finally {
@@ -193,10 +193,10 @@ describe("fetchWithAutoProxy", () => {
     const previousTlsSetting = process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
     process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
     try {
-      const response = await requestThroughProxy(
-        new URL(`https://127.0.0.1:${origin.port}/json`),
-        `http://127.0.0.1:${proxy.port}`,
-      );
+      const response = await requestThroughProxy({
+        target: new URL(`https://127.0.0.1:${origin.port}/json`),
+        proxyUrl: `http://127.0.0.1:${proxy.port}`,
+      });
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
       expect(proxy.connects).toEqual([`127.0.0.1:${origin.port}`]);
