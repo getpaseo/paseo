@@ -6495,6 +6495,18 @@ export class DaemonClient {
       return;
     }
 
+    const received = transfer.chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    if (received !== transfer.size) {
+      this.activeBinaryFileTransfers.delete(frame.requestId);
+      this.rejectWaitersForRequestId(
+        frame.requestId,
+        new Error(
+          `File transfer incomplete: expected ${transfer.size} bytes, received ${received}.`,
+        ),
+      );
+      return;
+    }
+
     const bytes = concatByteChunks(transfer.chunks, transfer.size);
     this.activeBinaryFileTransfers.delete(frame.requestId);
     this.completedBinaryFileReads.set(frame.requestId, {

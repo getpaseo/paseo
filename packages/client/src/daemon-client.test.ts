@@ -2863,6 +2863,40 @@ test("readFile with timeout 0 outlives the default request timeout", async () =>
   expect(new TextDecoder().decode(result.bytes)).toBe("hello");
 });
 
+test("readFile rejects a binary transfer that ends before the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_short");
+
+  const responsePromise = client.readFile("/tmp/project", "short.bin", "req-short");
+  sendBinaryFile(mock, "req-short", 10, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-short" }),
+  );
+
+  await expect(responsePromise).rejects.toThrow(
+    "File transfer incomplete: expected 10 bytes, received 5.",
+  );
+});
+
+test("readFile rejects a binary transfer that exceeds the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_long");
+
+  const responsePromise = client.readFile("/tmp/project", "long.bin", "req-long");
+  const settled = responsePromise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  sendBinaryFile(mock, "req-long", 4, ["hello!"]);
+
+  expect(() =>
+    mock.triggerMessage(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-long" }),
+    ),
+  ).not.toThrow();
+  expect(await settled).toMatchObject({
+    message: "File transfer incomplete: expected 4 bytes, received 6.",
+  });
+});
+
 test("uploadFile sends metadata request and file bytes as binary chunks", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
