@@ -3334,7 +3334,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private buildSdkEnv() {
     return createProviderEnv({
-      baseEnv: process.env,
+      baseEnv: {
+        ...process.env,
+        // Claude Code omits Artifact from SDK sessions unless this flag is enabled.
+        CLAUDE_CODE_ARTIFACT: process.env.CLAUDE_CODE_ARTIFACT ?? "1",
+      },
       runtimeSettings: this.runtimeSettings,
       overlays: [
         this.launchEnv,
