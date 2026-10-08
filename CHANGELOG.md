@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Workspaces opened at a linked Git worktree root without a selected project reuse the main checkout's project. Explicit projects and existing workspace membership are preserved.
+
 ## 0.11.1 - 2026-10-07
 
 ### Added

@@ -236,6 +236,64 @@ describe("workspace registries", () => {
     expect(opaque.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
   });
 
+  test("serializes canonical allocation with exact-root registration and preserves the registered project", async () => {
+    await projectRegistry.initialize();
+    const rootPath = path.join(tmpDir, "main");
+    const linked = path.join(tmpDir, "linked");
+    const timestamp = "2026-03-01T00:00:00.000Z";
+    const registered = projectRegistry.getOrCreateActiveByRoot({
+      rootPath: linked,
+      kind: "git",
+      displayName: "Independent",
+      projectKey: "linked-key",
+      timestamp,
+    });
+    const allocation = projectRegistry.getOrCreateActiveByRoot({
+      rootPath,
+      preferredExistingRootPath: linked,
+      kind: "git",
+      displayName: "Main",
+      projectKey: "main-key",
+      timestamp,
+    });
+    const [explicit, implicit] = await Promise.all([registered, allocation]);
+    expect(implicit).toEqual(explicit);
+    expect(await projectRegistry.list()).toEqual([explicit]);
+  });
+
+  test("canonical allocation ignores archived alternatives and never resurrects their identity", async () => {
+    await projectRegistry.initialize();
+    const rootPath = path.join(tmpDir, "main");
+    const linked = path.join(tmpDir, "linked");
+    const timestamp = "2026-03-01T00:00:00.000Z";
+    const previous = await projectRegistry.getOrCreateActiveByRoot({
+      rootPath: linked,
+      kind: "git",
+      displayName: "Previous",
+      timestamp,
+    });
+    await projectRegistry.archive(previous.projectId, timestamp);
+    const archived = await projectRegistry.get(previous.projectId);
+    const projects = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        projectRegistry.getOrCreateActiveByRoot({
+          rootPath,
+          preferredExistingRootPath: linked,
+          kind: "git",
+          displayName: "Main",
+          timestamp,
+        }),
+      ),
+    );
+    expect(new Set(projects.map((project) => project.projectId))).toEqual(
+      new Set([projects[0].projectId]),
+    );
+    expect(projects[0].projectId).not.toBe(previous.projectId);
+    expect(projects[0].rootPath).toBe(rootPath);
+    expect(await projectRegistry.get(previous.projectId)).toEqual(archived);
+    expect(await projectRegistry.list()).toHaveLength(2);
+  });
+
   test("allocates a fresh opaque ID when only an archived exact root exists", async () => {
     await projectRegistry.initialize();
     const rootPath = path.join(tmpDir, "archived-root");

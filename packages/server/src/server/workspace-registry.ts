@@ -135,6 +135,7 @@ export interface ProjectRegistry {
   get(projectId: string): Promise<PersistedProjectRecord | null>;
   getOrCreateActiveByRoot(input: {
     rootPath: string;
+    preferredExistingRootPath?: string;
     kind: PersistedProjectKind;
     displayName: string;
     projectKey?: string;
@@ -405,6 +406,7 @@ export class FileBackedProjectRegistry
 
   async getOrCreateActiveByRoot(input: {
     rootPath: string;
+    preferredExistingRootPath?: string;
     kind: PersistedProjectKind;
     displayName: string;
     projectKey?: string;
@@ -415,16 +417,27 @@ export class FileBackedProjectRegistry
     this.allocationQueue = new Promise<void>((resolve) => (release = resolve));
     await previous;
     try {
-      const active = (await this.list())
+      const matches = (await this.list())
         .filter(
-          (project) => !project.archivedAt && areEquivalentPaths(project.rootPath, input.rootPath),
+          (project) =>
+            !project.archivedAt &&
+            (areEquivalentPaths(project.rootPath, input.rootPath) ||
+              (input.preferredExistingRootPath !== undefined &&
+                areEquivalentPaths(project.rootPath, input.preferredExistingRootPath))),
         )
         .sort(
           (left, right) =>
             Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
             left.projectId.localeCompare(right.projectId),
-        )[0];
+        );
+      const active =
+        matches.find(
+          (project) =>
+            input.preferredExistingRootPath !== undefined &&
+            areEquivalentPaths(project.rootPath, input.preferredExistingRootPath),
+        ) ?? matches[0];
       if (active) {
+        if (!areEquivalentPaths(active.rootPath, input.rootPath)) return active;
         if (active.kind === input.kind && active.projectKey === (input.projectKey ?? null))
           return active;
         const refreshed = {
