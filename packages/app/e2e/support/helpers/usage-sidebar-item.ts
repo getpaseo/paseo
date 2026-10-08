@@ -8,7 +8,7 @@ import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { pluginRequirements } from "./plugin-fixture";
 import { waitForSettledPosition } from "./sheet-layout";
 
-/** Real usage-source plugin; its long report exercises the sheet's scrolling boundary. */
+/** Real usage-source plugin; its long report makes the Usage modal scroll. */
 export async function installTallUsageSource() {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-tall-usage-"));
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
@@ -142,13 +142,9 @@ export function usageItem(page: Page): Locator {
   return visible(page, "sidebar-usage");
 }
 
-/** The compact usage sheet the Usage item opens. */
-export function usageSheet(page: Page): Locator {
-  return visible(page, "usage-expanded");
-}
-
-export async function expectOnUsageScreen(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/usage$/);
+/** The Usage modal's body: a dialog on wide layouts, a bottom sheet on compact ones. */
+export function usageModal(page: Page): Locator {
+  return visible(page, "usage-modal-body");
 }
 
 /** Each pinned window as it reads: its percent and short label, "31% 5h". */
@@ -189,23 +185,45 @@ export async function togglePin(scope: Locator, source: string, window: string) 
   await expect(row).toBeChecked({ checked: !pinned });
 }
 
-/** The footer's Usage icon, which is there whether or not the Usage item is on. */
-export async function openUsageScreenFromIcon(page: Page): Promise<void> {
+/**
+ * The footer's Usage icon, which is there whether or not the Usage item is on. On a phone the
+ * sidebar drawer has to be open.
+ */
+export async function openUsageFromIcon(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Usage", exact: true }).click({ timeout: 30_000 });
-  await expectOnUsageScreen(page);
+  await expect(usageModal(page)).toBeVisible();
 }
 
-/** Both footer entry points open Usage over the current screen on a phone. */
-export async function openUsageSheetFromIcon(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Usage", exact: true }).click();
-  await expect(usageSheet(page)).toBeVisible();
+/** The footer's Usage item, its summary of pinned windows. */
+export async function openUsageFromItem(page: Page): Promise<void> {
+  await usageItem(page).click();
+  await expect(usageModal(page)).toBeVisible();
 }
 
-export async function closeUsageSheet(page: Page): Promise<void> {
-  const sheet = usageSheet(page);
+/** Scrolls the Usage modal's body with the mouse wheel, as a user does. */
+export async function scrollUsage(page: Page, deltaY: number): Promise<void> {
+  const body = await usageModal(page).boundingBox();
+  const viewport = page.viewportSize();
+  if (!body || !viewport) throw new Error("Usage must be open before scrolling it.");
+  // The middle of the part of the body on screen; the body itself runs past the viewport.
+  const top = Math.max(body.y, 0);
+  const bottom = Math.min(body.y + body.height, viewport.height);
+  await page.mouse.move(body.x + body.width / 2, (top + bottom) / 2);
+  await page.mouse.wheel(0, deltaY);
+}
+
+/** The modal's own Close button. */
+export async function closeUsage(page: Page): Promise<void> {
+  await visible(page, "usage-modal").getByRole("button", { name: "Close", exact: true }).click();
+  await expect(usageModal(page)).toHaveCount(0);
+}
+
+/** A tap on the backdrop above the bottom sheet. */
+export async function closeUsageFromBackdrop(page: Page): Promise<void> {
+  const sheet = usageModal(page);
   await waitForSettledPosition(sheet);
-  const bounds = await sheet.boundingBox();
-  if (!bounds) throw new Error("Usage sheet must be visible before closing it.");
+  const bounds = await visible(page, "usage-modal").boundingBox();
+  if (!bounds) throw new Error("Usage must be open before closing it.");
   await page.mouse.click(bounds.x + bounds.width / 2, bounds.y / 2);
   await expect(sheet).toHaveCount(0);
 }
@@ -214,7 +232,7 @@ function summaryInSidebarSwitch(page: Page): Locator {
   return page.getByRole("switch", { name: "Summary in sidebar", exact: true });
 }
 
-/** Turns the sidebar Usage summary on or off from the Usage screen's Settings. */
+/** Turns the sidebar Usage summary on or off from the Usage modal's Settings. */
 export async function setSummaryInSidebar(page: Page, on: boolean): Promise<void> {
   await openUsageOptions(page);
   await summaryInSidebarSwitch(page).click();
@@ -274,10 +292,4 @@ export async function refreshAllUsage(page: Page): Promise<void> {
 /** Opens the compact sidebar drawer. */
 export async function openCompactSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
-}
-
-/** On a phone the Usage screen has a back header instead of the sidebar menu. */
-export async function leaveUsageScreen(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Back", exact: true }).first().click();
-  await expect(page).not.toHaveURL(/\/usage$/);
 }

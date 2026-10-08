@@ -358,14 +358,21 @@ test.skipIf(process.platform === "win32").each([["start"], ["daemon", "run"]])(
         stdio: "ignore",
       });
       const exited = new Promise((resolve) => child!.once("exit", resolve));
+      // The lock file exists before its contents identify the supervisor.
+      let supervisorPid: number | undefined;
       await expect
-        .poll(async () => existsSync(path.join(home, "paseo.pid")), { timeout: 10_000 })
-        .toBe(true);
-      const lock = JSON.parse(await readFile(path.join(home, "paseo.pid"), "utf8"));
+        .poll(
+          async () => {
+            supervisorPid = (await readDaemonInstance(home))?.pid;
+            return supervisorPid;
+          },
+          { timeout: 10_000 },
+        )
+        .toBeTypeOf("number");
       await f.ok(["status", "--home", home]);
       child.kill("SIGINT");
       await exited;
-      expect(() => process.kill(lock.pid, 0)).toThrow();
+      expect(() => process.kill(supervisorPid!, 0)).toThrow();
       expect((await f.ok(["status", "--home", home])).localDaemon).toBe("stopped");
     } finally {
       child?.kill("SIGTERM");

@@ -58,14 +58,14 @@ interface FakeAgentSessionOptions {
   sessionId?: string;
   memoryMarker?: string | null;
   closeSession?: () => Promise<void>;
-  onStartTurn?: (prompt: AgentPromptInput) => void;
+  onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
 }
 
 export interface TestAgentClientOptions {
-  beforeCreateSession?: () => Promise<void>;
+  beforeCreateSession?: (config: AgentSessionConfig) => Promise<void>;
   closeSession?: () => Promise<void>;
-  onStartTurn?: (prompt: AgentPromptInput) => void;
+  onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
   supportsMcpServers?: boolean;
 }
@@ -339,7 +339,7 @@ class FakeAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
 
   private readonly closeSession: (() => Promise<void>) | undefined;
-  private readonly onStartTurn: ((prompt: AgentPromptInput) => void) | undefined;
+  private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
   private readonly beforeTurnComplete: ((prompt: AgentPromptInput) => Promise<void>) | undefined;
 
   constructor(options: FakeAgentSessionOptions) {
@@ -444,7 +444,7 @@ class FakeAgentSession implements AgentSession {
 
     const turnId = `fake-turn-${this.nextTurnOrdinal++}`;
     this.activeForegroundTurnId = turnId;
-    this.onStartTurn?.(prompt);
+    this.onStartTurn?.(prompt, this.config);
 
     void this.emitTurnEvents(prompt);
 
@@ -1218,7 +1218,7 @@ class FakeAgentClient implements AgentClient {
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    await this.options.beforeCreateSession?.();
+    await this.options.beforeCreateSession?.(config);
     return new FakeAgentSession({
       providerName: this.provider,
       config: { ...config },

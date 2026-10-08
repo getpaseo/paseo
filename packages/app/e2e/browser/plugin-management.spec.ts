@@ -1,3 +1,4 @@
+import overviewCorpus from "../../../protocol/tests/fixtures/plugin-overview.json";
 import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -557,7 +558,7 @@ async function retryGitInstallAndInspectRows(
 
   await installPlugin(page, missingSource);
   await expect(page.getByTestId("plugin-management-feedback")).toContainText(
-    "Plugin source is neither an existing directory nor a Git URL",
+    `Plugin directory does not exist: ${missingSource}`,
   );
   await expect(page.getByLabel("Plugin source")).toHaveValue(missingSource);
   await capturePluginInstallForm(page, testInfo, "compact-error");
@@ -654,4 +655,28 @@ async function reloadAndRemoveNpmPlugin(page: Page) {
   await selectPluginAction(page, "npm-review", "Remove");
   await expect(page.getByText("Removed npm-review", { exact: true })).toBeVisible();
   await expect(page.getByLabel("npm-review running")).toHaveCount(0);
+}
+
+test("renders installed-plugin descriptions as plain text", async ({ page, pluginEnvironment }) => {
+  const description = overviewCorpus.map(({ markdown }) => markdown).join("\n\n");
+  await installPluginWithUntrustedDescription(pluginEnvironment, description);
+  await gotoAppShell(page);
+  await openPluginSettings(page);
+  const text = page.getByText(description, { exact: true });
+  await expect(text).toBeVisible();
+  // This field must remain a text node, with no Markdown links, images, or HTML children.
+  expect(await text.evaluate((element) => element.childElementCount)).toBe(0);
+});
+
+async function installPluginWithUntrustedDescription(
+  environment: PluginEnvironment,
+  description: string,
+) {
+  const directory = await createDirectoryPlugin(
+    environment.directory,
+    "plain-text-plugin",
+    description,
+    "Plain text plugin",
+  );
+  await environment.client.installPluginSource({ source: directory });
 }

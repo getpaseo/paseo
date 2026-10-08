@@ -1,3 +1,4 @@
+import { parseAgentMessage } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -1431,6 +1432,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       provider: "codex",
       currentModeId: "full-access",
@@ -3150,6 +3152,7 @@ describe("create_agent MCP tool", () => {
     await mkdir(subdir, { recursive: true });
     spies.agentManager.getAgent.mockReturnValue({
       id: "voice-agent",
+      config: { title: "Voice" },
       cwd: baseDir,
       workspaceId: "wks_voice",
       provider: "codex",
@@ -3204,6 +3207,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3250,6 +3254,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3295,6 +3300,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3347,6 +3353,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "claude",
@@ -3661,6 +3668,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "claude",
@@ -3713,6 +3721,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "claude",
@@ -3797,7 +3806,8 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput) {
-    return prompt === "/side-command" ? { run: async () => {} } : null;
+    const text = typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : null;
+    return text === "/side-command" ? { run: async () => {} } : null;
   }
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
@@ -3945,6 +3955,7 @@ describe("send_agent_prompt MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -4035,6 +4046,7 @@ describe("send_agent_prompt MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -4202,7 +4214,11 @@ describe("send_agent_prompt MCP tool", () => {
             disposition: "out_of_band",
             status: "running",
           });
-          expect(childClient.sessions[0]!.prompts).toEqual(["Ongoing task"]);
+          expect(childClient.sessions[0]!.prompts).toHaveLength(1);
+          expect(parseAgentMessage(childClient.sessions[0]!.prompts[0])).toMatchObject({
+            source: { kind: "agent-message", agentId: parent.id },
+            text: "Ongoing task",
+          });
           expect(parentClient.sessions[0]!.prompts).toHaveLength(0);
           childClient.sessions[0]!.finishTurn("Ongoing task done");
           await vi.waitFor(() => {
@@ -4385,7 +4401,12 @@ describe("send_agent_prompt MCP tool", () => {
         agentId: child.id,
         prompt: "Follow up",
       });
-      await vi.waitFor(() => expect(childSession.prompts).toEqual(["Follow up"]));
+      await vi.waitFor(() => expect(childSession.prompts).toHaveLength(1));
+      expect(parseAgentMessage(childSession.prompts[0])).toEqual({
+        id: expect.any(String),
+        source: { kind: "agent-message", agentId: parent.id },
+        text: "Follow up",
+      });
       acknowledgeTurnStart();
       const response = await pending;
 

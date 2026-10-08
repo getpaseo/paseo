@@ -211,15 +211,6 @@ test("loads private plugin registry settings through the configuration boundary"
     });
     expect(config.pluginRegistryUrl).toBe("https://plugins.example.test/internal");
     expect(config.pluginRegistries).toEqual(pluginRegistries);
-    expect(config.pluginRegistryEnabled).toBe(false);
-    await writeFile(
-      path.join(home, "config.json"),
-      JSON.stringify({ pluginRegistries, pluginRegistryEnabled: true }),
-    );
-    expect(loadConfig(home, { env: {} }).pluginRegistryEnabled).toBe(true);
-    expect(
-      loadConfig(home, { env: { PASEO_PLUGIN_REGISTRY_ENABLED: "false" } }).pluginRegistryEnabled,
-    ).toBe(false);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

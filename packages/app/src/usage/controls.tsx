@@ -65,8 +65,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * One host's usage and the title-row controls that go with it, for the Usage screen and the
- * compact usage sheet.
+ * One host's usage and the title-row controls that go with it, for the Usage modal.
  */
 export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   view: UsageView;

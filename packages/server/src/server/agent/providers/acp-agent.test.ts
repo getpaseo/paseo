@@ -1,9 +1,11 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { pathToFileURL } from "node:url";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
   ClientSideConnection,
@@ -52,8 +54,10 @@ import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type {
   AgentCapabilityFlags,
   AgentPersistenceHandle,
+  AgentSession,
   ProviderRefreshContext,
 } from "../agent-sdk-types.js";
+import { buildProviderRegistry } from "../provider-registry.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
@@ -3436,6 +3440,8 @@ interface ACPCloseInternals {
   child: ChildProcess | null;
   connection: unknown;
   sessionId: string | null;
+  activeForegroundTurnId: string | null;
+  agentCapabilities: { sessionCapabilities?: { close?: unknown } } | null;
 }
 
 async function startTerminal(
@@ -3500,6 +3506,38 @@ describe("ACPAgentSession close() tree-kill", () => {
 
     expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() terminates the provider when cancel and closeSession never settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminator = new FakeTerminator();
+      const session = createSession({ terminateProcess: terminator.terminate });
+      const child = createTerminalChildStub();
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      const unstableCloseSession = vi.fn(() => new Promise<void>(() => undefined));
+      const internals = asInternals<ACPCloseInternals>(session);
+      internals.child = child;
+      internals.sessionId = "session-1";
+      internals.activeForegroundTurnId = "turn-1";
+      internals.agentCapabilities = { sessionCapabilities: { close: {} } };
+      internals.connection = { cancel, unstable_closeSession: unstableCloseSession };
+
+      let settled = false;
+      const closing = (async () => {
+        await session.close();
+        settled = true;
+      })();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(settled).toBe(true);
+      expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(unstableCloseSession).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(terminator.terminated).toContain(child);
+      await closing;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("close() terminates running terminal child processes", async () => {
@@ -4218,5 +4256,267 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+});
+
+const SILENT_CLOSE_ACP_AGENT = `
+import { readFileSync, writeFileSync } from "node:fs";
+import { Readable, Writable } from "node:stream";
+const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
+writeFileSync(process.env.ACP_PID_FILE, String(process.pid));
+new AgentSideConnection(
+  () => ({
+    async initialize() {
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { sessionCapabilities: { close: {} } },
+      };
+    },
+    async newSession() {
+      return { sessionId: "silent-close-session" };
+    },
+    async authenticate() {},
+    async cancel() {},
+    unstable_closeSession() {
+      return new Promise(() => {});
+    },
+  }),
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
+`;
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface SilentCloseProvider {
+  session: ACPAgentSession;
+  readPid(): Promise<number>;
+  dispose(): Promise<void>;
+}
+
+async function startSilentCloseProvider(): Promise<SilentCloseProvider> {
+  const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-silent-close-"));
+  const agentScript = path.join(dir, "agent.mjs");
+  const pidFile = path.join(dir, "agent.pid");
+  await writeFile(agentScript, SILENT_CLOSE_ACP_AGENT);
+  const session = new ACPAgentSession(
+    { provider: "silent-close-acp", cwd: dir },
+    {
+      provider: "silent-close-acp",
+      logger: createTestLogger(),
+      defaultCommand: [process.execPath, agentScript],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      launchEnv: {
+        ACP_SDK_URL: pathToFileURL(
+          createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+        ).href,
+        ACP_PID_FILE: pidFile,
+      },
+    },
+  );
+  const readPid = async () => Number(await readFile(pidFile, "utf8"));
+  return {
+    session,
+    readPid,
+    async dispose() {
+      const pid = await readPid().catch(() => null);
+      if (pid !== null && isProcessAlive(pid)) {
+        process.kill(pid, "SIGKILL");
+      }
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("ACPAgentSession close() with an unresponsive provider", () => {
+  let provider: SilentCloseProvider | null = null;
+
+  afterEach(async () => {
+    await provider?.dispose();
+    provider = null;
+  });
+
+  test("terminates a provider that never answers session/close", async () => {
+    provider = await startSilentCloseProvider();
+    await provider.session.initializeNewSession();
+    const pid = await provider.readPid();
+    expect(isProcessAlive(pid)).toBe(true);
+
+    expect(await settlesWithin(provider.session.close(), 8_000)).toBe(true);
+    expect(isProcessAlive(pid)).toBe(false);
+  }, 15_000);
+});
+
+// An ACP agent that advertises two models (or none, with ACP_ADVERTISE_MODELS=none) but,
+// like Cline, runs any model id it is given.
+const PERMISSIVE_MODEL_ACP_AGENT = `
+import { Readable, Writable } from "node:stream";
+const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
+let currentModelId = "advertised-default";
+const modelState = () =>
+  process.env.ACP_ADVERTISE_MODELS === "none"
+    ? undefined
+    : {
+        currentModelId,
+        availableModels: [
+          { modelId: "advertised-default", name: "Advertised default" },
+          { modelId: "advertised-other", name: "Advertised other" },
+        ],
+      };
+new AgentSideConnection(
+  () => ({
+    async initialize() {
+      return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: true } };
+    },
+    async newSession() {
+      return { sessionId: "permissive-session", models: modelState() };
+    },
+    async loadSession() {
+      return { models: modelState() };
+    },
+    async unstable_setSessionModel({ modelId }) {
+      currentModelId = modelId;
+      return {};
+    },
+    async authenticate() {},
+    async cancel() {},
+    async prompt() {
+      return { stopReason: "end_turn" };
+    },
+  }),
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
+`;
+
+describe("custom ACP provider with configured models", () => {
+  let dir: string;
+  let agentScript: string;
+  let session: AgentSession | null = null;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-configured-models-"));
+    agentScript = path.join(dir, "agent.mjs");
+    await writeFile(agentScript, PERMISSIVE_MODEL_ACP_AGENT);
+  });
+
+  afterEach(async () => {
+    await session?.close();
+    session = null;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function buildRegistry(
+    override: {
+      models?: Array<{ id: string; label: string }>;
+      additionalModels?: Array<{ id: string; label: string }>;
+    },
+    agentEnv: Record<string, string> = {},
+  ) {
+    return buildProviderRegistry(createTestLogger(), {
+      providerOverrides: {
+        permissive: {
+          extends: "acp",
+          label: "Permissive",
+          command: [process.execPath, agentScript],
+          env: {
+            ACP_SDK_URL: pathToFileURL(
+              createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+            ).href,
+            ...agentEnv,
+          },
+          ...override,
+        },
+      },
+    });
+  }
+
+  async function createSessionOnModel(
+    registry: ReturnType<typeof buildRegistry>,
+    model: string,
+  ): Promise<AgentSession> {
+    const client = registry.permissive.createClient(createTestLogger());
+    session = await client.createSession({ provider: "permissive", cwd: dir, model });
+    return session;
+  }
+
+  test("runs on a model added through additionalModels that the agent does not advertise", async () => {
+    const registry = buildRegistry({
+      additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }],
+    });
+
+    const created = await createSessionOnModel(registry, "stealth/pixel-canary");
+
+    expect((await created.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
+  });
+
+  test("runs on a model from a replacement models list that the agent does not advertise", async () => {
+    const registry = buildRegistry({
+      models: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }],
+    });
+
+    const created = await createSessionOnModel(registry, "stealth/pixel-canary");
+
+    expect((await created.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
+  });
+
+  test("runs on a model from additionalModels when the agent advertises no models", async () => {
+    const registry = buildRegistry(
+      { additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }] },
+      { ACP_ADVERTISE_MODELS: "none" },
+    );
+
+    const created = await createSessionOnModel(registry, "stealth/pixel-canary");
+
+    expect((await created.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
+  });
+
+  test("resumes on a model added through additionalModels that the agent does not advertise", async () => {
+    const registry = buildRegistry({
+      additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }],
+    });
+    const client = registry.permissive.createClient(createTestLogger());
+
+    session = await client.resumeSession(
+      { provider: "permissive", sessionId: "permissive-session", metadata: { cwd: dir } },
+      { model: "stealth/pixel-canary" },
+    );
+
+    expect((await session.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
+  });
+
+  test("keeps the agent's model when the requested model is neither advertised nor configured", async () => {
+    const registry = buildRegistry({
+      additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }],
+    });
+
+    const created = await createSessionOnModel(registry, "stale/removed-model");
+
+    expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
   });
 });

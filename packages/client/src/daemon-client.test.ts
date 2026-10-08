@@ -7481,3 +7481,49 @@ test("usage request timeout detaches its update listener", async () => {
     vi.useRealTimers();
   }
 });
+
+test.each([false, true])(
+  "agent provenance requires host support=%s while human sends remain compatible",
+  async (supported) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "provenance",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { agentMessageProvenance: supported } });
+    await connecting;
+    if (!supported) {
+      await expect(
+        client.sendAgentMessage("recipient", "review", { sourceAgentId: "server::sender" }),
+      ).rejects.toThrow("Update the Paseo host");
+      expect(transport.sent).toHaveLength(0);
+    }
+    const send = client.sendAgentMessage("recipient", "review", {
+      messageId: "delivery",
+      ...(supported ? { sourceAgentId: "server::sender" } : {}),
+    });
+    const request = parseSentFrame(transport.sent[0]);
+    expect(request).toMatchObject({
+      type: "send_agent_message_request",
+      text: "review",
+      messageId: "delivery",
+    });
+    expect(request.sourceAgentId).toBe(supported ? "server::sender" : undefined);
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          error: null,
+        },
+      }),
+    );
+    await send;
+  },
+);

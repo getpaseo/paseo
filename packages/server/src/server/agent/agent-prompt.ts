@@ -1,3 +1,4 @@
+import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 import type { Logger } from "pino";
 
 import type {
@@ -211,21 +212,6 @@ export async function unarchiveAgentState(
   return true;
 }
 
-/**
- * Wrap a body in <paseo-system>…</paseo-system> so the receiving agent
- * recognizes the prompt as system-injected context — not a user turn.
- * Used by chat mentions, schedule fires, and notify-on-finish.
- */
-export function formatSystemNotificationPrompt(reason: string): string {
-  return `<paseo-system>\n${reason}\n</paseo-system>`;
-}
-
-const SYSTEM_ENVELOPE_PATTERN = /^<paseo-system>\n[\s\S]*\n<\/paseo-system>$/;
-
-export function isSystemInjectedEnvelope(text: string): boolean {
-  return SYSTEM_ENVELOPE_PATTERN.test(text);
-}
-
 export interface SendPromptToAgentParams {
   onDispatch?: StartAgentRunOptions["onDispatch"];
   agentManager: AgentManager;
@@ -233,6 +219,7 @@ export interface SendPromptToAgentParams {
   agentId: string;
   /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
   prompt: AgentPromptInput;
+  source?: AgentPromptSource;
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
@@ -250,10 +237,12 @@ export interface SendPromptToAgentParams {
 }
 
 export interface StartCreatedAgentInitialPromptParams {
+  agentStorage: AgentStorage;
   agentManager: AgentManager;
   agentId: string;
   snapshot?: ManagedAgent;
   prompt: AgentPromptInput | null;
+  source?: AgentPromptSource;
   runOptions?: AgentRunOptions;
   logger: Logger;
 }
@@ -298,6 +287,18 @@ export async function waitForAgentRunStartWithTimeout(
   }
 }
 
+async function resolvePromptSource(
+  source: AgentPromptSource | undefined,
+  manager: Pick<AgentManager, "getAgent">,
+  storage: AgentStorage,
+): Promise<AgentPromptSource | undefined> {
+  if (!source) return undefined;
+  const title = (
+    manager.getAgent(source.agentId)?.config.title ?? (await storage.get(source.agentId))?.title
+  )?.trim();
+  return title ? { ...source, title } : source;
+}
+
 /**
  * Full send-prompt orchestration: (optional unarchive) → load → (optional
  * mode change) → start run.
@@ -315,28 +316,42 @@ export async function sendPromptToAgent(
   const unarchive = params.unarchive ?? true;
 
   const record = await params.agentStorage.get(params.agentId);
+  let archivedAtToRestore: string | null = null;
   if (record?.archivedAt) {
     if (!unarchive) {
       return { disposition: "turn_started" };
     }
-    await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
+    if (await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId)) {
+      archivedAtToRestore = record.archivedAt;
+    }
   }
 
-  await ensureAgentLoaded(params.agentId, {
-    agentManager: params.agentManager,
-    agentStorage: params.agentStorage,
-    logger: params.logger,
-  });
+  try {
+    await ensureAgentLoaded(params.agentId, {
+      agentManager: params.agentManager,
+      agentStorage: params.agentStorage,
+      logger: params.logger,
+    });
+  } catch (error) {
+    // A send that could not load the agent leaves it where it was: still archived.
+    // Concurrent sends share this load, so none of them holds a live session.
+    if (archivedAtToRestore) {
+      await params.agentManager.archiveSnapshot(params.agentId, archivedAtToRestore);
+    }
+    throw error;
+  }
 
   if (params.sessionMode) {
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
-  const runOptions = params.messageId
-    ? { ...params.runOptions, clientMessageId: params.messageId }
+  const source = await resolvePromptSource(params.source, params.agentManager, params.agentStorage);
+  const delivery = prepareAgentMessage(params.prompt, source, params.messageId);
+  const runOptions = delivery.messageId
+    ? { ...params.runOptions, clientMessageId: delivery.messageId }
     : params.runOptions;
 
-  return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
+  return await startAgentRun(params.agentManager, params.agentId, delivery.prompt, params.logger, {
     replaceRunning: true,
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
@@ -357,14 +372,17 @@ export async function startCreatedAgentInitialPrompt(
     return currentSnapshot;
   }
 
+  const delivery = prepareAgentMessage(
+    params.prompt,
+    await resolvePromptSource(params.source, params.agentManager, params.agentStorage),
+    params.runOptions?.clientMessageId,
+  );
   const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
-    params.prompt,
+    delivery.prompt,
     params.logger,
-    {
-      runOptions: params.runOptions,
-    },
+    { runOptions: { ...params.runOptions, clientMessageId: delivery.messageId } },
   );
 
   if (dispatchResult.disposition === "turn_started") {
@@ -390,6 +408,13 @@ export interface SetupFinishNotificationParams {
 }
 
 type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+
+const finishNotificationEvents = {
+  finished: "finished",
+  errored: "errored",
+  "needs permission": "permission-required",
+  "was closed": "closed",
+} as const;
 
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
 
@@ -498,7 +523,12 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       agentManager,
       agentStorage,
       agentId: callerAgentId,
-      prompt: formatSystemNotificationPrompt(body),
+      prompt: body,
+      source: {
+        kind: "agent-notification",
+        agentId: childAgentId,
+        event: finishNotificationEvents[reason],
+      },
       activeTurnBehavior: "steer",
       unarchive: false,
       logger,

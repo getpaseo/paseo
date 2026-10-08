@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { UsageSourceRegistry } from "../../../packages/server/src/server/plugins/usage-sources/index.js";
+import { Usage as MuseUsage } from "../server/usage.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import os from "node:os";
@@ -1415,7 +1417,7 @@ for (const usage of [
   test(`usage source presents ${"usage" in usage ? "subscription windows" : "real route absence"} from discovered accounts`, async () => {
     const h = await harness("catalog-controls", { MUSE_TEST_USAGE: JSON.stringify(usage) });
     await h.open();
-    const inputs = await h.usageSource.discover();
+    const inputs = await h.usageSource.discover({ kind: "global" });
     expect(inputs).toHaveLength(1);
     const account = inputs[0]!;
     expect(account).toEqual({
@@ -1566,7 +1568,7 @@ test("usage identity follows the resolved config directory across credential and
       META_BASE_URL: route!,
     });
     await h.open();
-    const inputs = await h.usageSource.discover();
+    const inputs = await h.usageSource.discover({ kind: "global" });
     expect(inputs).toHaveLength(1);
     identities.push(inputs[0]!.key);
   }
@@ -1576,7 +1578,7 @@ test("usage identity follows the resolved config directory across credential and
 
 test.each(["no sessions", "unrelated environment"])("Muse discovery is empty with %s", async () => {
   const { Usage } = await import("../server/usage.js");
-  expect(await new Usage().registration().discover()).toEqual([]);
+  expect(await new Usage().registration().discover({ kind: "global" })).toEqual([]);
 });
 
 test("Muse window identity follows the reported duration instead of assuming five hours", async () => {
@@ -1591,7 +1593,7 @@ test("Muse window identity follows the reported duration instead of assuming fiv
     }),
   });
   await h.open();
-  const [account] = await h.usageSource.discover();
+  const [account] = await h.usageSource.discover({ kind: "global" });
   expect(await h.usageSource.fetch(account!.input)).toMatchObject({
     status: "available",
     windows: [
@@ -1687,3 +1689,44 @@ async function cleanupStubbornHosts(h: Awaited<ReturnType<typeof harness>>) {
     }
   }
 }
+
+test("Muse reports belong only to the session's account and remain available globally", async () => {
+  const usage = new MuseUsage();
+  const homeEnv = { HOME: "/usage/home" };
+  const configEnv = { HOME: "/usage/home", XDG_CONFIG_HOME: "/usage/work" };
+  const accountIds = [homeEnv, configEnv].map((env, index) => {
+    const launch = { command: "muse", args: [], env };
+    usage.attach(`session-${index}`, launch, async () => ({
+      usage: {
+        observedAtMs: 1700000000000,
+        tier: "Pro",
+        window: { usedPercent: 11, resetsAtMs: 1700018000000, windowDurationMins: 120 },
+        weekly: { usedPercent: 22, resetsAtMs: 1700604800000 },
+      },
+    }));
+    return `muse:${usage.remember(launch).account}`;
+  });
+  const sessions = new Map([
+    ["claude", { provider: "claude", env: homeEnv, sessionKey: "claude" }],
+    ["codex", { provider: "codex", env: configEnv, sessionKey: "codex" }],
+    ["muse-home", { provider: "muse", env: homeEnv, sessionKey: "muse-home" }],
+    ["muse-work", { provider: "muse", env: configEnv, sessionKey: "muse-work" }],
+    ["muse-unknown", { provider: "muse", env: { HOME: "/usage/unknown" }, sessionKey: "unknown" }],
+  ]);
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => sessions.has(id),
+    usageSession: (id) => sessions.get(id) ?? null,
+  });
+  registry.register(usage.registration());
+
+  expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);
+  expect(await registry.listReports({ agentId: "claude" })).toEqual([]);
+  expect(await registry.listReports({ agentId: "codex" })).toEqual([]);
+  for (const [index, agentId] of ["muse-home", "muse-work"].entries()) {
+    const reports = await registry.listReports({ agentId });
+    expect(reports.map((report) => report.id)).toEqual([accountIds[index]]);
+    expect(reports[0]!.report.status).toBe("available");
+  }
+  expect(await registry.listReports({ agentId: "muse-unknown" })).toEqual([]);
+  expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);
+});
