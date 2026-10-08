@@ -1,4 +1,5 @@
 import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { connect as tcpConnect, createServer as createTcpServer, type Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -169,6 +170,48 @@ describe("fetchWithAutoProxy", () => {
       await origin.close();
     }
   });
+
+  it("treats 205 responses as bodyless instead of throwing from Response construction", async () => {
+    const origin = await startOrigin();
+    const proxy = await startForwardProxy();
+    try {
+      const response = await requestThroughProxy(
+        new URL(`http://127.0.0.1:${origin.port}/reset`),
+        `http://127.0.0.1:${proxy.port}`,
+      );
+      expect(response.status).toBe(205);
+      expect(await response.text()).toBe("");
+    } finally {
+      await proxy.close();
+      await origin.close();
+    }
+  });
+
+  it("sends the HTTPS request over the CONNECT tunnel rather than opening a direct socket", async () => {
+    const origin = await startHttpsOrigin();
+    const proxy = await startForwardProxy();
+    const previousTlsSetting = process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
+    process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+    try {
+      const response = await requestThroughProxy(
+        new URL(`https://127.0.0.1:${origin.port}/json`),
+        `http://127.0.0.1:${proxy.port}`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(proxy.connects).toEqual([`127.0.0.1:${origin.port}`]);
+      expect(origin.remotePorts).toHaveLength(1);
+      expect(proxy.connectUpstreamPorts).toContain(origin.remotePorts[0]);
+    } finally {
+      if (previousTlsSetting === undefined) {
+        delete process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
+      } else {
+        process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = previousTlsSetting;
+      }
+      await proxy.close();
+      await origin.close();
+    }
+  });
 });
 
 interface OriginRequest {
@@ -200,6 +243,11 @@ async function startOrigin(): Promise<{
         res.end(Buffer.alloc(6 * 1024 * 1024));
         return;
       }
+      if (req.url === "/reset") {
+        res.writeHead(205, { "content-length": "0" });
+        res.end();
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
     });
@@ -214,12 +262,66 @@ async function startOrigin(): Promise<{
   };
 }
 
+const TEST_TLS_KEY = `-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIJh8QfIvSXtsX9QOlNIVpIE/c6/OGYWWqGCmMdZF73l4oAoGCCqGSM49
+AwEHoUQDQgAELD7cgKCQUO478vQb/Itdu/KP4hdAaDPKEZWbzGrUQu7U92M6kvwt
+Ck9bDj532zTh5YLkzeOo+nwkLCjyxPu8ZQ==
+-----END EC PRIVATE KEY-----`;
+
+const TEST_TLS_CERT = `-----BEGIN CERTIFICATE-----
+MIIBjjCCATSgAwIBAgIUSi58Pq6Xgz8ugjJa2b0r7QxcMm4wCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJMTI3LjAuMC4xMB4XDTI2MTAwODAwNDM0MVoXDTM2MTAwNTAw
+NDM0MVowFDESMBAGA1UEAwwJMTI3LjAuMC4xMFkwEwYHKoZIzj0CAQYIKoZIzj0D
+AQcDQgAELD7cgKCQUO478vQb/Itdu/KP4hdAaDPKEZWbzGrUQu7U92M6kvwtCk9b
+Dj532zTh5YLkzeOo+nwkLCjyxPu8ZaNkMGIwHQYDVR0OBBYEFOu903WpCcmNgkmP
+HVvcwtVqRslVMB8GA1UdIwQYMBaAFOu903WpCcmNgkmPHVvcwtVqRslVMA8GA1Ud
+EwEB/wQFMAMBAf8wDwYDVR0RBAgwBocEfwAAATAKBggqhkjOPQQDAgNIADBFAiEA
+8iGIyRrgtsCgaT9OsHZ3RdkCZBHKrZrwnbusxeNcvO0CIDxsebRhmH66JadFX4ay
+OacTTam1Ps8vpYeFrkwt7tgb
+-----END CERTIFICATE-----`;
+
+async function startHttpsOrigin(): Promise<{
+  port: number;
+  remotePorts: number[];
+  close: () => Promise<void>;
+}> {
+  const remotePorts: number[] = [];
+  const sockets = new Set<Socket>();
+  const server = createHttpsServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, (req, res) => {
+    req.resume();
+    req.once("end", () => {
+      if (req.socket.remotePort !== undefined) remotePorts.push(req.socket.remotePort);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("HTTPS origin did not bind");
+  return {
+    port: address.port,
+    remotePorts,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
 async function startForwardProxy(): Promise<{
   port: number;
   proxyAuth: (string | null)[];
+  connects: string[];
+  connectUpstreamPorts: number[];
   close: () => Promise<void>;
 }> {
   const proxyAuth: (string | null)[] = [];
+  const connects: string[] = [];
+  const connectUpstreamPorts: number[] = [];
   const sockets = new Set<Socket>();
   const server = createTcpServer((client) => {
     sockets.add(client);
@@ -240,14 +342,34 @@ async function startForwardProxy(): Promise<{
       }
       const proxyHeader = headers.find(([name]) => name.toLowerCase() === "proxy-authorization");
       proxyAuth.push(proxyHeader?.[1] ?? null);
-      const absoluteUrl = requestLine?.split(" ")[1] ?? "";
-      const target = new URL(absoluteUrl);
+
+      const method = requestLine?.split(" ")[0] ?? "GET";
+      const requestTarget = requestLine?.split(" ")[1] ?? "";
+      if (method === "CONNECT") {
+        connects.push(requestTarget);
+        const separator = requestTarget.lastIndexOf(":");
+        const host = requestTarget.slice(0, separator).replace(/^\[|\]$/g, "");
+        const port = Number(requestTarget.slice(separator + 1));
+        const upstream = tcpConnect(port, host, () => {
+          if (upstream.localPort !== undefined) connectUpstreamPorts.push(upstream.localPort);
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          if (rest.length > 0) upstream.write(rest);
+          client.pipe(upstream);
+          upstream.pipe(client);
+        });
+        sockets.add(upstream);
+        upstream.once("close", () => sockets.delete(upstream));
+        upstream.on("error", () => client.destroy());
+        client.on("error", () => upstream.destroy());
+        return;
+      }
+
+      const target = new URL(requestTarget);
       const originForm = `${target.pathname}${target.search}`;
       const rewrittenHeaders = headers
         .filter(([name]) => name.toLowerCase() !== "proxy-authorization")
         .map(([name, value]) => `${name}: ${value}`)
         .join("\r\n");
-      const method = requestLine?.split(" ")[0] ?? "GET";
       const upstream = tcpConnect(target.port ? Number(target.port) : 80, target.hostname, () => {
         upstream.write(`${method} ${originForm} HTTP/1.1\r\n${rewrittenHeaders}\r\n\r\n`);
         if (rest.length > 0) upstream.write(rest);
@@ -267,6 +389,8 @@ async function startForwardProxy(): Promise<{
   return {
     port: address.port,
     proxyAuth,
+    connects,
+    connectUpstreamPorts,
     close: async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
