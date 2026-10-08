@@ -54,3 +54,44 @@ test("a completed edit carries the replaced and replacement text", () => {
     },
   ]);
 });
+
+test("a tool's image output is shown as an image, not as base64 in the tool output", () => {
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  const screenshot = assistant([
+    {
+      type: "tool",
+      id: "call-screenshot",
+      name: "paseo_browser_screenshot",
+      executed: false,
+      state: {
+        status: "completed",
+        input: {},
+        content: [
+          { type: "text", text: "Captured browser screenshot (1x1)." },
+          { type: "file", uri: `data:image/png;base64,${png}`, mime: "image/png" },
+        ],
+        metadata: {},
+      },
+      time: { created: 2, ran: 2, completed: 2 },
+    },
+  ]);
+  const timeline = new V2Timeline();
+
+  const events = timeline.messages([screenshot]);
+
+  expect(JSON.stringify(events)).not.toContain(png);
+  expect(events.map((event) => event.type === "timeline" && event.item)).toMatchObject([
+    {
+      type: "tool_call",
+      name: "paseo_browser_screenshot",
+      status: "completed",
+      detail: { output: "Captured browser screenshot (1x1).\n[image]" },
+    },
+    {
+      type: "assistant_message",
+      text: expect.stringMatching(/^!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)$/),
+    },
+  ]);
+  expect(timeline.messages([screenshot])).toEqual([]);
+});

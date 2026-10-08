@@ -226,7 +226,7 @@ submission. Overlapping sends settle independently rather than collapsing to one
 message.
 
 Daemons advertising `server_info.features.canonicalSubmittedPrompts` guarantee that every accepted
-prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
+human prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
 same id. This includes daemon-handled commands that do not allocate a foreground turn; their submitted
 row is recorded before handler output. The app tracks submission transactions only for hosts with this
 capability. Older hosts keep the shipped untracked optimistic-row behavior and roll that row back on RPC
@@ -241,10 +241,24 @@ foreground control ownership remains a separate daemon concern. Cancellation req
 with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
 remain a separate pre-turn registry and retire on canonical acknowledgement.
 
-Canonical turns and visible responses are different boundaries. System-injected prompts are absent from
-the Paseo timeline, so one visible response can span several canonical turns without a user message
-between them. Layout and copy group that response together; lifecycle, timing, tool sequences, and exact
+Canonical turns and visible responses are different boundaries. Agent-originated prompts and lifecycle
+notifications project into tool rows, so they do not create a human-message boundary. Legacy system
+prompts, including schedule injections, remain hidden. One visible response can span several canonical
+turns; layout and copy group that response together while lifecycle, timing, tool sequences, and exact
 fork positions retain the canonical `turnId` boundaries.
+
+Agent-message XML belongs to the daemon's `agent/agent-messages` boundary. Prompt delivery encodes
+provenance; acceptance, provider echoes, import, and replay share its projection. The delivery ID is
+also the projected call ID, so a provider echo cannot create a second row. Sender IDs are opaque and
+do not imply local ownership or authorization. Capture the sender title at delivery: archived or
+removed senders must remain understandable without a live directory lookup.
+
+The optional `agentMessage` payload carries event, sender, and delivered text. Shared client
+presentation (`protocol/agent-message-display`) owns its heading and expanded details. The daemon
+must not construct UI labels or prepend sender labels to the semantic message body. The existing
+`tool_call` / `plain_text` envelope is a compatibility adapter: older clients still parse the row and
+expand its body. New clients use the typed payload, never infer the event from a tool name or parse
+XML. Stream reduction and disk-cache serialization preserve the payload without rendering it.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app
@@ -253,7 +267,7 @@ second running state. Disconnect preserves the last replicated turn until cache 
 advances it; replica removal remains the destructive close boundary. Elapsed time comes only from turn
 liveness, never from submission records or whichever timeline rows happen to be mounted.
 
-The daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
+For human prompts, the daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
 submission's `clientMessageId`, so the row is born with its final identity and remains immutable on
 the wire. A correlated provider echo records the provider's native identity internally without
 dispatching another timeline event. Rewind resolves the wire identity to that provider identity at
