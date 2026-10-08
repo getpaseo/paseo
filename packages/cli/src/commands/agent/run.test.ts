@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
+import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
 import {
   resolveExistingRunWorkspace,
-  resolveRunCallerAgentId,
   runRunCommand,
   waitsForFinish,
   type AgentRunOptions,
@@ -48,17 +48,20 @@ describe("managed agent caller context", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("fails instead of dropping the caller when the lookup loses its connection", async () => {
-    const disconnectedDaemon = {
-      async fetchAgent(): Promise<never> {
-        throw new DaemonConnectionError("Connection lost before message could be sent");
-      },
-    };
+  it.each(["DAEMON_CONNECTION_LOST", "DAEMON_REQUEST_TIMEOUT"] as const)(
+    "preserves %s instead of dropping the caller",
+    async (code) => {
+      const disconnectedDaemon = {
+        async fetchAgent(): Promise<never> {
+          throw new DaemonConnectionError("Caller lookup transport failed", code);
+        },
+      };
 
-    await expect(
-      resolveRunCallerAgentId(disconnectedDaemon, { PASEO_AGENT_ID: "parent-agent" }),
-    ).rejects.toBeInstanceOf(DaemonConnectionError);
-  });
+      await expect(
+        resolveRunCallerAgentId(disconnectedDaemon, { PASEO_AGENT_ID: "parent-agent" }),
+      ).rejects.toBeInstanceOf(DaemonConnectionError);
+    },
+  );
 
   it("omits blank caller ids", async () => {
     await expect(

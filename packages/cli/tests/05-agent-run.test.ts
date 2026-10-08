@@ -54,7 +54,10 @@ try {
     const result = await $`npx paseo run --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "run --help should exit 0");
     assert(result.stdout.includes("--no-wait"), "help should mention --no-wait flag");
-    assert(result.stdout.includes("--internal"), "help should mention --internal flag");
+    assert(
+      !result.stdout.includes("--internal"),
+      "help should not mention removed --internal flag",
+    );
     assert(!result.stdout.includes("--background"), "help should hide legacy --background syntax");
     assert(!result.stdout.includes("--detach"), "help should hide legacy --detach syntax");
     assert(result.stdout.includes("--title"), "help should mention --title option");

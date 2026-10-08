@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkspaceSource } from "./create.js";
+import { Command } from "commander";
+import { DaemonClient } from "../../../../server/src/server/test-utils/daemon-client.js";
+import { createTestPaseoDaemon } from "../../../../server/src/server/test-utils/paseo-daemon.js";
+import { buildWorkspaceSource, runCreateCommand } from "./create.js";
 
 describe("workspace create source", () => {
   it("maps local isolation to a directory workspace", () => {
@@ -122,4 +125,58 @@ describe("workspace create source", () => {
       "Unsupported workspace isolation",
     );
   });
+});
+
+describe("workspace create caller context", () => {
+  it("inherits only callers on the selected daemon and preserves explicit visibility", async () => {
+    const daemon = await createTestPaseoDaemon({
+      providerOverrides: { codex: { enabled: true } },
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const previousCaller = process.env.PASEO_AGENT_ID;
+    const previousHome = process.env.PASEO_HOME;
+    try {
+      process.env.PASEO_HOME = daemon.paseoHome;
+      await client.connect();
+      const parentWorkspace = await client.createWorkspace({
+        source: { kind: "directory", path: daemon.paseoHome },
+        background: true,
+      });
+      expect(parentWorkspace.error).toBeNull();
+      const parent = await client.createAgent({
+        config: { provider: "codex", cwd: daemon.paseoHome },
+        workspaceId: parentWorkspace.workspace!.id,
+      });
+      const cases = [
+        { caller: parent.id, background: undefined, expected: true },
+        { caller: parent.id, background: false, expected: false },
+        { caller: parent.id, background: true, expected: true },
+        { caller: "foreign-or-missing-agent", background: undefined, expected: false },
+        { caller: "foreign-or-missing-agent", background: true, expected: true },
+        { caller: "foreign-or-missing-agent", background: false, expected: false },
+        { caller: "", background: undefined, expected: false },
+        { caller: "", background: true, expected: true },
+      ];
+      for (const entry of cases) {
+        process.env.PASEO_AGENT_ID = entry.caller;
+        const result = await runCreateCommand(
+          {
+            daemonTarget: { kind: "endpoint", host: `127.0.0.1:${daemon.port}` },
+            isolation: "local",
+            path: daemon.paseoHome,
+            ...(entry.background !== undefined ? { background: entry.background } : {}),
+          },
+          new Command(),
+        );
+        expect(result.data.background, JSON.stringify(entry)).toBe(entry.expected);
+      }
+    } finally {
+      if (previousCaller === undefined) delete process.env.PASEO_AGENT_ID;
+      else process.env.PASEO_AGENT_ID = previousCaller;
+      if (previousHome === undefined) delete process.env.PASEO_HOME;
+      else process.env.PASEO_HOME = previousHome;
+      await client.close();
+      await daemon.close();
+    }
+  }, 30_000);
 });
