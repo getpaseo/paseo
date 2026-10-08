@@ -59,6 +59,7 @@ import {
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
+  setupFinishNotification,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
@@ -4298,6 +4299,8 @@ export class Session {
           labels: resolvedIntent.intent.labels,
           env,
           provisionalTitle,
+          callerAgentId: msg.callerAgentId,
+          notifyOnFinish: msg.notifyOnFinish,
           firstAgentContext,
           buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
             this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
@@ -8056,14 +8059,17 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
     const resolved = await this.resolveAgentIdentifier(msg.agentId);
-    if (!resolved.ok) {
+    const notifyCallerAgentId = msg.notifyOnFinish ? msg.callerAgentId : undefined;
+    const missingCaller =
+      notifyCallerAgentId !== undefined && !this.agentManager.getAgent(notifyCallerAgentId);
+    if (!resolved.ok || missingCaller) {
       this.emit({
         type: "send_agent_message_response",
         payload: {
           requestId: msg.requestId,
           agentId: msg.agentId,
           accepted: false,
-          error: resolved.error,
+          error: resolved.ok ? `Caller agent ${notifyCallerAgentId} not found` : resolved.error,
         },
       });
       return;
@@ -8093,6 +8099,16 @@ export class Session {
           clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
+        // Armed once the turn is dispatched, like MCP send_agent_prompt in background.
+        if (notifyCallerAgentId) {
+          setupFinishNotification({
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            childAgentId: agentId,
+            callerAgentId: notifyCallerAgentId,
+            logger: this.sessionLogger,
+          });
+        }
         if (result.disposition === "turn_started") {
           await waitForAgentRunStartWithTimeout(
             this.agentManager,

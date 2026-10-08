@@ -429,6 +429,9 @@ export interface SendMessageOptions {
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+  /** With notifyOnFinish, the daemon wakes this agent when the turn finishes, errors, or needs permission. */
+  callerAgentId?: string;
+  notifyOnFinish?: boolean;
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -450,6 +453,8 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   env?: CreateAgentRequestMessage["env"];
   workspaceId?: string;
   callerAgentId?: string;
+  /** With callerAgentId, the daemon wakes the caller when the child finishes, errors, or needs permission. */
+  notifyOnFinish?: boolean;
   initialPrompt?: string;
   idempotencyKey?: string;
   clientMessageId?: string;
@@ -2874,6 +2879,7 @@ export class DaemonClient {
       ...(options.env ? { env: options.env } : {}),
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
+      ...(options.notifyOnFinish !== undefined ? { notifyOnFinish: options.notifyOnFinish } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       idempotencyKey: options.idempotencyKey,
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
@@ -3458,6 +3464,8 @@ export class DaemonClient {
       ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
+      ...(options?.callerAgentId ? { callerAgentId: options.callerAgentId } : {}),
+      ...(options?.notifyOnFinish !== undefined ? { notifyOnFinish: options.notifyOnFinish } : {}),
     });
     const payload = await this.sendRequest({
       requestId,
@@ -6928,6 +6936,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     idempotencyKey: _idempotencyKey,
     clientMessageId: _clientMessageId,
     callerAgentId: _callerAgentId,
+    notifyOnFinish: _notifyOnFinish,
     outputSchema: _outputSchema,
     attachments: _attachments,
     worktree: _worktree,

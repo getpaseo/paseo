@@ -1358,6 +1358,10 @@ export const SendAgentMessageRequestSchema = z.object({
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+  // Managed CLI invocations name their calling agent so the daemon can wake it
+  // when this turn finishes, errors, or needs permission. Only honored together.
+  callerAgentId: z.string().optional(),
+  notifyOnFinish: z.boolean().optional(),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -1701,6 +1705,9 @@ export const CreateAgentRequestMessageSchema = z.object({
   // Optional caller context lets managed CLI invocations use the same daemon-owned
   // workspace and parentage policy as agent-scoped MCP creation.
   callerAgentId: z.string().optional(),
+  // With callerAgentId, wake the caller when the child finishes, errors, or
+  // needs permission, matching agent-scoped MCP create_agent.
+  notifyOnFinish: z.boolean().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
@@ -3716,6 +3723,9 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(callerFinishNotifications): added in v0.10.3, remove gate after 2027-03-31.
+        // create/send requests honor callerAgentId + notifyOnFinish.
+        callerFinishNotifications: z.boolean().optional(),
       })
       .optional(),
   })

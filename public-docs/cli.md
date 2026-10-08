@@ -59,6 +59,14 @@ Use `--output-schema` to return only matching JSON output. You can pass a schema
 
 By default, `paseo run` waits for completion. Use `--background` to return immediately while the agent keeps running.
 
+An agent that starts a background run can ask to be woken when the new agent finishes, errors, or needs permission, like `create_agent` over MCP:
+
+```bash
+paseo run --background --notify-on-finish "run the focused test suite"
+```
+
+`--notify-on-finish` only works from inside a Paseo agent on the target daemon.
+
 ## Projects
 
 Register the current directory as a project, then list the projects known to the daemon:
@@ -219,7 +227,10 @@ Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](
 paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
 paseo send <id> --no-wait "queue this task"
+paseo send <id> --no-wait --notify-on-finish "run the tests and report back"
 ```
+
+From inside an agent, `--notify-on-finish` wakes the sender when the recipient finishes, errors, or needs permission.
 
 ## Viewing logs
 

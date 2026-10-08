@@ -31,6 +31,10 @@ export function addRunOptions(cmd: Command): Command {
       // COMPAT(detachRunFlag): --detach used to mean background execution, not
       // ownership transfer. Added in v0.2.0; remove after 2027-01-17.
       .addOption(new Option("--detach", "Legacy alias for --background").hideHelp())
+      .option(
+        "--notify-on-finish",
+        "Wake the calling agent when this agent finishes, errors, or needs permission (agent-scoped, with --background)",
+      )
       .option("--title <title>", "Assign a title to the agent")
       .addOption(new Option("--name <name>", "Hidden alias for --title").hideHelp())
       .option(
@@ -113,6 +117,7 @@ export const agentRunSchema: OutputSchema<AgentRunResult> = {
 export interface AgentRunOptions extends CommandOptions {
   background?: boolean;
   detach?: boolean;
+  notifyOnFinish?: boolean;
   title?: string;
   name?: string;
   provider?: string;
@@ -398,6 +403,14 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
       details: "Structured output requires waiting for the agent to finish",
     } satisfies CommandError;
   }
+
+  if (options.notifyOnFinish && !runsInBackground(options)) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--notify-on-finish requires --background",
+      details: "A foreground run already reports the result to the caller",
+    } satisfies CommandError;
+  }
 }
 
 function runsInBackground(options: Pick<AgentRunOptions, "background" | "detach">): boolean {
@@ -612,6 +625,9 @@ export async function runRunCommand(
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
     const callerAgentId = await resolveRunCallerAgentId(client);
+    if (options.notifyOnFinish) {
+      requireNotifyOnFinishCaller(client, callerAgentId);
+    }
     const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId);
     const workspaceId = workspace.id;
     const runCwd = workspace.cwd;
@@ -705,6 +721,7 @@ export async function runRunCommand(
       images,
       env: requestEnv,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
+      notifyOnFinish: options.notifyOnFinish,
     });
 
     // Default run behavior is foreground: wait for completion unless background execution is set.
@@ -769,4 +786,33 @@ export async function resolveRunCallerAgentId(
     return null;
   });
   return caller?.agent.id === agentId ? agentId : undefined;
+}
+
+interface NotifyOnFinishClient {
+  getLastServerInfoMessage(): {
+    features?: { callerFinishNotifications?: boolean };
+  } | null;
+}
+
+// The daemon wakes the caller through a prompt, so --notify-on-finish needs a
+// caller agent on the target daemon and a daemon that honors the request field.
+export function requireNotifyOnFinishCaller(
+  client: NotifyOnFinishClient,
+  callerAgentId: string | undefined,
+): string {
+  if (!callerAgentId) {
+    throw {
+      code: "NOT_AGENT_SCOPED",
+      message: "--notify-on-finish requires running inside a Paseo agent",
+      details: "PASEO_AGENT_ID must name an agent on the target daemon",
+    } satisfies CommandError;
+  }
+  // COMPAT(callerFinishNotifications): added in v0.10.3, remove gate after 2027-03-31.
+  if (client.getLastServerInfoMessage()?.features?.callerFinishNotifications !== true) {
+    throw {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to use --notify-on-finish.",
+    } satisfies CommandError;
+  }
+  return callerAgentId;
 }
