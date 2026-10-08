@@ -88,6 +88,7 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type AgentUsageSession,
   type FetchCatalogOptions,
   type ProviderRefreshContext,
   type ImportableProviderSession,
@@ -112,6 +113,7 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
+  createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -456,6 +458,8 @@ export type ACPCatalogModelResolver = (
 
 interface ACPAgentClientOptions {
   provider: string;
+  // Provider id usage sources match a session against; ACP sessions without one report no usage.
+  usageProvider?: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
@@ -488,6 +492,7 @@ interface ACPAgentClientOptions {
 
 interface ACPAgentSessionOptions {
   provider: string;
+  usageProvider?: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
@@ -910,6 +915,7 @@ function isACPCreateConfigUnattended(input: AgentCreateConfigUnattendedInput): b
 
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
+  private readonly usageProvider?: string;
   readonly capabilities: AgentCapabilityFlags;
   readonly resolveCreateConfig = resolveACPCreateConfig;
   readonly isCreateConfigUnattended = isACPCreateConfigUnattended;
@@ -951,6 +957,7 @@ export class ACPAgentClient implements AgentClient {
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
+    this.usageProvider = options.usageProvider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
     this.logger = options.logger.child({
@@ -989,6 +996,7 @@ export class ACPAgentClient implements AgentClient {
       { ...config, provider: this.provider },
       {
         provider: this.provider,
+        usageProvider: this.usageProvider,
         logger: this.logger,
         runtimeSettings: this.runtimeSettings,
         defaultCommand: this.defaultCommand,
@@ -1046,6 +1054,7 @@ export class ACPAgentClient implements AgentClient {
     const providerOptions = ACPProviderOptionsSchema.parse(mergedConfig.providerOptions ?? {});
     const session = new ACPAgentSession(mergedConfig, {
       provider: this.provider,
+      usageProvider: this.usageProvider,
       logger: this.logger,
       runtimeSettings: this.runtimeSettings,
       defaultCommand: this.defaultCommand,
@@ -1715,6 +1724,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
+  private readonly usageProvider?: string;
+  private readonly usageSessionKey = randomUUID();
+  private readonly harnessEnvironment: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
@@ -1777,6 +1789,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
+    this.usageProvider = options.usageProvider;
+    this.harnessEnvironment = createProviderEnv({
+      runtimeSettings: options.runtimeSettings,
+      overlays: [options.launchEnv],
+    });
     this.initialHandle = options.handle;
     this.resumePurpose = options.resumePurpose ?? "interactive";
     this.config = { ...config, provider: options.provider };
@@ -1791,6 +1808,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   get id(): string | null {
     return this.sessionId;
+  }
+
+  usageSession(): AgentUsageSession | null {
+    if (this.closed || !this.usageProvider) return null;
+    return {
+      provider: this.usageProvider,
+      model: this.currentModel ?? undefined,
+      env: this.harnessEnvironment,
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   async initializeNewSession(): Promise<void> {
