@@ -279,7 +279,11 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       ...previous,
       item: {
         type: "assistant_message",
-        text: `${previousAssistant.text}${entryAssistant.text}`,
+        // A replacement row carries the full current text and supersedes
+        // everything accumulated before it; a delta row extends it.
+        text: entryAssistant.replace
+          ? entryAssistant.text
+          : `${previousAssistant.text}${entryAssistant.text}`,
         ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
       },
       timestamp: entry.timestamp,

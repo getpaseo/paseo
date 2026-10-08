@@ -2305,3 +2305,94 @@ describe("notification timeline items", () => {
     expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
   });
 });
+
+describe("assistant message replacement", () => {
+  function replaceAssistantTimeline(
+    text: string,
+    provider: AgentProvider = "opencode",
+    messageId?: string,
+  ): AgentStreamEventPayload {
+    return {
+      type: "timeline",
+      provider,
+      item: {
+        type: "assistant_message",
+        text,
+        ...(messageId ? { messageId } : {}),
+        replace: true,
+      },
+    };
+  }
+
+  it("swaps the text of an existing assistant row in place", () => {
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+
+    const updates = [
+      {
+        event: assistantTimeline("Hel", "opencode", "msg-replace"),
+        timestamp: new Date("2025-01-01T10:00:00Z"),
+      },
+      {
+        event: assistantTimeline("lo", "opencode", "msg-replace"),
+        timestamp: new Date("2025-01-01T10:00:01Z"),
+      },
+      {
+        event: replaceAssistantTimeline("Rewritten.", "opencode", "msg-replace"),
+        timestamp: new Date("2025-01-01T10:00:02Z"),
+      },
+      {
+        event: { type: "turn_completed" as const, provider: "opencode" as const },
+        timestamp: new Date("2025-01-01T10:00:03Z"),
+      },
+    ];
+    for (const update of updates) {
+      const result = applyStreamEvent({
+        tail,
+        head,
+        event: update.event,
+        timestamp: update.timestamp,
+      });
+      tail = result.tail;
+      head = result.head;
+    }
+
+    const messages = tail.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toBe("Rewritten.");
+    expect(messages[0]?.messageId).toBe("msg-replace");
+  });
+
+  it("creates the row when a replace arrives without preceding deltas", () => {
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+    for (const update of [
+      {
+        event: replaceAssistantTimeline("Rewritten.", "opencode", "msg-new"),
+        timestamp: new Date("2025-01-01T10:00:00Z"),
+      },
+      {
+        event: { type: "turn_completed" as const, provider: "opencode" as const },
+        timestamp: new Date("2025-01-01T10:00:01Z"),
+      },
+    ]) {
+      const result = applyStreamEvent({
+        tail,
+        head,
+        event: update.event,
+        timestamp: update.timestamp,
+      });
+      tail = result.tail;
+      head = result.head;
+    }
+    const messages = tail.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toBe("Rewritten.");
+  });
+});

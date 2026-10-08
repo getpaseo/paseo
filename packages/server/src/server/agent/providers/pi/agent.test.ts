@@ -2352,6 +2352,59 @@ describe("PiRpcAgentSession", () => {
       usage: { contextWindowUsedTokens: 160 },
     });
   });
+
+  test("emits replace item from message_end text for assistant messages (#5410)", async () => {
+    const { pi, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "MARKER hello" },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "hello world" }],
+      },
+    });
+
+    const items = events.timelineItems();
+    const replaceItem = items.find((i) => i.replace === true);
+    expect(replaceItem).toMatchObject({
+      type: "assistant_message",
+      text: "hello world",
+      replace: true,
+      messageId: expect.any(String),
+    });
+  });
+
+  test("does not emit replace item when message_end has no text content", async () => {
+    const { pi, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "internal" },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "thinking", text: "internal reasoning" }],
+      },
+    });
+
+    const items = events.timelineItems();
+    const replaceItem = items.find((i) => i.replace === true);
+    expect(replaceItem).toBeUndefined();
+  });
 });
 
 describe("PiRpcAgentSession steering", () => {

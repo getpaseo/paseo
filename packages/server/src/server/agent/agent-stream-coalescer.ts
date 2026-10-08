@@ -76,6 +76,10 @@ function isTerminalToolCall(item: CoalescableTimelineItem): boolean {
   );
 }
 
+function isReplaceTextItem(item: CoalescableTextItem): boolean {
+  return item.type === "assistant_message" && item.replace === true;
+}
+
 function isSameTextStream(previous: PendingTextEntry, next: PendingTextEntry): boolean {
   if (previous.item.type !== next.item.type) {
     return false;
@@ -271,6 +275,21 @@ export class AgentStreamCoalescer {
 
     for (const entry of entries) {
       const previous = collapsed.at(-1);
+      if (
+        entry.kind === "text" &&
+        isReplaceTextItem(entry.item) &&
+        previous &&
+        previous.kind === "text" &&
+        isSameTextStream(previous, entry) &&
+        previous.provider === entry.provider &&
+        previous.turnId === entry.turnId
+      ) {
+        // A replace item carries the part's full current text, not a suffix:
+        // it supersedes the accumulated text for that message instead of extending it.
+        collapsed.pop();
+        collapsed.push({ ...entry });
+        continue;
+      }
       if (
         previous &&
         previous.kind === "text" &&

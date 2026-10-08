@@ -64,6 +64,7 @@ function assistant(
     provider?: AgentProvider;
     turnId?: string;
     messageId?: string;
+    replace?: boolean;
   },
 ): Extract<AgentStreamEvent, { type: "timeline" }> {
   return timeline(
@@ -71,6 +72,7 @@ function assistant(
       type: "assistant_message",
       text,
       ...(options?.messageId !== undefined ? { messageId: options.messageId } : {}),
+      ...(options?.replace ? { replace: true } : {}),
     },
     options,
   );
@@ -803,6 +805,29 @@ describe("AgentStreamCoalescer", () => {
       },
       { type: "reasoning", text: "r" },
       { type: "assistant_message", text: "b" },
+    ]);
+  });
+
+  test("a replace item supersedes buffered deltas for the same message", async () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
+
+    coalescer.handle("agent-1", assistant("hel", { messageId: "msg-1" }));
+    coalescer.handle("agent-1", assistant("Rewritten.", { messageId: "msg-1", replace: true }));
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "Rewritten.", messageId: "msg-1", replace: true },
+    ]);
+  });
+
+  test("a lone replace item keeps the flag on flush", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("Rewritten.", { messageId: "msg-1", replace: true }));
+
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "Rewritten.", messageId: "msg-1", replace: true },
     ]);
   });
 });

@@ -77,11 +77,13 @@ import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime
 import type {
   PiAgentSessionEvent,
   PiAgentMessage,
+  PiAssistantContent,
   PiImageContent,
   PiModel,
   PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
+  PiTextContent,
   PiThinkingLevel,
 } from "./rpc-types.js";
 import { PiUsagePoller, type PiUsagePollScheduler } from "./usage-poller.js";
@@ -2362,6 +2364,16 @@ export class PiRpcAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      const messageId = this.activeAssistantMessageId;
+      const text = this.extractAssistantText(event.message.content);
+      if (messageId && text) {
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text, messageId, replace: true },
+        });
+      }
       this.activeAssistantMessageId = null;
       return;
     }
@@ -2386,6 +2398,14 @@ export class PiRpcAgentSession implements AgentSession {
       }
       return;
     }
+  }
+
+  /** Concatenate all text parts of an assistant message (skips thinking/toolCall). */
+  private extractAssistantText(content: PiAssistantContent[]): string {
+    return content
+      .filter((part): part is PiTextContent => part.type === "text")
+      .map((part) => part.text)
+      .join("");
   }
 
   private emitToolCallEvent(

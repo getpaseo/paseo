@@ -516,7 +516,12 @@ export type ProviderTimelineItem =
       messageId?: string;
       clientMessageId?: string;
     })
-  | (ProviderTimelineIdentity & { type: "assistant_message"; text: string; messageId?: string })
+  | (ProviderTimelineIdentity & {
+      type: "assistant_message";
+      text: string;
+      messageId?: string;
+      replace?: boolean;
+    })
   | (ProviderTimelineIdentity & { type: "reasoning"; text: string })
   | ProviderToolCallItem
   | (ProviderTimelineIdentity & {
@@ -1202,6 +1207,7 @@ const timelineItemSchema: z.ZodType<ProviderTimelineItem> = z.union([
       type: z.literal("assistant_message"),
       text: z.string(),
       messageId: z.string().optional(),
+      replace: z.boolean().optional(),
     })
     .strip(),
   z.object({ ...timelineIdentityShape, type: z.literal("reasoning"), text: z.string() }).strip(),

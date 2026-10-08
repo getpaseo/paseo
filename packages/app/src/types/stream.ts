@@ -909,6 +909,63 @@ function appendUserMessage(
   return upsertUserMessage(state, nextItem);
 }
 
+// Returns the assistant row that a streaming delta should extend: the last
+// row when it is the same message, or (live only) the row before a trailing
+// user row that followed the streaming assistant during an interrupt.
+function findAssistantRowToExtend(
+  state: StreamItem[],
+  source: StreamUpdateSource,
+  messageId?: string,
+): { index: number; item: AssistantMessageItem } | null {
+  const last = state[state.length - 1];
+  if (
+    last &&
+    last.kind === "assistant_message" &&
+    (messageId === undefined || last.messageId === messageId)
+  ) {
+    return { index: state.length - 1, item: last };
+  }
+  const secondLast = state[state.length - 2];
+  if (
+    source === "live" &&
+    last?.kind === "user_message" &&
+    secondLast?.kind === "assistant_message" &&
+    (messageId === undefined || secondLast.messageId === messageId)
+  ) {
+    return { index: state.length - 2, item: secondLast };
+  }
+  return null;
+}
+
+// A replace item carries the part's full current text, not a suffix: when a
+// row for the message exists, swap its text in place.
+function replaceAssistantText(
+  state: StreamItem[],
+  messageId: string,
+  text: string,
+  timestamp: Date,
+  timelineCursor?: TimelinePosition,
+): StreamItem[] | null {
+  const idx = state.findIndex(
+    (entry) => entry.kind === "assistant_message" && entry.messageId === messageId,
+  );
+  if (idx === -1) {
+    return null;
+  }
+  const existing = state[idx];
+  if (existing.kind !== "assistant_message" || existing.messageId !== messageId) {
+    return null;
+  }
+  const { chunk } = normalizeChunk(text);
+  const updated: AssistantMessageItem = {
+    ...existing,
+    text: chunk,
+    timestamp,
+    ...(timelineCursor ? { timelineCursor } : {}),
+  };
+  return [...state.slice(0, idx), updated, ...state.slice(idx + 1)];
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
@@ -917,43 +974,33 @@ function appendAssistantMessage(
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
+  replace = false,
 ): StreamItem[] {
+  if (replace && messageId) {
+    const replaced = replaceAssistantText(state, messageId, text, timestamp, timelineCursor);
+    if (replaced) {
+      return replaced;
+    }
+    // No existing row (the preceding deltas may have been coalesced away
+    // server-side): the replace item carries the full current text, so fall
+    // through and create the row with it.
+  }
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
     return state;
   }
 
-  const last = state[state.length - 1];
-  const shouldAppendToLast =
-    last &&
-    last.kind === "assistant_message" &&
-    (messageId === undefined || last.messageId === messageId);
-  if (shouldAppendToLast) {
+  const target = findAssistantRowToExtend(state, source, messageId);
+  if (target) {
     const updated: AssistantMessageItem = {
-      ...last,
-      text: `${last.text}${chunk}`,
+      ...target.item,
+      text: `${target.item.text}${chunk}`,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -1), updated];
-  }
-
-  // A submitted user row can follow the streaming assistant during interrupt.
-  // In that case, look one row further back for the assistant to extend.
-  const secondLast = state[state.length - 2];
-  if (
-    source === "live" &&
-    last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message" &&
-    (messageId === undefined || secondLast.messageId === messageId)
-  ) {
-    const updated: AssistantMessageItem = {
-      ...secondLast,
-      text: `${secondLast.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
-    return [...state.slice(0, -2), updated, last];
+    const next = [...state];
+    next[target.index] = updated;
+    return next;
   }
 
   if (!hasContent) {
@@ -1524,6 +1571,7 @@ function reduceTimelineEvent(
           item.messageId,
           reservedItemIds,
           timelineCursor,
+          item.replace,
         ),
       );
     case "reasoning":
