@@ -133,6 +133,9 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { KeeperControl } from "./keeper/keeper-control.js";
+import { KeeperEventOutbox } from "./keeper/event-outbox.js";
+import { KeeperSendReceipts } from "./keeper/send-receipts.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -401,6 +404,7 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   browserToolsEnabled?: boolean;
+  keeperControlEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
@@ -691,6 +695,7 @@ export async function createPaseoDaemon(
     appBaseUrl = typeof value === "string" ? value : "https://app.paseo.sh";
   });
   let wsServer: VoiceAssistantWebSocketServer | null = null;
+  let keeperControl: KeeperControl | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
@@ -943,6 +948,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    trackPermissions: config.keeperControlEnabled === true,
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
@@ -1610,6 +1616,19 @@ export async function createPaseoDaemon(
         );
       }
 
+      if (config.keeperControlEnabled) {
+        const outbox = await KeeperEventOutbox.open(path.join(config.paseoHome, "keeper-events"));
+        keeperControl = new KeeperControl({
+          enabled: true,
+          agentManager,
+          agentStorage,
+          receipts: new KeeperSendReceipts(path.join(config.paseoHome, "keeper-send-receipts")),
+          outbox,
+          logger: logger.child({ module: "keeper" }),
+        });
+        keeperControl.start();
+      }
+
       // Start main HTTP server
       await new Promise<void>((resolve, reject) => {
         const onError = (err: Error) => {
@@ -1686,6 +1705,7 @@ export async function createPaseoDaemon(
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
                 startPaused: true,
+                keeperControl,
               },
               workspaceAutoName,
               daemonAuth,
@@ -1814,13 +1834,15 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
-    await closeAllAgents(logger, agentManager);
+    const unclosed = await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
       timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
       label: "drain plugin lifecycle events",
     }).catch((error) => logger.warn({ err: error }, "Plugin lifecycle events did not finish"));
     await agentManager.flushForShutdown().catch(() => undefined);
+    keeperControl?.noteUnclosed(unclosed);
+    await keeperControl?.close();
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
@@ -1873,19 +1895,29 @@ export async function createPaseoDaemon(
  */
 const AGENT_CLOSE_TIMEOUT_MS = 5_000;
 
-async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
+async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<string[]> {
   const agents = agentManager.listAgents();
+  const unclosed: string[] = [];
   await Promise.all(
     agents.map(async (agent) => {
+      let settled = false;
       try {
+        const closing = agentManager.closeAgent(agent.id);
+        closing
+          .finally(() => {
+            settled = true;
+          })
+          .catch(() => undefined);
         await withTimeout({
-          promise: agentManager.closeAgent(agent.id),
+          promise: closing,
           timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
           label: `close agent ${agent.id}`,
         });
       } catch (err) {
+        if (!settled) unclosed.push(agent.id);
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
       }
     }),
   );
+  return unclosed;
 }

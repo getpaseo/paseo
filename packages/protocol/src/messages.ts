@@ -1364,6 +1364,72 @@ export const SendAgentMessageRequestSchema = z.object({
   attachments: AgentAttachmentsSchema,
 });
 
+// ============================================================================
+// Keeper control RPCs (opt-in; see docs/keeper-control.md)
+// ============================================================================
+
+export const KEEPER_SEND_RESULTS = [
+  "accepted",
+  "duplicate",
+  "rejected",
+  "outcome_unknown",
+] as const;
+export const KEEPER_SEND_REJECTION_REASONS = [
+  "disabled",
+  "agent_not_found",
+  "agent_not_live",
+  "agent_archived",
+  "stale_incarnation",
+  "stale_generation",
+  "permission_pending",
+  "turn_active",
+  "steer_unavailable",
+  "admission_busy",
+  "idempotency_conflict",
+  "send_failed",
+] as const;
+
+/** Full agent ID only: the keeper never resolves prefixes or titles. */
+export const KeeperGetSnapshotRequestSchema = z.object({
+  type: z.literal("keeper.agent.get_snapshot.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+});
+
+export const KeeperSendMessageRequestSchema = z.object({
+  type: z.literal("keeper.agent.send_message.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  text: z.string().min(1).max(100_000),
+  /** Dedupe key scoped to agentId. Reusing it with different text is a conflict. */
+  idempotencyKey: z.string().min(1).max(200),
+  expectedSessionIncarnation: z.string().min(1),
+  expectedPermissionGeneration: z.number().int().nonnegative(),
+  /** "steer" steers an active turn and never replaces it; "reject" refuses when a turn is active. */
+  onActiveTurn: z.enum(["steer", "reject"]),
+  /** Default false: a send while any permission or question is pending is rejected. */
+  allowPendingPermissions: z.boolean().optional(),
+});
+
+export const KeeperGetPendingRequestRequestSchema = z.object({
+  type: z.literal("keeper.agent.get_pending_request.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  permissionRequestId: z.string(),
+  expectedSessionIncarnation: z.string().min(1),
+  expectedPermissionGeneration: z.number().int().nonnegative(),
+});
+
+export const KeeperReadEventsRequestSchema = z.object({
+  type: z.literal("keeper.events.read.request"),
+  requestId: z.string(),
+  /** Opaque cursor from a previous response or snapshot; null starts at the oldest retained event. */
+  cursor: z.string().nullable(),
+  limit: z.number().int().positive().max(500).optional(),
+  /** Long-poll: wait up to this long for the first event when none is available. */
+  waitMs: z.number().int().nonnegative().max(30_000).optional(),
+});
+
 export const WaitForFinishRequestSchema = z.object({
   type: z.literal("wait_for_finish_request"),
   requestId: z.string(),
@@ -3209,6 +3275,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
+  KeeperGetSnapshotRequestSchema,
+  KeeperSendMessageRequestSchema,
+  KeeperGetPendingRequestRequestSchema,
+  KeeperReadEventsRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
@@ -3553,6 +3623,7 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
+        keeperControl: z.boolean().optional(),
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
@@ -4935,6 +5006,101 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const KeeperStateSummarySchema = z.object({
+  sessionIncarnation: z.string().nullable(),
+  permissionGeneration: z.number().int().nonnegative(),
+  pendingPermissionCount: z.number().int().nonnegative(),
+  lifecycle: z.string(),
+  hasActiveTurn: z.boolean(),
+});
+
+export const KeeperGetSnapshotResponseSchema = z.object({
+  type: z.literal("keeper.agent.get_snapshot.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    bootId: z.string(),
+    snapshot: KeeperStateSummarySchema.extend({
+      /** Ids and kinds only; raw question text and tool input are never included. */
+      pending: z.array(z.object({ permissionRequestId: z.string(), kind: z.string() })),
+      eventCursor: z.string(),
+    }).nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const KeeperSendMessageResponseSchema = z.object({
+  type: z.literal("keeper.agent.send_message.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    idempotencyKey: z.string(),
+    /** One of KEEPER_SEND_RESULTS. */
+    result: z.string(),
+    /** One of KEEPER_SEND_REJECTION_REASONS when result is "rejected"; otherwise null. */
+    reason: z.string().nullable(),
+    /** "turn_started" or "steered" once the provider acknowledged; otherwise null. */
+    delivery: z.string().nullable(),
+    current: KeeperStateSummarySchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const KeeperGetPendingRequestResponseSchema = z.object({
+  type: z.literal("keeper.agent.get_pending_request.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    /** "stale_incarnation", "stale_generation", "not_found", "disabled" or null. */
+    reason: z.string().nullable(),
+    detail: z
+      .object({
+        permissionRequestId: z.string(),
+        kind: z.string(),
+        name: z.string(),
+        title: z.string().nullable(),
+        description: z.string().nullable(),
+        /** JSON of the request input, bounded; truncated is true when it was cut. */
+        input: z.string().nullable(),
+        truncated: z.boolean(),
+      })
+      .nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const KeeperEventSchema = z.object({
+  eventId: z.string(),
+  seq: z.number().int().nonnegative(),
+  timestamp: z.string(),
+  /** lifecycle | turn_complete | question | permission */
+  category: z.string(),
+  type: z.string(),
+  agentId: z.string(),
+  bootId: z.string(),
+  sessionIncarnation: z.string().nullable(),
+  permissionGeneration: z.number().int().nonnegative().nullable(),
+  permissionRequestId: z.string().nullable(),
+  turnId: z.string().nullable(),
+  lifecycle: z.string().nullable(),
+  /** send.rejected only: the reject reason and sha256("sendkey", agentId, idempotencyKey). */
+  reason: z.string().nullable().optional(),
+  sendKey: z.string().nullable().optional(),
+});
+
+export const KeeperReadEventsResponseSchema = z.object({
+  type: z.literal("keeper.events.read.response"),
+  payload: z.object({
+    requestId: z.string(),
+    events: z.array(KeeperEventSchema),
+    nextCursor: z.string(),
+    headCursor: z.string(),
+    /** True when the cursor is unusable (other epoch or fell off retention); restart from a snapshot. */
+    resyncRequired: z.boolean(),
     error: z.string().nullable(),
   }),
 });
@@ -6912,6 +7078,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
+  KeeperGetSnapshotResponseSchema,
+  KeeperSendMessageResponseSchema,
+  KeeperGetPendingRequestResponseSchema,
+  KeeperReadEventsResponseSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
@@ -7232,6 +7402,16 @@ export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessage
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
+export type KeeperGetSnapshotRequest = z.infer<typeof KeeperGetSnapshotRequestSchema>;
+export type KeeperSendMessageRequest = z.infer<typeof KeeperSendMessageRequestSchema>;
+export type KeeperGetPendingRequestRequest = z.infer<typeof KeeperGetPendingRequestRequestSchema>;
+export type KeeperReadEventsRequest = z.infer<typeof KeeperReadEventsRequestSchema>;
+export type KeeperEvent = z.infer<typeof KeeperEventSchema>;
+export type KeeperStateSummary = z.infer<typeof KeeperStateSummarySchema>;
+export type KeeperSendMessageResponse = z.infer<typeof KeeperSendMessageResponseSchema>;
+export type KeeperGetSnapshotResponse = z.infer<typeof KeeperGetSnapshotResponseSchema>;
+export type KeeperGetPendingRequestResponse = z.infer<typeof KeeperGetPendingRequestResponseSchema>;
+export type KeeperReadEventsResponse = z.infer<typeof KeeperReadEventsResponseSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
 export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>;
