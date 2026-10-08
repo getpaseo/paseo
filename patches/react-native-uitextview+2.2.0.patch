@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-uitextview/ios/RNUITextView.mm b/node_modules/react-native-uitextview/ios/RNUITextView.mm
-index d0c31ed..df8a233 100644
+index d0c31ed..efe42a2 100644
 --- a/node_modules/react-native-uitextview/ios/RNUITextView.mm
 +++ b/node_modules/react-native-uitextview/ios/RNUITextView.mm
 @@ -22,6 +22,7 @@ using namespace facebook::react;
@@ -20,11 +20,31 @@ index d0c31ed..df8a233 100644
  
      const auto longPressGestureRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self
                                                                                            action:@selector(handleLongPressIfNecessary:)];
-@@ -94,16 +96,15 @@ using namespace facebook::react;
-   // Reset the frame to zero so that when it properly lays out on the next use
-   _textView.frame = CGRectZero;
+@@ -91,19 +93,33 @@ using namespace facebook::react;
+   [super prepareForRecycle];
+   _state.reset();
+ 
+-  // Reset the frame to zero so that when it properly lays out on the next use
+-  _textView.frame = CGRectZero;
++  // Keep the text view on the content container's bounds. The container keeps
++  // its size while the view waits in the recycle pool, and autoresizing only
++  // applies the size delta on reuse, so a zeroed text view would come back as
++  // wide as that delta (zero, or a two-word column).
++  _textView.frame = _view.bounds;
    _textView.attributedText = nil;
 +  _lastTextLayoutFrame = CGRectZero;
++}
++
++- (void)updateLayoutMetrics:(const LayoutMetrics &)layoutMetrics
++           oldLayoutMetrics:(const LayoutMetrics &)oldLayoutMetrics
++{
++  [super updateLayoutMetrics:layoutMetrics oldLayoutMetrics:oldLayoutMetrics];
++  // Fabric has just sized the content container. Match it here instead of
++  // relying on autoresizing deltas or a later drawRect.
++  if (!CGRectEqualToRect(_textView.frame, _view.bounds)) {
++    _textView.frame = _view.bounds;
++    [self setNeedsDisplay];
++  }
  }
  
  - (void)layoutSubviews
@@ -41,7 +61,7 @@ index d0c31ed..df8a233 100644
      [self setNeedsDisplay];
    }
  }
-@@ -124,8 +125,9 @@ using namespace facebook::react;
+@@ -124,10 +140,16 @@ using namespace facebook::react;
    // entirely when nothing actually changed so a JS-side state update made in
    // response to onSelectionChange doesn't deselect what the user is selecting.
    const BOOL textChanged = ![_textView.attributedText isEqualToAttributedString:convertedAttrString];
@@ -52,17 +72,25 @@ index d0c31ed..df8a233 100644
 +  if (!textChanged && !frameChanged && !layoutChanged) {
      return;
    }
++  // Size the text view before handing it the text, so UIKit lays the text out
++  // at the container width instead of a stale width.
++  if (frameChanged) {
++    _textView.frame = _view.bounds;
++  }
    if (textChanged) {
-@@ -142,7 +144,7 @@ using namespace facebook::react;
+     // Reassigning attributedText clears any active selection. Save it and
+     // restore after, while suppressing the synthetic textViewDidChangeSelection
+@@ -141,9 +163,6 @@ using namespace facebook::react;
+     }
      _suppressSelectionChange = NO;
    }
-   if (frameChanged) {
+-  if (frameChanged) {
 -    _textView.frame = _view.frame;
-+    _textView.frame = _view.bounds;
-   }
+-  }
  
    __block std::vector<std::string> lines;
-@@ -162,6 +164,7 @@ using namespace facebook::react;
+   const int maxLines = props.numberOfLines;
+@@ -162,6 +181,7 @@ using namespace facebook::react;
      }
    }];
  
