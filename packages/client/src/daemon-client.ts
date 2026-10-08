@@ -1196,6 +1196,16 @@ export function supportsUsageReports(features: ServerInfoStatusPayload["features
   return features?.usageSources === true || features?.providerUsageList === true;
 }
 
+type KeeperResponseType =
+  | "keeper.agent.get_snapshot.response"
+  | "keeper.agent.send_message.response"
+  | "keeper.agent.get_pending_request.response"
+  | "keeper.events.read.response";
+type KeeperPayload<T extends KeeperResponseType> = Extract<
+  SessionOutboundMessage,
+  { type: T }
+>["payload"];
+
 export class DaemonClient {
   private readonly providerSnapshotUpdates = new ProviderSnapshotUpdates({
     active: (message) => this.owned.owns(message),
@@ -3488,6 +3498,69 @@ export class DaemonClient {
 
   async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {
     await this.sendAgentMessage(agentId, text, options);
+  }
+
+  private async keeperRequest<TType extends KeeperResponseType>(
+    request: Record<string, unknown> & { type: string },
+    responseType: TType,
+    options?: { timeout?: number; skipQueue?: boolean },
+  ): Promise<KeeperPayload<TType>> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({ ...request, requestId });
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout: options?.timeout,
+      options: options?.skipQueue ? { skipQueue: true } : undefined,
+      select: (msg) =>
+        msg.type === responseType && msg.payload.requestId === requestId
+          ? (msg.payload as KeeperPayload<TType>)
+          : null,
+    });
+  }
+
+  /** Opt-in keeper control RPCs; see docs/keeper-control.md. Full agent IDs only. */
+  async keeperGetSnapshot(agentId: string) {
+    return this.keeperRequest(
+      { type: "keeper.agent.get_snapshot.request", agentId },
+      "keeper.agent.get_snapshot.response",
+    );
+  }
+
+  async keeperSendMessage(params: {
+    agentId: string;
+    text: string;
+    idempotencyKey: string;
+    expectedSessionIncarnation: string;
+    expectedPermissionGeneration: number;
+    onActiveTurn: "steer" | "reject";
+    allowPendingPermissions?: boolean;
+  }) {
+    return this.keeperRequest(
+      { type: "keeper.agent.send_message.request", ...params },
+      "keeper.agent.send_message.response",
+      { skipQueue: true },
+    );
+  }
+
+  async keeperGetPendingRequest(params: {
+    agentId: string;
+    permissionRequestId: string;
+    expectedSessionIncarnation: string;
+    expectedPermissionGeneration: number;
+  }) {
+    return this.keeperRequest(
+      { type: "keeper.agent.get_pending_request.request", ...params },
+      "keeper.agent.get_pending_request.response",
+    );
+  }
+
+  async keeperReadEvents(params: { cursor: string | null; limit?: number; waitMs?: number }) {
+    return this.keeperRequest(
+      { type: "keeper.events.read.request", ...params },
+      "keeper.events.read.response",
+      { timeout: (params.waitMs ?? 0) + DEFAULT_SESSION_RPC_TIMEOUT_MS },
+    );
   }
 
   async rewindAgent(

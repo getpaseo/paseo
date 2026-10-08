@@ -6,6 +6,11 @@ import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
+  TrackedPermissionMap,
+  type PermissionChange,
+  type PermissionLedger,
+} from "./tracked-permission-map.js";
+import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
@@ -414,6 +419,8 @@ interface ManagedAgentBase {
   features?: AgentFeature[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
+  /** Identifies the bound provider session; a reload or reopen mints a new one. */
+  sessionIncarnation?: string;
   bufferedPermissionResolutions: Map<
     string,
     Extract<AgentStreamEvent, { type: "permission_resolved" }>
@@ -574,6 +581,45 @@ interface SteerEventBarrier {
   events: AgentStreamEvent[];
 }
 
+export interface AgentControlState {
+  sessionIncarnation: string;
+  permissionGeneration: number;
+  lifecycle: AgentLifecycleStatus;
+  hasActiveTurn: boolean;
+  pending: AgentPermissionRequest[];
+}
+
+export interface AgentAdmissionGuard {
+  expectedSessionIncarnation: string;
+  expectedPermissionGeneration: number;
+  allowPendingPermissions?: boolean;
+  /** Persist dedupe state after the first comparison; the send needs it durable before it starts. */
+  reserve?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
+  release?: () => Promise<void>;
+}
+
+export interface AgentAdmissionContext {
+  agent: ActiveManagedAgent;
+  state: AgentControlState;
+}
+
+export interface AgentAdmissionRejection {
+  rejected: string;
+  state: AgentControlState | null;
+}
+
+export type AgentAdmissionResult<T> = AgentAdmissionRejection | { admitted: true; value: T };
+
+/** Thrown from an admission commit to refuse with a reason and no side effect. */
+export class AdmissionRefused extends Error {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(reason);
+    this.reason = reason;
+  }
+}
+
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.guid();
 
@@ -724,6 +770,9 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
+  readonly bootId = randomUUID();
+  private readonly permissionLedgers = new Map<string, PermissionLedger>();
+  private readonly permissionChangeListeners = new Set<(change: PermissionChange) => void>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
@@ -2696,6 +2745,141 @@ export class AgentManager {
     }
   }
 
+  subscribePermissionChanges(listener: (change: PermissionChange) => void): () => void {
+    this.permissionChangeListeners.add(listener);
+    return () => this.permissionChangeListeners.delete(listener);
+  }
+
+  private permissionLedgerFor(agentId: string): PermissionLedger {
+    let ledger = this.permissionLedgers.get(agentId);
+    if (!ledger) {
+      ledger = {
+        agentId,
+        generation: 0,
+        notify: (change) => {
+          for (const listener of this.permissionChangeListeners) {
+            try {
+              listener(change);
+            } catch (error) {
+              this.logger.warn({ err: error, agentId }, "Permission change listener failed");
+            }
+          }
+        },
+      };
+      this.permissionLedgers.set(agentId, ledger);
+    }
+    return ledger;
+  }
+
+  /** Read-only view for control surfaces; null unless the agent has a live bound session. */
+  getControlState(agentId: string): AgentControlState | null {
+    const agent = this.agents.get(agentId);
+    if (!agent || !agent.session || !agent.sessionIncarnation) return null;
+    return {
+      sessionIncarnation: agent.sessionIncarnation,
+      permissionGeneration: this.permissionLedgerFor(agentId).generation,
+      lifecycle: agent.lifecycle,
+      hasActiveTurn:
+        Boolean(agent.activeForegroundTurnId ?? agent.activeTurnId) || this.runs.hasRun(agentId),
+      pending: [...agent.pendingPermissions.values()],
+    };
+  }
+
+  /**
+   * Runs `commit` only if the agent is exactly as the caller last saw it. Queued session events
+   * are applied first; a rejection has touched nothing. `commit` must not await before its
+   * provider call, so no event can be admitted between the comparison and the send.
+   */
+  async admitGuarded<T>(
+    agentId: string,
+    guard: AgentAdmissionGuard,
+    commit: (context: AgentAdmissionContext) => Promise<T>,
+  ): Promise<AgentAdmissionResult<T>> {
+    return this.runForegroundMutation(agentId, async () => {
+      const check = async (): Promise<AgentAdmissionRejection | AgentAdmissionContext> => {
+        await this.drainSessionEvents(agentId);
+        this.agentStreamCoalescer.flushFor(agentId);
+        return this.checkAdmission(agentId, guard);
+      };
+      const first = await check();
+      if ("rejected" in first) return first;
+      const reserved = await guard.reserve?.();
+      if (reserved && !reserved.ok) return { rejected: reserved.reason, state: first.state };
+      const second = await check();
+      if ("rejected" in second) {
+        await guard.release?.();
+        return second;
+      }
+      try {
+        return { admitted: true, value: await commit(second) };
+      } catch (error) {
+        if (error instanceof AdmissionRefused) {
+          await guard.release?.();
+          return { rejected: error.reason, state: this.getControlState(agentId) };
+        }
+        throw error;
+      }
+    });
+  }
+
+  private checkAdmission(
+    agentId: string,
+    guard: AgentAdmissionGuard,
+  ): AgentAdmissionRejection | AgentAdmissionContext {
+    const state = this.getControlState(agentId);
+    const agent = this.agents.get(agentId);
+    if (!state || !agent) return { rejected: "agent_not_live", state: null };
+    if (state.sessionIncarnation !== guard.expectedSessionIncarnation) {
+      return { rejected: "stale_incarnation", state };
+    }
+    if (state.permissionGeneration !== guard.expectedPermissionGeneration) {
+      return { rejected: "stale_generation", state };
+    }
+    const startPending = this.runs.getPendingRun(agentId)?.start.status === "pending";
+    if (
+      this.steerEventBarriers.has(agentId) ||
+      startPending ||
+      agent.pendingReplacement ||
+      agent.lifecycle === "initializing"
+    ) {
+      return { rejected: "admission_busy", state };
+    }
+    if (state.pending.length > 0 && !guard.allowPendingPermissions) {
+      return { rejected: "permission_pending", state };
+    }
+    return { agent, state };
+  }
+
+  /** Steers without a replace fallback; "unavailable" refuses, leaving the turn untouched. */
+  async steerHeld(
+    context: AgentAdmissionContext,
+    prompt: AgentPromptInput,
+    options: AgentSteerOptions | undefined,
+  ): Promise<void> {
+    const agent = context.agent;
+    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (!expectedTurnId || !agent.session.steerActiveTurn)
+      throw new AdmissionRefused("steer_unavailable");
+    const steerActiveTurn = agent.session.steerActiveTurn.bind(agent.session);
+    const admission = await this.runSteerAdmissionHeld(agent, expectedTurnId, async () => {
+      const result = await steerActiveTurn(prompt, { ...options, expectedTurnId });
+      if (result.status === "accepted") {
+        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+      }
+      return result;
+    });
+    if (admission.status !== "accepted") throw new AdmissionRefused("steer_unavailable");
+  }
+
+  /** Starts a turn on an idle agent; never replaces a running one. */
+  startTurnHeld(
+    context: AgentAdmissionContext,
+    prompt: AgentPromptInput,
+    options: AgentRunOptions | undefined,
+  ): AsyncGenerator<AgentStreamEvent> {
+    return this.streamAgent(context.agent.id, prompt, options);
+  }
+
   async steerAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
@@ -2784,21 +2968,30 @@ export class AgentManager {
     return this.runForegroundMutation(agent.id, async () => {
       await this.drainSessionEvents(agent.id);
       this.agentStreamCoalescer.flushFor(agent.id);
-      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-      const barrier: SteerEventBarrier = { events: [] };
-      this.steerEventBarriers.set(agent.id, barrier);
-      try {
-        return await operation();
-      } finally {
-        if (this.steerEventBarriers.get(agent.id) === barrier) {
-          this.steerEventBarriers.delete(agent.id);
-        }
-        for (const event of barrier.events) {
-          this.enqueueSessionEvent(agent.id, event);
-        }
-        await this.drainSessionEvents(agent.id);
-      }
+      return this.runSteerAdmissionHeld(agent, expectedTurnId, operation);
     });
+  }
+
+  /** Caller holds the foreground mutation and has just drained events; nothing may await before this. */
+  private async runSteerAdmissionHeld<T>(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+    const barrier: SteerEventBarrier = { events: [] };
+    this.steerEventBarriers.set(agent.id, barrier);
+    try {
+      return await operation();
+    } finally {
+      if (this.steerEventBarriers.get(agent.id) === barrier) {
+        this.steerEventBarriers.delete(agent.id);
+      }
+      for (const event of barrier.events) {
+        this.enqueueSessionEvent(agent.id, event);
+      }
+      await this.drainSessionEvents(agent.id);
+    }
   }
 
   private async runForegroundMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
@@ -3640,8 +3833,10 @@ export class AgentManager {
       | undefined;
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const sessionIncarnation = randomUUID();
     return {
       id: resolvedAgentId,
+      sessionIncarnation,
       provider: config.provider,
       cwd: config.cwd,
       workspaceId: options?.workspaceId,
@@ -3655,7 +3850,10 @@ export class AgentManager {
       updatedAt: options?.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
-      pendingPermissions: new Map<string, AgentPermissionRequest>(),
+      pendingPermissions: new TrackedPermissionMap(
+        this.permissionLedgerFor(resolvedAgentId),
+        sessionIncarnation,
+      ),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
@@ -3728,6 +3926,7 @@ export class AgentManager {
   }
 
   private discardRetainedAgentState(agentId: string): void {
+    this.permissionLedgers.delete(agentId);
     this.timelineStore.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
@@ -3948,7 +4147,11 @@ export class AgentManager {
 
     try {
       const pending = agent.session.getPendingPermissions();
-      agent.pendingPermissions = new Map(pending.map((request) => [request.id, request]));
+      if (agent.pendingPermissions instanceof TrackedPermissionMap) {
+        agent.pendingPermissions.replaceAll(pending);
+      } else {
+        agent.pendingPermissions = new Map(pending.map((request) => [request.id, request]));
+      }
     } catch {
       agent.pendingPermissions.clear();
     }
