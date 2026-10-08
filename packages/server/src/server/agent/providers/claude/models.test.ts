@@ -282,9 +282,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     expect(models.filter((model) => model.id !== "claude-mythos-5-1")).toEqual(
       getClaudeModels("2.1.293").filter((model) => model.id !== "claude-mythos-5-1"),
     );
-    expect(models.find((model) => model.id === "claude-mythos-5-1")?.description).toBe(
-      "From Claude settings.json model",
-    );
+    expect(models.find((model) => model.id === "claude-mythos-5-1")).toEqual({
+      ...findClaudeModel("claude-mythos-5-1"),
+      label: "claude-mythos-5-1",
+      description: "From Claude settings.json model",
+    });
   });
 
   it("omits unconfirmed Mythos after a failed probe and retries on refresh", async () => {

@@ -71,7 +71,10 @@ export async function getClaudeModelsWithSettings(
       }
       continue;
     }
-    models.push(model);
+    const manifestModel = getClaudeModels(claudeCodeVersion).find(
+      (candidate) => candidate.id === model.id,
+    );
+    models.push({ ...manifestModel, ...model });
   }
 
   return models;
