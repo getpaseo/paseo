@@ -212,7 +212,6 @@ test("mcp create accepts provider-only internal input and leaves model undefined
     workspaceId: "ws-create-test",
     title: "provider default",
     initialPrompt: "hello",
-    background: true,
     notifyOnFinish: false,
   });
 
@@ -330,7 +329,6 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
         provider: "codex/gpt-5.4",
         title: "child",
         initialPrompt: "do the thing",
-        background: true,
         notifyOnFinish: false,
         callerAgentId: parent.id,
         worktree: { worktreeName: "feature", baseBranch: "main" },
@@ -379,7 +377,6 @@ test("mcp create exposes the created worktree before dispatching the initial pro
         cwd: workdir,
         title: "worktree callback",
         initialPrompt: "Say done.",
-        background: true,
         notifyOnFinish: false,
         worktree: { worktreeName: "feature", baseBranch: "main" },
         onCreated: ({ agentId, createdWorktree: callbackWorktree }) => {

@@ -105,29 +105,30 @@ const child = await workspace.agents.create({
 
 `parent` establishes parentage. Archiving a parent cascade-archives its children. Call `detach()` first when a child should continue independently.
 
-## Run an internal helper
+## Run work in a background workspace
 
-A one-shot agent that summarizes, classifies, or names something should not appear in History, the sidebar, or the parent's subagents track, and should not notify anyone. Create it with `internal: true`, the same flag the daemon uses for its own branch-name and commit-message helpers:
+Create a background workspace and its first agent in one call. Put `background` on the
+workspace options and the agent's configuration under `agent`:
 
 ```ts
-const helper = await workspace.agents.create({
-  config: { provider: "codex/gpt-5.5" },
-  parent,
-  internal: true,
-  autoArchive: true,
-  outputSchema: {
-    type: "object",
-    properties: { summary: { type: "string" } },
-    required: ["summary"],
-    additionalProperties: false,
+const cwd = "/Users/me/dev/storefront";
+const workspace = await client.workspaces.create({
+  source: { kind: "directory", path: cwd },
+  background: true,
+  agent: {
+    cwd,
+    config: { provider: "codex/gpt-5.5" },
+    prompt: "Review the checkout flow.",
   },
-  prompt: "Summarize what the parent agent needs in one sentence.",
 });
-
-const result = await helper.waitForFinish(60_000);
 ```
 
-An internal agent is never written to agent storage, so it cannot be resumed after the daemon restarts, and its provider session is not kept either. Only its exact id reaches it: `waitForFinish()`, `refresh()`, the timeline, and `archive()` work on the handle, and for ten minutes after archive they still answer, so a helper that finished and auto-archived before you asked returns its result. Plugin lifecycle hooks do not fire for it. Older hosts reject the call with "Update the host to create internal agents."; check `features.internalAgents` in `server_info` when you need to degrade.
+The call returns a workspace handle and starts its first agent with the supplied prompt.
+
+Background agents keep their history and survive daemon restarts. Default discovery hides them;
+use `client.agents.list({ filter: { includeBackground: true } })` to include them.
+Exact-ID handles work normally. See [workspace creation](./workspaces.md#create-a-fresh-workspace)
+for defaults and caller inheritance.
 
 ## Request structured output
 

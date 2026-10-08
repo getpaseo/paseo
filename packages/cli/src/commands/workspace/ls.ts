@@ -4,15 +4,15 @@ import type { CommandError, ListResult } from "../../output/index.js";
 import {
   toWorkspaceRow,
   workspaceSchema,
-  workspaceWithInternalSchema,
+  workspaceWithBackgroundSchema,
   type WorkspaceRow,
 } from "./shared.js";
 
 export interface WorkspaceLsOptions {
   host?: string;
   daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
-  /** --internal: Include internal workspaces */
-  internal?: boolean;
+  /** --background: Include background workspaces */
+  background?: boolean;
 }
 
 export async function runLsCommand(
@@ -32,7 +32,7 @@ export async function runLsCommand(
     let cursor: string | undefined;
     do {
       const payload = await client.fetchWorkspaces({
-        ...(options.internal ? { filter: { includeInternal: true } } : {}),
+        ...(options.background ? { filter: { includeBackground: true } } : {}),
         page: { limit: 200, ...(cursor ? { cursor } : {}) },
       });
       workspaces.push(...payload.entries.map(toWorkspaceRow));
@@ -41,7 +41,7 @@ export async function runLsCommand(
     return {
       type: "list",
       data: workspaces,
-      schema: options.internal ? workspaceWithInternalSchema : workspaceSchema,
+      schema: options.background ? workspaceWithBackgroundSchema : workspaceSchema,
     };
   } finally {
     await client.close().catch(() => undefined);

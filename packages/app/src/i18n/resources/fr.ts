@@ -1124,6 +1124,7 @@ export const fr: TranslationResources = {
   },
   sidebar: {
     display: {
+      showBackground: "Afficher les espaces en arrière-plan",
       trigger: "Préférences d'affichage",
       heading: "Affichage",
       grouping: {

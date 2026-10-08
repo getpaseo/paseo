@@ -12,9 +12,9 @@ type FetchAgentsOptions = NonNullable<
 export function addLsOptions(cmd: Command): Command {
   return cmd
     .description("List agents. By default excludes archived agents.")
-    .option("-a, --all", "Include archived agents")
+    .option("-a, --all", "Include archived and background agents")
     .option("-g, --global", "List agents across all directories")
-    .option("--internal", "Include internal agents")
+    .option("--background", "Include background workspace agents")
     .option(
       "--label <key=value>",
       "Filter by label (can be used multiple times)",
@@ -34,7 +34,6 @@ export interface AgentListItem {
   status: string;
   cwd: string;
   created: string;
-  internal: boolean;
 }
 
 /** Helper to get relative time string */
@@ -89,15 +88,6 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
   ],
 };
 
-/** `--internal` listings add a column so hidden agents stand out. */
-export const agentLsWithInternalSchema: OutputSchema<AgentListItem> = {
-  ...agentLsSchema,
-  columns: [
-    ...agentLsSchema.columns,
-    { header: "INTERNAL", field: (item) => (item.internal ? "yes" : ""), width: 8 },
-  ],
-};
-
 /** Transform agent snapshot to AgentListItem */
 function toListItem(agent: AgentSnapshotPayload): AgentListItem {
   const model = normalizeModelId(agent.runtimeInfo?.model) ?? normalizeModelId(agent.model);
@@ -110,7 +100,6 @@ function toListItem(agent: AgentSnapshotPayload): AgentListItem {
     status: agent.status,
     cwd: shortenPath(agent.cwd),
     created: relativeTime(agent.createdAt),
-    internal: agent.internal === true,
   };
 }
 
@@ -121,8 +110,8 @@ export interface AgentLsOptions extends CommandOptions {
   all?: boolean;
   /** -g: List agents across all directories */
   global?: boolean;
-  /** --internal: Include internal agents */
-  internal?: boolean;
+  /** --background: Include background workspace agents */
+  background?: boolean;
   /** Filter by specific status */
   status?: string;
   /** Filter by specific cwd */
@@ -147,7 +136,7 @@ function parseLabelFilters(labels: string[] | undefined): Record<string, string>
 }
 
 export function buildAgentLsFetchOptions(
-  options: Pick<AgentLsOptions, "all" | "global" | "internal" | "label" | "thinking">,
+  options: Pick<AgentLsOptions, "all" | "global" | "background" | "label" | "thinking">,
 ): FetchAgentsOptions {
   const labelFilters = parseLabelFilters(options.label);
   const normalizedThinkingOptionId = options.thinking?.trim();
@@ -156,8 +145,8 @@ export function buildAgentLsFetchOptions(
   if (options.all) {
     daemonFilter.includeArchived = true;
   }
-  if (options.internal) {
-    daemonFilter.includeInternal = true;
+  if (options.background || options.all) {
+    daemonFilter.includeBackground = true;
   }
   if (Object.keys(labelFilters).length > 0) {
     daemonFilter.labels = labelFilters;
@@ -167,7 +156,7 @@ export function buildAgentLsFetchOptions(
   }
 
   const fetchOptions: FetchAgentsOptions = {};
-  if (!options.global) {
+  if (!options.global && !options.all) {
     fetchOptions.scope = "active";
   }
   if (Object.keys(daemonFilter).length > 0) {
@@ -180,7 +169,7 @@ export function buildAgentLsFetchOptions(
  * Agent ls command semantics:
  * - `paseo agent ls`    → active non-archived agents
  * - `paseo agent ls -g` → global non-archived agents
- * - `paseo agent ls -a` → active agents, including archived
+ * - `paseo agent ls -a` → all agents, including archived and background
  * - `paseo agent ls -ag` → global agents, including archived
  */
 export async function runLsCommand(
@@ -252,7 +241,7 @@ export async function runLsCommand(
     return {
       type: "list",
       data: items,
-      schema: options.internal ? agentLsWithInternalSchema : agentLsSchema,
+      schema: agentLsSchema,
     };
   } catch (err) {
     await client.close().catch(() => {});

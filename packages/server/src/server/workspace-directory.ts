@@ -170,7 +170,7 @@ export class WorkspaceDirectory {
   /**
    * Per-workspace last-seen winning bucket + entered-at. Persists across
    * `buildDescriptorMap` calls inside the daemon process; reset on cold start.
-   * Server-internal; never crosses the wire.
+   * Server-private; never crosses the wire.
    */
   private readonly bucketHistoryByWorkspaceId = new Map<string, WorkspaceBucketHistoryEntry>();
 
@@ -558,7 +558,7 @@ export class WorkspaceDirectory {
   // sidebar projection bucket for projects whose workspace list is currently
   // empty; it is not a separate domain record.
   async listEmptyProjects(options?: {
-    includeInternal?: boolean;
+    includeBackground?: boolean;
   }): Promise<WorkspaceProjectDescriptor[]> {
     const [persistedWorkspaces, persistedProjects] = await Promise.all([
       this.deps.workspaceRegistry.list(),
@@ -569,7 +569,7 @@ export class WorkspaceDirectory {
       persistedWorkspaces
         .filter(
           (workspace) =>
-            !workspace.archivedAt && (options?.includeInternal === true || !workspace.internal),
+            !workspace.archivedAt && (options?.includeBackground === true || !workspace.background),
         )
         .map((workspace) => workspace.projectId),
     );
@@ -602,8 +602,8 @@ export class WorkspaceDirectory {
     }));
   }
 
-  // Every active workspace, internal ones included. Callers that answer a
-  // listing go through matchesFilter so internal workspaces stay opt-in.
+  // Every active workspace, background ones included. Callers that answer a
+  // listing go through matchesFilter so background workspaces stay opt-in.
   async listDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
     return Array.from(
       (
@@ -619,7 +619,11 @@ export class WorkspaceDirectory {
     filter: FetchWorkspacesRequestFilter | undefined;
   }): boolean {
     const { workspace, filter } = input;
-    if (workspace.internal && filter?.includeInternal !== true) {
+    if (
+      workspace.background &&
+      filter?.includeBackground !== true &&
+      filter?.query !== workspace.id
+    ) {
       return false;
     }
     if (!filter) {
@@ -677,7 +681,7 @@ export class WorkspaceDirectory {
     const projectIdFilter = filter?.projectId?.trim();
     const emptyProjects = cursorToken
       ? []
-      : (await this.listEmptyProjects({ includeInternal: filter?.includeInternal })).filter(
+      : (await this.listEmptyProjects({ includeBackground: filter?.includeBackground })).filter(
           (project) => !projectIdFilter || project.projectId === projectIdFilter,
         );
 

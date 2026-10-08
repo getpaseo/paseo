@@ -1102,6 +1102,7 @@ export const ja: TranslationResources = {
   },
   sidebar: {
     display: {
+      showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",
       grouping: {

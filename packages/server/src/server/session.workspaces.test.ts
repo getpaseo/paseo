@@ -9514,7 +9514,7 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   });
 });
 
-test("workspace.create.request with internal persists a hidden workspace that only opted-in listings show", async () => {
+test("workspace.create.request with background persists a hidden workspace that only opted-in listings show", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
@@ -9528,19 +9528,19 @@ test("workspace.create.request with internal persists a hidden workspace that on
 
   await session.handleMessage({
     type: "workspace.create.request",
-    requestId: "req-internal-workspace",
-    internal: true,
+    requestId: "req-background-workspace",
+    background: true,
     source: { kind: "directory", path: REPO_CWD },
   });
 
   const response = findByType(emitted, "workspace.create.response");
   expect(response?.payload).toMatchObject({
-    requestId: "req-internal-workspace",
+    requestId: "req-background-workspace",
     error: null,
-    workspace: { internal: true },
+    workspace: { background: true },
   });
   const workspaceId = response?.payload.workspace?.id as string;
-  expect(workspaces.get(workspaceId)?.internal).toBe(true);
+  expect(workspaces.get(workspaceId)?.background).toBe(true);
   // No subscription exists, and the legacy causal update stays quiet for a hidden workspace.
   expect(filterByType(emitted, "workspace_update")).toEqual([]);
 
@@ -9553,9 +9553,9 @@ test("workspace.create.request with internal persists a hidden workspace that on
   const shown = await session.listFetchWorkspacesEntries({
     type: "fetch_workspaces_request",
     requestId: "req-list-shown",
-    filter: { includeInternal: true },
+    filter: { includeBackground: true },
   });
-  expect(shown.entries.map((entry) => [entry.id, entry.internal])).toEqual([[workspaceId, true]]);
+  expect(shown.entries.map((entry) => [entry.id, entry.background])).toEqual([[workspaceId, true]]);
 });
 
 test("workspace.create.request reports an unknown explicit project", async () => {

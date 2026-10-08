@@ -1106,6 +1106,7 @@ export const ru: TranslationResources = {
   },
   sidebar: {
     display: {
+      showBackground: "Показать фоновые пространства",
       trigger: "Настройки отображения",
       heading: "Отображение",
       grouping: {

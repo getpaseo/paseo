@@ -696,21 +696,21 @@ test("agents.create forwards internal on the request, outside the agent config",
     providerUsageList: true,
     providersSnapshotCwd: true,
     ownedSubscriptions: true,
-    internalAgents: true,
+    backgroundWorkspaces: true,
   });
 
   const createPromise = client.agents.create({
     config: { provider: "codex/gpt-5.4" },
     cwd: "/repo/sdk",
     title: "Summary helper",
-    internal: true,
+    background: true,
     autoArchive: true,
   });
   const request = parseSentSessionMessage(ws.sent.at(-1));
   expect(request).toMatchObject({
     type: "create_agent_request",
     config: { provider: "codex", model: "gpt-5.4", cwd: "/repo/sdk", title: "Summary helper" },
-    internal: true,
+    background: true,
     autoArchive: true,
   });
   expect(request.config).not.toHaveProperty("internal");
@@ -739,9 +739,9 @@ test("agents.create with internal fails before sending on a host without interna
     client.agents.create({
       config: { provider: "codex/gpt-5.4" },
       cwd: "/repo/sdk",
-      internal: true,
+      background: true,
     }),
-  ).rejects.toThrow("Update the host to create internal agents.");
+  ).rejects.toThrow("Update the host to use background workspaces.");
   expect(ws.sent).toHaveLength(sentBefore);
   await client.close();
 });

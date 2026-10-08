@@ -320,7 +320,6 @@ export interface CreateAgentOptions {
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
-  isInternalWorkspace?: (workspaceId: string) => Promise<boolean>;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
@@ -735,7 +734,6 @@ export interface RetiredInternalAgent {
 
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
-  private readonly isInternalWorkspace: ((workspaceId: string) => Promise<boolean>) | undefined;
   private readonly retiredInternalAgents = new Map<
     string,
     RetiredInternalAgent & { expiresAt: number }
@@ -781,7 +779,6 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
-    this.isInternalWorkspace = options.isInternalWorkspace;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
@@ -1285,16 +1282,6 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    if (
-      !config.internal &&
-      options.workspaceId &&
-      (await this.isInternalWorkspace?.(options.workspaceId))
-    ) {
-      // Internal cascades from the workspace: nothing inside it is listed,
-      // persisted, or announced, so the provider session is not kept either.
-      config = { ...config, internal: true };
-      options = { ...options, persistSession: false };
-    }
     if (this.pluginLifecycle && !config.internal) {
       const request = await this.pluginLifecycle.before("agent.create", {
         config,

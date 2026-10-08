@@ -102,9 +102,8 @@ const PersistedWorkspaceRecordSchema = z.object({
     .transform((value) => value ?? null),
   labels: z.array(z.string()).optional(),
   untrustedSource: UntrustedWorkspaceSourceSchema.optional(),
-  // Hidden from listings and plugin hooks; every agent created inside is
-  // internal. Set at creation and never changed.
-  internal: z.boolean().optional(),
+  // Public discovery visibility. Contents retain their ordinary lifecycle.
+  background: z.boolean().optional().default(false),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
@@ -687,12 +686,12 @@ export function createPersistedWorkspaceRecord(input: {
   pinnedAt?: string | null;
   labels?: string[];
   untrustedSource?: UntrustedWorkspaceSource;
-  internal?: boolean;
+  background?: boolean;
 }): PersistedWorkspaceRecord {
-  const { internal, ...rest } = input;
+  const { background, ...rest } = input;
   return PersistedWorkspaceRecordSchema.parse({
     ...rest,
-    ...(internal ? { internal: true } : {}),
+    background: background ?? false,
     title: input.title ?? null,
     branch: input.branch ?? null,
     worktreeRoot: input.worktreeRoot ?? null,

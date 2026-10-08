@@ -69,11 +69,11 @@ the marker. Closing a tab sets that client's label to `false`. Any `true` client
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
 normal root agent immediately, and closing its still-open tab archives it.
 
-Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation only selects an existing workspace.
+Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation reuses that workspace unless a new workspace is explicitly requested.
 
 Users can also detach an existing subagent from the subagents track. Detach is deliberately a manual lifecycle gesture, not an agent-facing MCP tool. It removes the parent and open-tab lifecycle labels: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
 
-`notifyOnFinish` defaults to `true` for agent-scoped creation and background prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
+`notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
@@ -84,53 +84,31 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
-## Internal agents
+## Background workspaces
 
-An internal agent is an ephemeral helper. The daemon creates them for its own branch-name and
-commit-message generators; clients create them with `internal: true` on the create request, which
-reaches the SDK as `agents.create({ internal: true })`, the CLI as `paseo run --internal`, and the
-MCP tool as `create_agent({ internal: true })`. The contract:
+`workspace.background` controls discovery only. Background workspaces contain ordinary durable
+agents and terminals: provider history, plugin hooks, parentage, archive, and restart recovery
+keep their normal behavior. Visibility is creation-only; selecting an existing workspace cannot
+change it. New workspaces default to false, inherit the caller workspace's value when an agent
+creates one without an override, and accept explicit true or false.
 
-- `AgentManager` never persists one, so it is never in History and does not survive a daemon
-  restart. The provider session is not kept either (`persistSession: false`; Claude deletes the
-  transcript on close).
-- It is left out of agent lists, global subscriptions, attention tracking, notifications, and
-  plugin lifecycle hooks. Only its exact id reaches it, so prefix and title matching stay public.
-- Archiving one is closing it: the runtime is closed, the committed timeline is dropped, and
-  attached children are archived as for any parent. Live internal children are scanned separately,
-  since the storage scan cannot see them.
-- A one-shot helper can finish and auto-archive before its creator's `waitForFinish` arrives, so the
-  archived snapshot and last message stay readable by exact id for ten minutes after archive.
-  Storage plays that role for public agents.
-- Hidden means opt-in, not unreachable. `fetch_agents_request` with `filter.includeInternal`
-  returns live internal agents and, with `includeArchived`, the retained archived ones; the
-  snapshot carries `internal: true`. The CLI exposes it as `paseo ls --internal`. The app never
-  passes the flag, so a "show internal agents" setting is one filter field away.
+The daemon derives agent discovery from workspace ownership. Default workspace and agent lists,
+including History requests, exclude background work; `filter.includeBackground` includes it.
+Exact-ID operations bypass discovery filtering. The app replicates both kinds and filters only
+its sidebar with **Show background**, so direct navigation and restored tabs remain available.
 
-The flag lives on `create_agent_request`, not in `AgentSessionConfig` on the wire, because that
-config schema is reused for update overrides. The `agent.create` transform hook cannot set it
-either: the manager re-pins `internal` from the original request after the hook runs, so a plugin
-cannot hide an agent another client asked for. Clients gate on `features.internalAgents`.
+Sequenced directories keep complete canonical collections. A filtered read must never replace
+those collections with its subset. Inclusive and default observations have distinct cursor
+scopes, so changing scope requires a fresh snapshot rather than reusing an incomplete cache.
+Clients gate creation and inclusive discovery on `features.backgroundWorkspaces`.
 
-### Internal workspaces
+### Private daemon helpers
 
-`workspace.create.request` takes `internal: true` as well (`workspaces.create({ internal: true })`,
-`paseo workspace create --internal`, `create_workspace({ internal: true })`). The record is
-persisted like any workspace, with `internal: true`, so it survives a restart and archives
-normally. What changes:
-
-- `fetch_workspaces_request` and workspace update subscriptions leave it out unless
-  `filter.includeInternal` is set; sequenced sync reads carry no filter and never include it.
-  A project whose only workspaces are internal reads as empty to a caller that did not opt in.
-- Opening a directory by path (`open_project`, `paseo run` without `--workspace`) never adopts an
-  internal workspace; it mints a visible one beside it.
-- Plugin `workspace.create`, `workspace.created`, and `workspace.archived` hooks skip it.
-- Every agent created inside it is internal. `AgentManager` applies this from the workspace id on
-  every create path (session, MCP, schedule, hub) before the plugin hook, so a creator cannot opt
-  an agent out. `paseo run --internal` with `--new-workspace` creates the workspace internal too.
-
-Archive and shutdown enumerate agents with `includeInternal` so nothing inside an internal
-workspace outlives it. Clients gate on `features.internalWorkspaces`.
+Branch-name and commit-message generators still use private disposable internal runtimes.
+`AgentManager` does not persist them or their provider sessions, excludes them from public
+discovery and plugin hooks, and drops their timelines on archive. An archived helper retains
+its exact-ID result briefly to cover completion before a waiter attaches. This internal
+lifecycle is separate from public workspace visibility and is not a public creation option.
 
 ## Archive
 

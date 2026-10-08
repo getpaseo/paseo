@@ -82,6 +82,7 @@ class WorkspaceStatus {
       workspaceDirectory: workspace.cwd,
       projectKind: "git",
       workspaceKind: workspace.kind,
+      background: workspace.background,
       name: workspace.displayName,
       archivingAt: null,
       status: "done",
@@ -571,8 +572,9 @@ describe("WorkspaceDirectory empty projects", () => {
         workspaceDirectory: workspace.cwd,
         projectKind: "non_git",
         workspaceKind: workspace.kind,
+        background: workspace.background,
         name: workspace.displayName,
-        ...(workspace.internal ? { internal: true } : {}),
+        ...(workspace.internal ? { background: true } : {}),
         archivingAt: null,
         status: "done",
         activityAt: null,
@@ -646,7 +648,7 @@ describe("WorkspaceDirectory empty projects", () => {
     expect(result.emptyProjects.map((p) => p.projectId)).toEqual(["empty"]);
   });
 
-  test("hides internal workspaces and counts their project as empty unless includeInternal", async () => {
+  test("hides background workspaces and counts their project as empty unless includeBackground", async () => {
     const directory = makeDirectory({
       projects: [project({ projectId: "hidden-only" })],
       workspaces: [
@@ -659,7 +661,7 @@ describe("WorkspaceDirectory empty projects", () => {
           createdAt: NOW,
           updatedAt: NOW,
           archivedAt: null,
-          internal: true,
+          background: true,
         },
       ],
     });
@@ -675,7 +677,7 @@ describe("WorkspaceDirectory empty projects", () => {
     const shown = await directory.listFetchEntries({
       type: "fetch_workspaces_request",
       requestId: "r2",
-      filter: { includeInternal: true },
+      filter: { includeBackground: true },
     });
     expect(shown.entries.map((entry) => entry.id)).toEqual(["ws-internal"]);
     expect(shown.emptyProjects).toEqual([]);

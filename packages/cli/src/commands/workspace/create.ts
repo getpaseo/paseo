@@ -15,7 +15,7 @@ export interface WorkspaceCreateOptions extends CommandOptions {
   branch?: string;
   prNumber?: string;
   forge?: string;
-  internal?: boolean;
+  background?: boolean;
 }
 
 interface WorktreeSourceBase {
@@ -148,7 +148,8 @@ export async function runCreateCommand(
     const payload = await client.createWorkspace({
       source: buildWorkspaceSource(options),
       ...(options.title ? { title: options.title } : {}),
-      ...(options.internal ? { internal: true } : {}),
+      ...(options.background !== undefined ? { background: options.background } : {}),
+      ...(process.env.PASEO_AGENT_ID ? { callerAgentId: process.env.PASEO_AGENT_ID } : {}),
     });
     if (!payload.workspace) {
       throw new Error(payload.error ?? "Workspace creation failed");

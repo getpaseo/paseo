@@ -7703,7 +7703,7 @@ test("listAgents excludes internal agents", async () => {
   ]);
 });
 
-test("createAgent inside an internal workspace makes the agent internal and skips persistence", async () => {
+test("workspace ownership does not turn an ordinary agent into a disposable helper", async () => {
   const agentId = "00000000-0000-4000-8000-000000000115";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -7713,7 +7713,6 @@ test("createAgent inside an internal workspace makes the agent internal and skip
     registry: storage,
     logger,
     idFactory: () => agentId,
-    isInternalWorkspace: async (workspaceId) => workspaceId === "wks_internal",
     pluginLifecycle: {
       emit: () => {},
       before: async (name, request) => {
@@ -7727,11 +7726,11 @@ test("createAgent inside an internal workspace makes the agent internal and skip
     workspaceId: "wks_internal",
   });
 
-  expect(manager.getAgent(agentId)?.internal).toBe(true);
-  expect(manager.listAgents()).toEqual([]);
-  expect(await storage.get(agentId)).toBeNull();
-  // The create hook is skipped like any internal agent; launch hooks still run.
-  expect(beforeHookCalls).not.toContain("agent.create");
+  expect(manager.getAgent(agentId)?.internal).toBe(false);
+  expect(manager.listAgents().map((agent) => agent.id)).toEqual([agentId]);
+  expect(await storage.get(agentId)).not.toBeNull();
+  // Workspace ownership preserves ordinary agent lifecycle hooks.
+  expect(beforeHookCalls).toContain("agent.create");
 });
 
 test("global subscribers receive internal agent events only when they opt in", async () => {

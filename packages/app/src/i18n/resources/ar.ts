@@ -1089,6 +1089,7 @@ export const ar: TranslationResources = {
   },
   sidebar: {
     display: {
+      showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
       heading: "العرض",
       grouping: {

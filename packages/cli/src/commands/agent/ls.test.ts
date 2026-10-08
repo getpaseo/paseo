@@ -24,8 +24,8 @@ describe("buildAgentLsFetchOptions", () => {
   });
 
   it("asks the daemon for internal agents only with --internal", () => {
-    expect(buildAgentLsFetchOptions({ internal: true, global: true })).toEqual({
-      filter: { includeInternal: true },
+    expect(buildAgentLsFetchOptions({ background: true, global: true })).toEqual({
+      filter: { includeBackground: true },
     });
   });
 
@@ -33,11 +33,11 @@ describe("buildAgentLsFetchOptions", () => {
     expect(buildAgentLsFetchOptions({ global: true })).toEqual({});
   });
 
-  it("keeps -a within the active scope", () => {
+  it("includes archived and background agents with -a", () => {
     expect(buildAgentLsFetchOptions({ all: true })).toEqual({
-      scope: "active",
       filter: {
         includeArchived: true,
+        includeBackground: true,
       },
     });
   });
@@ -46,6 +46,7 @@ describe("buildAgentLsFetchOptions", () => {
     expect(buildAgentLsFetchOptions({ all: true, global: true })).toEqual({
       filter: {
         includeArchived: true,
+        includeBackground: true,
       },
     });
   });

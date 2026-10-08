@@ -43,7 +43,7 @@ Use `paseo run` to start a new agent with a task:
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
 paseo run --no-wait "run the focused test suite"
-paseo run --internal --output-schema schema.json "name this branch"
+paseo run --output-schema schema.json "name this branch"
 paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
 paseo run --workspace <workspace-id> "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
@@ -60,7 +60,10 @@ Use `--output-schema` to return only matching JSON output. You can pass a schema
 
 By default, `paseo run` waits for completion. Use `--no-wait` to return immediately while the agent keeps running, the same flag `paseo send` takes.
 
-Use `--internal` for a helper whose result only the caller needs. An internal agent is hidden from every listing, History, and the subagents track, is never persisted, and does not survive a daemon restart. Combine it with `--output-schema` for a scripted one-shot answer that leaves nothing behind. With `--new-workspace`, the minted workspace is internal too. `paseo ls --internal` and `paseo inspect <agent-id>` still reach it.
+The old `run --background` and `-d` aliases still mean `--no-wait`. They are deprecated, hidden
+from help, and print a warning to stderr. Use `--no-wait` in scripts. Workspace visibility is
+selected separately with `workspace create --background`; this release does not repurpose
+`run --background`.
 
 ## Projects
 
@@ -119,13 +122,23 @@ paseo workspace create \
   --pr-number 2186
 ```
 
-Add `--internal` to keep the workspace out of every listing. Every agent created inside an internal workspace is internal. `paseo workspace ls --internal` shows it, and `paseo run --workspace <id>` targets it by id.
+Add `--background` to hide a workspace from default discovery. Its agents and terminals keep
+ordinary history, persistence, hooks, and restart recovery. `--no-background` explicitly overrides
+caller-workspace inheritance; omission inherits when run by a Paseo agent and defaults to false
+from a human shell. Visibility is creation-only.
+
+```bash
+paseo workspace create --isolation local --background --path /path/to/repo
+paseo run --workspace <workspace-id> --no-wait "review the checkout flow"
+```
+
+Exact workspace and agent IDs remain accessible regardless of listing visibility.
 
 Then list, use, rename, or archive it:
 
 ```bash
 paseo workspace ls
-paseo workspace ls --internal                 # Also include internal workspaces
+paseo workspace ls --background               # Also include background workspaces
 paseo run --workspace <workspace-id> "implement authentication"
 paseo workspace rename <workspace-id> "Auth rework"
 paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
@@ -203,7 +216,7 @@ paseo ls                    # Non-archived agents in active workspaces
 paseo ls -a                 # Also include archived agents
 paseo ls -g                 # Non-archived agents across all workspaces
 paseo ls -a -g --json       # All agents, including archived, as JSON
-paseo ls --internal         # Also include internal agents, marked in an INTERNAL column
+paseo ls --background       # Also include agents in background workspaces
 ```
 
 ## Streaming output

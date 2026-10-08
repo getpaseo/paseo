@@ -904,7 +904,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -982,7 +981,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1052,7 +1050,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1112,7 +1109,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };

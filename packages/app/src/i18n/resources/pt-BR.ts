@@ -1115,6 +1115,7 @@ export const ptBR: TranslationResources = {
   },
   sidebar: {
     display: {
+      showBackground: "Mostrar espaços em segundo plano",
       trigger: "Preferências de exibição",
       heading: "Exibição",
       grouping: {

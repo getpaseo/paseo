@@ -28,7 +28,7 @@ describe("resolveWorkspaceName", () => {
     );
   });
 
-  test("createPersistedWorkspaceRecord keeps internal only when set", () => {
+  test("createPersistedWorkspaceRecord defaults background to false and preserves explicit intent", () => {
     const base = {
       workspaceId: "ws-1",
       projectId: "proj-1",
@@ -38,11 +38,9 @@ describe("resolveWorkspaceName", () => {
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
     };
-    expect(createPersistedWorkspaceRecord(base)).not.toHaveProperty("internal");
-    expect(createPersistedWorkspaceRecord({ ...base, internal: false })).not.toHaveProperty(
-      "internal",
-    );
-    expect(createPersistedWorkspaceRecord({ ...base, internal: true }).internal).toBe(true);
+    expect(createPersistedWorkspaceRecord(base).background).toBe(false);
+    expect(createPersistedWorkspaceRecord({ ...base, background: false }).background).toBe(false);
+    expect(createPersistedWorkspaceRecord({ ...base, background: true }).background).toBe(true);
   });
 
   test("resolveWorkspaceDisplayName applies the same rule over the persisted record", () => {

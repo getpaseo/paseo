@@ -34,10 +34,6 @@ export function addRunOptions(cmd: Command): Command {
       // COMPAT(detachRunFlag): --detach used to mean background execution, not
       // ownership transfer. Added in v0.2.0; remove after 2027-01-17.
       .addOption(new Option("--detach", "Legacy alias for --no-wait").hideHelp())
-      .option(
-        "--internal",
-        "Create an internal agent: hidden from every listing and History, never persisted",
-      )
       .option("--title <title>", "Assign a title to the agent")
       .addOption(new Option("--name <name>", "Hidden alias for --title").hideHelp())
       .option(
@@ -121,7 +117,6 @@ export interface AgentRunOptions extends CommandOptions {
   wait?: boolean;
   background?: boolean;
   detach?: boolean;
-  internal?: boolean;
   title?: string;
   name?: string;
   provider?: string;
@@ -398,6 +393,10 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     } satisfies CommandError;
   }
 
+  if (options.background) {
+    console.error("Warning: --background (-d) is deprecated. Use --no-wait instead.");
+  }
+
   validateRunWorkspaceOptions(options);
 
   if (outputSchema && !waitsForFinish(options)) {
@@ -568,10 +567,9 @@ async function resolveRunWorkspace(
   // TODO: thread the run `prompt` as firstAgentContext so workspace-level
   // title/branch generation picks up the task description (U8/U6 deferred).
   const source = buildRunWorkspaceSource(options, cwd);
-  // An internal agent that mints its own workspace keeps that workspace hidden too.
   const result = await client.createWorkspace({
     source,
-    ...(options.internal ? { internal: true } : {}),
+    ...(callerAgentId ? { callerAgentId } : {}),
   });
 
   if (!result.workspace) {
@@ -650,7 +648,6 @@ export async function runRunCommand(
             images,
             env: requestEnv,
             labels: Object.keys(labels).length > 0 ? labels : undefined,
-            ...(options.internal ? { internal: true } : {}),
           });
         } else {
           await client.sendMessage(structuredAgent.id, structuredPrompt);
@@ -721,7 +718,6 @@ export async function runRunCommand(
       images,
       env: requestEnv,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
-      ...(options.internal ? { internal: true } : {}),
     });
 
     // Default run behavior is foreground: wait for completion unless --no-wait is set.

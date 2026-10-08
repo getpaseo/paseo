@@ -1097,6 +1097,7 @@ export const en = {
   },
   sidebar: {
     display: {
+      showBackground: "Show background",
       trigger: "Display preferences",
       heading: "Display",
       grouping: {

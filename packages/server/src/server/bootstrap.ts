@@ -903,7 +903,7 @@ export async function createPaseoDaemon(
     },
   });
   workspaceRegistry.subscribeToMutations((mutation) => {
-    if (mutation.kind === "archive" && mutation.workspace && !mutation.workspace.internal) {
+    if (mutation.kind === "archive" && mutation.workspace) {
       pluginRuntime.emit("workspace.archived", {
         workspace: describeHookWorkspace(mutation.workspace),
       });
@@ -946,8 +946,6 @@ export async function createPaseoDaemon(
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
-    isInternalWorkspace: async (workspaceId) =>
-      (await workspaceRegistry.get(workspaceId))?.internal === true,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -1035,10 +1033,13 @@ export async function createPaseoDaemon(
   const ensureWorkspaceForCreateExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
+    context?: { callerWorkspaceId?: string },
   ): Promise<string> => {
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
       resolveFirstAgentPromptTitle(firstAgentContext),
+      undefined,
+      context,
     );
     if (firstAgentContext) {
       workspaceAutoName.scheduleForDirectory({
@@ -1085,8 +1086,9 @@ export async function createPaseoDaemon(
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
+    context?: { callerWorkspaceId?: string },
   ): Promise<string> => {
-    const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext);
+    const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext, context);
     await emitWorkspaceUpdatesExternal([workspaceId]);
     return workspaceId;
   };

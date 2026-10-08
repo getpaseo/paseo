@@ -27,6 +27,8 @@ export type AgentRunController = Pick<
 };
 
 export interface StartAgentRunOptions {
+  /** Called after selecting the run, before consuming its events. */
+  onDispatch?: (disposition: PromptDispatchDisposition) => void;
   replaceRunning?: boolean;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
@@ -113,6 +115,7 @@ export async function startAgentRun(
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+    options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
   try {
@@ -137,6 +140,7 @@ async function startAgentRunInner(
   const snapshot = agentManager.getAgent(agentId);
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
+    options?.onDispatch?.("steered");
     return steered;
   }
   const { iterator, replaced } = steered
@@ -151,6 +155,7 @@ async function startAgentRunInner(
     },
     "agent.session.start_stream.iterator_returned",
   );
+  options?.onDispatch?.("turn_started");
   void (async () => {
     try {
       try {
@@ -222,6 +227,7 @@ export function isSystemInjectedEnvelope(text: string): boolean {
 }
 
 export interface SendPromptToAgentParams {
+  onDispatch?: StartAgentRunOptions["onDispatch"];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   agentId: string;
@@ -332,6 +338,7 @@ export async function sendPromptToAgent(
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
+    onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,
@@ -377,6 +384,8 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
+  /** A replacement must observe its new start, not the displaced running snapshot. */
+  waitForTurnStart?: boolean;
   logger: Logger;
 }
 
@@ -430,16 +439,18 @@ interface NotifySafelyOptions {
 // next finish reaches the caller once.
 const armedFinishNotifications = new WeakMap<AgentManager, Map<string, () => void>>();
 
-export function setupFinishNotification(params: SetupFinishNotificationParams): void {
+export function setupFinishNotification(params: SetupFinishNotificationParams): () => void {
   const {
     agentManager,
     agentStorage,
     childAgentId,
     callerAgentId,
     requireParentOwnership = false,
+    waitForTurnStart = false,
     logger,
   } = params;
   let hasSeenRunning = false;
+  let hasSeenTurn = false;
   let stopped = false;
   const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
@@ -507,6 +518,37 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       });
   }
 
+  function observeState(agent: ManagedAgent): void {
+    for (const requestId of notifiedPermissionRequestIds) {
+      if (!agent.pendingPermissions.has(requestId)) {
+        notifiedPermissionRequestIds.delete(requestId);
+      }
+    }
+    if (agent.lifecycle === "running") {
+      if (waitForTurnStart && !hasSeenTurn) return;
+      hasSeenTurn = true;
+      if (agent.pendingPermissions.size === 0) {
+        hasSeenRunning = true;
+      }
+      return;
+    }
+    // Prior terminal state is not this task's outcome. A failure before turn start
+    // is reported by the dispatch acknowledgement instead of a finish callback.
+    if (agent.lifecycle === "error" && hasSeenTurn) {
+      notifySafely("errored");
+      return;
+    }
+    if (agent.lifecycle === "idle" && hasSeenRunning) {
+      notifySafely("finished");
+      return;
+    }
+    if (agent.lifecycle === "closed") {
+      notifySafely("was closed");
+      return;
+    }
+    return;
+  }
+
   unsubscribe = agentManager.subscribe(
     (event) => {
       if (stopped) {
@@ -514,33 +556,17 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.type === "agent_state") {
-        for (const requestId of notifiedPermissionRequestIds) {
-          if (!event.agent.pendingPermissions.has(requestId)) {
-            notifiedPermissionRequestIds.delete(requestId);
-          }
-        }
-        if (event.agent.lifecycle === "running") {
-          if (event.agent.pendingPermissions.size === 0) {
-            hasSeenRunning = true;
-          }
-          return;
-        }
-        if (event.agent.lifecycle === "error") {
-          notifySafely("errored");
-          return;
-        }
-        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          notifySafely("finished");
-          return;
-        }
-        if (event.agent.lifecycle === "closed") {
-          notifySafely("was closed");
-          return;
-        }
+        observeState(event.agent);
         return;
       }
 
       if (event.type === "timeline_replacement") {
+        return;
+      }
+
+      if (event.event.type === "turn_started") {
+        hasSeenTurn = true;
+        hasSeenRunning = true;
         return;
       }
 
@@ -578,11 +604,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   const childSnapshot = agentManager.getAgent(childAgentId);
   if (!childSnapshot || childSnapshot.lifecycle === "closed") {
     stop();
-    return;
+    return stop;
   }
-  if (childSnapshot.lifecycle === "running") {
+  if (childSnapshot.lifecycle === "running" && !waitForTurnStart) {
+    hasSeenTurn = true;
     hasSeenRunning = true;
-  } else if (childSnapshot.lifecycle === "error") {
-    notifySafely("errored");
   }
+  return stop;
 }
