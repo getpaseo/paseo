@@ -20,6 +20,7 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { z } from "zod";
+import { HermesSubagents } from "./hermes-subagents.js";
 import type {
   AcpConfigAccess,
   AcpConfigChange,
@@ -360,6 +361,8 @@ class AcpRuntime {
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallSnapshot>();
   private readonly pendingCompactions = new Set<string>();
+  private hermesSubagents: HermesSubagents | null = null;
+  private openingUpdates: SessionNotification[] | null = null;
   private readonly permissions = new Map<
     string,
     { request: RequestPermissionRequest; resolve(response: RequestPermissionResponse): void }
@@ -421,7 +424,7 @@ class AcpRuntime {
         runtime.call(
           runtime.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
+            clientCapabilities: { _meta: { hermes: { subagentProgress: 1 } } },
             clientInfo: { name: "paseo", version: "1" },
           }),
         ),
@@ -485,6 +488,14 @@ class AcpRuntime {
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
   ): Promise<readonly ProviderCapability[]> {
+    this.hermesSubagents = new HermesSubagents({
+      sessionId: this.options.boundarySessionId,
+      cwd: input.config.cwd,
+      emit: this.emit,
+    });
+    // ACP load streams history before its response. Hold it until the root
+    // provider session exists so child sessions and transcript items have an owner.
+    this.openingUpdates = [];
     const mcpServers = toAcpMcpServers(input.config);
     const nativeSessionId = readNativeSessionId(input.persistence);
     const metadata = {
@@ -538,6 +549,9 @@ class AcpRuntime {
       cwd: input.config.cwd,
     });
     this.emitConfig();
+    const openingUpdates = this.openingUpdates;
+    this.openingUpdates = null;
+    for (const update of openingUpdates) this.sessionUpdate(update);
     if (this.options.options.acpOptions?.waitForInitialCommands) {
       await this.waitForInitialCommands();
     }
@@ -729,6 +743,7 @@ class AcpRuntime {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    this.hermesSubagents?.finish("canceled");
     this.settlePendingWork();
     await this.closeConnector();
     const child = this.child;
@@ -886,7 +901,13 @@ class AcpRuntime {
   }
 
   private sessionUpdate(notification: SessionNotification): void {
+    if (this.closing || this.processFailed) return;
+    if (this.openingUpdates !== null) {
+      this.openingUpdates.push(notification);
+      return;
+    }
     if (notification.sessionId !== this.nativeSessionId) return;
+    if (this.hermesSubagents?.accept(notification.update)) return;
     this.reduceUpdate(notification.update);
   }
 
@@ -1121,6 +1142,7 @@ class AcpRuntime {
   }
 
   private settlePendingWork(): void {
+    if (this.processFailed) this.hermesSubagents?.finish("failed");
     for (const permission of this.permissions.values()) {
       permission.resolve({ outcome: { outcome: "cancelled" } });
     }

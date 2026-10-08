@@ -71,13 +71,14 @@ describe("buildACPClientCapabilities", () => {
         writeTextFile: false,
       },
       terminal: true,
+      _meta: { hermes: { subagentProgress: 1 } },
     });
   });
 
   test("applies provider capability overrides without dropping metadata", () => {
     expect(
       buildACPClientCapabilities(
-        { source: "provider" },
+        { source: "provider", hermes: { otherCapability: true } },
         {
           fs: {
             readTextFile: true,
@@ -91,7 +92,7 @@ describe("buildACPClientCapabilities", () => {
         writeTextFile: false,
       },
       terminal: false,
-      _meta: { source: "provider" },
+      _meta: { source: "provider", hermes: { otherCapability: true, subagentProgress: 1 } },
     });
   });
 });
