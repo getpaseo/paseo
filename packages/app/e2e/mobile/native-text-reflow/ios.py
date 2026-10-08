@@ -39,14 +39,28 @@ def __lldb_init_module(debugger, _internal_dict):
             container.frame = frame;
             [container layoutIfNeeded];
             CGFloat wide = text.frame.size.width;
+            auto keptSelection = text.selectedRange;
+            // Fabric recycles the view: the container keeps its size in the pool,
+            // and the next paragraph mounts it 30 points wider (a list-item paragraph
+            // reused by a full-width one) or at the same size.
+            [host performSelector:@selector(prepareForRecycle)];
+            frame.size.width = 530;
+            container.frame = frame;
+            [container layoutIfNeeded];
+            CGFloat reusedWider = text.frame.size.width;
+            [host performSelector:@selector(prepareForRecycle)];
+            container.frame = frame;
+            [container layoutIfNeeded];
+            CGFloat reusedSame = text.frame.size.width;
             BOOL ok = text != nil && narrow == 240 && wide == 500 &&
-                selection.location == text.selectedRange.location &&
-                selection.length == text.selectedRange.length &&
+                reusedWider == 530 && reusedSame == 530 &&
+                selection.location == keptSelection.location &&
+                selection.length == keptSelection.length &&
                 selection.location == 12 && selection.length == 9;
-            [NSString stringWithFormat:@"NATIVE_REFLOW_%@ narrow=%.0f wide=%.0f selection=%lu:%lu",
-                ok ? @"PASS" : @"FAIL", narrow, wide,
-                (unsigned long)text.selectedRange.location,
-                (unsigned long)text.selectedRange.length];
+            [NSString stringWithFormat:@"NATIVE_REFLOW_%@ narrow=%.0f wide=%.0f recycled=%.0f,%.0f selection=%lu:%lu",
+                ok ? @"PASS" : @"FAIL", narrow, wide, reusedWider, reusedSame,
+                (unsigned long)keptSelection.location,
+                (unsigned long)keptSelection.length];
         })''',
         options,
     )
