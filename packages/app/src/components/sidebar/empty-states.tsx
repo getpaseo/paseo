@@ -99,6 +99,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   actions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: theme.spacing[2],
     marginTop: theme.spacing[4],
   },
