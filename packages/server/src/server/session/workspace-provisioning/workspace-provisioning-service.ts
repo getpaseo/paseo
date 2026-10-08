@@ -192,7 +192,7 @@ export function createWorkspaceProvisioningService(deps: {
   async function findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
     const rootPath = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(rootPath);
-    return allocateProjectForDirectory(rootPath, checkout);
+    return allocateProjectForDirectory({ rootPath, checkout });
   }
 
   async function findOrCreateProjectForWorkspace(
@@ -206,7 +206,7 @@ export function createWorkspaceProvisioningService(deps: {
       checkout.worktreeRoot !== null &&
       areEquivalentPaths(rootPath, checkout.worktreeRoot);
     if (!isLinkedRoot || !checkout.mainRepoRoot)
-      return allocateProjectForDirectory(rootPath, checkout);
+      return allocateProjectForDirectory({ rootPath, checkout });
 
     const mainRootPath = resolve(checkout.mainRepoRoot);
     const mainCheckout = await workspaceGitService.getCheckout(mainRootPath);
@@ -219,16 +219,24 @@ export function createWorkspaceProvisioningService(deps: {
       deriveProjectKey({ rootPath, ...checkout, serverId }) ===
       deriveProjectKey({ rootPath: mainRootPath, ...mainCheckout, serverId });
     if (!isMainRoot || (hasRemote && !sameRemote))
-      return allocateProjectForDirectory(rootPath, checkout);
+      return allocateProjectForDirectory({ rootPath, checkout });
 
-    return allocateProjectForDirectory(mainRootPath, mainCheckout, rootPath);
+    return allocateProjectForDirectory({
+      rootPath: mainRootPath,
+      checkout: mainCheckout,
+      preferredExistingRootPath: rootPath,
+    });
   }
 
-  async function allocateProjectForDirectory(
-    rootPath: string,
-    checkout: ProjectCheckoutLitePayload,
-    preferredExistingRootPath?: string,
-  ): Promise<PersistedProjectRecord> {
+  async function allocateProjectForDirectory({
+    rootPath,
+    checkout,
+    preferredExistingRootPath,
+  }: {
+    rootPath: string;
+    checkout: ProjectCheckoutLitePayload;
+    preferredExistingRootPath?: string;
+  }): Promise<PersistedProjectRecord> {
     const timestamp = new Date().toISOString();
     return projectRegistry.getOrCreateActiveByRoot({
       rootPath,
