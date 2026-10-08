@@ -6,9 +6,14 @@ import net from "node:net";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
+import { FILE_EXPLORER_STREAM_CHUNK_BYTES } from "../file-explorer/service.js";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import {
   deriveSharedKey,
@@ -71,6 +76,10 @@ function decodeOfferFromFragmentUrl(url: string): {
   const json = Buffer.from(encoded, "base64url").toString("utf8");
   const offer = ConnectionOfferSchema.parse(JSON.parse(json));
   return { serverId: offer.serverId, daemonPublicKeyB64: offer.daemonPublicKeyB64 };
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function encodeCiphertext(ciphertext: ArrayBuffer): string {
@@ -781,6 +790,66 @@ async function waitForCapturedLog(
     } finally {
       await daemon.close();
       await stopRelay();
+    }
+  }, 90000);
+
+  test("reads a workspace file over the E2EE relay session byte-for-byte", async () => {
+    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+    const { logger, lines } = createCapturingLogger();
+    await startRelay({ useLocalRelay: true });
+
+    const daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      logger,
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+    });
+    const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-download-"));
+    const fileName = "rapport données.bin";
+    const source = randomBytes(4 * FILE_EXPLORER_STREAM_CHUNK_BYTES + 123);
+    await writeFile(path.join(workspaceDir, fileName), source);
+    let client: DaemonClient | null = null;
+
+    try {
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
+      const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+
+      client = new DaemonClient({
+        url: buildRelayWebSocketUrl({
+          endpoint: `127.0.0.1:${relayPort}`,
+          useTls: false,
+          serverId,
+          role: "client",
+        }),
+        clientType: "cli",
+        connectTimeoutMs: 30_000,
+        e2ee: { enabled: true, daemonPublicKeyB64 },
+        reconnect: { enabled: false },
+      });
+      await client.connect();
+
+      const result = await client.readFile(workspaceDir, fileName, undefined, undefined, 0);
+
+      expect(result.size).toBe(source.byteLength);
+      expect(result.bytes.byteLength).toBe(source.byteLength);
+      expect(sha256(result.bytes)).toBe(sha256(source));
+    } catch (err) {
+      const tail = lines.slice(-50).join("");
+      // eslint-disable-next-line no-console
+      console.error("daemon logs (tail):\n", tail);
+      throw err;
+    } finally {
+      await client?.close().catch(() => undefined);
+      await daemon.close();
+      await stopRelay();
+      await rm(workspaceDir, { recursive: true, force: true });
     }
   }, 90000);
 });
