@@ -2,6 +2,15 @@ import type { createCreationScenario } from "../support/helpers/creation";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
 
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      metadataGeneration: { providers: [{ provider: "mock", model: "ten-second-stream" }] },
+    },
+  },
+});
+
 for (const isolation of ["local", "worktree"] as const) {
   test(`repeated Create clicks before a render create only one ${isolation} workspace`, async ({
     creation,

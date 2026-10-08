@@ -1,6 +1,15 @@
 import { test } from "../support/fixtures";
 import { verifyDelayedWorkspaceCreation } from "../support/helpers/new-workspace-navigation";
 
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      metadataGeneration: { providers: [{ provider: "mock", model: "ten-second-stream" }] },
+    },
+  },
+});
+
 test.describe("Delayed workspace creation", () => {
   test.describe.configure({ timeout: 120_000 });
 

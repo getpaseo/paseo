@@ -82,6 +82,7 @@ import {
   useSessionStore,
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
@@ -1387,7 +1388,12 @@ const AgentStreamSection = memo(function AgentStreamSection({
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  const isWorkspaceSetupRunning = useWorkspaceSetupStore((state) =>
+    Boolean(workspaceKey && state.snapshots[workspaceKey]?.status === "running"),
+  );
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasVisibleComposerTracks =
     hasActiveComposer && (hasVisibleAgentTracks || hasWorkspaceDiffStat);
@@ -1457,6 +1463,9 @@ const AgentStreamSection = memo(function AgentStreamSection({
       toast={toast}
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
+      runningStatusLabel={
+        isWorkspaceSetupRunning ? t("workspace.setup.waitingForWorkspace") : undefined
+      }
       onOpenWorkspaceFile={onOpenWorkspaceFile}
     />
   );

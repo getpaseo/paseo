@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
+import {
+  resolveWorkspaceAutoSubmitAttempt,
+  shouldAllowEmptyDraftText,
+  validateDraftSubmission,
+} from "./workspace-tab-core";
 
 const baseComposerState = {
   providerDefinitions: [{ id: "codewhale" }],
@@ -67,5 +71,36 @@ describe("workspace draft empty text readiness", () => {
         attachments: [],
       }),
     ).toBe(false);
+  });
+});
+
+describe("workspace draft auto-submit identity", () => {
+  test("recovers the stored attempt when the rendered store snapshot is stale", () => {
+    expect(
+      resolveWorkspaceAutoSubmitAttempt({
+        clientMessageId: "message-1",
+        renderedAttempt: null,
+        latestStoredAttempt: {
+          clientMessageId: "message-1",
+          text: "Keep this prompt singular",
+          timestamp: Date.parse("2026-07-30T12:30:00.000Z"),
+          lifecycle: "active",
+        },
+      }),
+    ).toEqual({
+      clientMessageId: "message-1",
+      text: "Keep this prompt singular",
+      timestamp: new Date("2026-07-30T12:30:00.000Z"),
+    });
+  });
+
+  test("does not create a replacement identity when the stored attempt is unavailable", () => {
+    expect(
+      resolveWorkspaceAutoSubmitAttempt({
+        clientMessageId: "message-1",
+        renderedAttempt: null,
+        latestStoredAttempt: null,
+      }),
+    ).toBeNull();
   });
 });

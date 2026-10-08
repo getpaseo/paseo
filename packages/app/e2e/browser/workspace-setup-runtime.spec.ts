@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { expect, test } from "../support/fixtures";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { clickNewTerminal } from "../support/helpers/launcher";
@@ -6,14 +8,72 @@ import { expectTerminalSurfaceVisible } from "../support/helpers/terminal-perf";
 import {
   connectWorkspaceSetupClient,
   createWorkspaceThroughDaemon,
+  expectSetupPanel,
+  expectSetupStatus,
+  fetchWorkspaceById,
   findWorktreeWorkspaceForProject,
   navigateToWorkspaceViaSidebar,
   openHomeWithProject,
   seedProjectForWorkspaceSetup,
+  waitForWorkspaceSetupProgress,
 } from "../support/helpers/workspace-setup";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 
 test.describe("Workspace setup runtime authority", () => {
   test.describe.configure({ retries: 1 });
+
+  test("refreshes setup completed while the browser was disconnected", async ({ page }) => {
+    test.setTimeout(90_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const client = await connectWorkspaceSetupClient();
+    const repo = await createTempGitRepo("workspace-setup-reconnect-", {
+      paseoConfig: { worktree: { setup: "node setup.cjs" } },
+      files: [
+        {
+          path: "setup.cjs",
+          content: `const { existsSync } = require("node:fs");
+console.log("Waiting for setup release");
+const timer = setInterval(() => {
+  if (existsSync("allow-setup")) {
+    clearInterval(timer);
+    console.log("Setup finished");
+  }
+}, 20);
+`,
+        },
+      ],
+    });
+
+    try {
+      await seedProjectForWorkspaceSetup(client, repo.path);
+      const workspace = await createWorkspaceThroughDaemon(client, {
+        cwd: repo.path,
+        worktreeSlug: "setup-reconnect",
+      });
+      const descriptor = await fetchWorkspaceById(client, workspace.id);
+      await openHomeWithProject(page, repo.path);
+      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await expectSetupPanel(page);
+      await expectSetupStatus(page, "Running");
+
+      await gate.drop();
+      await gate.waitForBlockedConnection();
+      const completed = waitForWorkspaceSetupProgress(
+        client,
+        (progress) => progress.workspaceId === workspace.id && progress.status === "completed",
+      );
+      await writeFile(path.join(descriptor.workspaceDirectory, "allow-setup"), "ok\n");
+      await completed;
+      await expectSetupStatus(page, "Running");
+
+      gate.restore();
+      await expectSetupStatus(page, "Completed");
+    } finally {
+      gate.restore();
+      await client.close();
+      await repo.cleanup();
+    }
+  });
 
   test("worktree workspace is created in its own directory", async ({ page }) => {
     test.setTimeout(90_000);

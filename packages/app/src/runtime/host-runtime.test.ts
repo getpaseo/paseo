@@ -17,6 +17,7 @@ import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
@@ -70,6 +71,28 @@ class FakeDaemonClient {
   public sentAgentMessages: Array<Parameters<DaemonClient["sendAgentMessage"]>> = [];
   public sendAgentMessageFailures: Error[] = [];
   public sendAgentMessageResponses: Promise<void>[] = [];
+  public workspaceSetupRequests: string[] = [];
+
+  async fetchWorkspaceSetupStatus(
+    workspaceId: string,
+  ): ReturnType<DaemonClient["fetchWorkspaceSetupStatus"]> {
+    this.workspaceSetupRequests.push(workspaceId);
+    return {
+      requestId: "setup-status",
+      workspaceId,
+      snapshot: {
+        status: "completed",
+        detail: {
+          type: "worktree_setup",
+          worktreePath: "/repo",
+          branchName: "main",
+          commands: [],
+          log: "",
+        },
+        error: null,
+      },
+    };
+  }
   private agentUpdateListeners = new Set<
     (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void
   >();
@@ -2032,6 +2055,49 @@ describe("HostRuntimeStore", () => {
     const persistedHosts = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
     expect(persistedHosts[0]?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
     store.syncHosts([]);
+  });
+
+  it("refreshes setup that completed while the host was disconnected", async () => {
+    const host = makeHost({ serverId: "srv_setup_reconnect" });
+    const clients: FakeDaemonClient[] = [];
+    const store = new HostRuntimeStore({
+      deps: makeDeps({ "direct:lan:6767": 12 }, clients),
+    });
+
+    try {
+      store.syncHosts([host]);
+      await waitForHostOnline(store, host.serverId);
+      const fakeClient = clients[0];
+      if (!fakeClient) throw new Error("Host did not create its daemon client");
+      useWorkspaceSetupStore.getState().upsertProgress({
+        serverId: host.serverId,
+        payload: {
+          workspaceId: "workspace",
+          status: "running",
+          detail: {
+            type: "worktree_setup",
+            worktreePath: "/repo",
+            branchName: "main",
+            commands: [],
+            log: "",
+          },
+          error: null,
+        },
+      });
+
+      fakeClient.setConnectionState({ status: "disconnected", reason: "transport closed" });
+      fakeClient.setConnectionState({ status: "connected" });
+      await waitForHostOnline(store, host.serverId);
+      await vi.waitFor(() => {
+        expect(
+          useWorkspaceSetupStore.getState().snapshots[`${host.serverId}:workspace`]?.status,
+        ).toBe("completed");
+      });
+      expect(fakeClient.workspaceSetupRequests).toEqual(["workspace"]);
+    } finally {
+      store.syncHosts([]);
+      useWorkspaceSetupStore.getState().clearServer(host.serverId);
+    }
   });
 
   it("tracks connection status transitions independently of agent panels", async () => {

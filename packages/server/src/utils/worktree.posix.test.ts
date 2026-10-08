@@ -973,6 +973,28 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(progressEvents.some((event) => event.type === "command_completed")).toBe(true);
     });
 
+    it("terminates a streamed setup command when canceled", async () => {
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "sleep 30" } }),
+      );
+      const abortController = new AbortController();
+
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        cleanupOnFailure: false,
+        signal: abortController.signal,
+        onEvent: (event) => {
+          if (event.type === "command_started") {
+            abortController.abort(new Error("workspace archived"));
+          }
+        },
+      });
+
+      await expect(setup).rejects.toThrow("workspace archived");
+    });
+
     it("reuses persisted worktree runtime port across resolutions", async () => {
       const result = await createLegacyWorktreeForTest({
         branchName: "main",
@@ -1205,6 +1227,35 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
         scripts: { dev: { command: "echo hi" } },
       });
+    });
+
+    it("does not seed paseo.json committed only on the source branch into another base branch", async () => {
+      execFileSync("git", ["checkout", "-b", "source-with-config"], { cwd: repoDir });
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "node support/source-only-helper.mjs" } }),
+      );
+      mkdirSync(join(repoDir, "support"));
+      writeFileSync(join(repoDir, "support", "source-only-helper.mjs"), "process.exit(0);\n");
+      execFileSync("git", ["add", "paseo.json", "support/source-only-helper.mjs"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "source config"], {
+        cwd: repoDir,
+      });
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "target-without-config",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/without-config" },
+        runSetup: true,
+        paseoHome,
+      });
+
+      expect(existsSync(join(result.worktreePath, "paseo.json"))).toBe(false);
+      expect(existsSync(join(result.worktreePath, "support", "source-only-helper.mjs"))).toBe(
+        false,
+      );
     });
 
     it("keeps a new worktree clean when its upstream ref has a newer paseo.json", async () => {

@@ -5,7 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 
@@ -68,6 +68,7 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { WorkspaceSetupReadiness } from "../workspace-setup-readiness.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -170,16 +171,6 @@ async function waitForWorkspaceTitle(
   title: string,
 ): Promise<void> {
   await vi.waitFor(() => expect(workspaceRecords.get(workspaceId)?.title).toBe(title), {
-    timeout: 5_000,
-  });
-}
-
-async function waitForWorkspaceBranch(
-  workspaceRecords: Map<string, PersistedWorkspaceRecord>,
-  workspaceId: string,
-  branch: string,
-): Promise<void> {
-  await vi.waitFor(() => expect(workspaceRecords.get(workspaceId)?.branch).toBe(branch), {
     timeout: 5_000,
   });
 }
@@ -686,6 +677,7 @@ function createPaseoWorktreeForMcpTest(options: {
   createdWorkspaceIds?: string[];
   workspaceRecords?: Map<string, PersistedWorkspaceRecord>;
   generateWorkspaceName?: () => Promise<GeneratedWorkspaceName | null>;
+  onWorkspaceNameApplied?: () => void;
   setupContinuations?: Array<"workspace" | "agent" | undefined>;
   startedAgentSetupIds?: string[];
 }): CreatePaseoWorktreeWorkflowFn {
@@ -774,6 +766,7 @@ function createPaseoWorktreeForMcpTest(options: {
     emitWorkspaceUpdateForCwd: async (cwd) => {
       const workspace = Array.from(workspaces.values()).find((record) => record.cwd === cwd);
       options.broadcasts.push(z.string().parse(workspace?.workspaceId));
+      options.onWorkspaceNameApplied?.();
     },
     emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
       options.broadcasts.push(workspaceId);
@@ -799,6 +792,9 @@ function createPaseoWorktreeForMcpTest(options: {
         warmWorkspaceGitData: async () => {},
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
           workspaceAutoName.scheduleForWorktree(autoNameInput),
+        generateWorkspaceNameForFirstAgent: (nameInput) =>
+          workspaceAutoName.generateForWorktreeCreation(nameInput),
+        workspaceSetupReadiness: new WorkspaceSetupReadiness(),
         emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
           options.broadcasts.push(workspaceId);
         },
@@ -1863,9 +1859,9 @@ describe("create_agent MCP tool", () => {
         background: true,
       });
 
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toHaveLength(2);
       expect(createdWorkspaceIds).toHaveLength(1);
-      expect(broadcasts[0]).toBe(createdWorkspaceIds[0]);
+      expect(broadcasts).toEqual([createdWorkspaceIds[0], createdWorkspaceIds[0]]);
       expect(setupContinuations).toEqual(["agent"]);
       expect(startedAgentSetupIds).toEqual(["agent-with-worktree"]);
       const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
@@ -1932,7 +1928,14 @@ describe("create_agent MCP tool", () => {
         agentStorage,
         providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({
+          paseoHome,
+          broadcasts,
+          generateWorkspaceName: async () => ({
+            title: "Fix workspace creation naming",
+            branch: "fix-workspace-creation-naming",
+          }),
+        }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees"
@@ -1958,17 +1961,18 @@ describe("create_agent MCP tool", () => {
       })
         .toString()
         .trim();
-      expect(initialBranch).not.toBe("");
-      expect(initialBranch).not.toBe("main");
+      expect(initialBranch).toBe("fix-workspace-creation-naming");
+      expect(basename(agentCwd)).toBe("fix-workspace-creation-naming");
       await waitForUnexpectedWorkspaceNamingSideEffects();
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toHaveLength(2);
+      expect(broadcasts[1]).toBe(broadcasts[0]);
     } finally {
       await removeTempDir(tempDir);
     }
   });
 
-  it("auto-titles and renames an agent-created branch-off worktree from the initial prompt", async () => {
+  it("auto-titles an agent-created worktree while preserving its explicit branch", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-auto-title-"));
     const repoDir = join(tempDir, "repo");
@@ -2044,17 +2048,12 @@ describe("create_agent MCP tool", () => {
         .trim();
       const metadata = readPaseoWorktreeMetadata(agentCwd);
 
-      expect(metadata).toMatchObject({
-        version: 2,
-        firstAgentBranchAutoName: {
-          status: "attempted",
-          placeholderBranchName: "feat/placeholder-auto-title",
-        },
-      });
-      expect(branchName).toBe("workspace-auto-title-flow");
+      expect(metadata).toMatchObject({ version: 1 });
+      expect(metadata).not.toHaveProperty("firstAgentBranchAutoName");
+      expect(branchName).toBe("feat/placeholder-auto-title");
       expect(workspace).toMatchObject({
         title: "Workspace Auto Title Flow",
-        branch: "workspace-auto-title-flow",
+        branch: "feat/placeholder-auto-title",
       });
     } finally {
       await removeTempDir(tempDir);
@@ -2069,6 +2068,8 @@ describe("create_agent MCP tool", () => {
     const broadcasts: string[] = [];
     const createdWorkspaceIds: string[] = [];
     const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
+    const generatedName = Promise.withResolvers<GeneratedWorkspaceName | null>();
+    const nameApplied = Promise.withResolvers<void>();
 
     try {
       execFileSync("git", ["init", repoDir], { stdio: "pipe" });
@@ -2105,10 +2106,8 @@ describe("create_agent MCP tool", () => {
           broadcasts,
           createdWorkspaceIds,
           workspaceRecords,
-          generateWorkspaceName: async () => ({
-            title: "Generated Manual Race Title",
-            branch: "generated-manual-race-title",
-          }),
+          generateWorkspaceName: () => generatedName.promise,
+          onWorkspaceNameApplied: () => nameApplied.resolve(),
         }),
         workspaceRegistry: {
           get: async (workspaceId) => workspaceRecords.get(workspaceId) ?? null,
@@ -2139,7 +2138,11 @@ describe("create_agent MCP tool", () => {
         title: "Manual Workspace Title",
       });
       const workspaceId = z.string().parse(createdWorkspaceIds[0]);
-      await waitForWorkspaceBranch(workspaceRecords, workspaceId, "generated-manual-race-title");
+      generatedName.resolve({
+        title: "Generated Manual Race Title",
+        branch: "generated-manual-race-title",
+      });
+      await nameApplied.promise;
 
       const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
       const workspace = workspaceRecords.get(workspaceId);
@@ -2150,12 +2153,13 @@ describe("create_agent MCP tool", () => {
         .toString()
         .trim();
 
-      expect(branchName).toBe("generated-manual-race-title");
+      expect(branchName).toBe("feat/manual-title-placeholder");
       expect(workspace).toMatchObject({
         title: "Manual Workspace Title",
-        branch: "generated-manual-race-title",
+        branch: "feat/manual-title-placeholder",
       });
     } finally {
+      generatedName.resolve(null);
       await removeTempDir(tempDir);
     }
   });
@@ -2236,7 +2240,7 @@ describe("create_agent MCP tool", () => {
       );
       expect(workspace).toMatchObject({
         title: "Generated Workspace Title",
-        branch: "generated-workspace-title",
+        branch: "feat/agent-title-placeholder",
       });
     } finally {
       await removeTempDir(tempDir);
@@ -2460,7 +2464,7 @@ describe("create_agent MCP tool", () => {
       });
       expect(generateCalls).toBe(1);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toEqual([workspaceId, workspaceId]);
+      expect(broadcasts).toEqual([workspaceId, workspaceId, workspaceId]);
     } finally {
       await removeTempDir(tempDir);
     }
@@ -2623,7 +2627,8 @@ describe("create_agent MCP tool", () => {
       expect(response.structuredContent.workspaceId).toBe(broadcasts[0]);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(setupContinuations).toEqual([undefined]);
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toHaveLength(2);
+      expect(broadcasts[1]).toBe(broadcasts[0]);
       expect(broadcasts[0]).toMatch(/^wks_[0-9a-f]{16}$/);
     } finally {
       await removeTempDir(tempDir);
