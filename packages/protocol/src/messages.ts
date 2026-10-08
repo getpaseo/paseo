@@ -3623,7 +3623,6 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
-        // COMPAT(keeperControl): added in v0.10.1+keeper, opt-in per daemon; remove gate once shipped by default.
         keeperControl: z.boolean().optional(),
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
@@ -5088,6 +5087,9 @@ export const KeeperEventSchema = z.object({
   permissionRequestId: z.string().nullable(),
   turnId: z.string().nullable(),
   lifecycle: z.string().nullable(),
+  /** send.rejected only: the reject reason and sha256("sendkey", agentId, idempotencyKey). */
+  reason: z.string().nullable().optional(),
+  sendKey: z.string().nullable().optional(),
 });
 
 export const KeeperReadEventsResponseSchema = z.object({

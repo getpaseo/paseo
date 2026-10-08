@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -71,6 +71,29 @@ describe("keeper atomic send", () => {
     expect(reply).toMatchObject({ result: "accepted", delivery: "turn_started", reason: null });
     expect(h.provider.callsOf("startTurn")).toEqual([{ kind: "startTurn", text: "hello k1" }]);
     expect(h.provider.callsOf("interrupt")).toEqual([]);
+  });
+
+  test("a completed receipt carries the admitted identity and a rejected send writes none", async () => {
+    const h = await setup();
+    const dir = path.join(h.ctx.daemon.paseoHome, "keeper-send-receipts");
+    const files = () => (existsSync(dir) ? readdirSync(dir) : []);
+    const receipts = () => files().map((f) => JSON.parse(readFileSync(path.join(dir, f), "utf8")));
+    const seen = await observe(h);
+    const stale = { ...sendParams(h, seen, "kr0"), expectedPermissionGeneration: 99 };
+    expect(await h.ctx.client.keeperSendMessage(stale)).toMatchObject({ result: "rejected" });
+    expect(files()).toEqual([]);
+    const { bootId } = await h.ctx.client.keeperGetSnapshot(h.agentId);
+    await h.ctx.client.keeperSendMessage(sendParams(h, seen, "kr1"));
+    expect(receipts()).toEqual([
+      expect.objectContaining({
+        state: "completed",
+        admission: {
+          bootId,
+          sessionIncarnation: seen.incarnation,
+          permissionGeneration: seen.permissionGeneration,
+        },
+      }),
+    ]);
   });
 
   test("a send queued behind a session reload is rejected against the new incarnation", async () => {
@@ -200,6 +223,46 @@ describe("keeper atomic send", () => {
     expect(steered).toMatchObject({ result: "accepted", delivery: "steered" });
     expect(h.provider.callsOf("steer")).toHaveLength(1);
     expect(h.provider.callsOf("interrupt")).toEqual([]);
+  });
+
+  test("the final comparison enters provider dispatch before a queued permission event", async () => {
+    const h = await setup();
+    const seen = await observe(h);
+    const manager = h.ctx.daemon.daemon.agentManager;
+    const originalCheck = Reflect.get(manager, "checkAdmission") as (...args: unknown[]) => unknown;
+    const raiseQuestion = () => h.provider.session.raise({ id: "microtask-question" });
+    let comparisons = 0;
+    let pendingAtDispatch = -1;
+    Reflect.set(manager, "checkAdmission", (...args: unknown[]) => {
+      const result = originalCheck.apply(manager, args);
+      comparisons += 1;
+      if (comparisons === 2) {
+        queueMicrotask(raiseQuestion);
+      }
+      return result;
+    });
+    try {
+      const result = await manager.admitGuarded(
+        h.agentId,
+        {
+          expectedSessionIncarnation: seen.incarnation,
+          expectedPermissionGeneration: seen.permissionGeneration,
+        },
+        async () => {
+          pendingAtDispatch = h.provider.session.getPendingPermissions().length;
+          await h.provider.session.startTurn("atomic dispatch");
+        },
+      );
+      expect(result).toMatchObject({ admitted: true });
+      expect(comparisons).toBe(2);
+      expect(pendingAtDispatch).toBe(0);
+      expect(h.provider.callsOf("startTurn")).toEqual([
+        { kind: "startTurn", text: "atomic dispatch" },
+      ]);
+      expect(h.provider.session.getPendingPermissions()).toHaveLength(1);
+    } finally {
+      Reflect.set(manager, "checkAdmission", originalCheck);
+    }
   });
 
   test("a question arriving during the durable reserve is caught by the second comparison", async () => {

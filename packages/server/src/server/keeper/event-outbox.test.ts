@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -85,6 +85,23 @@ describe("KeeperEventOutbox", () => {
     expect((await outbox.read("other.1", 10, 0)).resyncRequired).toBe(true);
     expect((await outbox.read(start, 10, 0)).resyncRequired).toBe(true);
     expect((await outbox.read(null, 10, 0)).events.map((e) => e.agentId)).toEqual(["c", "d"]);
+  });
+
+  test("a burst compacts only events already persisted to disk", async () => {
+    const d = await dir();
+    const outbox = await KeeperEventOutbox.open(d, { maxEvents: 2 });
+    for (const id of ["a", "b", "c", "d", "e"]) outbox.append(input(id));
+    await outbox.flush();
+    const lines = (await readFile(path.join(d, "events.jsonl"), "utf8")).trim().split("\n");
+    expect(lines.map((line) => JSON.parse(line).seq)).toEqual([4, 5]);
+    const reopened = await KeeperEventOutbox.open(d, { maxEvents: 2 });
+    expect((await reopened.read(null, 10, 0)).events.map((event) => event.agentId)).toEqual([
+      "d",
+      "e",
+    ]);
+    reopened.append(input("f"));
+    await reopened.flush();
+    expect((await reopened.read(null, 10, 0)).events.map((event) => event.seq)).toEqual([5, 6]);
   });
 
   test("a lost log starts a new epoch and a torn final line is dropped", async () => {

@@ -4,8 +4,22 @@ import path from "node:path";
 import { z } from "zod";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 
+export interface ReceiptAdmission {
+  bootId: string;
+  sessionIncarnation: string;
+  permissionGeneration: number;
+}
+
 const ReceiptSchema = z.object({
   fingerprint: z.string(),
+  // Optional on read so receipts written before this field existed still parse.
+  admission: z
+    .object({
+      bootId: z.string(),
+      sessionIncarnation: z.string(),
+      permissionGeneration: z.number().int().nonnegative(),
+    })
+    .optional(),
   state: z.enum(["pending", "completed"]),
   delivery: z.string().nullable(),
 });
@@ -50,11 +64,17 @@ export class KeeperSendReceipts {
     return { kind: "outcome_unknown" };
   }
 
-  async reserve(agentId: string, key: string, fingerprint: string): Promise<ReceiptOutcome> {
+  async reserve(
+    agentId: string,
+    key: string,
+    fingerprint: string,
+    admission: ReceiptAdmission,
+  ): Promise<ReceiptOutcome> {
     const existing = await this.lookup(agentId, key, fingerprint);
     if (existing.kind !== "none") return existing;
     await writeJsonFileAtomic(this.file(agentId, key), {
       fingerprint,
+      admission,
       state: "pending",
       delivery: null,
     });
@@ -70,9 +90,11 @@ export class KeeperSendReceipts {
     key: string,
     fingerprint: string,
     delivery: string,
+    admission: ReceiptAdmission,
   ): Promise<void> {
     await writeJsonFileAtomic(this.file(agentId, key), {
       fingerprint,
+      admission,
       state: "completed",
       delivery,
     });
@@ -90,6 +112,11 @@ export class KeeperSendReceipts {
       throw error;
     }
   }
+}
+
+/** Stable id of a send attempt: hex sha256 over length-prefixed ("sendkey", agentId, idempotencyKey). */
+export function sendKey(agentId: string, key: string): string {
+  return digest("sendkey", agentId, key);
 }
 
 export function sendFingerprint(text: string, onActiveTurn: string): string {

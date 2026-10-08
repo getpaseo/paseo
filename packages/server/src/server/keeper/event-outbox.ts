@@ -33,6 +33,8 @@ const EventLineSchema = z.object({
   permissionRequestId: z.string().nullable(),
   turnId: z.string().nullable(),
   lifecycle: z.string().nullable(),
+  reason: z.string().nullable().optional(),
+  sendKey: z.string().nullable().optional(),
 });
 
 // Durable event log addressed by `<epoch>.<seq>` cursors; reads return only events already on
@@ -50,6 +52,7 @@ export class KeeperEventOutbox {
     private readonly directory: string,
     private readonly epoch: string,
     loaded: KeeperEvent[],
+    fileLines: number,
     private readonly maxEvents: number,
     private readonly now: () => Date,
   ) {
@@ -57,7 +60,7 @@ export class KeeperEventOutbox {
     const last = loaded.at(-1)?.seq ?? 0;
     this.nextSeq = last + 1;
     this.flushedSeq = last;
-    this.fileLines = loaded.length;
+    this.fileLines = fileLines;
   }
 
   static async open(
@@ -73,14 +76,26 @@ export class KeeperEventOutbox {
     const epoch = reuse ? existingEpoch : randomUUID();
     if (!reuse) await writeJsonFileAtomic(metaPath, { epoch });
     const maxEvents = options.maxEvents ?? 10_000;
-    const loaded = parseEvents(raw ?? "").slice(-maxEvents);
-    if (raw && !isCleanLog(raw, loaded.length)) {
+    if (!Number.isSafeInteger(maxEvents) || maxEvents < 1) {
+      throw new Error("maxEvents must be a positive integer");
+    }
+    const parsed = parseEvents(raw ?? "");
+    const loaded = parsed.slice(-maxEvents);
+    const clean = raw === null || isCleanLog(raw, parsed.length);
+    if (raw && !clean) {
       // A torn tail would swallow the next append, so the log is rewritten first.
       const body = loaded.map((e) => JSON.stringify(e)).join("\n");
       await writeFileAtomic(path.join(directory, "events.jsonl"), body ? `${body}\n` : "");
     }
     const now = options.now ?? (() => new Date());
-    return new KeeperEventOutbox(directory, epoch, loaded, maxEvents, now);
+    return new KeeperEventOutbox(
+      directory,
+      epoch,
+      loaded,
+      clean ? parsed.length : loaded.length,
+      maxEvents,
+      now,
+    );
   }
 
   append(input: KeeperEventInput): KeeperEvent {
@@ -92,7 +107,6 @@ export class KeeperEventOutbox {
       timestamp: this.now().toISOString(),
     };
     this.events.push(event);
-    this.fileLines += 1;
     this.chain = this.chain.then(() => this.persist(event));
     return event;
   }
@@ -174,6 +188,7 @@ export class KeeperEventOutbox {
     if (this.writeError) return;
     try {
       await appendFile(path.join(this.directory, "events.jsonl"), `${JSON.stringify(event)}\n`);
+      this.fileLines += 1;
       this.flushedSeq = event.seq;
       await this.compactIfNeeded();
     } catch (error) {
@@ -183,13 +198,15 @@ export class KeeperEventOutbox {
   }
 
   private async compactIfNeeded(): Promise<void> {
-    if (this.events.length > this.maxEvents) {
-      this.events.splice(0, this.events.length - this.maxEvents);
-    }
+    // Queued events cannot evict the durable prefix or force a rewrite before they are persisted.
+    const firstQueued = this.events.findIndex((event) => event.seq > this.flushedSeq);
+    const persistedCount = firstQueued < 0 ? this.events.length : firstQueued;
+    const trimCount = Math.max(0, persistedCount - this.maxEvents);
+    if (trimCount > 0) this.events.splice(0, trimCount);
     if (this.fileLines <= this.maxEvents * 2) return;
-    const retained = this.events.filter((e) => e.seq <= this.flushedSeq);
-    const body = retained.map((e) => JSON.stringify(e)).join("\n");
-    await writeFileAtomic(path.join(this.directory, "events.jsonl"), body ? `${body}\n` : "");
+    const retained = this.events.slice(0, persistedCount - trimCount);
+    const body = retained.map((event) => JSON.stringify(event)).join("\n");
+    await writeFileAtomic(path.join(this.directory, "events.jsonl"), `${body}\n`);
     this.fileLines = retained.length;
   }
 }

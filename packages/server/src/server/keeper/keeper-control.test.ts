@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { KeeperControl } from "./keeper-control.js";
 import { dispatchKeeperMessage } from "./keeper-session-handlers.js";
-import type { ReceiptOutcome } from "./send-receipts.js";
+import { sendKey, type ReceiptOutcome } from "./send-receipts.js";
 
 const request = {
   requestId: "r",
@@ -26,18 +26,45 @@ function build(options: {
   agentGone?: boolean;
 }) {
   const calls = { released: 0, committed: 0, logged: 0 };
+  const events: Record<string, unknown>[] = [];
   const manager = {
+    bootId: "boot",
     getAgent: () => (options.agentGone ? null : {}),
-    admitGuarded: async (_id: string, guard: { reserve: () => Promise<{ ok: boolean }> }) => {
-      const reserved = await guard.reserve();
+    admitGuarded: async (
+      _id: string,
+      guard: { reserve: (matched: unknown) => Promise<{ ok: boolean }> },
+      commit: (context: unknown) => Promise<unknown>,
+    ) => {
+      const matched = {
+        sessionIncarnation: "i",
+        permissionGeneration: 0,
+        lifecycle: "idle",
+        hasActiveTurn: false,
+        pending: [],
+      };
+      const reserved = await guard.reserve(matched);
       if (!reserved.ok) return { rejected: (reserved as { reason: string }).reason, state: null };
       if (options.rejectAt === "second") {
         await (guard as { release: () => Promise<void> }).release();
-        return { rejected: "stale_generation", state: null };
+        return {
+          rejected: "stale_generation",
+          state: {
+            sessionIncarnation: "i",
+            permissionGeneration: 3,
+            lifecycle: "idle",
+            hasActiveTurn: false,
+            pending: [],
+          },
+        };
       }
       calls.committed += 1;
-      return { admitted: true, value: "turn_started" };
+      return { admitted: true, value: await commit({ agent: {}, state: matched }) };
     },
+    // One event is enough for the first-event acknowledgement; the commit starts the turn.
+    startTurnHeld: () =>
+      (async function* () {
+        yield {};
+      })(),
     getControlState: () => null,
   };
   const receipts = {
@@ -50,7 +77,11 @@ function build(options: {
       if (calls.released <= (options.releaseFailures ?? 0)) throw new Error("rm failed");
     },
   };
-  const outbox = { lastWriteError: () => options.writeError ?? null };
+  const outbox = {
+    lastWriteError: () => options.writeError ?? null,
+    append: (event: Record<string, unknown>) => events.push(event),
+    flush: async () => undefined,
+  };
   const control = new KeeperControl({
     enabled: true,
     agentManager: manager,
@@ -63,7 +94,7 @@ function build(options: {
       },
     },
   } as never);
-  return { control, calls };
+  return { control, calls, events };
 }
 
 describe("keeper control guards", () => {
@@ -71,6 +102,43 @@ describe("keeper control guards", () => {
     const { control, calls } = build({ reserve: { kind: "outcome_unknown" } });
     expect(await control.send(request)).toMatchObject({ result: "outcome_unknown" });
     expect(calls).toMatchObject({ released: 0, committed: 0 });
+  });
+
+  test("a stale-generation reject writes one send.rejected event; an accepted send writes none", async () => {
+    const stale = build({ reserve: { kind: "none" }, rejectAt: "second" });
+    expect(await stale.control.send(request)).toMatchObject({
+      result: "rejected",
+      reason: "stale_generation",
+    });
+    expect(stale.events).toEqual([
+      expect.objectContaining({
+        category: "send",
+        type: "send.rejected",
+        agentId: "a",
+        bootId: "boot",
+        sessionIncarnation: "i",
+        permissionGeneration: 3,
+        reason: "stale_generation",
+        sendKey: sendKey("a", "k"),
+      }),
+    ]);
+    const ok = build({ reserve: { kind: "none" } });
+    expect(await ok.control.send(request)).toMatchObject({ result: "accepted" });
+    expect(ok.events).toEqual([]);
+  });
+
+  test("a stalled feed prevents a clean rejected-send acknowledgement", async () => {
+    const { control, calls, events } = build({
+      reserve: { kind: "none" },
+      rejectAt: "second",
+      writeError: new Error("disk unavailable"),
+    });
+    expect(await control.send(request)).toMatchObject({
+      result: "outcome_unknown",
+      error: "disk unavailable",
+    });
+    expect(calls).toMatchObject({ committed: 0, logged: 1 });
+    expect(events).toHaveLength(1);
   });
 
   test("a completed receipt that appears at reserve time answers duplicate", async () => {
