@@ -2371,6 +2371,8 @@ export const ko: TranslationResources = {
         toggleVoiceMode: "음성 모드 토글",
         startStopDictation: "받아쓰기 시작/중지",
         interruptAgent: "에이전트 중단",
+        forkChatInNewTab: "채팅을 새 탭으로 분기",
+        forkChatInNewWorkspace: "채팅을 새 워크스페이스로 분기",
         sendMessage: "메시지 보내기",
         queueMessage: "메시지 대기열에 추가",
         muteUnmuteVoiceMode: "음성 모드 음소거/해제",

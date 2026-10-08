@@ -2401,6 +2401,8 @@ export const ru: TranslationResources = {
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать/остановить диктовку",
         interruptAgent: "Прервать агента",
+        forkChatInNewTab: "Создать форк чата в новой вкладке",
+        forkChatInNewWorkspace: "Создать форк чата в новом рабочем пространстве",
         sendMessage: "Отправить сообщение",
         queueMessage: "Поставить сообщение в очередь",
         muteUnmuteVoiceMode: "Выключить/включить звук в голосовом режиме",

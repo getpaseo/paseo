@@ -2413,6 +2413,8 @@ export const fr: TranslationResources = {
         toggleVoiceMode: "Activer/désactiver le mode vocal",
         startStopDictation: "Démarrer/arrêter la dictée",
         interruptAgent: "Interrompre l’agent",
+        forkChatInNewTab: "Forker la discussion dans un nouvel onglet",
+        forkChatInNewWorkspace: "Forker la discussion dans un nouvel espace de travail",
         sendMessage: "Envoyer le message",
         queueMessage: "Mettre le message en file d’attente",
         muteUnmuteVoiceMode: "Couper/réactiver le micro en mode vocal",

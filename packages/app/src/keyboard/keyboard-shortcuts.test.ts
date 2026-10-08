@@ -1262,3 +1262,47 @@ describe("direct new-tab target shortcuts", () => {
     ).toEqual([["ctrl", "shift", "H"]]);
   });
 });
+
+describe("fork chat shortcuts", () => {
+  const desktopMac = { isMac: true, isDesktop: true };
+  const desktopNonMac = { isMac: false, isDesktop: true };
+
+  it("routes Cmd+Shift+K on mac and Ctrl+Shift+K elsewhere to fork in a new tab", () => {
+    const mac = resolveShortcut({
+      event: { key: "K", code: "KeyK", metaKey: true, shiftKey: true },
+      context: { ...desktopMac, focusScope: "message-input" },
+    });
+    const nonMac = resolveShortcut({
+      event: { key: "K", code: "KeyK", ctrlKey: true, shiftKey: true },
+      context: { ...desktopNonMac, focusScope: "message-input" },
+    });
+
+    expect(mac.match?.action).toBe("agent.fork.tab");
+    expect(nonMac.match?.action).toBe("agent.fork.tab");
+  });
+
+  it("leaves Ctrl+Shift+K to a focused terminal on non-mac", () => {
+    const result = resolveShortcut({
+      event: { key: "K", code: "KeyK", ctrlKey: true, shiftKey: true },
+      context: { ...desktopNonMac, focusScope: "terminal" },
+    });
+
+    expect(result.match).toBeNull();
+  });
+
+  it("ships fork in a new workspace unbound but rebindable", () => {
+    const bindingId = getBindingIdForAction("fork-chat-new-workspace", desktopMac);
+    expect(bindingId).toBe("agent-fork-workspace-mac");
+    const row = buildKeyboardShortcutHelpSections(desktopMac)
+      .flatMap((section) => section.rows)
+      .find((candidate) => candidate.id === "fork-chat-new-workspace");
+    expect(row?.chord).toBeNull();
+
+    const rebound = resolveShortcut({
+      event: { key: "Y", code: "KeyY", metaKey: true, shiftKey: true },
+      context: desktopMac,
+      bindings: buildEffectiveBindings({ [bindingId as string]: "Cmd+Shift+Y" }),
+    });
+    expect(rebound.match?.action).toBe("agent.fork.workspace");
+  });
+});

@@ -2415,6 +2415,8 @@ export const es: TranslationResources = {
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar dictado/stop",
         interruptAgent: "agente de interrupción",
+        forkChatInNewTab: "Bifurcar el chat en una pestaña nueva",
+        forkChatInNewWorkspace: "Bifurcar el chat en un espacio de trabajo nuevo",
         sendMessage: "enviar mensaje",
         queueMessage: "mensaje de cola",
         muteUnmuteVoiceMode: "Silenciar el modo de voz/unmute",

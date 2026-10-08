@@ -2361,6 +2361,8 @@ export const ar: TranslationResources = {
         toggleVoiceMode: "تبديل الوضع الصوتي",
         startStopDictation: "بدء إملاء /stop",
         interruptAgent: "عامل المقاطعة",
+        forkChatInNewTab: "تفريع المحادثة في تبويب جديد",
+        forkChatInNewWorkspace: "تفريع المحادثة في مساحة عمل جديدة",
         sendMessage: "أرسل رسالة",
         queueMessage: "رسالة قائمة الانتظار",
         muteUnmuteVoiceMode: "كتم وضع الصوت /unmute",

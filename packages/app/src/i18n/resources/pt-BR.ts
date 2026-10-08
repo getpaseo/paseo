@@ -2396,6 +2396,8 @@ export const ptBR: TranslationResources = {
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar/parar ditado",
         interruptAgent: "Interromper agente",
+        forkChatInNewTab: "Bifurcar o chat em uma nova aba",
+        forkChatInNewWorkspace: "Bifurcar o chat em um novo workspace",
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",

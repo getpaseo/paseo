@@ -2381,6 +2381,8 @@ export const ja: TranslationResources = {
         toggleVoiceMode: "音声モードを切り替え",
         startStopDictation: "音声入力を開始/停止",
         interruptAgent: "エージェントを中断",
+        forkChatInNewTab: "チャットを新しいタブにフォーク",
+        forkChatInNewWorkspace: "チャットを新しいワークスペースにフォーク",
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
