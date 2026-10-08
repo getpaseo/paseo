@@ -20,6 +20,7 @@ function workspace(workspaceId: string, projectViewKey: string): SidebarWorkspac
     labels: [],
     currentBranch: "main",
     statusBucket: "done",
+    lastActivityAt: null,
     statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,

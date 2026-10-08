@@ -19,7 +19,12 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
-import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import {
+  recentActivityWorkspaceGroups,
+  statusWorkspaceGroups,
+  type SidebarWorkspaceGroup,
+} from "./sidebar-labels";
+import { sortSidebarWorkspacesByRecency } from "@/hooks/use-sidebar-workspaces-list";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -92,7 +97,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   };
 }
 
-/** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
+/** Project mode keeps its project headers and groups nothing; the other modes group the rows. */
 function buildWorkspaceGroups(
   input: SidebarProjectionInput,
   unpinnedWorkspaces: SidebarWorkspaceEntry[],
@@ -103,6 +108,14 @@ function buildWorkspaceGroups(
     case "status":
       return statusWorkspaceGroups(
         buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey, input.t),
+      );
+    case "recentActivity":
+      return recentActivityWorkspaceGroups(
+        sortSidebarWorkspacesByRecency({
+          items: unpinnedWorkspaces,
+          getKey: (workspace) => workspace.workspaceKey,
+          entriesByKey: input.workspaceEntriesByKey,
+        }),
       );
   }
 }

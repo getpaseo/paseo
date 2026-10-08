@@ -36,6 +36,8 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 }
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
+  /** Latest activity among the workspace's root agents; null when none have been seen. */
+  lastActivityAt: Date | null;
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
   // Raw user-set title (null when the name is derived from branch/directory).
@@ -169,6 +171,7 @@ export function createSidebarWorkspaceEntry(input: {
     pinnedAt: input.workspace.pinnedAt,
     labels: input.workspace.labels ?? EMPTY_WORKSPACE_LABELS,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
+    lastActivityAt: input.workspaceAgentActivity?.get(input.workspace.id)?.lastActivityAt ?? null,
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
@@ -525,6 +528,30 @@ export function applyStoredOrdering<T>(input: {
   }
 
   return ordered;
+}
+
+/**
+ * Most-recently-active first. Workspaces with no recorded activity sink to the end, ordered
+ * among themselves by their baseline position; ties keep the baseline order so the list doesn't
+ * reshuffle while two workspaces sit on the same second.
+ */
+export function sortSidebarWorkspacesByRecency<T>(input: {
+  items: readonly T[];
+  getKey: (item: T) => string;
+  entriesByKey: ReadonlyMap<string, Pick<SidebarWorkspaceEntry, "lastActivityAt">>;
+}): T[] {
+  return input.items
+    .map((item, index) => ({
+      item,
+      index,
+      activityAt: input.entriesByKey.get(input.getKey(item))?.lastActivityAt?.getTime() ?? null,
+    }))
+    .sort(
+      (left, right) =>
+        (right.activityAt ?? Number.NEGATIVE_INFINITY) -
+          (left.activityAt ?? Number.NEGATIVE_INFINITY) || left.index - right.index,
+    )
+    .map(({ item }) => item);
 }
 
 export function appendMissingOrderKeys(input: {
