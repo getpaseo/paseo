@@ -19,6 +19,13 @@ export interface UsageProxyOptions {
   proxyAttemptTimeoutMs?: number;
 }
 
+export interface RequestThroughProxyArgs {
+  target: URL;
+  proxyUrl: string;
+  init?: RequestInit;
+  options?: UsageProxyOptions;
+}
+
 const DEFAULT_PROXY_PROBE_HOST = "127.0.0.1";
 const DEFAULT_PROXY_PROBE_PORT = 7890;
 const DEFAULT_PROXY_PROBE_TIMEOUT_MS = 500;
@@ -445,12 +452,12 @@ async function requestHttpsTargetThroughProxy(
 }
 
 /** Route one request through an HTTP or HTTPS proxy. */
-export async function requestThroughProxy(
-  target: URL,
-  proxyUrl: string,
-  init: RequestInit = {},
-  options: UsageProxyOptions = {},
-): Promise<Response> {
+export async function requestThroughProxy({
+  target,
+  proxyUrl,
+  init = {},
+  options = {},
+}: RequestThroughProxyArgs): Promise<Response> {
   const proxy = new URL(proxyUrl);
   if (proxy.protocol !== "http:" && proxy.protocol !== "https:") {
     throw new Error(`Unsupported proxy protocol ${proxy.protocol}`);
@@ -529,7 +536,12 @@ export async function fetchWithAutoProxy(
 
   const requestInit = input instanceof Request ? await initFromRequest(input, init) : { ...init };
   try {
-    return await requestThroughProxy(target, proxyUrl, requestInit, { ...options, env });
+    return await requestThroughProxy({
+      target,
+      proxyUrl,
+      init: requestInit,
+      options: { ...options, env },
+    });
   } catch (error) {
     if (callerAborted(input, init)) throw error;
     console.warn(
