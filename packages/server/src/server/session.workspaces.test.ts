@@ -4247,6 +4247,57 @@ test("workspace updates stay scoped to the matching cwd", async () => {
   expect(archivedWorkspaceIds).toEqual([]);
 });
 
+test.each([
+  { name: "a snapshot read", useCursor: false },
+  { name: "a changes read", useCursor: true },
+])(
+  "sequenced workspace subscriptions do not re-send unchanged workspaces after $name",
+  async ({ useCursor }) => {
+    const emitted: SessionOutboundMessage[] = [];
+    const cwd = path.join(tmpdir(), "paseo-sequenced-workspace");
+    const session = createSessionForWorkspaceTests();
+    session.workspaceRegistry.list = async () => [
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-sequenced",
+        projectId: "proj-sequenced",
+        cwd,
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    ];
+    session.onMessage = (message: unknown) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    };
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "initial",
+      sync: {},
+    });
+    const initial = findByType(emitted, "fetch_workspaces_response")?.payload;
+    expect(initial?.entries).toEqual([expect.objectContaining({ id: "ws-sequenced", syncSeq: 1 })]);
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "subscribed",
+      sync: useCursor
+        ? { generation: initial?.sync?.generation, afterSeq: initial?.sync?.headSeq }
+        : {},
+      subscribe: { subscriptionId: "sub-sequenced" },
+    });
+    const subscribed = filterByType(emitted, "fetch_workspaces_response").at(-1)?.payload;
+    expect(subscribed?.entries).toHaveLength(useCursor ? 0 : 1);
+    expect(subscribed?.sync?.mode).toBe(useCursor ? "changes" : "snapshot");
+
+    await session.emitWorkspaceUpdateForCwd(cwd);
+    await flushWorkspaceUpdateBackgroundWork();
+
+    expect(filterByType(emitted, "workspace_update")).toEqual([]);
+  },
+);
+
 test("open_project_request registers a workspace before any agent exists", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();

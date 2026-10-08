@@ -67,7 +67,6 @@ function createPendingManager() {
   const workspaceGitService = {
     getCheckoutDiff: async () => ({ diff: "", structured: [] }),
     getSnapshot: async () => createWorkspaceSnapshot(),
-    peekSnapshot: () => null,
     registerWorkspace: () => ({ unsubscribe: () => {} }),
     requestWorkingTreeWatch: (cwd: string, onChange: () => void) => {
       const pending = createDeferred<{ repoRoot: string | null; unsubscribe: () => void }>();
@@ -125,7 +124,6 @@ describe("CheckoutDiffManager", () => {
 
     const workspaceGitService = {
       subscribe: vi.fn(),
-      peekSnapshot: vi.fn(),
       registerWorkspace: vi.fn(
         (_params: { cwd: string }, listener: (snapshot: WorkspaceGitRuntimeSnapshot) => void) => {
           onWorkspaceSnapshot = listener;

@@ -387,6 +387,45 @@ describe("workspace git watch targets", () => {
     await session.cleanup();
   });
 
+  test("a reconnecting subscription stays quiet when the observer's first snapshot is unchanged", async () => {
+    const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
+      createSessionForWorkspaceGitWatchTests();
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-10",
+      cwd: REPO_CWD,
+      name: "main",
+    });
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "reconnect",
+      subscribe: {},
+    });
+    const response = emitted.find((message) => message.type === "fetch_workspaces_response");
+    expect(response?.payload).toMatchObject({
+      entries: [{ id: "ws-10", gitRuntime: { currentBranch: "main" } }],
+    });
+    expect(subscriptions).toHaveLength(1);
+
+    subscriptions[0]?.listener(createWorkspaceRuntimeSnapshot(REPO_CWD));
+    await session.emitWorkspaceUpdateForCwd(REPO_CWD);
+    expect(getWorkspaceUpdates(emitted)).toEqual([]);
+
+    const changed = createWorkspaceRuntimeSnapshot(REPO_CWD, { git: { currentBranch: "next" } });
+    workspaceGitService.peekSnapshot.mockReturnValue(changed);
+    subscriptions[0]?.listener(changed);
+    await vi.waitFor(() => expect(getWorkspaceUpdates(emitted)).toHaveLength(1));
+    expect(getWorkspaceUpdates(emitted)[0]?.payload).toMatchObject({
+      kind: "upsert",
+      workspace: { id: "ws-10", gitRuntime: { currentBranch: "next" } },
+    });
+
+    await session.cleanup();
+  });
+
   test("emits checkout_status_update to a client subscribed to the workspace git target", async () => {
     const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
