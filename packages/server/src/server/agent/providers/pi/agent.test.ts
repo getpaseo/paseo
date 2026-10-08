@@ -23,6 +23,7 @@ import {
   PiRpcAgentSession,
   transformPiModels,
 } from "./agent.js";
+import { createPiCatalogScopeProbe } from "./catalog-scope.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
@@ -47,6 +48,27 @@ const RESTRICTED_THINKING_MODEL: PiModel = {
     max: "max",
   },
 };
+
+// Three Pi models across providers, for the resolved model-scope catalog tests.
+const PI_CATALOG_ALPHA: PiModel = {
+  provider: "openai",
+  id: "gpt-4",
+  name: "GPT-4",
+  reasoning: false,
+};
+const PI_CATALOG_BETA: PiModel = {
+  provider: "zai",
+  id: "glm-5.3",
+  name: "GLM-5.3",
+  reasoning: true,
+};
+const PI_CATALOG_GAMMA: PiModel = {
+  provider: "kimi-coding",
+  id: "kimi-k3",
+  name: "Kimi K3",
+  reasoning: true,
+};
+const PI_CATALOG_MODELS: PiModel[] = [PI_CATALOG_ALPHA, PI_CATALOG_BETA, PI_CATALOG_GAMMA];
 
 interface PiThinkingCatalogCase {
   name: string;
@@ -199,6 +221,15 @@ async function applyPaseoExtensionSystemPrompt(
 
 async function flushTurnScheduling(): Promise<void> {
   await waitForImmediate();
+}
+
+// The catalog probe's scope extension and its output file share one temporary directory.
+function scopeExtensionDir(pi: FakePi): string {
+  const extensionPath = pi.recordedLaunches[0]?.extensionPaths?.[0];
+  if (!extensionPath) {
+    throw new Error("the catalog probe did not load the scope extension");
+  }
+  return path.dirname(extensionPath);
 }
 
 async function createSession(
@@ -2806,6 +2837,204 @@ describe("PiRpcAgentClient", () => {
     expect(catalog.models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
       "zai/glm-5.3",
     ]);
+  });
+
+  test("catalogs only the models in Pi's resolved scope, in scope order", async () => {
+    const pi = new FakePi();
+    pi.queueScopedModels([
+      { provider: "kimi-coding", id: "kimi-k3" },
+      { provider: "zai", id: "glm-5.3" },
+    ]);
+    pi.queueSessionSetup((session) => {
+      session.models = PI_CATALOG_MODELS;
+      session.state = { ...session.state, model: PI_CATALOG_BETA };
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/scoped",
+      force: false,
+    });
+
+    expect(catalog.models.map((model) => model.id)).toEqual(["kimi-coding/kimi-k3", "zai/glm-5.3"]);
+    expect(catalog.models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      "zai/glm-5.3",
+    ]);
+    expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/scoped", noSession: true });
+    expect(pi.latestSession().closeCount).toBe(1);
+    expect(existsSync(scopeExtensionDir(pi))).toBe(false);
+  });
+
+  test("keeps Pi's full catalogue when Pi resolves no model scope", async () => {
+    const pi = new FakePi();
+    pi.queueScopedModels([]);
+    pi.queueSessionSetup((session) => {
+      session.models = PI_CATALOG_MODELS;
+      session.state = { ...session.state, model: PI_CATALOG_BETA };
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/unscoped",
+      force: false,
+    });
+
+    expect(catalog.models.map((model) => model.id)).toEqual([
+      "openai/gpt-4",
+      "zai/glm-5.3",
+      "kimi-coding/kimi-k3",
+    ]);
+    expect(catalog.models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      "zai/glm-5.3",
+    ]);
+  });
+
+  test("keeps Pi's full catalogue on a Pi without ctx.scopedModels", async () => {
+    const pi = new FakePi();
+    pi.queueScopedModels(null);
+    pi.queueSessionSetup((session) => {
+      session.models = PI_CATALOG_MODELS;
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/legacy-pi",
+      force: false,
+    });
+
+    expect(catalog.models.map((model) => model.id)).toEqual([
+      "openai/gpt-4",
+      "zai/glm-5.3",
+      "kimi-coding/kimi-k3",
+    ]);
+  });
+
+  test("leaves the catalog default unmarked when Pi's model is outside its scope", async () => {
+    const pi = new FakePi();
+    pi.queueScopedModels([{ provider: "kimi-coding", id: "kimi-k3" }]);
+    pi.queueSessionSetup((session) => {
+      session.models = [PI_CATALOG_ALPHA, PI_CATALOG_GAMMA];
+      session.state = { ...session.state, model: PI_CATALOG_ALPHA };
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/out-of-scope-model",
+      force: false,
+    });
+
+    expect(catalog.models.map((model) => model.id)).toEqual(["kimi-coding/kimi-k3"]);
+    expect(catalog.models.filter((model) => model.isDefault)).toEqual([]);
+  });
+
+  test("keeps the catalogue empty when Pi's scope names no model Pi still offers", async () => {
+    const pi = new FakePi();
+    pi.queueScopedModels([{ provider: "ghost", id: "gone" }]);
+    pi.queueSessionSetup((session) => {
+      session.models = [PI_CATALOG_ALPHA, PI_CATALOG_BETA];
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/stale-scope",
+      force: false,
+    });
+
+    expect(catalog.models).toEqual([]);
+  });
+
+  test("reads the model scope from Pi instead of the project settings on disk", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-scope-project-"));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    const cwd = path.join(root, "workspace");
+    mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+    writeFileSync(
+      path.join(cwd, ".pi", "settings.json"),
+      JSON.stringify({ enabledModels: ["kimi-coding/kimi-k3"] }),
+      "utf8",
+    );
+    const pi = new FakePi();
+    pi.queueScopedModels([]);
+    pi.queueSessionSetup((session) => {
+      session.models = [PI_CATALOG_ALPHA, PI_CATALOG_BETA];
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd,
+      force: false,
+    });
+
+    expect(pi.recordedLaunches[0]).toMatchObject({ cwd });
+    expect(catalog.models.map((model) => model.id)).toEqual(["openai/gpt-4", "zai/glm-5.3"]);
+  });
+
+  test("fails the catalog when Pi's scope extension writes nothing", async () => {
+    const pi = new FakePi();
+    pi.skipCatalogScopeExtensionBoot();
+    pi.queueSessionSetup((session) => {
+      session.models = PI_CATALOG_MODELS;
+    });
+
+    await expect(
+      createClient(pi).fetchCatalog({
+        scope: "workspace",
+        cwd: "/workspace/broken-extension",
+        force: false,
+      }),
+    ).rejects.toThrow("no readable model scope");
+
+    expect(pi.latestSession().closeCount).toBe(1);
+    expect(existsSync(scopeExtensionDir(pi))).toBe(false);
+  });
+
+  test("fails the catalog probe when Pi reports a scope its extension cannot read", async () => {
+    const probe = createPiCatalogScopeProbe();
+    onTestFinished(probe.cleanup);
+    const listeners = await loadPaseoExtensionListeners(probe.path);
+
+    const sessionStart = listeners.get("session_start")!;
+    await expect(sessionStart({ reason: "startup" }, { scopedModels: "all" })).rejects.toThrow(
+      TypeError,
+    );
+    expect(() => probe.selectModels([PI_CATALOG_ALPHA])).toThrow(probe.scopePath);
+  });
+
+  test("fails the catalog probe when the scope file does not match the extension's payload", () => {
+    const probe = createPiCatalogScopeProbe();
+    onTestFinished(probe.cleanup);
+    writeFileSync(
+      probe.scopePath,
+      JSON.stringify({ scopedModels: [{ provider: "openai" }] }),
+      "utf8",
+    );
+
+    expect(() => probe.selectModels([PI_CATALOG_ALPHA])).toThrow(probe.scopePath);
+  });
+
+  test("closes the catalog session and removes its scope extension when the refresh is cancelled", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = PI_CATALOG_MODELS;
+    });
+    const abort = new AbortController();
+    const catalogPromise = createClient(pi).fetchCatalog(
+      { scope: "workspace", cwd: "/workspace/cancelled", force: false },
+      {
+        signal: abort.signal,
+        runActivity: async (_name, operation) => {
+          abort.signal.throwIfAborted();
+          const result = await operation();
+          abort.signal.throwIfAborted();
+          return result;
+        },
+      },
+    );
+    abort.abort(new Error("refresh cancelled"));
+
+    await expect(catalogPromise).rejects.toThrow("refresh cancelled");
+    expect(pi.latestSession().closeCount).toBe(1);
+    expect(existsSync(scopeExtensionDir(pi))).toBe(false);
   });
 
   test("honors per-model Pi thinking maps and clamps the catalog default upward", async () => {

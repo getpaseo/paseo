@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   PiRuntime,
   PiRuntimeLaunch,
@@ -13,6 +15,7 @@ import type {
   PiSessionState,
   PiSessionStats,
 } from "../rpc-types.js";
+import { PI_CATALOG_SCOPE_EXTENSION_FILE_NAME } from "../catalog-scope.js";
 import { buildPiLaunch } from "../runtime.js";
 
 type FakePiSubagentSubscriptionLevel = "off" | "progress" | "events";
@@ -51,13 +54,31 @@ interface FakePiUserEntry {
   text: string;
 }
 
+/**
+ * How the fake Pi boots the generated catalog scope extension. `scopedModels: null` is a Pi
+ * older than 0.83.0, whose extension context has no `ctx.scopedModels`.
+ */
+interface FakePiCatalogScopeBoot {
+  scopedModels: readonly Pick<PiModel, "provider" | "id">[] | null;
+  skipExtension: boolean;
+}
+
+type FakePiExtensionListener = (event: unknown, context?: unknown) => unknown;
+
+interface FakePiExtensionApi {
+  on: (event: string, listener: FakePiExtensionListener) => void;
+}
+
 export class FakePi implements PiRuntime {
   readonly recordedLaunches: PiRuntimeLaunch[] = [];
   private readonly sessions: FakePiSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: PiRpcSlashCommand[][] = [];
   private readonly queuedSessionSetups: Array<(session: FakePiSession) => void> = [];
+  private readonly queuedScopedModels: Array<readonly Pick<PiModel, "provider" | "id">[] | null> =
+    [];
   private readonly removedModels = new Set<string>();
+  private skipCatalogScopeExtension = false;
 
   constructor(command: [string, ...string[]] = ["pi"]) {
     this.command = command;
@@ -74,6 +95,12 @@ export class FakePi implements PiRuntime {
     }
     const session = new FakePiSession(launch, this.removedModels);
     session.commands = this.queuedCommands.shift() ?? [];
+    const scopedModels = this.queuedScopedModels.shift();
+    session.catalogScopeBoot = {
+      // An explicit null is a Pi without ctx.scopedModels; undefined means nothing was queued.
+      scopedModels: scopedModels === undefined ? [] : scopedModels,
+      skipExtension: this.skipCatalogScopeExtension,
+    };
     this.queuedSessionSetups.shift()?.(session);
     this.sessions.push(session);
     return session;
@@ -81,6 +108,16 @@ export class FakePi implements PiRuntime {
 
   queueCommands(commands: PiRpcSlashCommand[]): void {
     this.queuedCommands.push(commands);
+  }
+
+  /** Pi's resolved `enabledModels` / `--models` scope for the next launched session. */
+  queueScopedModels(models: readonly Pick<PiModel, "provider" | "id">[] | null): void {
+    this.queuedScopedModels.push(models);
+  }
+
+  /** Simulates a Pi that fails to load the generated extension and never writes the scope. */
+  skipCatalogScopeExtensionBoot(): void {
+    this.skipCatalogScopeExtension = true;
   }
 
   queueSessionSetup(setup: (session: FakePiSession) => void): void {
@@ -103,6 +140,9 @@ export class FakePi implements PiRuntime {
 
 export class FakePiSession implements PiRuntimeSession {
   readonly environment: Record<string, string>;
+  /** Pi's extension boot for the generated catalog scope extension, dispatched by getState. */
+  catalogScopeBoot?: FakePiCatalogScopeBoot;
+  closeCount = 0;
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly steerCalls: Array<{ message: string; imageCount: number }> = [];
   steerError: Error | null = null;
@@ -155,7 +195,7 @@ export class FakePiSession implements PiRuntimeSession {
     null;
 
   constructor(
-    launch: PiRuntimeLaunch,
+    private readonly launch: PiRuntimeLaunch,
     private readonly removedModels: ReadonlySet<string> = new Set(),
   ) {
     this.environment = launch.env ?? {};
@@ -266,6 +306,7 @@ export class FakePiSession implements PiRuntimeSession {
     if (this.getStateError) {
       throw this.getStateError;
     }
+    await this.bootCatalogScopeExtension();
     return this.state;
   }
 
@@ -389,7 +430,37 @@ export class FakePiSession implements PiRuntimeSession {
     this.respondToExtensionUiRequest(id, { cancelled: true });
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closeCount += 1;
+  }
+
+  // Pi boots its extensions before it answers RPC commands, so the scope file exists once
+  // get_state responds. Loading the generated file runs the real extension source.
+  private async bootCatalogScopeExtension(): Promise<void> {
+    const boot = this.catalogScopeBoot;
+    this.catalogScopeBoot = undefined;
+    if (!boot || boot.skipExtension) {
+      return;
+    }
+    const extensionPath = this.launch.extensionPaths?.find(
+      (candidate) => basename(candidate) === PI_CATALOG_SCOPE_EXTENSION_FILE_NAME,
+    );
+    if (!extensionPath) {
+      return;
+    }
+    const extension = (await import(pathToFileURL(extensionPath).href)) as {
+      default: (pi: FakePiExtensionApi) => void;
+    };
+    const listeners = new Map<string, FakePiExtensionListener>();
+    extension.default({
+      on: (event, listener) => listeners.set(event, listener),
+    });
+    const context =
+      boot.scopedModels === null
+        ? {}
+        : { scopedModels: boot.scopedModels.map((model) => ({ model })) };
+    await listeners.get("session_start")?.({ reason: "startup" }, context);
+  }
 
   emit(event: PiRuntimeEvent): void {
     for (const subscriber of this.subscribers) {

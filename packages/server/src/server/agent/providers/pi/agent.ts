@@ -65,6 +65,7 @@ import {
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
+import { createPiCatalogScopeProbe } from "./catalog-scope.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import {
   createPiExtensionHost,
@@ -2651,6 +2652,7 @@ export class PiRpcAgentClient implements AgentClient {
   ): Promise<ProviderCatalog> {
     const providerOptions = PiProviderOptionsSchema.parse(options.providerOptions ?? {});
     const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
+    const catalogScope = createPiCatalogScopeProbe();
     let runtimeSession: PiRuntimeSession | undefined;
     let closePromise: Promise<void> | undefined;
     const closeSession = () => {
@@ -2665,6 +2667,8 @@ export class PiRpcAgentClient implements AgentClient {
         runtimeSession = await runtime.startSession({
           cwd: options.scope === "global" ? homedir() : options.cwd,
           signal: context?.signal,
+          noSession: true,
+          extensionPaths: [catalogScope.path],
         });
         if (context?.signal.aborted) await closeSession();
       });
@@ -2679,8 +2683,11 @@ export class PiRpcAgentClient implements AgentClient {
         "get_state",
         () => catalogSession.getState(),
       );
+      // Pi answers no RPC command before its extensions have booted, so the scope file is
+      // complete by now.
+      const scopedModels = catalogScope.selectModels(piModels);
       const models = transformPiModels(
-        piModels.map((model) => {
+        scopedModels.map((model) => {
           const mapped = mapPiModel(model, PI_PROVIDER);
           const isConfigured =
             model.provider === configuredModel?.provider && model.id === configuredModel?.id;
@@ -2691,7 +2698,11 @@ export class PiRpcAgentClient implements AgentClient {
       return { models, modes: [] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
-      await closeSession();
+      try {
+        await closeSession();
+      } finally {
+        catalogScope.cleanup();
+      }
     }
   }
 
