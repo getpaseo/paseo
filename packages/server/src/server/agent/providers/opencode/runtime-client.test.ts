@@ -209,3 +209,91 @@ test.each([
   },
   10000,
 );
+
+test("registered OpenCode clients read archived history", async () => {
+  const { buildProviderRegistry } = await import("../../provider-registry.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const logger = createTestLogger();
+  const client = buildProviderRegistry(logger).opencode.createClient(logger);
+  try {
+    expect(client.readSessionHistory).toBeTypeOf("function");
+  } finally {
+    await client.shutdown?.();
+  }
+});
+
+test("reads v2 history without any interactive session setup", async () => {
+  const { V2Harness } = await import("./test-utils/v2-harness.js");
+  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const harness = new V2Harness();
+  harness.history.push({ id: "old", type: "user", text: "Earlier prompt", time: { created: 1 } });
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const handle = { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } };
+  try {
+    const result = await client.readSessionHistory(handle);
+    expect(result.coverage).toEqual({ kind: "complete" });
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: "timeline",
+        item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
+      }),
+    ]);
+    // A dedicated read must not configure the session the way attach()/initialize() does.
+    expect(harness.environments).toEqual([]);
+    expect(harness.mcpAdds).toEqual([]);
+    expect(harness.prompts).toEqual([]);
+    expect(harness.creates).toEqual([]);
+    expect(harness.releases).toBe(1);
+  } finally {
+    await client.shutdown();
+  }
+});
+
+test("releases the v2 connection when a history read fails", async () => {
+  const { V2Harness } = await import("./test-utils/v2-harness.js");
+  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const harness = new V2Harness();
+  harness.api.message.list = async () => {
+    throw new Error("history unavailable");
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const handle = { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } };
+  try {
+    await expect(client.readSessionHistory(handle)).rejects.toThrow("history unavailable");
+    expect(harness.releases).toBe(1);
+  } finally {
+    await client.shutdown();
+  }
+});
+
+test("the runtime client keeps the v2 notice on dedicated history reads", async () => {
+  const { withOpenCodeRuntimeNoticeEvents } = await import("./runtime-notice.js");
+  const events = withOpenCodeRuntimeNoticeEvents(
+    [
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
+      },
+    ],
+    2,
+    { provider: "opencode", sessionId: "session" },
+  );
+  expect(events).toEqual([
+    expect.objectContaining({
+      item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
+    }),
+    expect.objectContaining({
+      item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+    }),
+  ]);
+});

@@ -287,6 +287,135 @@ function expectNestedChildren(events: AgentStreamEvent[]) {
 }
 
 describe("PluginAgentClientRegistry", () => {
+  test("uses the dedicated plugin history reader without opening a provider session", async () => {
+    const harness = createProviderHarness();
+    const reads: unknown[] = [];
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      async readSessionHistory(request) {
+        reads.push(request);
+        return {
+          items: [
+            {
+              item: { type: "assistant_message", id: "history-1", text: "archived" },
+              timestamp: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          coverage: { kind: "complete" },
+        };
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      await expect(
+        client.readSessionHistory!(
+          {
+            provider: registration.id,
+            sessionId: 'plugin:{"version":1,"data":{"token":"saved"}}',
+          },
+          { cwd: "/workspace", env: { TOKEN: "test" } },
+        ),
+      ).resolves.toEqual({
+        events: [
+          {
+            type: "timeline",
+            provider: registration.id,
+            item: { type: "assistant_message", text: "archived", messageId: "history-1" },
+            timestamp: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        coverage: { kind: "complete" },
+      });
+      expect(reads).toEqual([
+        {
+          persistence: { version: 1, data: { token: "saved" } },
+          cwd: "/workspace",
+          env: { TOKEN: "test" },
+        },
+      ]);
+      expect(harness.inputs).not.toContainEqual(expect.objectContaining({ type: "session.open" }));
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("maps dedicated child history into provider-subagent events", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      async readSessionHistory() {
+        return {
+          items: [{ item: { type: "assistant_message", id: "root-message", text: "root" } }],
+          children: [
+            {
+              sessionId: "child-history",
+              parentSessionId: null,
+              toolCallId: "spawn-call",
+              title: "History child",
+              description: "Inspect the repository",
+              cwd: "/workspace/child",
+              items: [
+                {
+                  item: { type: "assistant_message", id: "child-message", text: "child result" },
+                  timestamp: "2026-01-01T00:00:01.000Z",
+                },
+              ],
+            },
+          ],
+          coverage: { kind: "complete" },
+        };
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const events = await registry.clients()[registration.id]!.readSessionHistory!(
+        {
+          provider: registration.id,
+          sessionId: 'plugin:{"version":1,"data":{"token":"saved"}}',
+        },
+        { cwd: "/workspace" },
+      );
+      expect(events.events).toEqual([
+        {
+          type: "timeline",
+          provider: registration.id,
+          item: { type: "assistant_message", text: "root", messageId: "root-message" },
+          timestamp: undefined,
+        },
+        {
+          type: "provider_subagent",
+          provider: registration.id,
+          event: {
+            type: "upsert",
+            id: "child-history",
+            parentSubagentId: null,
+            toolCallId: "spawn-call",
+            title: "History child",
+            description: "Inspect the repository",
+            status: "completed",
+            cwd: "/workspace/child",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: registration.id,
+          event: {
+            type: "timeline",
+            id: "child-history",
+            item: { type: "assistant_message", text: "child result", messageId: "child-message" },
+            timestamp: "2026-01-01T00:00:01.000Z",
+          },
+        },
+      ]);
+      expect(harness.inputs).not.toContainEqual(expect.objectContaining({ type: "session.open" }));
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("stores only agent options while the plugin receives merged defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();

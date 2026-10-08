@@ -5,8 +5,10 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
   AgentFeature,
+  AgentHistoryReadContext,
   AgentModelDefinition,
   AgentMode,
+  AgentPersistenceHandle,
   AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
@@ -57,6 +59,10 @@ const mockState = vi.hoisted(() => {
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
     codexNativeArchiveCalls: [] as Array<{ state: "archive" | "restore"; handle: unknown }>,
+    historyReads: [] as Array<{
+      handle: AgentPersistenceHandle;
+      context?: AgentHistoryReadContext;
+    }>,
     reset() {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
@@ -71,6 +77,7 @@ const mockState = vi.hoisted(() => {
       this.runtimeModels.clear();
       this.cursorListFeaturesConfigs = [];
       this.codexNativeArchiveCalls = [];
+      this.historyReads = [];
     },
   };
 });
@@ -107,6 +114,20 @@ vi.mock("./providers/claude/agent.js", async () => {
 
       async resumeSession(): Promise<never> {
         throw new Error("not implemented");
+      }
+
+      async readSessionHistory(handle: AgentPersistenceHandle, context?: AgentHistoryReadContext) {
+        mockState.historyReads.push({ handle, context });
+        return {
+          events: [
+            {
+              type: "timeline" as const,
+              provider: "claude",
+              item: { type: "assistant_message" as const, text: "derived history" },
+            },
+          ],
+          coverage: { kind: "complete" as const },
+        };
       }
 
       async fetchCatalog(): Promise<ProviderCatalog> {
@@ -639,6 +660,52 @@ test("new provider extending codex archives and unarchives its native sessions",
   expect(mockState.codexNativeArchiveCalls).toEqual([
     { state: "archive", handle: { ...handle, provider: "codex" } },
     { state: "restore", handle: { ...handle, provider: "codex" } },
+  ]);
+});
+
+test("derived provider maps dedicated history reads through the base provider", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+      },
+    },
+  });
+  const client = registry.zai.createClient(logger);
+  const context: AgentHistoryReadContext = {
+    agentId: "00000000-0000-4000-8000-000000000401",
+    cwd: "/workspace/zai",
+  };
+
+  await expect(
+    client.readSessionHistory?.(
+      {
+        provider: "zai",
+        sessionId: "zai-session",
+        metadata: { cwd: context.cwd },
+      },
+      context,
+    ),
+  ).resolves.toEqual({
+    events: [
+      {
+        type: "timeline",
+        provider: "zai",
+        item: { type: "assistant_message", text: "derived history" },
+      },
+    ],
+    coverage: { kind: "complete" },
+  });
+  expect(mockState.historyReads).toEqual([
+    {
+      handle: {
+        provider: "claude",
+        sessionId: "zai-session",
+        metadata: { cwd: context.cwd },
+      },
+      context,
+    },
   ]);
 });
 

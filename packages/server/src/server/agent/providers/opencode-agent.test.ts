@@ -4153,6 +4153,315 @@ describe("OpenCodeAgentClient env", () => {
 });
 
 describe("OpenCode persisted sessions", () => {
+  const historyHandle = {
+    provider: "opencode" as const,
+    sessionId: "ses_history",
+    metadata: { cwd: "/workspace/repo" },
+  };
+
+  function createHistoryHarness(
+    options: {
+      sdkClient?: TestOpenCodeClient;
+      failClientCreation?: boolean;
+    } = {},
+  ) {
+    const runtime = new TestOpenCodeHarness();
+    const sdkClient = options.sdkClient ?? new TestOpenCodeClient();
+    if (!options.failClientCreation) {
+      runtime.enqueueClient(sdkClient);
+    }
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: options.failClientCreation
+        ? () => {
+            throw new Error("OpenCode client construction failed");
+          }
+        : runtime.createClient,
+    });
+    return {
+      runtime,
+      sdkClient,
+      read: async () => await client.readSessionHistory(historyHandle),
+    };
+  }
+
+  function createChildHistoryHarness(failure?: "children" | "messages" | "status") {
+    const harness = createHistoryHarness();
+    harness.sdkClient.sessionMessagesResponse = { data: [] };
+    harness.sdkClient.sessionChildrenResponses = [
+      {
+        data: [
+          {
+            id: "ses_child",
+            parentID: "ses_history",
+            title: "Inspect the repository",
+            agent: "explore",
+            directory: "/workspace/child",
+            revert: { messageID: "msg_child_03" },
+          },
+          { id: "ses_failed", parentID: "ses_history", title: "Failed task" },
+        ],
+      },
+      { data: [{ id: "ses_grandchild", parentID: "ses_child", title: "Nested task" }] },
+      { data: [] },
+      { data: [] },
+    ];
+    const message = (sessionID: string, id: string, text: string, failed = false) => ({
+      info: {
+        id,
+        sessionID,
+        role: "assistant",
+        time: { created: 1, completed: 2 },
+        ...(failed ? { error: { name: "UnknownError", data: { message: "failed" } } } : {}),
+      },
+      parts: [{ id: `prt_${id}`, sessionID, messageID: id, type: "text", text }],
+    });
+    const histories = [
+      { data: [] },
+      {
+        data: [
+          message("ses_child", "msg_child_01", "Child result"),
+          message("ses_child", "msg_child_03", "Reverted result"),
+        ],
+      },
+      { data: [message("ses_failed", "msg_failed", "Failed result", true)] },
+      { data: [message("ses_grandchild", "msg_grandchild", "Grandchild result")] },
+    ];
+    harness.sdkClient.sessionMessagesImplementation = async () => histories.shift() ?? { data: [] };
+    harness.sdkClient.sessionStatusResponse = { data: { ses_child: { type: "busy" } } };
+    if (failure === "children") {
+      harness.sdkClient.sessionChildrenResponses[1] = {
+        error: { message: "child listing unavailable" },
+      };
+    }
+    if (failure === "messages") {
+      harness.sdkClient.sessionMessagesImplementation = async () => {
+        if (harness.sdkClient.calls.sessionMessages.length === 4) {
+          return { error: { message: "grandchild messages unavailable" } };
+        }
+        return histories.shift() ?? { data: [] };
+      };
+    }
+    if (failure === "status") {
+      harness.sdkClient.sessionStatusResponse = { error: { message: "child status unavailable" } };
+    }
+    return harness;
+  }
+
+  test("reads saved children and nested timelines without an interactive session", async () => {
+    const { runtime, sdkClient, read } = createChildHistoryHarness();
+
+    await expect(read()).resolves.toEqual({
+      events: [
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_child",
+            parentSubagentId: null,
+            title: "explore",
+            description: "Inspect the repository",
+            status: "running",
+            cwd: "/workspace/child",
+            subtitle: "explore",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "ses_child",
+            item: { type: "assistant_message", text: "Child result", messageId: "msg_child_01" },
+            timestamp: "1970-01-01T00:00:01.000Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_failed",
+            parentSubagentId: null,
+            description: "Failed task",
+            status: "failed",
+            cwd: "/workspace/repo",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "ses_failed",
+            item: { type: "assistant_message", text: "Failed result", messageId: "msg_failed" },
+            timestamp: "1970-01-01T00:00:01.000Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_grandchild",
+            parentSubagentId: "ses_child",
+            description: "Nested task",
+            status: "completed",
+            cwd: "/workspace/child",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "ses_grandchild",
+            item: {
+              type: "assistant_message",
+              text: "Grandchild result",
+              messageId: "msg_grandchild",
+            },
+            timestamp: "1970-01-01T00:00:01.000Z",
+          },
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(sdkClient.calls.sessionChildren).toEqual([
+      { sessionID: "ses_history", directory: "/workspace/repo" },
+      { sessionID: "ses_child", directory: "/workspace/child" },
+      { sessionID: "ses_failed", directory: "/workspace/repo" },
+      { sessionID: "ses_grandchild", directory: "/workspace/child" },
+    ]);
+    expect(sdkClient.calls.globalEvent).toEqual([]);
+    expect(sdkClient.calls.eventSubscribe).toEqual([]);
+    expect(sdkClient.calls.sessionAbort).toEqual([]);
+    expect(sdkClient.calls.sessionUpdate).toEqual([]);
+    expect(sdkClient.calls.permissionList).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test.each([
+    ["children", "child listing unavailable"],
+    ["messages", "grandchild messages unavailable"],
+    ["status", "child status unavailable"],
+  ] as const)(
+    "releases the history server when reading child %s fails",
+    async (failure, message) => {
+      const { runtime, read } = createChildHistoryHarness(failure);
+
+      await expect(read()).rejects.toThrow(message);
+      expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    },
+  );
+
+  test("reads history without starting an event stream or aborting the native session", async () => {
+    const { runtime, sdkClient, read } = createHistoryHarness();
+    sdkClient.sessionGetResponse = {
+      data: {
+        id: "ses_history",
+        directory: historyHandle.metadata.cwd,
+        title: null,
+        time: { archived: 123 },
+      },
+    };
+    sdkClient.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_user",
+            sessionID: "ses_history",
+            role: "user",
+            time: { created: 1000 },
+            agent: "build",
+            model: { providerID: "opencode", modelID: "big-pickle" },
+          },
+          parts: [
+            {
+              id: "prt_user",
+              sessionID: "ses_history",
+              messageID: "msg_user",
+              type: "text",
+              text: "read archived history",
+            },
+          ],
+        },
+      ],
+    };
+
+    await expect(read()).resolves.toEqual({
+      events: [
+        {
+          type: "timeline",
+          provider: "opencode",
+          item: {
+            type: "user_message",
+            text: "read archived history",
+            messageId: "msg_user",
+          },
+          timestamp: "1970-01-01T00:16:40.000Z",
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(sdkClient.calls.sessionGet).toEqual([
+      { sessionID: "ses_history", directory: historyHandle.metadata.cwd },
+    ]);
+    expect(sdkClient.calls.sessionMessages).toEqual([
+      { sessionID: "ses_history", directory: historyHandle.metadata.cwd },
+    ]);
+    expect(sdkClient.calls.globalEvent).toEqual([]);
+    expect(sdkClient.calls.eventSubscribe).toEqual([]);
+    expect(sdkClient.calls.sessionAbort).toEqual([]);
+    expect(sdkClient.calls.sessionUpdate).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("releases the server acquisition when direct history loading fails", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionMessagesImplementation = async () => {
+      throw new Error("session messages unavailable");
+    };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow("session messages unavailable");
+    expect(sdkClient.calls.sessionAbort).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("rejects structured session metadata errors without reading messages", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionGetResponse = { error: { name: "NotFoundError", message: "missing session" } };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow(
+      'Failed to read OpenCode session metadata: {"name":"NotFoundError","message":"missing session"}',
+    );
+    expect(sdkClient.calls.sessionMessages).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("rejects structured session message errors instead of completing empty history", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionMessagesResponse = {
+      error: { name: "InternalServerError", message: "messages unavailable" },
+    };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow(
+      'Failed to read OpenCode session messages: {"name":"InternalServerError","message":"messages unavailable"}',
+    );
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("releases the server acquisition when history client construction fails", async () => {
+    const { runtime, read } = createHistoryHarness({ failClientCreation: true });
+
+    await expect(read()).rejects.toThrow("OpenCode client construction failed");
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
   test("replay hides summaries produced by manual compact", () => {
     const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
       {

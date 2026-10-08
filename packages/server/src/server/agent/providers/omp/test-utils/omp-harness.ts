@@ -110,6 +110,33 @@ export class OmpHarness {
     this.session.subscribe((event) => this.events.push(event));
   }
 
+  async readPersistedHistory(
+    history: OmpResumeHistory,
+    overrides: Partial<AgentSessionConfig> = {},
+  ): Promise<AgentStreamEvent[]> {
+    const sessionFile = await writeOmpHistory(history);
+    const result = await this.client.readSessionHistory(
+      {
+        provider: "omp",
+        sessionId: "omp-session-history",
+        nativeHandle: sessionFile,
+        metadata: { cwd: CWD },
+      },
+      { cwd: overrides.cwd ?? CWD },
+    );
+    return result.events;
+  }
+
+  async readHistoryHandle(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> = {},
+  ): Promise<AgentStreamEvent[]> {
+    const result = await this.client.readSessionHistory(handle, {
+      cwd: overrides.cwd ?? CWD,
+    });
+    return result.events;
+  }
+
   async resume(
     history: OmpResumeHistory,
     overrides: Partial<AgentSessionConfig> = {},
@@ -149,6 +176,14 @@ export class OmpHarness {
 
   registeredHostTools() {
     return this.omp.latestSession().hostToolSetRequests;
+  }
+
+  subagentSubscriptionRequests() {
+    return this.omp.latestSession().subagentSubscriptionRequests;
+  }
+
+  runtimeClosed(): boolean {
+    return this.omp.latestSession().closed;
   }
 
   capabilities() {

@@ -3,11 +3,13 @@ import type {
   ProviderCatalog,
   ProviderCommand,
   ProviderConfigState,
+  ProviderHistoryReadRequest,
+  ProviderHistoryReadResult,
   ProviderNotice,
   ProviderRegistration,
   ProviderTimelineItem,
 } from "./provider.js";
-import { createAcpProviderConnection } from "./acp-internal/connection.js";
+import { createAcpProviderConnection, readAcpProviderHistory } from "./acp-internal/connection.js";
 
 interface RunAcpProviderBaseOptions {
   id: string;
@@ -116,6 +118,11 @@ export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistra
     description: options.description,
     icon: options.icon,
     command: options.command,
+    async readSessionHistory(
+      request: ProviderHistoryReadRequest,
+    ): Promise<ProviderHistoryReadResult> {
+      return await readAcpProviderHistory(options, request);
+    },
     connect(request) {
       return createAcpProviderConnection(options, request);
     },

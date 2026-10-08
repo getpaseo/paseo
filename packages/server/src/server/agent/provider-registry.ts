@@ -4,6 +4,7 @@ import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types
 import type {
   AgentClient,
   AgentCreateConfigUnattendedInput,
+  AgentResumeSessionOptions,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -493,6 +494,7 @@ function wrapClientProvider(
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
+  const readSessionHistory = inner.readSessionHistory?.bind(inner);
 
   return {
     provider,
@@ -513,7 +515,7 @@ function wrapClientProvider(
           { ...options, configuredModelIds },
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext, options) =>
+    resumeSession: async (handle, overrides, launchContext, options?: AgentResumeSessionOptions) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
@@ -530,6 +532,21 @@ function wrapClientProvider(
           { ...options, configuredModelIds },
         ),
       ),
+    readSessionHistory: readSessionHistory
+      ? async (handle, context) => {
+          const result = await readSessionHistory(
+            {
+              ...handle,
+              provider: inner.provider,
+            },
+            context,
+          );
+          return {
+            ...result,
+            events: result.events.map((event) => mapStreamEvent(provider, event)),
+          };
+        }
+      : undefined,
     fetchCatalog: async (options, context) => {
       const catalog = await inner.fetchCatalog({ ...options, providerOptions }, context);
       return {

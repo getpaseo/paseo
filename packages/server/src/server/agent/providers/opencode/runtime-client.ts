@@ -5,6 +5,8 @@ import type {
   AgentLaunchContext,
   AgentCreateSessionOptions,
   AgentPersistenceHandle,
+  AgentResumeSessionOptions,
+  AgentHistoryReadContext,
   FetchCatalogOptions,
   ProviderRefreshContext,
   ListImportableSessionsOptions,
@@ -19,7 +21,7 @@ import {
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
-import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
+import { withOpenCodeRuntimeNotice, withOpenCodeRuntimeNoticeEvents } from "./runtime-notice.js";
 
 // Keep the minimum aligned with the SDK and binary exercised by CI.
 const MINIMUM_V2: readonly [number, number] = [0, 10];
@@ -124,10 +126,24 @@ export class OpenCodeRuntimeClient implements AgentClient {
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ) {
-    const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch);
+    const client: AgentClient = await this.client();
+    const session = await client.resumeSession(handle, config, launch, options);
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
+  }
+  async readSessionHistory(handle: AgentPersistenceHandle, context?: AgentHistoryReadContext) {
+    const client: AgentClient = await this.client();
+    if (!client.readSessionHistory)
+      throw new Error("OpenCode runtime client does not support reading session history");
+    // Both v1 and v2 expose a dedicated read-only reader, so history never goes
+    // through an interactive resume.
+    const result = await client.readSessionHistory(handle, context);
+    if (client === this.legacy) return result;
+    return {
+      ...result,
+      events: withOpenCodeRuntimeNoticeEvents(result.events, 2, handle),
+    };
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
     return (await this.client()).fetchCatalog(options, context);

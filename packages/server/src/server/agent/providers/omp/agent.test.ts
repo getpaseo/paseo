@@ -1036,6 +1036,40 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("reads OMP history from the session file without launching a runtime", async () => {
+    const omp = new OmpHarness();
+
+    const history = await omp.readPersistedHistory(
+      {
+        user: { id: "user-history", text: "continue the audit" },
+        assistant: { id: "assistant-history", text: "audit context restored" },
+      },
+      { cwd: "/workspace/resumed" },
+    );
+
+    expect(history.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+      { type: "user_message", text: "continue the audit", messageId: "user-history" },
+      {
+        type: "assistant_message",
+        text: "audit context restored",
+        messageId: "assistant-history",
+      },
+    ]);
+    // A dedicated history read replays the transcript off disk, so it must never
+    // start an OMP runtime against the archived session.
+    expect(omp.runtimeLaunches()).toEqual([]);
+  });
+
+  test("rejects an OMP history read without a native session file", async () => {
+    const omp = new OmpHarness();
+
+    await expect(
+      omp.readHistoryHandle({ provider: "omp", sessionId: "omp-session-history" }),
+    ).rejects.toThrow("OMP history read requires a native session file handle");
+
+    expect(omp.runtimeLaunches()).toEqual([]);
+  });
+
   test("resumes an OMP session and replays its history", async () => {
     const omp = new OmpHarness();
     await omp.resume(
