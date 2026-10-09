@@ -4,12 +4,14 @@ import { isBuiltin } from "node:module";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import * as server from "./server/index.js";
 
 const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
 const entries = {
   ".": "shared",
   "./server": "server",
   "./server/provider": "server",
+  "./server/usage": "server",
   "./server/acp": "server",
   "./client": "client",
   "./client/host": "client",
@@ -63,6 +65,10 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
 }
 
 describe("plugin SDK import boundaries", () => {
+  it("publishes process capabilities without their Windows implementation helpers", () => {
+    expect(Object.keys(server).sort()).toEqual(["execCommand", "spawnProcess", "terminateProcess"]);
+  });
+
   it("classifies every published entry", () => {
     const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     expect(Object.keys(manifest.exports).sort()).toEqual(Object.keys(entries).sort());

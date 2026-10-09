@@ -18,7 +18,7 @@ export const permitLsSchema: OutputSchema<PermissionListItem> = {
   idField: "id",
   columns: [
     { header: "AGENT", field: "agentShortId", width: 12 },
-    { header: "REQ_ID", field: "id", width: 12 },
+    { header: "REQ_ID", field: (item) => item.id.slice(0, 8), width: 12 },
     { header: "TOOL", field: "name", width: 20 },
     { header: "DESCRIPTION", field: "description", width: 50 },
   ],
@@ -30,7 +30,7 @@ function toListItem(
   permission: AgentPermissionRequest,
 ): PermissionListItem {
   return {
-    id: permission.id.slice(0, 8),
+    id: permission.id,
     agentId: agent.id,
     agentShortId: agent.id.slice(0, 7),
     name: permission.name,
@@ -39,6 +39,22 @@ function toListItem(
 }
 
 export type PermitLsResult = ListResult<PermissionListItem>;
+
+/** Collect the pending permissions of every agent */
+export function listPendingPermissions(agents: AgentSnapshotPayload[]): PermitLsResult {
+  const items: PermissionListItem[] = [];
+  for (const agent of agents) {
+    for (const permission of agent.pendingPermissions ?? []) {
+      items.push(toListItem(agent, permission));
+    }
+  }
+
+  return {
+    type: "list",
+    data: items,
+    schema: permitLsSchema,
+  };
+}
 
 export interface PermitLsOptions extends CommandOptions {
   host?: string;
@@ -55,21 +71,7 @@ export async function runLsCommand(
     const agents = agentsPayload.entries.map((entry) => entry.agent);
     await client.close();
 
-    // Collect all pending permissions from all agents
-    const items: PermissionListItem[] = [];
-    for (const agent of agents) {
-      if (agent.pendingPermissions && agent.pendingPermissions.length > 0) {
-        for (const permission of agent.pendingPermissions) {
-          items.push(toListItem(agent, permission));
-        }
-      }
-    }
-
-    return {
-      type: "list",
-      data: items,
-      schema: permitLsSchema,
-    };
+    return listPendingPermissions(agents);
   } catch (err) {
     await client.close().catch(() => {});
     const message = err instanceof Error ? err.message : String(err);

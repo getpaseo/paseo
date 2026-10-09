@@ -73,6 +73,32 @@ The connection has three operations:
 Keep the native SDK, process, and stream inside the connection implementation. Convert its output
 to `ProviderEvent` objects before publishing it.
 
+## Launch the provider CLI
+
+Use `spawnProcess` and `execCommand` from `@getpaseo/plugin/server` for process transports
+and CLI probes. Both handle Windows `.cmd`/`.bat` launchers and quote shell arguments.
+Raw Node `spawn` and `execFile` reject those launchers on Windows.
+
+The daemon supplies `request.launch` with the resolved command, argument prefix, and complete
+environment. Pass that environment explicitly; the helpers do not apply daemon environment policy.
+Keep the process lifecycle and protocol deadlines inside your provider. End stdin for graceful
+shutdown; use `terminateProcess(child)` for a forced stop. It kills the process tree on Windows,
+including the CLI behind a command-script launcher. Bound your final wait for closed streams.
+
+```ts
+import { spawnProcess, execCommand } from "@getpaseo/plugin/server";
+
+const child = spawnProcess(launch.command, [...launch.args, "serve"], {
+  env: launch.env,
+  cwd,
+  stdio: "pipe",
+});
+const { stdout } = await execCommand(launch.command, [...launch.args, "--version"], {
+  env: launch.env,
+  timeout: 5000,
+});
+```
+
 ## Return models, modes, and thinking options
 
 Paseo requests the catalog before creating a session. Return the choices needed by the agent form:

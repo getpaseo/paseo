@@ -66,10 +66,7 @@ function createRuntime(
   });
 }
 
-function replyToCommands(
-  child: OmpChild,
-  handler: (command: Record<string, unknown>) => unknown,
-): void {
+function onOmpCommand(child: OmpChild, handler: (command: Record<string, unknown>) => void): void {
   let buffer = "";
   child.stdin.on("data", (chunk) => {
     buffer += chunk.toString();
@@ -78,17 +75,42 @@ function replyToCommands(
       if (newlineIndex === -1) break;
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
-      const command = JSON.parse(line) as Record<string, unknown>;
-      const result = handler(command);
-      child.stdout.write(
-        `${JSON.stringify({
-          id: command.id,
-          type: "response",
-          command: command.type,
-          success: true,
-          data: result,
-        })}\n`,
-      );
+      handler(JSON.parse(line) as Record<string, unknown>);
+    }
+  });
+}
+
+function replyToCommands(
+  child: OmpChild,
+  handler: (command: Record<string, unknown>) => unknown,
+): void {
+  onOmpCommand(child, (command) => {
+    const result = handler(command);
+    child.stdout.write(
+      `${JSON.stringify({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: true,
+        data: result,
+      })}\n`,
+    );
+  });
+}
+
+function capturePendingCommand(child: OmpChild, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    onOmpCommand(child, (command) => {
+      if (command.type === type) resolve(command);
+    });
+  });
+}
+
+/** Kill the child the moment it receives `type`, so the request is in flight when it dies. */
+function exitOnCommand(child: OmpChild, type: string): void {
+  onOmpCommand(child, (command) => {
+    if (command.type === type) {
+      child.emit("exit", 1, null);
     }
   });
 }
@@ -99,6 +121,28 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
 }
 
 describe("OMP CLI runtime", () => {
+  test("steer waits for OMP's response and surfaces rejection", async () => {
+    const child = createOmpChild();
+    let pending: Record<string, unknown> | null = null;
+    onOmpCommand(child, (command) => {
+      if (command.type === "steer") pending = command;
+    });
+    const launches: OmpRuntimeLaunch[] = [];
+    const session = await createRuntime(child, launches).startSession({
+      cwd: "/workspace/project",
+      env: { HOME: "/fixture/omp-home" },
+    });
+    expect(session.environment).toBe(launches[0]?.env);
+    expect(session.environment?.HOME).toBe("/fixture/omp-home");
+    const result = session.steer("change direction");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(pending).toMatchObject({ type: "steer", message: "change direction" });
+    child.stdout.write(
+      `${JSON.stringify({ id: pending!.id, type: "response", command: "steer", success: false, error: "rejected" })}\n`,
+    );
+    await expect(result).rejects.toThrow("rejected");
+    await session.close();
+  });
   test("uses the configured RPC timeout and attributes the pending phase", async () => {
     vi.useFakeTimers();
     const child = createOmpChild();
@@ -181,6 +225,95 @@ describe("OMP CLI runtime", () => {
     child.stdout.write(`${JSON.stringify({ type: "notice", level: "info", message: "ready" })}\n`);
 
     expect(eventTypes).toEqual(["notice"]);
+  });
+
+  test("emits agent_end for a run that contains an OMP developer message", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const eventTypes: string[] = [];
+    session.onEvent((event) => eventTypes.push(event.type));
+
+    // OMP 18.5 injects a developer reminder mid-run when a tool call matches a rule.
+    const reminder = {
+      role: "developer",
+      content: [
+        { type: "text", text: '<system-reminder reason="rule_violation">…</system-reminder>' },
+      ],
+      attribution: "agent",
+      timestamp: 2,
+    };
+    child.stdout.write(`${JSON.stringify({ type: "message_end", message: reminder })}\n`);
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Write tiny.ts" }], timestamp: 1 },
+          reminder,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Done" }],
+            stopReason: "stop",
+            timestamp: 3,
+          },
+        ],
+      })}\n`,
+    );
+
+    expect(eventTypes).toEqual(["message_end", "agent_end"]);
+  });
+
+  test("emits agent_end for a run that contains every OMP message role Paseo does not render", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const eventTypes: string[] = [];
+    session.onEvent((event) => eventTypes.push(event.type));
+
+    // A prompt that @-mentions a file makes OMP add a fileMention message to the run.
+    const fileMention = {
+      role: "fileMention",
+      files: [{ path: "notes.md", content: "# Notes\n", lineCount: 1 }],
+      timestamp: 2,
+    };
+    child.stdout.write(`${JSON.stringify({ type: "message_end", message: fileMention })}\n`);
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Read @notes.md" }], timestamp: 1 },
+          fileMention,
+          {
+            role: "pythonExecution",
+            code: "print(1)",
+            output: "1\n",
+            cancelled: false,
+            truncated: false,
+            timestamp: 3,
+          },
+          {
+            role: "hookMessage",
+            customType: "hook",
+            content: "hook output",
+            display: false,
+            timestamp: 4,
+          },
+          { role: "branchSummary", summary: "Earlier branch", fromId: "entry-1", timestamp: 5 },
+          {
+            role: "compactionSummary",
+            summary: "Earlier turns",
+            tokensBefore: 1000,
+            timestamp: 6,
+          },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Done" }],
+            stopReason: "stop",
+            timestamp: 7,
+          },
+        ],
+      })}\n`,
+    );
+
+    expect(eventTypes).toEqual(["message_end", "agent_end"]);
   });
 
   test("lists commands through get_available_commands", async () => {
@@ -279,12 +412,58 @@ describe("OMP CLI runtime", () => {
     ]);
   });
 
+  test("compact waits beyond the control-plane timeout for a late response", async () => {
+    vi.useFakeTimers();
+    const child = createOmpChild();
+    const pending = capturePendingCommand(child, "compact");
+    const session = await createRuntime(child, [], { requestTimeoutMs: 100 }).startSession({
+      cwd: "/workspace/project",
+    });
+    try {
+      const compact = session.compact("focus on tests");
+      const command = await pending;
+      await vi.advanceTimersByTimeAsync(101);
+      child.stdout.write(
+        `${JSON.stringify({ id: command.id, type: "response", command: "compact", success: true, data: {} })}\n`,
+      );
+      await expect(compact).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
   test("accepts the empty prompt acknowledgement emitted by OMP 17", async () => {
     const child = createOmpChild();
     replyToCommands(child, () => undefined);
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
     await expect(session.prompt("hello")).resolves.toEqual({ requestId: "req_1" });
+  });
+
+  test("reports OMP 18.3's late prompt rejection as a failed prompt result", async () => {
+    const child = createOmpChild();
+    onOmpCommand(child, (command) => {
+      if (command.type !== "prompt") return;
+      const response = { id: command.id, type: "response", command: "prompt" };
+      const rejection = { ...response, success: false, error: "No API key found for anthropic." };
+      child.stdout.write(
+        `${JSON.stringify({ ...response, success: true })}\n${JSON.stringify(rejection)}\n`,
+      );
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const events: unknown[] = [];
+    session.onEvent((event) => events.push(event));
+
+    await expect(session.prompt("hello")).resolves.toEqual({ requestId: "req_1" });
+
+    expect(events).toContainEqual({
+      type: "prompt_result",
+      id: "req_1",
+      agentInvoked: false,
+      status: "error",
+      error: { message: "No API key found for anthropic." },
+    });
   });
 
   test("negotiates RPC protocol v2 when OMP advertises it", async () => {
@@ -417,5 +596,28 @@ describe("OMP CLI runtime", () => {
     const result = await session.getAvailableModels();
     expect(result).toHaveLength(2_000);
     expect(result[0]).toEqual(expect.objectContaining({ id: "model-0" }));
+  });
+
+  // A dead runtime owns no turn, so aborting it is already satisfied. Rejecting here
+  // makes AgentManager treat the interrupt as unacknowledged and refuse the stop, which
+  // pins the agent at `running` until the daemon restarts. See issue #3749.
+  test("abort resolves once the OMP process has exited", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const environment = session.environment;
+    child.emit("exit", 1, null);
+    expect(session.environment).toBe(environment);
+    expect(environment).toBeDefined();
+
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
+
+  test("abort resolves when the OMP process exits while the abort is in flight", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    exitOnCommand(child, "abort");
+
+    await expect(session.abort()).resolves.toBeUndefined();
   });
 });

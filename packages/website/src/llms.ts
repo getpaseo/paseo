@@ -6,13 +6,15 @@ const SITE_URL = "https://paseo.sh";
 
 const PRODUCT_PREAMBLE = `# Paseo
 
-> Mobile and desktop app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket.
+> Open source agentic development environment for desktop, mobile, web, and CLI.
 
-Paseo is an open source application that lets you run AI coding agents on your own machine and drive them from your phone, desktop, browser, or terminal. Your code stays local — Paseo connects directly to your real development environment instead of running agents in someone else's cloud.
+Paseo is a full agentic development environment. For agent-driven development, it replaces your IDE: run coding agents, edit files, review diffs and pull requests, run tests in terminals, and check your app in the built-in desktop browser. Arrange agents, files, terminals, and browser tabs in split panes within a workspace.
 
-A self-hosted daemon manages agent lifecycle, exposes a WebSocket API, and ships with an MCP server so other agents can talk to it. Native apps for iOS, Android, macOS, Windows, Linux, and the web let you launch sessions, watch them work, review diffs, and ship from anywhere. A Docker-style CLI ("paseo run", "paseo ls", "paseo logs", "paseo wait") gives you scripting access. An end-to-end encrypted relay lets the mobile app reach your daemon over the public internet without exposing it.
+Run many agents in parallel, each in its own git worktree and branch. Choose a provider and model for each task, inspect the results, and decide what to merge. Agents can also create worktrees, launch other agents, and communicate with them through Paseo's orchestration tools.
 
-Paseo supports every major coding agent: Claude Code, Codex, GitHub Copilot, OpenCode, Cursor, Gemini, Cline, Goose, Amp, Aider, and 30+ others. Each agent runs as its own process; Paseo handles I/O, persistence, git worktree isolation, schedules, and skills.
+Agents run on your own machines with your existing tools, configuration, and credentials. Work from desktop, the full native iOS and Android app, a web browser, or the CLI. The desktop app starts its local daemon automatically. For remote work, run the daemon on another machine and connect directly or through the optional end-to-end encrypted relay.
+
+Paseo supports Claude Code, Codex, GitHub Copilot, OpenCode, Pi, Antigravity, Muse Code, and additional ACP-compatible agents. The CLI, TypeScript SDK, and MCP tools expose agent and workspace operations for automation. Plugins extend providers, workflows, and the app's interface.
 
 Distribution: native apps for Mac, Windows, Linux, iOS, and Android; web app; Homebrew; npm. Source: Apache-2.0 at https://github.com/getpaseo/paseo. Marketing site: https://paseo.sh.
 `;

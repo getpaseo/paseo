@@ -357,6 +357,67 @@ test("preserves ordinary checkout behavior when no separate base was recorded", 
   ).toMatchObject({ currentBranch: "feature", baseRef: "feature" });
 });
 
+test("restores a branchless workspace from its recorded base so work can continue", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/release");
+  execFileSync("git", ["switch", "-c", "release"], { cwd: fixture.repoDir, stdio: "pipe" });
+  writeFileSync(join(fixture.repoDir, "release.txt"), "release\n");
+  execFileSync("git", ["add", "release.txt"], { cwd: fixture.repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "release"], { cwd: fixture.repoDir, stdio: "pipe" });
+  execFileSync("git", ["switch", "main"], { cwd: fixture.repoDir, stdio: "pipe" });
+  await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+    ...workspace,
+    branch: null,
+  }));
+  await fixture.archiveAndRemove();
+
+  await expect(fixture.service.inspect(fixture.workspace.workspaceId)).resolves.toMatchObject({
+    kind: "recoverable",
+    action: "restore",
+    branch: null,
+  });
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+
+  const checkout = await getCheckoutStatus(fixture.workspace.cwd, { paseoHome: fixture.paseoHome });
+  expect(checkout.currentBranch).toBeTruthy();
+  expect(checkout.currentBranch).not.toBe("feature");
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(
+    execFileSync("git", ["rev-parse", "release"], {
+      cwd: fixture.repoDir,
+      encoding: "utf8",
+    }).trim(),
+  );
+});
+
+test("restores a branchless workspace from the repository default when its base is missing", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/deleted-base");
+  await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+    ...workspace,
+    branch: null,
+  }));
+  await fixture.archiveAndRemove();
+
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(
+    execFileSync("git", ["rev-parse", "main"], { cwd: fixture.repoDir, encoding: "utf8" }).trim(),
+  );
+});
+
 test("restores the branch HEAD with a base name when the exact base is missing", async () => {
   const fixture = await createBaseRecoveryFixture("refs/remotes/upstream/main");
   const headBeforeArchive = execFileSync("git", ["rev-parse", "HEAD"], {

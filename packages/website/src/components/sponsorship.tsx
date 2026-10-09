@@ -53,9 +53,10 @@ const MAINTAINER_LINK = (
 export function FounderNote() {
   return (
     <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+      <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
       <p>
-        I build Paseo on my own. There are no investors, no board and no company behind it, and I
-        have turned down funding offers to keep it that way.
+        It is built by one person, full time, with no investors, no board and no company behind it.
+        I have turned down funding offers to keep it that way.
       </p>
       <p>
         A tool that sits between you and your code, your keys and your machines has to stay neutral,
@@ -67,7 +68,7 @@ export function FounderNote() {
         <a href="/hub" className="underline hover:text-white/90">
           Paseo Hub
         </a>
-        , an optional hosted service. Your support is what lets me work on Paseo full time.
+        , an optional hosted service. Your support is what lets me keep working on it.
       </p>
       <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
     </div>
@@ -77,39 +78,32 @@ export function FounderNote() {
 interface BackingOption {
   href: string;
   name: string;
-  detail: string;
   icon: React.ComponentType<{ className?: string }>;
   external: boolean;
-  primary?: boolean;
 }
 
 const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
   {
     href: GITHUB_SPONSORS_URL,
     name: "GitHub Sponsors",
-    detail: "From $5 a month, or one time",
     icon: GitHubIcon,
     external: true,
-    primary: true,
   },
   {
     href: OPEN_COLLECTIVE_URL,
     name: "Open Collective",
-    detail: "Monthly or one time, with an invoice",
     icon: OpenCollectiveIcon,
     external: true,
   },
   {
     href: BUY_ME_A_COFFEE_URL,
     name: "Buy Me a Coffee",
-    detail: "One time, no account needed",
     icon: BuyMeACoffeeIcon,
     external: true,
   },
   {
     href: "/sponsor#spot",
-    name: "Sponsor a spot",
-    detail: "For companies",
+    name: "Sponsor as a company",
     icon: SpotIcon,
     external: false,
   },
@@ -132,33 +126,24 @@ export function BackingOptions() {
           key={option.href}
           href={option.href}
           {...(option.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-          className={`flex items-start gap-4 rounded-xl border p-4 transition-colors ${
-            option.primary
-              ? "border-white/25 bg-white/[0.06] hover:border-white/40 hover:bg-white/[0.08]"
-              : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]"
-          }`}
+          className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
         >
-          <option.icon className="mt-0.5 h-6 w-6 shrink-0 text-white/60" />
-          <div className="space-y-1">
-            <p className="flex items-center gap-1.5 font-medium text-white">
-              {option.name}
-              {option.external ? (
-                <ExternalLink className="h-3.5 w-3.5 text-white/40" />
-              ) : (
-                <ArrowRight className="h-3.5 w-3.5 text-white/40" />
-              )}
-            </p>
-            <p className="text-sm text-white/50">{option.detail}</p>
-          </div>
+          <option.icon className="h-6 w-6 shrink-0 text-white/60" />
+          <p className="flex items-center gap-1.5 font-medium text-white">
+            {option.name}
+            {option.external ? (
+              <ExternalLink className="h-3.5 w-3.5 text-white/40" />
+            ) : (
+              <ArrowRight className="h-3.5 w-3.5 text-white/40" />
+            )}
+          </p>
         </a>
       ))}
     </div>
   );
 }
 
-/** The four homepage spots: sponsor logos first, then a placeholder for each open spot. */
 function SponsorLogoRow() {
-  const placeholders = Array.from({ length: openSpotCount() }, (_, index) => index);
   return (
     <ul className="grid grid-cols-2 gap-4">
       {HOMEPAGE_SPONSORS.map((sponsor) => (
@@ -170,17 +155,6 @@ function SponsorLogoRow() {
             className="flex h-32 items-center justify-center rounded-xl border border-white/10 bg-white/[0.02] px-6 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
           >
             <img src={sponsor.logo} alt={sponsor.name} className="max-h-10 max-w-full opacity-80" />
-          </a>
-        </li>
-      ))}
-      {placeholders.map((index) => (
-        <li key={index}>
-          <a
-            href="/sponsor#spot"
-            className="flex h-32 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/20 transition-colors hover:border-white/40 hover:bg-white/[0.03]"
-          >
-            <span className="text-sm font-medium text-white/70">Sponsor</span>
-            <span className="text-xs text-white/40">{HOMEPAGE_SPOT_PRICE} a month</span>
           </a>
         </li>
       ))}
@@ -201,8 +175,8 @@ export function SponsorSpotSection() {
     <section id="spot" className="scroll-mt-8">
       <SectionHeading
         as="h2"
-        title="Sponsor a spot"
-        description="Support an independent project and put your company in front of a fast-growing audience of developers."
+        title="Sponsor as a company"
+        description="If your team relies on Paseo, a monthly sponsorship funds its development directly. As a thank you, your logo goes on the homepage and in the README."
       />
       <div className="space-y-8">
         <div className="flex items-end gap-2">
@@ -223,7 +197,7 @@ export function SponsorSpotSection() {
               href={SPONSOR_SPOT_CHECKOUT_URL}
               className="inline-flex items-center rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
             >
-              Sponsor a spot
+              Become a sponsor
             </a>
           ) : null}
           <a
@@ -258,9 +232,10 @@ export function SponsorSection() {
       <SectionHeading as="h2" title="Sponsor Paseo" />
       <div className="space-y-10">
         <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+          <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
           <p>
-            I build Paseo on my own, with no investors and no company behind it, and I have turned
-            down funding offers to keep it that way. A tool that sits between you and your code,
+            It is built by one person, full time, with no investors and no company behind it. I have
+            turned down funding to keep it that way. A tool that sits between you and your code,
             your keys and your machines has to stay neutral, and funding creates pressure to
             monetize.
           </p>
@@ -269,7 +244,7 @@ export function SponsorSection() {
             <a href="/hub" className="underline hover:text-white/90">
               Paseo Hub
             </a>
-            , and your support is what lets me work on it full time.
+            . Your support is what lets me keep working on it.
           </p>
           <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
         </div>
@@ -279,12 +254,23 @@ export function SponsorSection() {
   );
 }
 
-/** Homepage: the four sponsor spots, as they look once filled. */
+/** Homepage: the companies sponsoring Paseo. Renders nothing until there is one. */
 export function SponsorsSection() {
+  if (HOMEPAGE_SPONSORS.length === 0) return null;
   return (
     <section>
-      <SectionHeading as="h2" title="Sponsors" badge="New" />
-      <SponsorLogoRow />
+      <SectionHeading as="h2" title="Sponsors" />
+      <div className="space-y-4">
+        <SponsorLogoRow />
+        {openSpotCount() > 0 ? (
+          <a
+            href="/sponsor#spot"
+            className="inline-block text-sm text-white/50 underline transition-colors hover:text-white/80"
+          >
+            Become a sponsor
+          </a>
+        ) : null}
+      </div>
     </section>
   );
 }

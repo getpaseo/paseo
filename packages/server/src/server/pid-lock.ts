@@ -1,8 +1,10 @@
-import { open, readFile, unlink, utimes } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { open, readFile, stat, unlink, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { ensurePrivateDirectory } from "./private-files.js";
 import { join } from "node:path";
-import { hostname } from "node:os";
+import { uptime } from "node:os";
+import { getHostName } from "./host-name.js";
 import { z } from "zod";
 
 export const pidLockInfoSchema = z.object({
@@ -11,8 +13,10 @@ export const pidLockInfoSchema = z.object({
   hostname: z.string(),
   uid: z.number(),
   listen: z.string().nullable(),
+  serverId: z.string().nullable().optional(),
   desktopManaged: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
+  bootId: z.string().optional(),
 });
 
 export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
@@ -40,13 +44,59 @@ const PID_LOCK_HEARTBEAT_INTERVAL_MS = 30_000;
 const PID_LOCK_READ_RETRY_ATTEMPTS = 10;
 const PID_LOCK_READ_RETRY_DELAY_MS = 50;
 
-export function isPidRunning(pid: number): boolean {
+function isPidRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
   }
+}
+
+// `uptime()` reports whole seconds on some platforms, so the derived boot instant carries
+// about a second of error. This covers that resolution and nothing more: every extra second
+// is a window in which a lock written just before a reboot still reads as current.
+const BOOT_INSTANT_TOLERANCE_MS = 5_000;
+
+function precedesThisBoot(startedAt: string): boolean {
+  const stamped = Date.parse(startedAt);
+  if (Number.isNaN(stamped)) return false;
+  return stamped < Date.now() - uptime() * 1000 - BOOT_INSTANT_TOLERANCE_MS;
+}
+
+let cachedBootId: string | null | undefined;
+
+// Linux names each boot. The wall-clock boot instant is not enough there: a VM paused while
+// its host sleeps keeps its uptime, so after it resumes the instant lands after locks its
+// running supervisor wrote.
+function currentBootId(): string | null {
+  if (cachedBootId === undefined) {
+    try {
+      cachedBootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf-8").trim() || null;
+    } catch {
+      cachedBootId = null;
+    }
+  }
+  return cachedBootId;
+}
+
+function writtenDuringThisBoot(lock: PidLockInfo): boolean {
+  const thisBoot = currentBootId();
+  if (lock.bootId && thisBoot) return lock.bootId === thisBoot;
+  return !precedesThisBoot(lock.startedAt);
+}
+
+/**
+ * Whether the process that wrote this lock is still running.
+ *
+ * A PID alone does not identify the supervisor: the operating system hands the number to
+ * something else once the supervisor is gone, and a reboot reassigns it freely. A process
+ * cannot predate the boot it runs under, so a lock written during another boot is abandoned
+ * however alive its PID looks.
+ */
+export function isPidLockOwnerRunning(lock: PidLockInfo): boolean {
+  if (!writtenDuringThisBoot(lock)) return false;
+  return isPidRunning(lock.pid);
 }
 
 function getPidFilePath(paseoHome: string): string {
@@ -60,18 +110,26 @@ async function touchPidLockFile(pidPath: string): Promise<void> {
 
 async function readPidLock(pidPath: string): Promise<PidLockInfo | null> {
   let lastError: unknown;
+  let empty = false;
   for (let attempt = 0; attempt < PID_LOCK_READ_RETRY_ATTEMPTS; attempt++) {
     try {
       const content = await readFile(pidPath, "utf-8");
-      const lock = parsePidLockInfo(JSON.parse(content));
-      if (lock) return lock;
-      lastError = new Error("Invalid lock shape");
+      empty = content === "";
+      if (!empty) {
+        const lock = parsePidLockInfo(JSON.parse(content));
+        if (lock) return lock;
+        lastError = new Error("Invalid lock shape");
+      }
     } catch (error) {
       if (isErrnoException(error) && error.code === "ENOENT") return null;
+      empty = false;
       lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, PID_LOCK_READ_RETRY_DELAY_MS));
   }
+  // A supervisor writes its lock right after creating the file, so a file still empty
+  // after the retries was abandoned in between and names no owner.
+  if (empty) return null;
   throw Object.assign(
     new PidLockError(`Cannot read daemon state at ${pidPath}: ${String(lastError)}`),
     { code: "DAEMON_STATE_READ_FAILED" },
@@ -105,7 +163,7 @@ async function clearExistingPidLock(
   existingLock: PidLockInfo,
   lockOwnerPid: number,
 ): Promise<"already_owned" | "cleared"> {
-  const lockOwnerRunning = isPidRunning(existingLock.pid);
+  const lockOwnerRunning = isPidLockOwnerRunning(existingLock);
   if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
     await touchPidLockFile(pidPath);
     return "already_owned";
@@ -116,13 +174,21 @@ async function clearExistingPidLock(
   if (
     !confirmedLock ||
     !isSamePidLock(existingLock, confirmedLock) ||
-    isPidRunning(confirmedLock.pid)
+    isPidLockOwnerRunning(confirmedLock)
   ) {
     throw new PidLockError("PID lock changed while checking whether it was abandoned");
   }
 
   await unlink(pidPath).catch(() => {});
   return "cleared";
+}
+
+async function removeEmptyPidLock(pidPath: string): Promise<void> {
+  try {
+    if ((await stat(pidPath)).size === 0) await unlink(pidPath);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
 }
 
 async function writeNewPidLock(pidPath: string, lockInfo: PidLockInfo): Promise<void> {
@@ -167,16 +233,20 @@ export async function acquirePidLock(
     if (result === "already_owned") {
       return;
     }
+  } else {
+    await removeEmptyPidLock(pidPath);
   }
 
   // Create new lock with exclusive flag
+  const bootId = currentBootId();
   const lockInfo: PidLockInfo = {
     pid: lockOwnerPid,
     startedAt: new Date().toISOString(),
-    hostname: hostname(),
+    hostname: getHostName(),
     uid: process.getuid?.() ?? 0,
     listen,
     heartbeat: true,
+    ...(bootId ? { bootId } : {}),
     ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
   };
 
@@ -277,7 +347,7 @@ export function startPidLockHeartbeat(
 
 export async function updatePidLock(
   paseoHome: string,
-  patch: { listen: string | null },
+  patch: { listen: string; serverId: string } | { listen: null; serverId: null },
   options?: { ownerPid?: number },
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
@@ -339,7 +409,7 @@ export async function isLocked(
   if (!info) {
     return { locked: false };
   }
-  if (!isPidRunning(info.pid)) {
+  if (!isPidLockOwnerRunning(info)) {
     return { locked: false, info };
   }
   return { locked: true, info };
