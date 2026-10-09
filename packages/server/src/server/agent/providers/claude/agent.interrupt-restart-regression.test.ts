@@ -279,45 +279,73 @@ afterEach(() => {
   queryFactory.mockReset();
 });
 
-test.each([false, true])(
-  "submits after a thinking change with no live query (previous query ended: %s)",
-  async (previousQueryEnded) => {
-    const queries: ScriptedQuery[] = [];
-    queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      const scriptedQuery = createScriptedQuery({
-        prompt,
-        sessionId: "thinking-restart-session",
-        handlePrompt: ({ query }) => query.emit(buildSuccessResult("thinking-restart-session")),
-      });
-      queries.push(scriptedQuery);
-      return scriptedQuery;
+test("submits after a thinking change before the first query", async () => {
+  const queries: ScriptedQuery[] = [];
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "thinking-restart-session",
+      handlePrompt: ({ query }) => query.emit(buildSuccessResult("thinking-restart-session")),
     });
-    const session = await new ClaudeAgentClient({
-      logger: createTestLogger(),
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    }).createSession({ provider: "claude", cwd: process.cwd() });
+    queries.push(scriptedQuery);
+    return scriptedQuery;
+  });
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
 
-    try {
-      if (previousQueryEnded) {
-        await collectUntilTerminal(streamSession(session, "first prompt"));
-        queries[0].end();
-        // Let the pump retire the old query before changing thinking.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      await session.setThinkingOption!("medium");
-      const events = await collectUntilTerminal(
-        streamSession(session, "continue", { clientMessageId: "client-continue" }),
-      );
-      expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
-      expect(events.at(-1)?.type).toBe("turn_completed");
-      expect(queryFactory).toHaveBeenCalledTimes(previousQueryEnded ? 2 : 1);
-      expect(queries.at(-1)?.prompts.map((prompt) => prompt.text)).toEqual(["continue"]);
-    } finally {
-      await session.close();
-    }
-  },
-);
+  try {
+    await session.setThinkingOption!("medium");
+    const events = await collectUntilTerminal(
+      streamSession(session, "continue", { clientMessageId: "client-continue" }),
+    );
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(events.at(-1)?.type).toBe("turn_completed");
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+    expect(queries.at(-1)?.prompts.map((prompt) => prompt.text)).toEqual(["continue"]);
+  } finally {
+    await session.close();
+  }
+});
+
+test("submits after a thinking change when the previous query has ended", async () => {
+  const queries: ScriptedQuery[] = [];
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "thinking-restart-session",
+      handlePrompt: ({ query }) => query.emit(buildSuccessResult("thinking-restart-session")),
+    });
+    queries.push(scriptedQuery);
+    return scriptedQuery;
+  });
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  try {
+    await collectUntilTerminal(streamSession(session, "first prompt"));
+    await waitFor(() => queries[0].next.mock.calls.length >= 3);
+    queries[0].end();
+    await expect(queries[0].next.mock.results.at(-1)?.value).resolves.toEqual({
+      value: undefined,
+      done: true,
+    });
+    await session.setThinkingOption!("medium");
+    const events = await collectUntilTerminal(
+      streamSession(session, "continue", { clientMessageId: "client-continue" }),
+    );
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(events.at(-1)?.type).toBe("turn_completed");
+    expect(queryFactory).toHaveBeenCalledTimes(2);
+    expect(queries[1].prompts.map((prompt) => prompt.text)).toEqual(["continue"]);
+  } finally {
+    await session.close();
+  }
+});
 
 test("publishes the submitted prompt identity before an immediate provider failure", async () => {
   queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) =>
@@ -381,6 +409,7 @@ test("rewind resolves a failed prompt's client identity to its Claude checkpoint
     queryFactory,
     resolveBinary: async () => "/test/claude/bin",
   });
+  vi.spyOn(client, "isAvailable").mockResolvedValue(true);
   const manager = new AgentManager({ clients: { claude: client }, logger: createTestLogger() });
   const agent = await manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
     workspaceId: undefined,

@@ -3203,7 +3203,7 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
 
-    // A fresh query already uses the current settings, even when there was no old query to retire.
+    // A new query uses the current settings even when there was no old query to retire.
     this.queryRestartNeeded = false;
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
@@ -3808,12 +3808,11 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private startQueryPump(): void {
-    if (this.closed || this.queryPumpPromise || !this.query) {
+    if (this.closed || this.queryPumpPromise) {
       return;
     }
 
-    // Drain the initialized query; a pending settings change belongs to the next turn.
-    const pump = this.runQueryPump(this.query).catch((error) => {
+    const pump = this.runQueryPump().catch((error) => {
       this.logger.trace(
         {
           agentId: this.agentId,
@@ -3834,7 +3833,25 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  private async runQueryPump(activeQuery: Query): Promise<void> {
+  private async runQueryPump(): Promise<void> {
+    let activeQuery: Query;
+    try {
+      activeQuery = await this.ensureQuery();
+    } catch (error) {
+      this.logger.trace(
+        {
+          agentId: this.agentId,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          err: error,
+        },
+        "provider.claude.query_pump.init_failed",
+      );
+      this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
+      return;
+    }
+
     let consecutiveInterruptAbortRecoveries = 0;
     const logRawMessage = (message: SDKMessage): void => {
       this.logger.trace(
