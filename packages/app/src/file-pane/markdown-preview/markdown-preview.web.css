@@ -1,0 +1,347 @@
+/* GitHub-style reading surface for the file-pane markdown preview (web and
+ * Electron). Every color comes from the Unistyles CSS variables, so the preview
+ * follows the active app theme without a React subscription. Scoped under
+ * `.paseo-md` so nothing leaks into the rest of the app. */
+
+.paseo-md {
+  --paseo-md-mono: var(
+    --font-family-mono,
+    ui-monospace,
+    SFMono-Regular,
+    "SF Mono",
+    Menlo,
+    Consolas,
+    "Liberation Mono",
+    monospace
+  );
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 8px 8px 56px;
+  color: var(--colors-foreground);
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+.paseo-md *,
+.paseo-md *::before,
+.paseo-md *::after {
+  box-sizing: border-box;
+}
+
+.paseo-md > :first-child {
+  margin-top: 0;
+}
+
+.paseo-md h1,
+.paseo-md h2,
+.paseo-md h3,
+.paseo-md h4,
+.paseo-md h5,
+.paseo-md h6 {
+  margin: 1.6em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.paseo-md h1 {
+  font-size: 1.9em;
+  border-bottom: 1px solid var(--colors-border);
+  padding-bottom: 0.3em;
+}
+
+.paseo-md h2 {
+  font-size: 1.45em;
+  border-bottom: 1px solid var(--colors-border);
+  padding-bottom: 0.3em;
+}
+
+.paseo-md h3 {
+  font-size: 1.2em;
+}
+
+.paseo-md h4 {
+  font-size: 1.05em;
+}
+
+.paseo-md h5 {
+  font-size: 0.95em;
+}
+
+.paseo-md h6 {
+  font-size: 0.9em;
+  color: var(--colors-foreground-muted);
+}
+
+.paseo-md p {
+  margin: 0 0 1em;
+}
+
+.paseo-md a {
+  color: var(--colors-accent-bright);
+  text-decoration: none;
+}
+
+.paseo-md a:hover {
+  text-decoration: underline;
+}
+
+.paseo-md strong {
+  font-weight: 600;
+}
+
+.paseo-md del {
+  color: var(--colors-foreground-muted);
+}
+
+.paseo-md hr {
+  height: 0.25em;
+  margin: 1.6em 0;
+  border: 0;
+  background: var(--colors-border);
+}
+
+.paseo-md img {
+  max-width: 100%;
+  height: auto;
+}
+
+.paseo-md ul,
+.paseo-md ol {
+  margin: 0 0 1em;
+  padding-left: 1.8em;
+}
+
+.paseo-md li + li {
+  margin-top: 0.25em;
+}
+
+.paseo-md li > p {
+  margin: 0 0 0.5em;
+}
+
+.paseo-md blockquote {
+  margin: 0 0 1em;
+  padding: 0 1em;
+  color: var(--colors-foreground-muted);
+  border-left: 0.25em solid var(--colors-border);
+}
+
+.paseo-md blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.paseo-md code {
+  font-family: var(--paseo-md-mono);
+  font-size: 0.9em;
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  background: var(--colors-surface2);
+}
+
+.paseo-md pre {
+  margin: 0 0 1em;
+  padding: 14px 16px;
+  border: 1px solid var(--colors-border);
+  border-radius: 8px;
+  background: var(--colors-surface1);
+  overflow: auto;
+  line-height: 1.5;
+}
+
+.paseo-md pre code {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.875em;
+  white-space: pre;
+}
+
+/* --- tables ------------------------------------------------------------- */
+
+.paseo-md .paseo-md-table-scroll {
+  margin: 0 0 1em;
+  overflow-x: auto;
+}
+
+.paseo-md table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.paseo-md th,
+.paseo-md td {
+  padding: 6px 13px;
+  border: 1px solid var(--colors-border);
+}
+
+.paseo-md th {
+  font-weight: 600;
+  background: var(--colors-surface2);
+}
+
+.paseo-md tbody tr:nth-child(2n) {
+  background: var(--colors-surface1);
+}
+
+/* --- task lists --------------------------------------------------------- */
+
+.paseo-md .contains-task-list {
+  padding-left: 0;
+}
+
+.paseo-md .task-list-item {
+  list-style: none;
+}
+
+.paseo-md .task-list-item input[type="checkbox"] {
+  margin: 0 0.45em 0.2em -1.35em;
+  vertical-align: middle;
+}
+
+/* --- footnotes ---------------------------------------------------------- */
+
+.paseo-md .footnotes {
+  margin-top: 2em;
+  padding-top: 1em;
+  border-top: 1px solid var(--colors-border);
+  font-size: 0.9em;
+  color: var(--colors-foreground-muted);
+}
+
+.paseo-md sup a {
+  text-decoration: none;
+}
+
+/* --- heading anchors ---------------------------------------------------- */
+
+.paseo-md .paseo-md-anchor {
+  float: left;
+  margin-left: -1.2em;
+  padding-right: 0.35em;
+  color: var(--colors-foreground-extra-muted);
+  opacity: 0;
+  text-decoration: none;
+}
+
+.paseo-md h1:hover .paseo-md-anchor,
+.paseo-md h2:hover .paseo-md-anchor,
+.paseo-md h3:hover .paseo-md-anchor,
+.paseo-md h4:hover .paseo-md-anchor,
+.paseo-md h5:hover .paseo-md-anchor,
+.paseo-md h6:hover .paseo-md-anchor,
+.paseo-md .paseo-md-anchor:focus {
+  opacity: 1;
+}
+
+/* --- front matter ------------------------------------------------------- */
+
+.paseo-md .paseo-md-frontmatter {
+  width: 100%;
+  margin: 0 0 2em;
+  border-collapse: collapse;
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+.paseo-md .paseo-md-frontmatter th,
+.paseo-md .paseo-md-frontmatter td {
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+  border: 1px solid var(--colors-border);
+}
+
+.paseo-md .paseo-md-frontmatter th {
+  width: 30%;
+  max-width: 200px;
+  font-family: var(--paseo-md-mono);
+  font-weight: 500;
+  color: var(--colors-foreground-muted);
+  background: var(--colors-surface2);
+  white-space: nowrap;
+}
+
+/* --- syntax tokens ------------------------------------------------------ */
+
+.paseo-md .paseo-md-tok-keyword {
+  color: var(--colors-syntax-keyword);
+}
+
+.paseo-md .paseo-md-tok-comment {
+  color: var(--colors-syntax-comment);
+}
+
+.paseo-md .paseo-md-tok-string {
+  color: var(--colors-syntax-string);
+}
+
+.paseo-md .paseo-md-tok-number {
+  color: var(--colors-syntax-number);
+}
+
+.paseo-md .paseo-md-tok-literal {
+  color: var(--colors-syntax-literal);
+}
+
+.paseo-md .paseo-md-tok-function {
+  color: var(--colors-syntax-function);
+}
+
+.paseo-md .paseo-md-tok-definition {
+  color: var(--colors-syntax-definition);
+}
+
+.paseo-md .paseo-md-tok-class {
+  color: var(--colors-syntax-class);
+}
+
+.paseo-md .paseo-md-tok-type {
+  color: var(--colors-syntax-type);
+}
+
+.paseo-md .paseo-md-tok-tag {
+  color: var(--colors-syntax-tag);
+}
+
+.paseo-md .paseo-md-tok-attribute {
+  color: var(--colors-syntax-attribute);
+}
+
+.paseo-md .paseo-md-tok-property {
+  color: var(--colors-syntax-property);
+}
+
+.paseo-md .paseo-md-tok-variable {
+  color: var(--colors-syntax-variable);
+}
+
+.paseo-md .paseo-md-tok-operator {
+  color: var(--colors-syntax-operator);
+}
+
+.paseo-md .paseo-md-tok-punctuation {
+  color: var(--colors-syntax-punctuation);
+}
+
+.paseo-md .paseo-md-tok-regexp {
+  color: var(--colors-syntax-regexp);
+}
+
+.paseo-md .paseo-md-tok-escape {
+  color: var(--colors-syntax-escape);
+}
+
+.paseo-md .paseo-md-tok-meta {
+  color: var(--colors-syntax-meta);
+}
+
+.paseo-md .paseo-md-tok-heading {
+  color: var(--colors-syntax-heading);
+}
+
+.paseo-md .paseo-md-tok-link {
+  color: var(--colors-syntax-link);
+}
