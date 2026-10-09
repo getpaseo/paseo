@@ -101,6 +101,12 @@ export interface UsageQueryState {
   isFetching: boolean;
 }
 
+export function sortUsageReports(reports: readonly UsageReportEntry[]): UsageReportEntry[] {
+  return [...reports].sort(
+    (a, b) => a.sourceLabel.localeCompare(b.sourceLabel) || a.id.localeCompare(b.id),
+  );
+}
+
 export function resolveUsageView(input: {
   hostLabel: string;
   isConnected: boolean;
@@ -113,9 +119,7 @@ export function resolveUsageView(input: {
     return { kind: "unavailable", message: usageCopy.hostUpgradeRequired(hostLabel) };
   }
   if (query?.data) {
-    const reports = [...query.data].sort(
-      (a, b) => a.sourceLabel.localeCompare(b.sourceLabel) || a.id.localeCompare(b.id),
-    );
+    const reports = sortUsageReports(query.data);
     return { kind: "ready", reports, isRefreshing: query.isFetching };
   }
   if (query?.error) {
