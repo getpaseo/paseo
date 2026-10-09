@@ -1,4 +1,5 @@
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { DIFF_FILE_HEADER_HEIGHT } from "@/git/file-header-presentation";
 import { findClusterBreak } from "@marijn/find-cluster-break";
 import {
   buildSplitDiffRows,
@@ -24,7 +25,7 @@ import type {
   TextMeasurer,
 } from "./types";
 
-export const FILE_HEADER_HEIGHT = 30;
+export const FILE_HEADER_HEIGHT = DIFF_FILE_HEADER_HEIGHT;
 export const DIFF_BODY_BORDER_HEIGHT = 1;
 const CODE_HORIZONTAL_PADDING = 16;
 

@@ -3,8 +3,8 @@ const compactFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-export const DIFF_FILE_HEADER_HEIGHT = 30;
-export const DIFF_FILE_HEADER_CONTENT_HEIGHT = 28;
+export const DIFF_FILE_HEADER_HEIGHT = 36;
+export const DIFF_FILE_HEADER_CONTENT_HEIGHT = 34;
 export const DIFF_FILE_HEADER_LEFT = 12;
 export const DIFF_FILE_HEADER_RIGHT = 8;
 export const DIFF_FILE_HEADER_ICON_SIZE = 14;

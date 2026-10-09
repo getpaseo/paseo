@@ -964,6 +964,10 @@ export const ja: TranslationResources = {
         newFile: "新規",
         deletedFile: "削除済み",
         modifiedFile: "変更済み",
+        markAsViewed: "確認済みにする",
+        viewed: "確認済み",
+        viewedStateFailed:
+          "確認済みファイルを保存または読み込めませんでした。もう一度お試しください。",
         commits: {
           title: "コミット",
           countLabel: "ワークスペースのコミット数: {{count}}",

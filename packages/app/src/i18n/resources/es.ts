@@ -984,6 +984,10 @@ export const es: TranslationResources = {
         newFile: "Nuevo",
         deletedFile: "Eliminado",
         modifiedFile: "Modificado",
+        markAsViewed: "Marcar como visto",
+        viewed: "Visto",
+        viewedStateFailed:
+          "No se pudieron guardar o cargar los archivos vistos. Inténtalo de nuevo.",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits del espacio de trabajo",

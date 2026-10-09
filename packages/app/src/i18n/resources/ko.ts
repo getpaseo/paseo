@@ -958,6 +958,9 @@ export const ko: TranslationResources = {
         newFile: "신규",
         deletedFile: "삭제됨",
         modifiedFile: "수정됨",
+        markAsViewed: "확인함으로 표시",
+        viewed: "확인됨",
+        viewedStateFailed: "확인한 파일을 저장하거나 불러오지 못했습니다. 다시 시도하세요.",
         commits: {
           title: "커밋",
           countLabel: "워크스페이스 커밋 {{count}}개",

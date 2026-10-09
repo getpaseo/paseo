@@ -974,6 +974,10 @@ export const ptBR: TranslationResources = {
         newFile: "Novo",
         deletedFile: "Excluído",
         modifiedFile: "Modificado",
+        markAsViewed: "Marcar como visto",
+        viewed: "Visto",
+        viewedStateFailed:
+          "Não foi possível salvar ou carregar os arquivos vistos. Tente novamente.",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits do espaço de trabalho",

@@ -293,9 +293,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
             paints={paints}
             headerSurface={props.palette.headerSurface}
             headerActiveSurface={props.palette.headerActiveSurface}
+            isViewed={props.viewedFiles.get(file.path) === file.file}
+            viewedActionDisabled={props.viewedActionDisabled}
+            viewedActionPending={props.viewedFilePendingPath === file.path}
             selectedPath={props.selectedPath}
             mode={props.mode}
             onToggleFile={props.onToggleFile}
+            onToggleFileViewed={props.onToggleFileViewed}
             onSelectPath={props.onSelectPath}
           />
         ))}
@@ -372,9 +376,13 @@ function NativeCanvasFileHeader({
   paints,
   headerSurface,
   headerActiveSurface,
+  isViewed,
+  viewedActionDisabled,
+  viewedActionPending,
   selectedPath,
   mode,
   onToggleFile,
+  onToggleFileViewed,
   onSelectPath,
 }: {
   file: DiffFileSection;
@@ -384,9 +392,13 @@ function NativeCanvasFileHeader({
   paints: NativePaints;
   headerSurface: string;
   headerActiveSurface: string;
+  isViewed: boolean;
+  viewedActionDisabled: boolean;
+  viewedActionPending: boolean;
   selectedPath: DiffSurfaceProps["selectedPath"];
   mode: DiffSurfaceProps["mode"];
   onToggleFile: DiffSurfaceProps["onToggleFile"];
+  onToggleFileViewed: DiffSurfaceProps["onToggleFileViewed"];
   onSelectPath: DiffSurfaceProps["onSelectPath"];
 }) {
   const [active, setActive] = useState(false);
@@ -420,9 +432,13 @@ function NativeCanvasFileHeader({
       </Canvas>
       <DocumentFileHeader
         file={file}
+        isViewed={isViewed}
+        viewedActionDisabled={viewedActionDisabled}
+        viewedActionPending={viewedActionPending}
         selectedPath={selectedPath}
         mode={mode}
         onToggleFile={onToggleFile}
+        onToggleFileViewed={onToggleFileViewed}
         onSelectPath={onSelectPath}
         canvasRendered
         onActiveChange={setActive}

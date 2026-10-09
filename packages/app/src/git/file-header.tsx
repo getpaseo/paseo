@@ -7,6 +7,8 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import { DiffStat } from "@/components/diff-stat";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { FileChangeIcon } from "@/components/file-change-icon";
@@ -20,9 +22,13 @@ import {
   WORKSPACE_TREE_ICON_SIZE,
 } from "@/components/tree-primitives";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTranslation } from "react-i18next";
 import { useFileHeaderInteraction } from "@/git/file-header-interaction";
 import {
+  DIFF_FILE_HEADER_CONTENT_HEIGHT,
+  DIFF_FILE_HEADER_HEIGHT,
   diffFileChangeKind,
   directorySuffix,
   fileNameForPath,
@@ -36,6 +42,9 @@ export interface FileHeaderProps {
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   bodyVisible: boolean;
   showsBodyState?: boolean;
+  isViewed?: boolean;
+  viewedActionDisabled?: boolean;
+  viewedActionPending?: boolean;
   isSelected?: boolean;
   depth?: number;
   showDir?: boolean;
@@ -52,6 +61,7 @@ export interface FileHeaderProps {
   onDownload?: (path: string) => void;
   onDuplicate?: (path: string) => void;
   onRevert?: (path: string, oldPath?: string) => void;
+  onToggleViewed?: () => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
   canvasRendered?: boolean;
@@ -182,11 +192,116 @@ function FileHeaderMenu({
   );
 }
 
+function FileHeaderContent({
+  file,
+  dragSourceRef,
+  showDir,
+  showsBodyState,
+  isHovered,
+  isViewed,
+  viewedActionDisabled,
+  viewedActionPending,
+  onToggleViewed,
+  testID,
+}: {
+  file: ParsedDiffFile;
+  dragSourceRef: ReturnType<typeof useWorkspaceFileDragSource>;
+  showDir: boolean;
+  showsBodyState: boolean;
+  isHovered: boolean;
+  isViewed: boolean;
+  viewedActionDisabled: boolean;
+  viewedActionPending: boolean;
+  onToggleViewed?: () => void;
+  testID?: string;
+}): ReactElement {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const fileName = fileNameForPath(file.path);
+  const nameStyle = fileHeaderNameStyle(showsBodyState, isHovered);
+  const markAsViewedLabel = t(
+    isViewed ? "workspace.git.diff.viewed" : "workspace.git.diff.markAsViewed",
+  );
+  const handleToggleViewed = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onToggleViewed?.();
+    },
+    [onToggleViewed],
+  );
+  const stopMarkAsViewedPropagation = useCallback((event: GestureResponderEvent) => {
+    event.stopPropagation();
+  }, []);
+  const alwaysShowViewedAction = isNative || isCompact;
+  const showViewedAction = isViewed || viewedActionPending || isHovered || alwaysShowViewedAction;
+  const isViewedActionIdle = isViewed && !isHovered && !alwaysShowViewedAction;
+  const viewedAccessibilityState = useMemo(() => ({ selected: isViewed }), [isViewed]);
+  return (
+    <View
+      style={[styles.content, showsBodyState && styles.documentContent]}
+      testID={testID ? `${testID}-header-content` : undefined}
+    >
+      <View ref={dragSourceRef} style={showDir ? styles.left : [styles.left, styles.leftTree]}>
+        {showDir ? null : (
+          <View style={styles.icon}>
+            <MaterialFileIcon fileName={fileName} size={WORKSPACE_TREE_ICON_SIZE} />
+          </View>
+        )}
+        <Text style={nameStyle} numberOfLines={1} testID={testID ? `${testID}-name` : undefined}>
+          {fileName}
+        </Text>
+        {showDir ? (
+          <Text style={styles.directory} numberOfLines={1}>
+            {directorySuffix(file.path)}
+          </Text>
+        ) : (
+          <View style={styles.directorySpacer} />
+        )}
+      </View>
+      <View style={styles.right}>
+        {onToggleViewed ? (
+          <View
+            pointerEvents={showViewedAction ? "auto" : "none"}
+            style={[
+              styles.viewedAction,
+              isViewedActionIdle && styles.viewedActionIdle,
+              !showViewedAction && styles.viewedActionHidden,
+            ]}
+          >
+            <Button
+              variant="ghost"
+              size="xs"
+              testID={testID ? `${testID}-mark-as-viewed` : undefined}
+              onPress={handleToggleViewed}
+              onPressIn={stopMarkAsViewedPropagation}
+              disabled={viewedActionDisabled}
+              loading={viewedActionPending}
+              accessibilityState={viewedAccessibilityState}
+              textStyle={styles.viewedActionText}
+            >
+              {markAsViewedLabel}
+            </Button>
+          </View>
+        ) : null}
+        <DiffStat
+          additions={file.additions}
+          deletions={file.deletions}
+          testID={testID ? `${testID}-stat` : undefined}
+        />
+        <FileChangeIcon change={fileChange(file)} />
+      </View>
+    </View>
+  );
+}
+
 export const FileHeader = memo(function FileHeader({
   file,
   workspaceFileDragScope,
   bodyVisible,
   showsBodyState = true,
+  isViewed = false,
+  viewedActionDisabled = false,
+  viewedActionPending = false,
   isSelected = false,
   depth = 0,
   showDir = true,
@@ -197,6 +312,7 @@ export const FileHeader = memo(function FileHeader({
   testID,
   canvasRendered = false,
   onActiveChange,
+  onToggleViewed,
   ...actions
 }: FileHeaderProps) {
   const hover = useFileHeaderHover(interactive, onActiveChange);
@@ -247,40 +363,19 @@ export const FileHeader = memo(function FileHeader({
     () => fileHeaderAccessibilityState({ showsBodyState, bodyVisible, isSelected }),
     [bodyVisible, isSelected, showsBodyState],
   );
-  const fileName = fileNameForPath(file.path);
-  const nameStyle = fileHeaderNameStyle(showsBodyState, hover.isHovered);
-  const changeIcon = <FileChangeIcon change={fileChange(file)} />;
   const content = (
-    <View
-      style={[styles.content, showsBodyState && styles.documentContent]}
-      testID={testID ? `${testID}-header-content` : undefined}
-    >
-      <View ref={dragSourceRef} style={showDir ? styles.left : [styles.left, styles.leftTree]}>
-        {showDir ? null : (
-          <View style={styles.icon}>
-            <MaterialFileIcon fileName={fileName} size={WORKSPACE_TREE_ICON_SIZE} />
-          </View>
-        )}
-        <Text style={nameStyle} numberOfLines={1} testID={testID ? `${testID}-name` : undefined}>
-          {fileName}
-        </Text>
-        {showDir ? (
-          <Text style={styles.directory} numberOfLines={1}>
-            {directorySuffix(file.path)}
-          </Text>
-        ) : (
-          <View style={styles.directorySpacer} />
-        )}
-      </View>
-      <View style={styles.right}>
-        <DiffStat
-          additions={file.additions}
-          deletions={file.deletions}
-          testID={testID ? `${testID}-stat` : undefined}
-        />
-        {changeIcon}
-      </View>
-    </View>
+    <FileHeaderContent
+      file={file}
+      dragSourceRef={dragSourceRef}
+      showDir={showDir}
+      showsBodyState={showsBodyState}
+      isHovered={hover.isHovered}
+      isViewed={isViewed}
+      viewedActionDisabled={viewedActionDisabled}
+      viewedActionPending={viewedActionPending}
+      onToggleViewed={onToggleViewed}
+      testID={testID}
+    />
   );
   const renderedContent = canvasRendered ? (
     <View ref={dragSourceRef} style={styles.canvasInteractionContent} />
@@ -362,7 +457,7 @@ export const FileHeader = memo(function FileHeader({
 const styles = StyleSheet.create((theme) => ({
   container: { width: "100%", overflow: "hidden", userSelect: "none" },
   documentContainer: {
-    height: 30,
+    height: DIFF_FILE_HEADER_HEIGHT,
     backgroundColor: theme.colors.surface0,
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.borderAccent,
@@ -380,7 +475,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   documentHeader: {
     elevation: 2,
-    height: 28,
+    height: DIFF_FILE_HEADER_CONTENT_HEIGHT,
     paddingLeft: 0,
     paddingRight: 0,
     paddingVertical: 0,
@@ -394,7 +489,7 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   documentContent: {
-    height: 28,
+    height: DIFF_FILE_HEADER_CONTENT_HEIGHT,
     paddingLeft: theme.spacing[3],
     paddingRight: WORKSPACE_PANE_TRAILING_GLYPH_RAIL,
   },
@@ -423,6 +518,10 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
     userSelect: "none",
   },
+  viewedAction: { opacity: 1 },
+  viewedActionIdle: { opacity: 0.5 },
+  viewedActionHidden: { opacity: 0 },
+  viewedActionText: { color: theme.colors.foreground },
   icon: {
     width: WORKSPACE_TREE_ICON_SIZE,
     height: WORKSPACE_TREE_ICON_SIZE,

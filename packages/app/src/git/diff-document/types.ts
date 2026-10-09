@@ -16,6 +16,7 @@ interface DiffDocumentBaseProps {
 
 export interface WorkingDiffMode {
   kind: "working";
+  viewedFilesStorageKey: string;
   reviewActions?: InlineReviewActions;
   onFilePress?: (path: string) => void;
   focusPath?: string;
@@ -226,6 +227,10 @@ export type DiffSurfaceProps = DiffDocumentProps & {
   headerTypography: DiffHeaderTypography;
   collapsedFilePaths: ReadonlySet<string>;
   onToggleFile: (path: string) => void;
+  viewedFiles: ReadonlyMap<string, ParsedDiffFile>;
+  viewedActionDisabled: boolean;
+  viewedFilePendingPath: string | null;
+  onToggleFileViewed: (file: ParsedDiffFile) => void;
   selectedPath: string | null;
   onSelectPath: (path: string) => void;
 };
