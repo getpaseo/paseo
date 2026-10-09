@@ -1,4 +1,5 @@
 import type { Href } from "expo-router";
+import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { describe, expect, it } from "vitest";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
@@ -82,18 +83,28 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
   });
 });
 
-function createFakeRouter(workspaces: WorkspaceDescriptor[]): {
+function createFakeRouter(
+  workspaces: WorkspaceDescriptor[],
+  targets: ActiveWorkspaceSelection[] = [],
+): {
   deps: RedirectIfArchivingActiveWorkspaceDeps;
   routes: Href[];
+  selections: ActiveWorkspaceSelection[];
 } {
   const routes: Href[] = [];
+  const selections: ActiveWorkspaceSelection[] = [];
   return {
     routes,
+    selections,
     deps: {
       navigateToRoute: (route) => {
         routes.push(route);
       },
       readWorkspaces: () => workspaces,
+      readSidebarWorkspaceTargets: () => targets,
+      navigateToWorkspace: (target) => {
+        selections.push(target);
+      },
     },
   };
 }
@@ -136,6 +147,92 @@ describe("redirectIfArchivingActiveWorkspace", () => {
       ),
     ).toBe(true);
 
+    expect(routes).toEqual(["/new?serverId=server-1&dir=%2Frepo&name=Project&projectId=project-1"]);
+  });
+});
+
+describe("archive selection in sidebar order", () => {
+  const target = (workspaceId: string, serverId = "server-1"): ActiveWorkspaceSelection => ({
+    serverId,
+    workspaceId,
+  });
+
+  it.each([
+    {
+      name: "next row",
+      current: "first",
+      targets: [target("first"), target("second"), target("third")],
+      expected: target("second"),
+    },
+    {
+      name: "previous row at the end",
+      current: "third",
+      targets: [target("first"), target("second"), target("third")],
+      expected: target("second"),
+    },
+    {
+      name: "another host",
+      current: "first",
+      targets: [target("first"), target("second", "server-2")],
+      expected: target("second", "server-2"),
+    },
+    {
+      name: "first visible row when selection is filtered out",
+      current: "third",
+      targets: [target("second"), target("first")],
+      expected: target("second"),
+    },
+    {
+      name: "past missing and archiving rows",
+      current: "first",
+      targets: [target("first"), target("missing"), target("archiving"), target("third")],
+      expected: target("third"),
+    },
+  ])("selects $name", ({ current, targets, expected }) => {
+    const { deps, routes, selections } = createFakeRouter(
+      [
+        workspace({ id: "third" }),
+        workspace({ id: "second" }),
+        workspace({ id: "first" }),
+        workspace({ id: "archiving", archivingAt: "2026-09-14T00:00:00.000Z" }),
+      ],
+      targets,
+    );
+    expect(
+      redirectIfArchivingActiveWorkspace(
+        { ...target(current), activeWorkspaceSelection: target(current) },
+        deps,
+      ),
+    ).toBe(true);
+    expect(selections).toEqual([expected]);
+    expect(routes).toEqual([]);
+  });
+
+  it("keeps the selection when another host has the same workspace id", () => {
+    const { deps, routes, selections } = createFakeRouter(
+      [workspace({ id: "first" })],
+      [target("first")],
+    );
+    expect(
+      redirectIfArchivingActiveWorkspace(
+        { ...target("first"), activeWorkspaceSelection: target("first", "server-2") },
+        deps,
+      ),
+    ).toBe(false);
+    expect(selections).toEqual([]);
+    expect(routes).toEqual([]);
+  });
+
+  it("opens the new workspace screen after the last available row", () => {
+    const { deps, routes, selections } = createFakeRouter(
+      [workspace({ id: "first" })],
+      [target("first"), target("missing")],
+    );
+    redirectIfArchivingActiveWorkspace(
+      { ...target("first"), activeWorkspaceSelection: target("first") },
+      deps,
+    );
+    expect(selections).toEqual([]);
     expect(routes).toEqual(["/new?serverId=server-1&dir=%2Frepo&name=Project&projectId=project-1"]);
   });
 });
