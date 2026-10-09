@@ -3,6 +3,8 @@ const path = require("node:path");
 const pkg = require("./package.json");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
+const withAndroidShortcuts = require("./plugins/with-android-shortcuts");
+const withAssistantProvider = require("./plugins/with-assistant-provider");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
 const withAndroidScroll = require("./modules/paseo-scroll/app.plugin");
@@ -92,6 +94,15 @@ const variants = {
   },
 };
 
+// Share-sheet and text-selection entry points. paseo:// links come from `scheme`;
+// what each intent does is documented in docs/android-intents.md.
+const androidIntentFilters = [
+  { action: "SEND", category: ["DEFAULT"], data: [{ mimeType: "text/plain" }] },
+  { action: "SEND", category: ["DEFAULT"], data: [{ mimeType: "image/*" }] },
+  { action: "SEND_MULTIPLE", category: ["DEFAULT"], data: [{ mimeType: "image/*" }] },
+  { action: "PROCESS_TEXT", category: ["DEFAULT"], data: [{ mimeType: "text/plain" }] },
+];
+
 const variant = variants[appVariant] ?? variants.production;
 const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 
@@ -130,6 +141,7 @@ export default {
       permissions: buildProfile.androidPermissions,
       package: variant.packageId,
       versionCode: nativeReleaseVersion.androidVersionCode,
+      intentFilters: androidIntentFilters,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
     },
     web: {
@@ -144,6 +156,8 @@ export default {
       withPasteInput,
       withAndroidScroll,
       [withAndroidAsyncStorageSize, 64],
+      withAndroidShortcuts,
+      withAssistantProvider,
       ...buildProfile.cameraPlugins,
       [
         "expo-splash-screen",
