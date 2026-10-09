@@ -1,40 +1,62 @@
 # Hermes ACP subagent QA
 
-Every displayed reply is scripted and explicitly labeled `[NO-MODEL FIXTURE]`. These are actual app screenshots and recordings, not UI-injected events or real model output.
+Second-pass verification uses actual Paseo provider, daemon, WebSocket and browser paths. The screenshots show the real app. Synthetic replies are labeled `[NO-MODEL FIXTURE]`; live-model results are recorded separately.
 
-Tested on macOS 27.2 / Apple Silicon / Chrome 155. The executable Python fixture uses the companion Hermes checkout's real ACP server, callback wiring, relay, journal and serializer. Paseo launches it as a configured generic ACP provider; notifications travel through the actual daemon, WebSocket client and existing provider-subagent panels.
+## Results
+
+- Paseo focused tests: 166 passed across 5 files. This includes resume-only replay, opening history count/byte overflow and timeout, shortened/empty public-text replacement with a changed timeline epoch, titles and limit notices.
+- Hermes ACP tests: 50 passed across 3 files. Blocking check runner: 11 checks passed, zero blocking/advisory health findings.
+- Additional Hermes delegation tests: 75 passed, 1 failed. `test_child_dedicated_db_follows_parents_db_path` compares macOS `/var` and `/private/var` as strings. The same failure was verified on the unchanged base in the first pass; it is not a new failure introduced here.
+- Plugin, server and app typechecks: exit 0. Changed-file lint: zero warnings/errors. Formatting check passed.
+- Node no-model UI: 4 passed (25.4s). Companion Python no-model UI: 4 passed (50.3s). A further output-warning viewport capture passed (17.0s).
+- Real authenticated model success UI: 1 passed (1.3m). Real-runtime failure injection UI: 1 passed. See the structured outcome files below for actual observations.
+
+[Selected command result lines](validation-results.txt). Full repository success is not claimed.
+
+## Real model observations
+
+The producer was the modified Hermes checkout's real `AIAgent`, delegate tool and ACP server. The consumer was the modified Paseo checkout. Authentication used the official read-only Codex resolver. Credentials remained in memory; no credential files were copied. The runner writes only a temporary, separate Hermes home and synthetic workspace. Memory, context-file loading and background review are disabled for the QA parent. No installed runtime or personal profile configuration was edited.
+
+Success used `openai-codex` / `gpt-6.1-sol`. The parent delegated counting three synthetic text files after a 40-second wait and replied after 7,287 ms. Its child was still running then, remained running after browser reload, completed, and returned `3`. The public title was `Count files` before and after reconnect. [Structured result](real-model-success.json), [running child](real-model-success-before-reconnect.png), [completed result](real-model-success-terminal.png).
+
+Failure injection pinned only the child in the isolated QA configuration to `qa-intentionally-unavailable-model`, with fallback disabled. The parent still used the authenticated real model. Hermes reported the child failed, and Paseo retained failed state after reconnect. This is a genuine runtime failure induced through normal child model routing; it is not a scripted status event, an organic failure, or evidence of successful inference by the unavailable child model. Raw upstream errors and HTTP status were not retained, so no specific HTTP response is claimed. The public child timeline is empty because this channel does not forward raw failure summaries. [Structured result](real-model-failure.json), [failed child](real-model-failure-terminal.png).
+
+An earlier attempt to induce failure with a two-second timeout did not fail: Hermes floors that setting at 30 seconds and renews the inactivity budget when work progresses. That child completed normally. It is excluded from the passing failure-injection claim. Two early UI attempts also stopped at a wrong test locator: the title is in the tab, outside the timeline panel. The corrected live tests passed. Model timing and tool choices are nondeterministic; the recorded observations do not guarantee identical future runs.
+
+## Current no-model screenshots
+
+The companion Python fixture exercises the actual Hermes relay, callback wiring, journal and serializer without inference. It verifies concurrent and nested identities using Hermes' native zero-based relay depth, cross-turn completed/failed/canceled events and reconnect retention. It makes no model requests.
+
+- [Light running list](desktop-light-running.png), [nested panel](desktop-light-nested.png), [reconnected](desktop-light-reconnected.png).
+- [Dark running list](desktop-dark-running.png), [nested panel](desktop-dark-nested.png), [reconnected](desktop-dark-reconnected.png).
+- [Compact running list](compact-light-running.png), [nested panel](compact-light-nested.png), [reconnected](compact-light-reconnected.png).
+- [16,384-character incomplete-output notice](limits-output-incomplete.png), [32-activity incomplete-record notice](limits-incomplete-record.png), [64-child omission notice in the parent](limits-omitted-children.png).
+
+The three existing `.webm` recordings are from the first pass, before safe task titles and visible limit flags. They remain historical no-model evidence, not recordings of the current title/limit behavior.
 
 ## Reproduce
 
-From `packages/app`, after normal workspace setup and Playwright browser installation:
+After normal workspace setup, run from `packages/app`:
 
 ```sh
-E2E_RECORD_VIDEO=1 npx playwright test e2e/browser/hermes-subagents.spec.ts --project browser --workers 1
+npx playwright test e2e/browser/hermes-subagents.spec.ts --project browser --workers 1
 ```
 
-This default uses the self-contained Node contract fixture committed with Paseo. To exercise both repositories together, set `PASEO_HERMES_ACP_FIXTURE_PYTHON` to a Hermes test interpreter with the ACP extra and `PASEO_HERMES_ACP_FIXTURE_SCRIPT` to `tests/acp_adapter/fixtures/subagent_agent.py` in the companion checkout, then run the same command. The test creates an isolated temporary `HERMES_HOME` and workspace.
+For both checkouts without a model, set `PASEO_HERMES_ACP_FIXTURE_PYTHON` to an interpreter with the Hermes ACP extra and `PASEO_HERMES_ACP_FIXTURE_SCRIPT` to the companion checkout's `tests/acp_adapter/fixtures/subagent_agent.py`, then run that command.
 
-Local verification used installed Chrome through a temporary Playwright config and the installed FFmpeg through a temporary tooling directory because the bundled binaries were unavailable. Those machine-specific overrides are not committed.
+For opt-in live-model QA, set `PASEO_HERMES_REAL_PYTHON` to the interpreter, `PASEO_HERMES_REAL_SCRIPT` to the companion `tests/acp_adapter/qa/real_model_agent.py`, and `PASEO_HERMES_REAL_AUTH_HOME` to an already authenticated Codex profile. The script uses `read_only=True`; it will not refresh expired credentials. Authenticate through the normal provider mechanism beforehand if needed.
 
-## Observed behavior
+```sh
+npx playwright test e2e/browser/hermes-subagents.real.spec.ts --project real-provider --workers 1
+PASEO_HERMES_REAL_FAIL_CHILD=1 npx playwright test e2e/browser/hermes-subagents.real.spec.ts --project real-provider --workers 1
+```
 
-Three simultaneous children appear as two root rows and one nested child. The root turn finishes while all three remain running. Opening alpha shows its public reply and `Started tool: terminal`; opening its nested child shows that child's own reply and `Started tool: read_file`. No child Stop button is offered. A second root turn reports completed, failed and canceled through callbacks retained from the first turn. Browser reload retains the selected child's public output and daemon timeline.
+Live tests make network requests and may consume quota. They are separate from deterministic CI fixtures. Local browser execution used installed Chrome with a temporary config; that machine-specific config is not committed.
 
-- [Light desktop running list](desktop-light-running.png), [nested panel](desktop-light-nested.png), [after reconnect](desktop-light-reconnected.png), [recording](desktop-light.webm).
-- [Dark desktop running list](desktop-dark-running.png), [nested panel](desktop-dark-nested.png), [after reconnect](desktop-dark-reconnected.png), [recording](desktop-dark.webm).
-- [Compact running list](compact-light-running.png), [nested panel](compact-light-nested.png), [after reconnect](compact-light-reconnected.png), [recording](compact-light.webm).
+## Review fixes and remaining scope
 
-## Automated results
+The second pass addresses all four existing Greptile comments: resume-only child replay, bounded/deadline-limited opening history, true replacement of cumulative text, and intent-level browser tests with typed field assertions. Hermes first-level relay depth is also corrected from native zero to wire depth one; the earlier fixture's one-based native depth hid this real-runtime bug.
 
-- Plugin reducer + ACP connector: 2 files, 40 passed (18.13s).
-- Built-in ACP adapter + capability/child-history tests: 2 files, 117 passed (3.88s).
-- Self-contained Node fixture UI: 3 passed (53.2s).
-- Real Hermes fixture UI: 3 passed (55.0s); desktop light/dark and compact layouts.
-- Plugin, server and app typechecks: exit 0.
-- Changed TypeScript/fixture lint: 0 warnings, 0 errors; formatting check passed.
+Titles deliberately project goals to fixed public action/subject words rather than copying instructions. A task category can still be confidential; automatic projection or redaction cannot guarantee confidentiality. Limit flags are additive v1 fields, and ordinary ACP titles still explain limited records to older clients. Omitted-child state is a sticky boolean rather than an unbounded collection or an exact count.
 
-Regression proof on base `29db2b7`: both new ACP connector tests fail. The background test never receives a child terminal event; load emits only the root instead of root plus restored child. Both pass on the branch. Validator tests also cover duplicate/older sequences, terminal non-revival, malformed identities, wrong depth, cycles, child-before-parent ordering, unknown-version fallback, and transport loss.
-
-## Limits
-
-No model/network inference ran. Native iOS, Android, Electron, Linux and Windows were not tested. Browser reconnect is exercised end to end; ACP load replay and cold journal restore are covered by focused behavior tests. This is bounded public visibility, not a complete transcript archive or a child-control protocol. See the [shared v1 contract](../../hermes-acp-subagents.md).
+Browser reconnect while a real child runs is verified. ACP load/resume-only replay, old journal compatibility and cold restore are covered by focused tests. An ACP process restart cannot preserve the old process's running worker: cold restore reports it failed. Native iOS, Android, Electron, Linux and Windows were not executed. No child stop/steer control or full raw transcript viewer is added. See the [shared contract](../../hermes-acp-subagents.md).

@@ -13,6 +13,9 @@ function snapshot(id, extra = {}) {
     status: "running",
     text: "",
     tools: [],
+    title:
+      { alpha: "Count files", beta: "Review notes", nested: "Inspect data" }[id] ??
+      "Delegated task",
     ...nodes.get(id),
     ...extra,
     sequence: ++sequence,
@@ -70,7 +73,39 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       });
     }
   } else if (request.method === "session/prompt") {
-    if (++turn === 1) {
+    if (request.params.prompt?.some((block) => block.text === "fixture limits")) {
+      snapshot("alpha", {
+        title: "Count files",
+        text: ("[NO-MODEL FIXTURE] Bounded public output " + "x".repeat(16384)).slice(0, 16384),
+        tools: Array(32).fill("terminal"),
+        outputLimited: true,
+        activitiesLimited: true,
+      });
+      for (let i = 1; i < 64; i++) snapshot(`limit-${i}`);
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "fixture-root",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "hermes-subagents:limit",
+            title: "Additional Hermes subagents omitted: 64-child display limit reached",
+            status: "completed",
+            _meta: {
+              hermes: {
+                subagentLimit: {
+                  version: 1,
+                  sequence: ++sequence,
+                  limit: 64,
+                  childrenOmitted: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    } else if (++turn === 1) {
       snapshot("alpha", { text: "[NO-MODEL FIXTURE] alpha public output", tools: ["terminal"] });
       snapshot("beta", { text: "[NO-MODEL FIXTURE] beta public output", tools: ["terminal"] });
       snapshot("nested", {

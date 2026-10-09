@@ -4112,6 +4112,60 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     ]);
   });
 
+  test("retains children received before resume-only response for later history subscribers", async () => {
+    let session!: ACPAgentSession;
+    const unstableResumeSession = vi.fn(async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "hermes-subagent:child",
+          title: "Count files",
+          _meta: {
+            hermes: {
+              subagentProgress: {
+                version: 1,
+                id: "child",
+                parentId: null,
+                depth: 1,
+                sequence: 1,
+                title: "Count files",
+                status: "running",
+                text: "Public reply",
+                tools: [],
+              },
+            },
+          },
+        },
+      });
+      return { sessionId: "session-1", configOptions: [] };
+    });
+    ({ session } = makeTestSession({
+      capabilities: { sessionCapabilities: { resume: {} } } as AgentCapabilityFlags,
+      handle: { sessionId: "session-1", provider: "claude-acp" },
+      unstableResumeSession,
+    }));
+    await session.initializeResumedSession();
+    expect(unstableResumeSession).toHaveBeenCalledOnce();
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({ type: "upsert", title: "Count files" }),
+      }),
+    );
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "Public reply" }),
+        }),
+      }),
+    );
+  });
+
   test("coalesces an ID-less text and image user message during loadSession replay", async () => {
     let session!: ACPAgentSession;
     const loadSession = async () => {

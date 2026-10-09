@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { ProviderSubagentStore } from "../provider-subagents/store.js";
 import { HermesAcpSubagents } from "./acp-hermes-subagents.js";
 
 function snapshot(sequence: number, text: string, status = "running"): SessionUpdate {
@@ -65,5 +66,30 @@ describe("built-in ACP Hermes child events", () => {
     ]);
     children.finish("failed");
     expect(children.replay()).toEqual(replay);
+  });
+  it("replaces shortened and rewritten public snapshots without retaining old text", () => {
+    const store = new ProviderSubagentStore();
+    const children = new HermesAcpSubagents({
+      provider: "acp",
+      cwd: "/fixture",
+      emit(event) {
+        if (event.type === "provider_subagent") store.apply("root", "acp", event.event);
+      },
+    });
+    children.update(snapshot(1, "Old public output"));
+    const old = store.fetchTimeline("root", "acp-root:hermes:alpha");
+    children.update(snapshot(2, "Short"));
+    const shorter = store.fetchTimeline("root", "acp-root:hermes:alpha");
+    expect(shorter.epoch).not.toBe(old.epoch);
+    expect(shorter.rows.map((row) => row.item)).toEqual([
+      expect.objectContaining({ type: "notification", message: "Started tool: terminal" }),
+      expect.objectContaining({ type: "assistant_message", text: "Short" }),
+    ]);
+    children.update(snapshot(3, ""));
+    expect(
+      store
+        .fetchTimeline("root", "acp-root:hermes:alpha")
+        .rows.some((row) => row.item.type === "assistant_message" && row.item.text),
+    ).toBe(false);
   });
 });

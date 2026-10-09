@@ -1,0 +1,31 @@
+{
+  "kind": "real-model",
+  "provider": "openai-codex",
+  "model": "gpt-6.1-sol",
+  "failureInjection": false,
+  "parentReplyElapsedMs": 7287,
+  "childAtParentReply": {
+    "title": "Count files",
+    "description": "Count files",
+    "status": "running"
+  },
+  "childAfterReconnect": "running",
+  "terminalStatus": "completed",
+  "publicTimeline": [
+    {
+      "type": "notification",
+      "level": "info",
+      "message": "Started tool: terminal"
+    },
+    {
+      "type": "notification",
+      "level": "info",
+      "message": "Started tool: terminal"
+    },
+    {
+      "type": "assistant_message",
+      "messageId": "hermes-public-output",
+      "text": "\n\n3"
+    }
+  ]
+}

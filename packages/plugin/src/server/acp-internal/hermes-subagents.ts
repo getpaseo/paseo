@@ -11,7 +11,20 @@ const snapshotSchema = z
     depth: z.number().int().min(1).max(16),
     sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     status: z.enum(["running", "completed", "failed", "canceled"]),
-    text: z.string().max(16384),
+    text: z
+      .string()
+      .max(32768)
+      .refine((text) => [...text].length <= 16384),
+    title: z
+      .string()
+      .min(1)
+      .max(80)
+      .refine((text) =>
+        [...text].every((char) => char.codePointAt(0)! >= 32 && char.codePointAt(0)! !== 127),
+      )
+      .optional(),
+    outputLimited: z.boolean().default(false),
+    activitiesLimited: z.boolean().default(false),
     tools: z.array(z.string().regex(/^[A-Za-z0-9_.:-]{1,80}$/)).max(32),
   })
   .strip();
@@ -28,6 +41,7 @@ interface HermesSubagentsOptions {
 export class HermesSubagents {
   private readonly nodes = new Map<string, Snapshot>();
   private readonly waiting = new Map<string, Snapshot>();
+  private childrenOmitted = false;
 
   constructor(private readonly options: HermesSubagentsOptions) {}
 
@@ -35,6 +49,7 @@ export class HermesSubagents {
     if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
       return false;
     }
+    if (this.acceptLimit(update)) return true;
     const envelope = z
       .object({ hermes: z.object({ subagentProgress: z.unknown() }) })
       .safeParse(update._meta);
@@ -57,6 +72,41 @@ export class HermesSubagents {
     if (!previous && this.nodes.size + this.waiting.size >= 64) return true;
     this.waiting.set(node.id, node);
     this.flush();
+    return true;
+  }
+
+  private acceptLimit(update: SessionUpdate): boolean {
+    if (
+      (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") ||
+      update.toolCallId !== "hermes-subagents:limit"
+    )
+      return false;
+    const parsed = z
+      .object({
+        hermes: z.object({
+          subagentLimit: z.object({
+            version: z.literal(1),
+            sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+            limit: z.literal(64),
+            childrenOmitted: z.literal(true),
+          }),
+        }),
+      })
+      .safeParse(update._meta);
+    if (!parsed.success) return false;
+    if (!this.childrenOmitted) {
+      this.childrenOmitted = true;
+      this.options.emit({
+        type: "timeline.item",
+        sessionId: this.options.sessionId,
+        item: {
+          type: "notification",
+          id: "hermes-child-limit",
+          level: "warning",
+          message: "Additional Hermes subagents omitted: 64-child display limit reached.",
+        },
+      });
+    }
     return true;
   }
 
@@ -91,8 +141,8 @@ export class HermesSubagents {
         capabilities: [],
         restoration: "parent",
         cwd: this.options.cwd,
-        title: "Hermes subagent",
-        description: `Subagent ${node.id}`,
+        title: node.title ?? "Hermes subagent",
+        description: node.title ?? `Subagent ${node.id}`,
       });
     }
     this.nodes.set(node.id, node);
@@ -109,12 +159,33 @@ export class HermesSubagents {
         },
       });
     }
-    if (node.text && node.text !== previous?.text) {
+    if (node.text !== (previous?.text ?? "")) {
       this.options.emit({
         type: "timeline.item",
         sessionId,
         item: { type: "assistant_message", id: "hermes-public-output", text: node.text },
       });
+    }
+    for (const [limited, wasLimited, id, message] of [
+      [
+        node.outputLimited,
+        previous?.outputLimited,
+        "hermes-output-limit",
+        "Public output limit reached (16,384 characters). This record is incomplete; later output is omitted.",
+      ],
+      [
+        node.activitiesLimited,
+        previous?.activitiesLimited,
+        "hermes-activity-limit",
+        "Activity limit reached (32 tool starts). This record is incomplete; later activity is omitted.",
+      ],
+    ] as const) {
+      if (limited && !wasLimited)
+        this.options.emit({
+          type: "timeline.item",
+          sessionId,
+          item: { type: "notification", id, level: "warning", message },
+        });
     }
     if (node.status !== previous?.status) {
       this.options.emit({

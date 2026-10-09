@@ -1471,4 +1471,56 @@ describe("Hermes progress through the ACP connection", () => {
       await connection.close();
     }
   });
+  it.each(["count", "bytes", "stalled"])(
+    "fails opening bounded history on %s without exposing partial sessions",
+    async (mode) => {
+      const harness = connectorHarness({
+        capabilities: { loadSession: true },
+        handleRequest(instance, request) {
+          if (request.method !== "session/load") return false;
+          if (mode === "count")
+            for (let i = 0; i < 4097; i++)
+              instance.notify("session/update", {
+                sessionId: "connector-session",
+                update: textChunk("x"),
+              });
+          if (mode === "bytes")
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("x".repeat(8 * 1024 * 1024)),
+            });
+          return true; // deliberately withhold the load response
+        },
+      });
+      const registration = runAcpProvider({
+        id: "hermes",
+        label: "Hermes",
+        connector: harness.connector,
+        acpOptions: { startupTimeoutMs: 500 },
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message", "session.persistence"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send({
+          ...openInput(),
+          persistence: { version: 1, data: { sessionId: "connector-session" } },
+        });
+        const failed = await waitForEvent(events, (event) => event.type === "request.failed");
+        expect(failed).toMatchObject({
+          error: {
+            message: expect.stringContaining(
+              mode === "stalled" ? "opening timed out" : "4096 notifications or 8 MiB",
+            ),
+          },
+        });
+        expect(events.filter((event) => event.type === "session.opened")).toEqual([]);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
 });

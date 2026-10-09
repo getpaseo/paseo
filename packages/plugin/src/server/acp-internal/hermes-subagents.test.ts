@@ -126,4 +126,45 @@ describe("Hermes ACP subagent snapshots", () => {
       events.filter((event) => event.type === "session.turn" && event.state === "completed"),
     ).toHaveLength(1);
   });
+  it("retains safe titles and visibly reports bounded records and omitted children once", () => {
+    const { reducer, events } = harness();
+    reducer.accept(
+      update("alpha", 1, {
+        title: "Count files",
+        text: "😀".repeat(16384),
+        outputLimited: true,
+        activitiesLimited: true,
+      }),
+    );
+    expect(events.find((event) => event.type === "session.opened")).toMatchObject({
+      title: "Count files",
+      description: "Count files",
+    });
+    const limit: SessionUpdate = {
+      sessionUpdate: "tool_call",
+      toolCallId: "hermes-subagents:limit",
+      title: "Display limit",
+      _meta: {
+        hermes: { subagentLimit: { version: 1, sequence: 2, limit: 64, childrenOmitted: true } },
+      },
+    };
+    expect(reducer.accept(limit)).toBe(true);
+    reducer.accept(limit);
+    const notices = events.filter(
+      (event) => event.type === "timeline.item" && event.item.type === "notification",
+    );
+    expect(notices).toHaveLength(3);
+    expect(notices).toMatchObject([
+      { item: { message: expect.stringContaining("16,384") } },
+      { item: { message: expect.stringContaining("32 tool starts") } },
+      { sessionId: "root", item: { message: expect.stringContaining("64-child") } },
+    ]);
+    expect(
+      reducer.accept({
+        ...limit,
+        _meta: { hermes: { subagentLimit: { version: 2, limit: 64, childrenOmitted: true } } },
+      }),
+    ).toBe(false);
+    expect(reducer.accept(update("bad-title", 3, { title: "private\ncontext" }))).toBe(false);
+  });
 });
