@@ -428,6 +428,11 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+export type ACPSessionUsageResolver = (
+  notification: SessionNotification,
+  model: AvailableACPModel | null,
+) => UsageUpdate | undefined;
+
 /**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
@@ -480,6 +485,7 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionUsageResolver?: ACPSessionUsageResolver;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -511,6 +517,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionUsageResolver?: ACPSessionUsageResolver;
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
   configuredModelIds?: readonly string[];
@@ -681,7 +688,7 @@ interface SelectConfigChoice {
   description?: string | null;
   group?: string;
 }
-type AvailableACPModel = NonNullable<SessionModelState["availableModels"]>[number];
+export type AvailableACPModel = NonNullable<SessionModelState["availableModels"]>[number];
 
 interface ACPModeSelection {
   availableMode: AgentMode | null;
@@ -945,6 +952,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly sessionUsageResolver?: ACPSessionUsageResolver;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
@@ -975,6 +983,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.sessionUsageResolver = options.sessionUsageResolver;
     this.now = options.now ?? Date.now;
   }
 
@@ -1013,6 +1022,7 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        sessionUsageResolver: this.sessionUsageResolver,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -1072,6 +1082,7 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      sessionUsageResolver: this.sessionUsageResolver,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1745,7 +1756,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly sessionUsageResolver?: ACPSessionUsageResolver;
   private currentTurnUsage: AgentUsage | undefined;
+  private lastContextUsage: Pick<UsageUpdate, "size" | "used"> | null = null;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
@@ -1787,6 +1800,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.sessionUsageResolver = options.sessionUsageResolver;
   }
 
   get id(): string | null {
@@ -2617,6 +2631,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const events = this.translateSessionUpdate(params.update);
+    if (this.sessionUsageResolver && params.update.sessionUpdate !== "usage_update") {
+      const model =
+        this.availableModels?.find((entry) => entry.modelId === this.currentModel) ?? null;
+      const usage = this.sessionUsageResolver(params, model);
+      if (usage) {
+        this.handleUsageUpdate(usage);
+      }
+    }
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -3238,6 +3260,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (contextWindowMaxTokens === undefined || contextWindowUsedTokens === undefined) {
       return;
     }
+    if (
+      this.lastContextUsage?.size === contextWindowMaxTokens &&
+      this.lastContextUsage.used === contextWindowUsedTokens
+    ) {
+      return;
+    }
+    this.lastContextUsage = { size: contextWindowMaxTokens, used: contextWindowUsedTokens };
     this.pushEvent({
       type: "usage_updated",
       provider: this.provider,

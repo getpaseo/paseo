@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Show Grok session context usage in the composer ([#3306](https://github.com/getpaseo/paseo/pull/3306))
+
 ## 0.11.2 - 2026-10-09
 
 ### Fixed
