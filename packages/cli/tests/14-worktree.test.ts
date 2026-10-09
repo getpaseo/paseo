@@ -53,6 +53,7 @@ try {
     const result = await $`npx paseo worktree ls --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "worktree ls --help should exit 0");
     assert(result.stdout.includes("--host"), "help should mention --host option");
+    assert(result.stdout.includes("--cwd"), "help should mention --cwd option");
     console.log("✓ worktree ls --help shows options\n");
   }
 
@@ -89,6 +90,7 @@ try {
     const result = await $`npx paseo worktree archive --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "worktree archive --help should exit 0");
     assert(result.stdout.includes("--host"), "help should mention --host option");
+    assert(result.stdout.includes("--cwd"), "help should mention --cwd option");
     assert(result.stdout.includes("<name>"), "help should mention required name argument");
     console.log("✓ worktree archive --help shows options\n");
   }
@@ -170,8 +172,6 @@ try {
   await rm(paseoHome, { recursive: true, force: true });
 }
 
-console.log("=== All worktree tests passed ===");
-
 // Exercise repository selection through the real CLI and daemon. An empty
 // request used to fail before Git could inspect even a valid repository.
 const daemon = await startTestDaemon();
@@ -200,6 +200,7 @@ try {
     const explicit = args.includes("--cwd");
     const result = await runPaseoCli(daemon, args, {
       cwd: explicit ? daemon.workDir : repo,
+      env: { FORCE_COLOR: undefined },
     });
     assert.strictEqual(result.exitCode, 0, result.stderr);
     assert.deepStrictEqual(JSON.parse(result.stdout), []);
@@ -211,6 +212,7 @@ try {
   ]) {
     const result = await runPaseoCli(daemon, args, {
       cwd: args.includes("--cwd") ? daemon.workDir : repo,
+      env: { FORCE_COLOR: undefined },
     });
     assert.notStrictEqual(result.exitCode, 0);
     assert.strictEqual(JSON.parse(result.stderr).error.code, "WORKTREE_NOT_FOUND", result.stderr);
@@ -218,3 +220,5 @@ try {
 } finally {
   await daemon.stop();
 }
+
+console.log("=== All worktree tests passed ===");
