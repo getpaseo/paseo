@@ -1,4 +1,3 @@
-import { isChatsProject } from "@/chats/model";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -460,21 +459,19 @@ export function buildSidebarProjectsFromHostProjects(input: {
     return EMPTY_PROJECTS;
   }
 
-  return input.projects
-    .filter((project) => !isChatsProject(project))
-    .map((project) => ({
-      viewKey: project.viewKey,
-      projectName: project.projectName,
-      projectKind: project.projectKind,
-      iconWorkingDir: project.iconWorkingDir,
-      hosts: project.hosts,
-      workspaces: project.workspaceKeys.map((workspaceKey) =>
-        createStructuralWorkspaceEntry({
-          project,
-          workspaceKey,
-        }),
-      ),
-    }));
+  return input.projects.map((project) => ({
+    viewKey: project.viewKey,
+    projectName: project.projectName,
+    projectKind: project.projectKind,
+    iconWorkingDir: project.iconWorkingDir,
+    hosts: project.hosts,
+    workspaces: project.workspaceKeys.map((workspaceKey) =>
+      createStructuralWorkspaceEntry({
+        project,
+        workspaceKey,
+      }),
+    ),
+  }));
 }
 
 // Host labels disambiguate which machine a workspace lives on; they only earn their

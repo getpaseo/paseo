@@ -158,8 +158,6 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
       if (failures.length > 0) {
         toast.error(t("sidebar.chats.archiveAllFailed"));
       }
-    } catch {
-      toast.error(t("sidebar.chats.archiveAllFailed"));
     } finally {
       setIsArchivingAll(false);
     }

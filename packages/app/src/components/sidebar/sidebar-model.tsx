@@ -141,10 +141,10 @@ export function SidebarModelProvider({
     list.projects,
     visibleWorkspaceKeys,
   ]);
-  const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
+  const pinnedKeys = usePinnedSidebarKeys(list.projects);
   const projectionInput = useMemo(
     () => ({
-      projects: filteredProjects,
+      projects: list.projects,
       pinnedKeys,
       pinnedWorkspaceOrder,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
@@ -160,7 +160,7 @@ export function SidebarModelProvider({
       collapsedWorkspaceGroupKeys,
       groupMode,
       list.projectNamesByViewKey,
-      filteredProjects,
+      list.projects,
       pinnedCollapsed,
       pinnedKeys,
       pinnedWorkspaceOrder,

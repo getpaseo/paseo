@@ -201,4 +201,36 @@ describe("buildSidebarProjection", () => {
     const runningGroup = projection.workspaceGroups.find((g) => g.key === "running");
     expect(runningGroup?.rows.map((r) => r.workspaceId)).toEqual(["normal-wks"]);
   });
+  it("includes pinned chat workspaces in pinnedGroups and removes unpinned chats project from projects list", () => {
+    const normalWorkspace = makeWorkspace("normal-wks", "running", [], "project");
+    const chatWorkspace = makeWorkspace("chat-wks", "running", [], "__chats__");
+    chatWorkspace.placement.workspaceKind = "chat";
+    chatWorkspace.entry.workspaceKind = "chat";
+    const chatsProject = makeProject([chatWorkspace.placement], "__chats__");
+
+    const projection = buildSidebarProjection({
+      projects: [makeProject([normalWorkspace.placement], "project"), chatsProject],
+      pinnedKeys: {
+        pinnedWorkspaceKeys: [chatWorkspace.placement.workspaceKey],
+        pinnedAtByKey: { [chatWorkspace.placement.workspaceKey]: "2026-07-12T12:00:00.000Z" },
+      },
+      pinnedWorkspaceOrder: [],
+      workspaceEntriesByKey: new Map([
+        [normalWorkspace.placement.workspaceKey, normalWorkspace.entry],
+        [chatWorkspace.placement.workspaceKey, chatWorkspace.entry],
+      ]),
+      projectNamesByViewKey: new Map([
+        ["project", "Project"],
+        ["__chats__", "Chats"],
+      ]),
+      groupMode: "project",
+      pinnedCollapsed: false,
+      collapsedProjectKeys: new Set(),
+      collapsedWorkspaceGroupKeys: new Set(),
+      t: i18n.t,
+    });
+
+    expect(projection.pinnedGroups.pinnedChats.map((r) => r.workspaceId)).toEqual(["chat-wks"]);
+    expect(projection.pinnedGroups.unpinnedProjects.map((p) => p.viewKey)).toEqual(["project"]);
+  });
 });
