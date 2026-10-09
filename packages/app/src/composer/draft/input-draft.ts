@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { TextReplacement } from "@/composer/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
@@ -157,15 +158,14 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [draftKey],
   );
 
+  // The editing surface owns in-progress text on every platform, so the store only needs the
+  // draft after the keystroke has painted. Publishing per keystroke re-renders the whole
+  // composer chain for each character.
   const editText = useCallback(
     (nextText: string) => {
-      if (isWeb) {
-        textPublication.stage(nextText);
-      } else {
-        useDraftStore.getState().editDraftText({ draftKey, text: nextText });
-      }
+      textPublication.stage(nextText);
     },
-    [draftKey, textPublication],
+    [textPublication],
   );
 
   const replaceText = useCallback(
@@ -196,26 +196,25 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
 
   useEffect(() => {
-    const flushWhenHidden = () => {
-      if (document.visibilityState === "hidden") textPublication.flush();
-    };
     const flush = () => textPublication.flush();
+    const flushWhenBackgrounded = (status: AppStateStatus) => {
+      if (status !== "active") flush();
+    };
+    // AppState covers native background/inactive transitions and, through react-native-web,
+    // the document visibilitychange event. pagehide is the web-only teardown that fires when
+    // visibilitychange does not. react-native-web returns no subscription without a DOM.
+    const appStateSubscription = AppState.addEventListener("change", flushWhenBackgrounded);
     const canListenForPageHide =
       isWeb && typeof window !== "undefined" && typeof window.addEventListener === "function";
-    if (isWeb && typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", flushWhenHidden);
-    }
     if (canListenForPageHide) {
       window.addEventListener("pagehide", flush);
     }
     return () => {
-      if (isWeb && typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", flushWhenHidden);
-      }
+      appStateSubscription?.remove();
       if (canListenForPageHide) {
         window.removeEventListener("pagehide", flush);
       }
-      textPublication.flush();
+      flush();
     };
   }, [textPublication]);
 

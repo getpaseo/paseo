@@ -27,6 +27,7 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { getAgentModeIcon, getAgentModeOptionIcon } from "@/agent-controls/icons";
+import type { Theme } from "@/styles/theme";
 interface ModeComboboxOptionProps {
   option: ComboboxOption;
   selected: boolean;
@@ -35,6 +36,10 @@ interface ModeComboboxOptionProps {
   provider: string;
   providerDefinitions: AgentProviderDefinition[];
   iconColor: string;
+}
+
+function mutedIconColor(theme: Theme): string {
+  return theme.colors.foregroundMuted;
 }
 
 function ModeComboboxOption({
@@ -102,7 +107,6 @@ export function AgentModeControl({
   }, [modeOptions, selectedModeId]);
 
   const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
-  const iconColor = theme.colors.foregroundMuted;
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
@@ -198,7 +202,7 @@ export function AgentModeControl({
           <AgentControlTrigger
             ref={anchorRef}
             icon={Icon}
-            iconColor={iconColor}
+            iconColor={mutedIconColor}
             surface={surface}
             label={t("agentControls.mode.title")}
             value={selectedModeLabel}
