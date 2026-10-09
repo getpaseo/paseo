@@ -1180,6 +1180,11 @@ export class AgentManager {
     return this.timelineStore.getItems(id);
   }
 
+  getTimelineCount(id: string): number {
+    this.requireAgent(id);
+    return this.timelineStore.getItemCount(id);
+  }
+
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
     if (this.durableTimelineStore) {

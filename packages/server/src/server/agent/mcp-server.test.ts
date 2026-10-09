@@ -13,6 +13,7 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type {
@@ -23,6 +24,7 @@ import type {
   AgentRunResult,
   AgentSession,
   AgentStreamEvent,
+  AgentTimelineItem,
   ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
@@ -216,6 +218,16 @@ interface TestDeps {
 }
 
 function buildAgentManagerSpies() {
+  const getTimeline = vi.fn<AgentManager["getTimeline"]>().mockReturnValue([]);
+  const buildTimelineStore = (agentId: string) => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize(agentId, { items: getTimeline(agentId), epoch: `test-${agentId}` });
+    return store;
+  };
+  const fetchTimeline: AgentManager["fetchTimeline"] = (agentId, options) =>
+    buildTimelineStore(agentId).fetch(agentId, options);
+  const getTimelineCount: AgentManager["getTimelineCount"] = (agentId) =>
+    buildTimelineStore(agentId).getItemCount(agentId);
   return {
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
@@ -234,7 +246,9 @@ function buildAgentManagerSpies() {
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
     listAgents: vi.fn().mockReturnValue([]),
-    getTimeline: vi.fn().mockReturnValue([]),
+    getTimeline,
+    getTimelineCount,
+    fetchTimeline,
     resumeAgentFromPersistence: vi.fn(),
     hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
@@ -884,9 +898,11 @@ describe("browser MCP tools", () => {
       expect(listAgentsResult.isError).not.toBe(true);
       expect(listAgentsResult.structuredContent).toEqual({
         agents: [],
+        total: 0,
+        nextOffset: null,
       });
       expectSingleTextContent(browserResult);
-      expect(expectSingleTextContent(listAgentsResult)).toContain('"agents": []');
+      expect(expectSingleTextContent(listAgentsResult)).toContain('"agents":[]');
 
       const listedTools = await client.listTools();
       expect(listedTools.tools.map((tool) => tool.name)).toEqual(
@@ -5334,9 +5350,8 @@ describe("provider listing MCP tool", () => {
         },
       ],
     });
-    expect(modelVisibleText).toContain("providers_count=2");
-    expect(modelVisibleText).toContain("providers_ids=claude,zai");
-    expect(modelVisibleText).toContain('"providers"');
+    expect(JSON.parse(modelVisibleText)).toEqual(response.structuredContent);
+    expect(modelVisibleText).not.toContain("\n");
   });
 
   it("returns provider modes from the shared snapshot catalog", async () => {
@@ -5661,6 +5676,230 @@ describe("speak MCP tool", () => {
 describe("agent snapshot MCP serialization", () => {
   const logger = createTestLogger();
 
+  it("keeps default status small while preserving permission questions and full diagnostics", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({
+        id: "status-budget",
+        lastError: "Worklet registration failed",
+        availableModes: [{ id: "auto", label: "Auto", description: "diagnostic ".repeat(1000) }],
+        pendingPermissions: new Map([
+          [
+            "permission-1",
+            {
+              id: "permission-1",
+              provider: "codex",
+              name: "request_user_input",
+              kind: "question",
+              title: "Choose a target",
+              input: { prompt: "Production or staging?" },
+            },
+          ],
+        ]),
+      }),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+    try {
+      const compact = await client.callTool({
+        name: "get_agent_status",
+        arguments: { agentId: "status-budget" },
+      });
+      const full = await client.callTool({
+        name: "get_agent_status",
+        arguments: { agentId: "status-budget", detail: "full" },
+      });
+      const compactSnapshot = z
+        .record(z.string(), z.unknown())
+        .parse(compact.structuredContent?.snapshot);
+      expect(compactSnapshot.lastError).toBe("Worklet registration failed");
+      expect(compactSnapshot.pendingPermissions).toEqual([
+        expect.objectContaining({
+          id: "permission-1",
+          input: { prompt: "Production or staging?" },
+        }),
+      ]);
+      expect(compactSnapshot).not.toHaveProperty("availableModes");
+      expect(compactSnapshot).not.toHaveProperty("persistence");
+      const compactText = expectSingleTextContent(compact);
+      const fullText = expectSingleTextContent(full);
+      expect(compactText.length).toBeLessThan(fullText.length / 4);
+      expect(JSON.parse(compactText)).toEqual(compact.structuredContent);
+      expect(
+        z.record(z.string(), z.unknown()).parse(full.structuredContent?.snapshot),
+      ).toHaveProperty("availableModes");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("paginates the default agent list without losing matching records", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentStorage.list.mockResolvedValue(
+      Array.from({ length: 43 }, (_, index) =>
+        createStoredRecord({
+          id: `paged-${index}`,
+          archivedAt: null,
+          updatedAt: new Date(2026, 1, 1, 0, index).toISOString(),
+        }),
+      ),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "list_agents");
+    const first = await invokeToolWithParsedInput(tool, {});
+    const second = await invokeToolWithParsedInput(tool, {
+      offset: first.structuredContent.nextOffset,
+    });
+    const third = await invokeToolWithParsedInput(tool, {
+      offset: second.structuredContent.nextOffset,
+    });
+    expect(agentsOf(first)).toHaveLength(20);
+    expect(agentsOf(second)).toHaveLength(20);
+    expect(agentsOf(third)).toHaveLength(3);
+    expect(third.structuredContent.nextOffset).toBeNull();
+    expect(first.structuredContent.total).toBe(43);
+    expect(
+      new Set(
+        [...agentsOf(first), ...agentsOf(second), ...agentsOf(third)].map((agent) => agent.id),
+      ).size,
+    ).toBe(43);
+  });
+
+  it("bounds activity by default and supports older pages, incremental reads, and expired cursors", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const agentId = "activity-pages";
+    spies.agentManager.getAgent.mockReturnValue(createManagedAgent({ id: agentId }));
+    const items: AgentTimelineItem[] = [];
+    for (let index = 0; index < 24; index += 1) {
+      items.push({ type: "user_message", text: `activity-${index}` });
+    }
+    spies.agentManager.getTimeline.mockReturnValue(items);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_activity");
+    const latest = await invokeToolWithParsedInput(tool, { agentId });
+    const page = z
+      .object({
+        startCursor: z.object({ epoch: z.string(), seq: z.number() }),
+        endCursor: z.object({ epoch: z.string(), seq: z.number() }),
+        hasOlder: z.boolean(),
+      })
+      .parse(latest.structuredContent.page);
+    expect(latest.structuredContent.content).toContain("activity-14");
+    expect(latest.structuredContent.content).not.toContain("activity-13");
+    expect(page.hasOlder).toBe(true);
+    const older = await invokeToolWithParsedInput(tool, {
+      agentId,
+      direction: "before",
+      cursor: page.startCursor,
+    });
+    expect(older.structuredContent.content).toContain("activity-13");
+    expect(older.structuredContent.content).not.toContain("activity-14");
+    items.push({ type: "user_message", text: "new-activity" });
+    const newer = await invokeToolWithParsedInput(tool, {
+      agentId,
+      direction: "after",
+      cursor: page.endCursor,
+    });
+    expect(newer.structuredContent.content).toContain("new-activity");
+    expect(newer.structuredContent.content).not.toContain("activity-23");
+    await expect(
+      tool.handler({ agentId, direction: "after", cursor: { epoch: "expired", seq: 24 } }),
+    ).rejects.toThrow("no longer available");
+    for (const limit of [0, -1, 1.5, 51]) {
+      expect((await tool.inputSchema.safeParseAsync({ agentId, limit })).success).toBe(false);
+    }
+  });
+
+  it("labels oversized activity previews and retrieves the complete text explicitly", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const agentId = "long-activity";
+    const text = `earliest evidence ${"important evidence ".repeat(1000)} latest evidence`;
+    spies.agentManager.getAgent.mockReturnValue(createManagedAgent({ id: agentId }));
+    spies.agentManager.getTimeline.mockReturnValue([{ type: "assistant_message", text }]);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_activity");
+    const compact = await invokeToolWithParsedInput(tool, { agentId });
+    expect(compact.structuredContent.truncated).toBe(true);
+    expect(String(compact.structuredContent.content).length).toBeLessThan(4300);
+    expect(compact.structuredContent.content).toContain("Preview truncated");
+    expect(compact.structuredContent.content).toContain("latest evidence");
+    const request = z
+      .record(z.string(), z.unknown())
+      .parse(compact.structuredContent.fullDetailRequest);
+    const full = await invokeToolWithParsedInput(tool, request);
+    expect(full.structuredContent.truncated).toBe(false);
+    expect(full.structuredContent.content).toContain(text);
+  });
+
+  it("bounds updated tool history and replays truncated forward pages", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const agentId = "updated-activity";
+    const toolCall = (status: "running" | "completed"): AgentTimelineItem => ({
+      type: "tool_call",
+      callId: "earlier-tool",
+      name: "shell",
+      status,
+      error: null,
+      detail: { type: "plain_text", label: "work" },
+    });
+    const text = `forward evidence ${"important evidence ".repeat(1000)}end evidence`;
+    spies.agentManager.getAgent.mockReturnValue(createManagedAgent({ id: agentId }));
+    spies.agentManager.getTimeline.mockReturnValue([
+      toolCall("running"),
+      { type: "user_message", text: "Continue" },
+      { type: "assistant_message", text },
+      toolCall("completed"),
+      { type: "assistant_message", text: "Later answer" },
+    ]);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_activity");
+    const tail = await invokeToolWithParsedInput(tool, { agentId, limit: 2 });
+    expect(tail.structuredContent.content).toContain("Showing 2 activities");
+    expect(tail.structuredContent.content).toContain("Later answer");
+    const forward = await invokeToolWithParsedInput(tool, {
+      agentId,
+      limit: 2,
+      direction: "after",
+      cursor: { epoch: `test-${agentId}`, seq: 2 },
+    });
+    expect(forward.structuredContent.truncated).toBe(true);
+    const request = z
+      .record(z.string(), z.unknown())
+      .parse(forward.structuredContent.fullDetailRequest);
+    expect(request.direction).toBe("after");
+    const full = await invokeToolWithParsedInput(tool, request);
+    expect(full.structuredContent.content).toContain(text);
+    expect(full.structuredContent.content).toContain("work");
+    expect(full.structuredContent.content).not.toContain("Continue");
+    expect(full.structuredContent.content).not.toContain("Later answer");
+  });
+
   it("returns compact list items from list_agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.listAgents = vi.fn().mockReturnValue([
@@ -5694,17 +5933,11 @@ describe("agent snapshot MCP serialization", () => {
           title: null,
           provider: "codex",
           model: "gpt-5.4",
-          thinkingOptionId: "high",
-          effectiveThinkingOptionId: "high",
           status: "idle",
           cwd: REPO_CWD,
-          createdAt: expect.any(String),
-          updatedAt: expect.any(String),
-          lastUserMessageAt: null,
           archivedAt: null,
           requiresAttention: false,
           attentionReason: null,
-          attentionTimestamp: null,
           labels: { role: "researcher" },
         },
       ],
@@ -5804,7 +6037,7 @@ describe("agent snapshot MCP serialization", () => {
       logger,
     });
     const tool = registeredTool(server, "get_agent_status");
-    const response = await tool.handler({ agentId: "full-detail-agent" });
+    const response = await tool.handler({ agentId: "full-detail-agent", detail: "full" });
     const snapshot = z.record(z.string(), z.unknown()).parse(response.structuredContent.snapshot);
 
     const parsed = AgentSnapshotPayloadSchema.safeParse(snapshot);
@@ -6012,10 +6245,10 @@ describe("agent snapshot MCP serialization", () => {
     const response = await tool.handler({ includeArchived: true });
     const agentIds = agentsOf(response).map((agent) => agent.id);
 
-    expect(agentIds).toHaveLength(50);
+    expect(agentIds).toHaveLength(20);
     expect(agentIds).toEqual(
       Array.from(
-        { length: 50 },
+        { length: 20 },
         (_, index) => `recent-archived-${index.toString().padStart(2, "0")}`,
       ),
     );
@@ -6050,7 +6283,7 @@ describe("agent snapshot MCP serialization", () => {
       providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "list_agents");
-    const response = await tool.handler({ cwd: REPO_CWD, includeArchived: true });
+    const response = await tool.handler({ cwd: REPO_CWD, includeArchived: true, detail: "full" });
     const item = agentsOf(response)[0];
 
     expect(item).toEqual({
@@ -6161,7 +6394,7 @@ describe("agent snapshot MCP serialization", () => {
       providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "list_agents");
-    const response = await tool.handler({ includeArchived: true });
+    const response = await tool.handler({ includeArchived: true, detail: "full" });
 
     const parsed = z.array(AgentListItemPayloadSchema).safeParse(response.structuredContent.agents);
     if (!parsed.success) {
@@ -6245,8 +6478,7 @@ describe("agent snapshot MCP serialization", () => {
     spies.agentManager.resumeAgentFromPersistence.mockResolvedValue(snapshot);
     spies.agentManager.getTimeline.mockReturnValue([
       {
-        kind: "status",
-        timestamp: "2026-04-11T00:00:00.000Z",
+        type: "assistant_message",
         text: "Agent resumed",
       },
     ]);
@@ -6299,6 +6531,7 @@ describe("agent snapshot MCP serialization", () => {
 
     const content = String(response.structuredContent.content);
     expect(content).toContain("Hello world. How are you?");
+    expect(response.structuredContent.updateCount).toBe(2);
   });
 
   it("get_agent_activity limit=2 returns the last two projected entries whole", async () => {

@@ -327,6 +327,10 @@ export class TimelineProjection {
     return this.rows.map((row) => ({ ...row }));
   }
 
+  getRowCount(): number {
+    return this.rows.length;
+  }
+
   enrichSubmittedUserMessage(
     clientMessageId: string,
     providerMessageId: string,

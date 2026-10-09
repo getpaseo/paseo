@@ -65,7 +65,13 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
-**`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`.
+**`get_agent_status`** — `{ agentId }` returns compact status and pending permissions. Use `detail: "full"` only when you need runtime settings, capabilities, or persistence.
+
+**`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`. Returns 20 compact records by default, at most 50. Continue with the returned `nextOffset`; use `detail: "full"` for timestamps and thinking settings. Pagination observes the current list, so changing agent status can reorder records between calls.
+
+**`get_agent_activity`** — `{ agentId }` returns the latest 10 projected entries, at most 50 per request, with a bounded text preview. Read older entries with `direction: "before", cursor: page.startCursor`; read new entries with `direction: "after", cursor: page.endCursor`. When `truncated` is true, use `fullDetailRequest` for complete text. An expired cursor fails explicitly; restart from the latest page.
+
+Keep tool output small: select the needed fields from `structuredContent`, or use the text content when no structured result exists. Do not print the entire MCP response envelope, which can contain both representations of the same data. Store full logs and large diffs as files and read relevant sections. For a handoff, pass the objective, current state, remaining work, and evidence paths instead of copying whole timelines.
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
 

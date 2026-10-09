@@ -13,6 +13,7 @@ import {
   AgentListItemPayloadSchema,
   AgentPermissionResponseSchema,
   AgentSnapshotPayloadSchema,
+  AgentTimelineCursorSchema,
   WorkspaceScriptPayloadSchema,
 } from "../../messages.js";
 import type { AgentListItemPayload } from "../../messages.js";
@@ -21,8 +22,13 @@ import {
   toAgentListItemPayload,
   toAgentPayload,
 } from "../agent-projections.js";
-import { curateAgentActivity } from "../activity-curator.js";
-import { selectItemsByProjectedLimit } from "../timeline-projection.js";
+import {
+  AgentToolDetailSchema,
+  AgentActivityPageSchema,
+  CompactAgentListItemSchema,
+  CompactAgentStatusSchema,
+  formatAgentActivityPage,
+} from "./agent-tool-results.js";
 import type { AgentStorage } from "../agent-storage.js";
 import { ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
@@ -1996,16 +2002,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Get agent status",
       description:
-        "Return the latest snapshot for an agent, including lifecycle state, capabilities, and pending permissions.",
+        "Return compact agent status, context usage, errors, and pending permissions. Use detail=full for capabilities, runtime settings, and persistence.",
       inputSchema: {
         agentId: z.string(),
+        detail: AgentToolDetailSchema.optional().default("compact"),
       },
       outputSchema: {
         status: AgentStatusEnum,
-        snapshot: AgentSnapshotPayloadSchema,
+        snapshot: z.union([AgentSnapshotPayloadSchema, CompactAgentStatusSchema]),
       },
     },
-    async ({ agentId }) => {
+    async ({ agentId, detail = "compact" }) => {
       const snapshot = agentManager.getAgent(agentId);
       if (snapshot) {
         const structuredSnapshot = await serializeSnapshotWithMetadata(
@@ -2017,7 +2024,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           content: [],
           structuredContent: ensureValidJson({
             status: snapshot.lifecycle,
-            snapshot: structuredSnapshot,
+            snapshot:
+              detail === "full"
+                ? structuredSnapshot
+                : CompactAgentStatusSchema.parse(structuredSnapshot),
           }),
         };
       }
@@ -2035,7 +2045,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         content: [],
         structuredContent: ensureValidJson({
           status: structuredSnapshot.status,
-          snapshot: structuredSnapshot,
+          snapshot:
+            detail === "full"
+              ? structuredSnapshot
+              : CompactAgentStatusSchema.parse(structuredSnapshot),
         }),
       };
     },
@@ -2045,7 +2058,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_agents",
     {
       title: "List agents",
-      description: "List recent agents as compact metadata.",
+      description:
+        "List compact agent metadata, 20 per page. Use nextOffset to continue and detail=full for timestamps and thinking settings.",
       inputSchema: {
         includeArchived: z.boolean().optional().default(false),
         cwd: z.string().optional(),
@@ -2057,13 +2071,25 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .optional()
           .default(48),
         statuses: z.array(AgentStatusEnum).optional(),
-        limit: z.number().int().positive().max(200).optional().default(50),
+        limit: z.number().int().positive().max(50).optional().default(20),
+        offset: z.number().int().nonnegative().optional().default(0),
+        detail: AgentToolDetailSchema.optional().default("compact"),
       },
       outputSchema: {
-        agents: z.array(AgentListItemPayloadSchema),
+        agents: z.array(z.union([AgentListItemPayloadSchema, CompactAgentListItemSchema])),
+        total: z.number().optional(),
+        nextOffset: z.number().nullable().optional(),
       },
     },
-    async ({ includeArchived = false, cwd, sinceHours = 48, statuses, limit = 50 }) => {
+    async ({
+      includeArchived = false,
+      cwd,
+      sinceHours = 48,
+      statuses,
+      limit = 20,
+      offset = 0,
+      detail = "compact",
+    }) => {
       const callerCwd = callerAgentId ? resolveCallerAgent()?.cwd : undefined;
       const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
       const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
@@ -2085,17 +2111,26 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             includeArchived || isStoredAgentProviderAvailable(record, registeredProviderIds),
         )
         .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
-      const agents = [...liveAgents, ...storedAgents]
+      const matchingAgents = [...liveAgents, ...storedAgents]
         .map(toAgentListItemPayload)
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
         .filter((agent) => !statusFilter || statusFilter.has(agent.status))
         .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
-        .sort(compareAgentListItems)
-        .slice(0, limit);
+        .sort(compareAgentListItems);
+      const selectedAgents = matchingAgents.slice(offset, offset + limit);
+      const agents =
+        detail === "full"
+          ? selectedAgents
+          : selectedAgents.map((agent) => CompactAgentListItemSchema.parse(agent));
+      const hasMore = offset + selectedAgents.length < matchingAgents.length;
 
       return {
         content: [],
-        structuredContent: ensureValidJson({ agents }),
+        structuredContent: ensureValidJson({
+          agents,
+          total: matchingAgents.length,
+          nextOffset: hasMore ? offset + selectedAgents.length : null,
+        }),
       };
     },
   );
@@ -3055,53 +3090,63 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "get_agent_activity",
     {
       title: "Get agent activity",
-      description: "Return recent agent timeline entries as a curated summary.",
+      description:
+        "Return a bounded activity preview (10 entries, at most 50). Page older with direction=before and page.startCursor; read new activity with direction=after and page.endCursor. Use detail=full for complete text.",
       inputSchema: {
         agentId: z.string(),
-        limit: z
-          .number()
-          .optional()
-          .describe("Optional limit for number of activities to include (most recent first)."),
+        limit: z.number().int().positive().max(50).optional().default(10),
+        direction: z.enum(["tail", "before", "after"]).optional().default("tail"),
+        cursor: AgentTimelineCursorSchema.optional(),
+        detail: AgentToolDetailSchema.optional().default("compact"),
       },
       outputSchema: {
         agentId: z.string(),
         updateCount: z.number(),
         currentModeId: z.string().nullable(),
         content: z.string(),
+        truncated: z.boolean(),
+        page: AgentActivityPageSchema,
+        fullDetailRequest: z
+          .object({
+            agentId: z.string(),
+            direction: z.enum(["before", "after"]),
+            cursor: AgentTimelineCursorSchema,
+            limit: z.number(),
+            detail: z.literal("full"),
+          })
+          .optional(),
       },
     },
-    async ({ agentId, limit }) => {
+    async ({ agentId, limit = 10, direction = "tail", cursor, detail = "compact" }) => {
       await ensureAgentLoaded(agentId, {
         agentManager,
         agentStorage,
         logger: childLogger,
       });
-      const timeline = agentManager.getTimeline(agentId);
+      const updateCount = agentManager.getTimelineCount(agentId);
       const snapshot = agentManager.getAgent(agentId);
 
-      const selection = selectItemsByProjectedLimit({
-        items: timeline,
-        direction: "tail",
-        limit: limit ?? 0,
+      // Display-order pagination stays bounded even when older tool calls receive
+      // updates. The store's contiguous tail may expand beyond the requested limit.
+      const page = agentManager.fetchTimeline(agentId, {
+        limit,
+        direction: direction === "tail" ? "before" : direction,
+        cursor,
       });
-      const curatedContent = curateAgentActivity(selection.items);
-      const { totalProjected, shownProjected } = selection;
-
-      const noun = totalProjected === 1 ? "activity" : "activities";
-      const countHeader =
-        limit && shownProjected < totalProjected
-          ? `Showing ${shownProjected} of ${totalProjected} ${noun} (limited to ${limit})`
-          : `Showing all ${totalProjected} ${noun}`;
-
-      const contentWithCount = `${countHeader}\n\n${curatedContent}`;
+      if (page.staleCursor || page.gap) {
+        throw new Error(
+          "Activity cursor is no longer available. Read the latest page without a cursor.",
+        );
+      }
+      const activity = formatAgentActivityPage({ agentId, page, detail, limit });
 
       return {
         content: [],
         structuredContent: ensureValidJson({
           agentId,
-          updateCount: timeline.length,
+          updateCount,
           currentModeId: snapshot?.currentModeId ?? null,
-          content: contentWithCount,
+          ...activity,
         }),
       };
     },

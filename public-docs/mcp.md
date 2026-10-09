@@ -91,13 +91,13 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 | -------------------- | --------------------------------------------------------------------------------------- |
 | `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`.     |
 | `send_agent_prompt`  | Send a prompt to an existing agent using its `agentId` and a `prompt`.                  |
-| `get_agent_status`   | Return the latest snapshot for an agent.                                                |
-| `list_agents`        | List recent agents as compact metadata.                                                 |
+| `get_agent_status`   | Return compact status; request `detail: "full"` for the complete snapshot.              |
+| `list_agents`        | List compact metadata, 20 records per page; continue with `nextOffset`.                 |
 | `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                  |
 | `archive_agent`      | Soft-delete an agent and remove it from the active list.                                |
 | `kill_agent`         | Terminate an agent session permanently.                                                 |
 | `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features. |
-| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                              |
+| `get_agent_activity` | Preview the latest 10 entries; use timeline cursors for older or newer activity.        |
 | `set_agent_mode`     | Switch an agent's session mode.                                                         |
 
 ### Workspaces

@@ -424,7 +424,10 @@ describe("Suite A: Core Fixes", () => {
       const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
-      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const status = await callToolStructured(topLevelClient, "get_agent_status", {
+        agentId,
+        detail: "full",
+      });
       const snapshot = z.record(z.string(), z.unknown()).parse(status.snapshot);
       expectAgentFeatureValue(snapshot, "test_feature", true);
     } finally {
@@ -442,7 +445,10 @@ describe("Suite A: Core Fixes", () => {
       const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
-      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const status = await callToolStructured(topLevelClient, "get_agent_status", {
+        agentId,
+        detail: "full",
+      });
       const snapshot = z.record(z.string(), z.unknown()).parse(status.snapshot);
       expectAgentFeatureValue(snapshot, "test_feature", true);
     } finally {
@@ -462,7 +468,10 @@ describe("Suite A: Core Fixes", () => {
       const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
-      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const status = await callToolStructured(topLevelClient, "get_agent_status", {
+        agentId,
+        detail: "full",
+      });
       const snapshot = z.record(z.string(), z.unknown()).parse(status.snapshot);
       expectAgentFeatureValue(snapshot, "test_feature", true);
     } finally {

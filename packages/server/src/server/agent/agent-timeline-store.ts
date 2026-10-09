@@ -67,6 +67,10 @@ export class InMemoryAgentTimelineStore {
     return this.requireState(agentId).projection.getRows().map(cloneRow);
   }
 
+  getItemCount(agentId: string): number {
+    return this.requireState(agentId).projection.getRowCount();
+  }
+
   getSubmittedUserMessage(agentId: string, clientMessageId: string): AgentTimelineRow | null {
     const row = this.requireState(agentId)
       .projection.getRows()
