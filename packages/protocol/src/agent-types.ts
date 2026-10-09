@@ -66,6 +66,7 @@ export interface AgentMode {
   id: string;
   label: string;
   description?: string;
+  disabledReason?: string;
   icon?: string;
   colorTier?: string;
 }

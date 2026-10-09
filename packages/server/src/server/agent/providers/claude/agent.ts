@@ -1,3 +1,8 @@
+import {
+  applyClaudeRuntimeModeAvailability,
+  CLAUDE_ROOT_BYPASS_DISABLED_REASON,
+  isRunningAsRoot,
+} from "./permissions.js";
 import { validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -362,6 +367,18 @@ const DEFAULT_MODES: AgentMode[] = [
 ];
 
 const VALID_CLAUDE_MODES = new Set(DEFAULT_MODES.map((mode) => mode.id));
+function modesForRuntime(runningAsRoot: boolean): AgentMode[] {
+  return applyClaudeRuntimeModeAvailability(DEFAULT_MODES, runningAsRoot);
+}
+
+function permissionBypassOptions(
+  runningAsRoot: boolean,
+): Partial<Pick<ClaudeOptions, "allowDangerouslySkipPermissions">> {
+  if (runningAsRoot) {
+    return {};
+  }
+  return { allowDangerouslySkipPermissions: true };
+}
 
 const REWIND_COMMAND_NAME = "rewind";
 const REWIND_COMMAND: AgentSlashCommand = {
@@ -419,6 +436,7 @@ interface ClaudeAgentClientOptions {
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
+  runningAsRoot?: boolean;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -432,6 +450,7 @@ interface ClaudeAgentSessionOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
+  runningAsRoot: boolean;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1524,6 +1543,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly rewindSdk: ClaudeRewindSdk;
+  private readonly runningAsRoot: boolean;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1535,6 +1555,7 @@ export class ClaudeAgentClient implements AgentClient {
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
+    this.runningAsRoot = options.runningAsRoot ?? isRunningAsRoot();
   }
 
   resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
@@ -1557,6 +1578,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
+      runningAsRoot: this.runningAsRoot,
     });
   }
 
@@ -1586,6 +1608,7 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
+      runningAsRoot: this.runningAsRoot,
     });
   }
 
@@ -1615,6 +1638,7 @@ export class ClaudeAgentClient implements AgentClient {
     return {
       models,
       ...modeCatalog,
+      modes: applyClaudeRuntimeModeAvailability(modeCatalog.modes, this.runningAsRoot),
     };
   }
 
@@ -2075,6 +2099,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
+  private readonly runningAsRoot: boolean;
   private query: Query | null = null;
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
@@ -2096,7 +2121,7 @@ class ClaudeAgentSession implements AgentSession {
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
   private planResumeMode: PermissionMode | null = null;
-  private availableModes: AgentMode[] = DEFAULT_MODES;
+  private availableModes: AgentMode[];
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
@@ -2171,6 +2196,8 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
+    this.runningAsRoot = options.runningAsRoot;
+    this.availableModes = modesForRuntime(this.runningAsRoot);
     this.contextUsage = new ClaudeContextUsageState(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
@@ -2196,7 +2223,9 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
+    const configuredMode = isPermissionMode(config.modeId) ? config.modeId : "default";
+    this.currentMode =
+      this.runningAsRoot && configuredMode === "bypassPermissions" ? "default" : configuredMode;
     if (this.currentMode !== "plan") {
       this.planResumeMode = this.currentMode;
     }
@@ -2469,6 +2498,10 @@ class ClaudeAgentSession implements AgentSession {
       throw new Error(
         `Invalid mode '${modeId}' for Claude provider. Valid modes: ${validModesList}`,
       );
+    }
+
+    if (this.runningAsRoot && modeId === "bypassPermissions") {
+      throw new Error(CLAUDE_ROOT_BYPASS_DISABLED_REASON);
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
@@ -3379,9 +3412,8 @@ class ClaudeAgentSession implements AgentSession {
       includePartialMessages: true,
       permissionMode,
       // Dynamic mode switching can recreate the underlying Claude query. Keep the
-      // bypass launch capability available so later setPermissionMode("bypassPermissions")
-      // calls do not fail after a model/thinking/rewind-driven restart.
-      allowDangerouslySkipPermissions: true,
+      // bypass launch capability available unless Claude Code forbids the flag for root.
+      ...permissionBypassOptions(this.runningAsRoot),
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
       pathToClaudeCodeExecutable: claudeBinary,
@@ -4749,7 +4781,7 @@ class ClaudeAgentSession implements AgentSession {
       threadStartedSessionId = newSessionId;
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
-    this.availableModes = DEFAULT_MODES;
+    this.availableModes = modesForRuntime(this.runningAsRoot);
     this.observePermissionMode(message.permissionMode);
     this.persistence = null;
     if (message.model) {
@@ -4771,10 +4803,11 @@ class ClaudeAgentSession implements AgentSession {
 
   /** Records a mode Claude Code reports, returning whether it differs from the current one. */
   private observePermissionMode(mode: PermissionMode): boolean {
-    const changed = this.currentMode !== mode;
-    this.currentMode = mode;
-    if (mode !== "plan") {
-      this.planResumeMode = mode;
+    const observedMode = this.runningAsRoot && mode === "bypassPermissions" ? "default" : mode;
+    const changed = this.currentMode !== observedMode;
+    this.currentMode = observedMode;
+    if (observedMode !== "plan") {
+      this.planResumeMode = observedMode;
     }
     return changed;
   }

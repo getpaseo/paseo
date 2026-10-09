@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveAndValidateCreateAgentMode } from "./create-agent-mode.js";
+import {
+  resolveAndValidateCreateAgentMode,
+  resolveDefaultAgentCreateConfig,
+} from "./create-agent-mode.js";
 
 const CLAUDE_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 const OPENCODE_MODES = ["build", "plan"];
@@ -209,5 +212,45 @@ describe("resolveAndValidateCreateAgentMode", () => {
       targetUnattendedMode: "full-access",
     });
     expect(resolved).toBe("auto");
+  });
+});
+
+describe("resolveDefaultAgentCreateConfig", () => {
+  it("rejects a mode disabled by the provider with its explanation", () => {
+    expect(() =>
+      resolveDefaultAgentCreateConfig({
+        provider: "claude",
+        requestedMode: "bypassPermissions",
+        parent: null,
+        unattended: false,
+        availableModes: [
+          { id: "default", label: "Always Ask" },
+          {
+            id: "bypassPermissions",
+            label: "Bypass",
+            disabledReason: "Claude Code does not allow permission bypass as root.",
+          },
+        ],
+      }),
+    ).toThrow("Claude Code does not allow permission bypass as root.");
+  });
+
+  it("rejects a disabled mode inherited from a same-provider parent", () => {
+    expect(() =>
+      resolveDefaultAgentCreateConfig({
+        provider: "claude",
+        requestedMode: undefined,
+        parent: agentParent("claude", "bypassPermissions", true),
+        unattended: false,
+        availableModes: [
+          { id: "default", label: "Always Ask" },
+          {
+            id: "bypassPermissions",
+            label: "Bypass",
+            disabledReason: "Claude Code does not allow permission bypass as root.",
+          },
+        ],
+      }),
+    ).toThrow("Claude Code does not allow permission bypass as root.");
   });
 });
