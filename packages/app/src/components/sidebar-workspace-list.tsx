@@ -86,11 +86,17 @@ import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visua
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
-import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
+import {
+  hasVisibleOrderChanged,
+  mergeVisibleReorderInPlace,
+  mergeWithRemainder,
+} from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import type { SidebarHostSection } from "@/components/sidebar/sidebar-host-sections";
+import { SidebarHostSectionHeader } from "@/components/sidebar/sidebar-host-section-header";
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
@@ -212,6 +218,8 @@ function selectionForSelectedWorkspace(
 
 interface SidebarWorkspaceListProps {
   workspaceGroups: SidebarWorkspaceGroup[];
+  /** Always-on host sections, empty while the sidebar spans a single host. */
+  hostSections: SidebarHostSection[];
   /** What `useProjectIcons` is asked for, straight from the projection. See `SidebarProjection`. */
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
@@ -1883,6 +1891,7 @@ const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
 export function SidebarWorkspaceList({
   workspaceGroups,
+  hostSections,
   projectIconTargets,
   pinnedGroups,
   projects,
@@ -1966,6 +1975,7 @@ export function SidebarWorkspaceList({
     groupMode !== "project" ? (
       <SidebarGroupedModeList
         workspaceGroups={workspaceGroups}
+        hostSections={hostSections}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
@@ -1983,6 +1993,7 @@ export function SidebarWorkspaceList({
     ) : (
       <ProjectModeList
         projects={projects}
+        hostSections={hostSections}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
@@ -2018,6 +2029,7 @@ export function SidebarWorkspaceList({
  */
 function SidebarGroupedModeList({
   workspaceGroups,
+  hostSections,
   pinnedGroups,
   workspaceEntriesByKey,
   projectIconByProjectViewKey,
@@ -2033,6 +2045,7 @@ function SidebarGroupedModeList({
   dragGestureHostActive,
 }: {
   workspaceGroups: SidebarWorkspaceGroup[];
+  hostSections: SidebarHostSection[];
   pinnedGroups: PinnedSidebarGroups;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
@@ -2060,6 +2073,7 @@ function SidebarGroupedModeList({
   return (
     <SidebarStatusWorkspaceList
       groups={workspaceGroups}
+      hostSections={hostSections}
       pinnedWorkspaces={pinnedWorkspaces}
       projectIconByProjectViewKey={projectIconByProjectViewKey}
       shortcutIndexByWorkspaceKey={_projectShortcutIndex}
@@ -2079,6 +2093,7 @@ function SidebarGroupedModeList({
 
 function ProjectModeList({
   projects,
+  hostSections,
   pinnedGroups,
   workspaceEntriesByKey,
   projectIconByProjectViewKey,
@@ -2208,6 +2223,21 @@ function ProjectModeList({
     });
   }, [creatingWorkspaceIds, projects]);
 
+  const hostProjectSections = useMemo(
+    () =>
+      hostSections.length > 0
+        ? hostSections
+            // A host whose only content is status rows has no project row to head here.
+            .filter((section) => section.projects.length > 0)
+            .map((section) => ({
+              key: section.key,
+              label: section.label,
+              projects: section.projects,
+            }))
+        : null,
+    [hostSections],
+  );
+
   const handleProjectDragEnd = useCallback(
     (reorderedProjects: SidebarProjectEntry[]) => {
       const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
@@ -2229,6 +2259,33 @@ function ProjectModeList({
       );
     },
     [getProjectOrder, setProjectOrder],
+  );
+
+  const handleSectionProjectDragEnd = useCallback(
+    (reorderedProjects: SidebarProjectEntry[]) => {
+      if (!hostProjectSections) return;
+      const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
+      const currentOrder = getProjectOrder();
+      if (
+        !hasVisibleOrderChanged({
+          currentOrder,
+          reorderedVisibleKeys: reorderedProjectKeys,
+        })
+      ) {
+        return;
+      }
+      // A project spanning hosts has one slot in the global order, so merge the
+      // dragged section in place instead of rebuilding it from every section —
+      // the concatenation repeated those shared keys and the store dropped them,
+      // discarding the reorder.
+      setProjectOrder(
+        mergeVisibleReorderInPlace({
+          currentOrder,
+          reorderedVisibleKeys: reorderedProjectKeys,
+        }),
+      );
+    },
+    [getProjectOrder, hostProjectSections, setProjectOrder],
   );
 
   const handleWorkspaceReorder = useCallback(
@@ -2394,10 +2451,46 @@ function ProjectModeList({
     ],
   );
 
-  const projectBody =
-    projects.length === 0 ? (
+  let projectBody: ReactElement;
+  if (projects.length === 0) {
+    projectBody = (
       <SidebarProjectEmptyState onAddProject={onAddProject} onImportSession={onImportSession} />
-    ) : (
+    );
+  } else if (hostProjectSections) {
+    projectBody = (
+      <>
+        {hostProjectSections.map((section) => (
+          <View
+            key={section.key}
+            style={styles.hostSection}
+            testID={`sidebar-host-section-${section.key}`}
+          >
+            <SidebarHostSectionHeader
+              label={section.label}
+              testID={`sidebar-host-section-header-${section.key}`}
+            />
+            {section.projects.length > 0 ? (
+              <DraggableList
+                testID={`sidebar-project-list-${section.key}`}
+                data={section.projects}
+                keyExtractor={projectViewKeyExtractor}
+                renderItem={renderProject}
+                onDragEnd={handleSectionProjectDragEnd}
+                extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+                scrollEnabled={false}
+                useDragHandle
+                nestable={platformIsNative}
+                simultaneousGestureRef={parentGestureRef}
+                gestureHostPresented={dragGestureHostActive}
+                containerStyle={styles.projectListContainer}
+              />
+            ) : null}
+          </View>
+        ))}
+      </>
+    );
+  } else {
+    projectBody = (
       <DraggableList
         testID="sidebar-project-list"
         data={unpinnedProjects}
@@ -2413,6 +2506,7 @@ function ProjectModeList({
         containerStyle={styles.projectListContainer}
       />
     );
+  }
 
   const content = (
     <>
@@ -2504,6 +2598,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[4],
   },
   projectListContainer: {
+    width: "100%",
+  },
+  hostSection: {
     width: "100%",
   },
   pinnedSection: {
