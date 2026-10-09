@@ -516,6 +516,14 @@ test.describe("send review feedback", () => {
       await test.step("The wide menu includes only local open agents", async () => {
         await captureWideFeedbackAppearance(page);
       });
+      await test.step("Escape returns keyboard focus to feedback so the chooser can reopen", async () => {
+        await openFeedbackWithKeyboard(page);
+        await dismissRecipientMenu(page);
+        await expectFeedbackFocused(page);
+        await reopenFeedbackWithKeyboard(page);
+        await dismissRecipientMenu(page);
+        await expectFeedbackFocused(page);
+      });
       await test.step("Choose the second agent in the compact menu and stay on the diff", async () => {
         await showCompactLayout(page);
         await captureFeedback(page, "cta-compact");
@@ -654,6 +662,25 @@ async function expectCompactCommentSheet(page: Page) {
     page.getByRole("button", { name: "Save review comment", exact: true }),
   ).toBeDisabled();
 }
+function feedbackButton(page: Page) {
+  return page.getByRole("button", { name: "Send feedback (1)", exact: true });
+}
+async function openFeedbackWithKeyboard(page: Page) {
+  await feedbackButton(page).focus();
+  await expectFeedbackFocused(page);
+  await reopenFeedbackWithKeyboard(page);
+}
+async function reopenFeedbackWithKeyboard(page: Page) {
+  await page.keyboard.press("Enter");
+  await expectRecipientMenu(page);
+  const recipient = page.getByRole("menuitem", { name: "Composer diff stat", exact: true });
+  await recipient.focus();
+  await expect(recipient).toBeFocused();
+}
+async function expectFeedbackFocused(page: Page) {
+  await expect(feedbackButton(page)).toBeFocused();
+}
+
 async function captureWideFeedbackAppearance(page: Page) {
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });

@@ -153,18 +153,17 @@ function FeedbackTrigger({
         pointerEvents="box-none"
         style={[styles.wideAction, { bottom: bottomInset + SPACING[4] }]}
       >
-        <View ref={triggerRef} collapsable={false}>
-          <Button
-            variant="default"
-            size="sm"
-            leftIcon={Send}
-            accessibilityLabel={label}
-            disabled={disabled}
-            onPress={press}
-          >
-            {label}
-          </Button>
-        </View>
+        <Button
+          ref={triggerRef}
+          variant="default"
+          size="sm"
+          leftIcon={Send}
+          accessibilityLabel={label}
+          disabled={disabled}
+          onPress={press}
+        >
+          {label}
+        </Button>
       </View>
     );
   }
