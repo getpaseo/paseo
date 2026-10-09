@@ -113,7 +113,7 @@ export function WorkspaceOpenInEditorButton({
     serverId,
     cwd: shouldQueryCheckout ? cwd : "",
   });
-  const { resolvedForge } = useCheckoutPrStatusQuery({
+  const { resolvedForge, repositoryWebUrl } = useCheckoutPrStatusQuery({
     serverId,
     cwd: shouldQueryCheckout ? cwd : "",
   });
@@ -129,6 +129,7 @@ export function WorkspaceOpenInEditorButton({
         isLocalExecution: isLocalDaemon,
         checkoutStatus,
         forge: resolvedForge,
+        repositoryWebUrl,
       }).map((target) => {
         if (target.source === "forge") {
           const presentation = getForgePresentation(target.forge);
@@ -154,6 +155,7 @@ export function WorkspaceOpenInEditorButton({
       cwd,
       desktopOpenTargets,
       resolvedForge,
+      repositoryWebUrl,
       isDesktopOpenAvailable,
       isLocalDaemon,
       resolvedFile,

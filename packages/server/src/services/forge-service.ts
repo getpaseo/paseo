@@ -434,6 +434,8 @@ export interface CreatePullRequestOptions {
 }
 
 export interface ForgeService {
+  /** Canonical browser URL for the remote repository, independent of any PR. */
+  getRepositoryWebUrl?(options: { cwd: string; remoteUrl: string }): Promise<string | null>;
   listPullRequests(options: ListPullRequestsOptions): Promise<PullRequestSummary[]>;
   listIssues(options: ListIssuesOptions): Promise<IssueSummary[]>;
   getPullRequest(options: GetPullRequestOptions): Promise<PullRequestSummary>;
