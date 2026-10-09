@@ -100,7 +100,10 @@ export default {
     name: variant.name,
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
-    orientation: "portrait",
+    // `android:screenOrientation` has no screen-size qualifier, so a static lock
+    // would pillarbox tablets. The phone/tablet split happens at runtime in
+    // useAdaptiveOrientation.
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
     userInterfaceStyle: "automatic",
@@ -108,6 +111,12 @@ export default {
     ios: {
       supportsTablet: true,
       infoPlist: {
+        // Without this, a non-"portrait" `orientation` makes Expo write all four
+        // orientations for the iPhone too. `~ipad` stays all-four either way.
+        UISupportedInterfaceOrientations: [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+        ],
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
       },
