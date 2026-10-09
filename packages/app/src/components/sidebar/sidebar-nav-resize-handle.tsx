@@ -12,6 +12,9 @@ interface SidebarNavResizeHandleProps {
   onCommitHeight: (height: number) => void;
 }
 
+// Unistyles ViewStyle has no typed cursor; see sidebar-resize-handle.tsx.
+const webRowResizeCursorStyle = { cursor: "row-resize" } as object;
+
 /**
  * The divider between the sidebar's navigation group and the workspace list.
  *
@@ -34,8 +37,8 @@ export function SidebarNavResizeHandle({
 
   const handlePointerDown = useCallback(
     (event: RNPointerEvent) => {
-      const target = event.currentTarget as unknown as HTMLElement | null;
-      if (!target) return;
+      const target: unknown = event.currentTarget;
+      if (!(target instanceof HTMLElement)) return;
 
       const pointerId = event.nativeEvent.pointerId;
       startRef.current = { pointerY: event.nativeEvent.clientY, height };
@@ -45,15 +48,15 @@ export function SidebarNavResizeHandle({
       event.stopPropagation();
       target.setPointerCapture?.(pointerId);
 
-      function cleanup() {
+      const cleanup = () => {
         setDragging(false);
-        if (target?.hasPointerCapture?.(pointerId)) {
+        if (target.hasPointerCapture?.(pointerId)) {
           target.releasePointerCapture(pointerId);
         }
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
         window.removeEventListener("pointercancel", handlePointerUp);
-      }
+      };
 
       function handlePointerMove(moveEvent: PointerEvent) {
         if (moveEvent.pointerId !== pointerId) return;
@@ -102,11 +105,6 @@ export function SidebarNavResizeHandle({
     [height, onCommitHeight, onPreviewHeight],
   );
 
-  const hitAreaStyle = useMemo(
-    () => [styles.hitArea, { cursor: "row-resize", touchAction: "none" } as object],
-    [],
-  );
-
   // The pointer path reads `window` and captures on a DOM node, so it is gated on web
   // rather than on `finePointer` alone.
   if (isWeb && finePointer) {
@@ -116,7 +114,7 @@ export function SidebarNavResizeHandle({
         aria-orientation="horizontal"
         aria-label={label}
         testID="sidebar-nav-group-resize-handle"
-        style={hitAreaStyle}
+        style={[styles.hitArea, webRowResizeCursorStyle]}
         onPointerDown={handlePointerDown}
       >
         {dragging ? <View pointerEvents="none" style={styles.activeLine} /> : null}
@@ -149,6 +147,7 @@ const styles = StyleSheet.create((theme) => ({
     bottom: -5,
     height: 10,
     zIndex: 10,
+    touchAction: "none",
   },
   activeLine: {
     position: "absolute",

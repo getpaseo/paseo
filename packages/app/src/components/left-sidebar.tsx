@@ -398,16 +398,7 @@ function IconTooltipContent({
   );
 }
 
-function SidebarFooter({
-  theme,
-  handleOpenProject,
-  handleSettings,
-  labels,
-  handleAddHost,
-  handleOpenHostSettings,
-  onBeforeNavigate,
-  onHeightChange,
-}: {
+interface SidebarFooterProps {
   theme: SidebarTheme;
   handleOpenProject: () => void;
   handleSettings: () => void;
@@ -422,7 +413,18 @@ function SidebarFooter({
   handleOpenHostSettings: (serverId: string) => void;
   onBeforeNavigate?: () => void;
   onHeightChange?: (height: number) => void;
-}) {
+}
+
+function SidebarFooter({
+  theme,
+  handleOpenProject,
+  handleSettings,
+  labels,
+  handleAddHost,
+  handleOpenHostSettings,
+  onBeforeNavigate,
+  onHeightChange,
+}: SidebarFooterProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
   const lastHeightRef = useRef<number | null>(null);
