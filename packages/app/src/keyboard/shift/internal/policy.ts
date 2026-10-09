@@ -66,3 +66,20 @@ export function shouldReconcileHiddenKeyboardEnd(input: {
   "worklet";
   return !(input.height > 0) || !(input.progress > 0);
 }
+
+export interface KeyboardShiftSample {
+  moving: boolean;
+  shift: number;
+}
+
+/**
+ * The keyboard height shared value changes on every animation frame. Consumers that do JS-thread
+ * work (layout, measurement, bridge calls) must only see the value once motion has stopped.
+ */
+export function shouldPublishSettledKeyboardShift(input: {
+  current: KeyboardShiftSample;
+  previous: KeyboardShiftSample | null;
+}): boolean {
+  "worklet";
+  return !input.current.moving && (input.previous === null || input.previous.moving);
+}
