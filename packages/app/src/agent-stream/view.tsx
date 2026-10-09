@@ -91,6 +91,7 @@ import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
 } from "@/assistant-file-links";
+import { planInlinePathOpen } from "./inline-path-open";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -437,7 +438,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           return;
         }
 
-        if (normalized.file) {
+        const openFileLocation = () => {
+          if (!normalized.file) {
+            return;
+          }
           const location = normalizeWorkspaceFileLocation({
             path: normalized.file,
             lineStart: target.lineStart,
@@ -462,27 +466,51 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               target: createWorkspaceFileTabTarget(location),
             });
           }
+        };
+
+        const openFilesExplorerAt = (directoryPath: string) => {
+          void requestDirectoryListing(directoryPath);
+
+          openExplorerSidebarView({
+            isCompact: isMobile,
+            workspaceKey: buildWorkspaceTabPersistenceKey({
+              serverId: resolvedServerId,
+              workspaceId: context.workspaceId ?? "",
+            }),
+            checkout: {
+              serverId: resolvedServerId,
+              cwd: context.cwd,
+              isGit: context.projectPlacement?.checkout?.isGit ?? true,
+            },
+            view: "files",
+          });
+        };
+
+        const plan = planInlinePathOpen({
+          file: normalized.file,
+          lineStart: target.lineStart,
+          workspaceRoot,
+        });
+
+        if (plan.kind === "file") {
+          openFileLocation();
           return;
         }
 
-        void requestDirectoryListing(normalized.directory, {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
+        if (plan.kind === "directory") {
+          openFilesExplorerAt(normalized.directory || ".");
+          return;
+        }
 
-        openExplorerSidebarView({
-          isCompact: isMobile,
-          workspaceKey: buildWorkspaceTabPersistenceKey({
-            serverId: resolvedServerId,
-            workspaceId: context.workspaceId ?? "",
-          }),
-          checkout: {
-            serverId: resolvedServerId,
-            cwd: context.cwd,
-            isGit: context.projectPlacement?.checkout?.isGit ?? true,
-          },
-          view: "files",
-        });
+        if (!client) {
+          openFileLocation();
+          return;
+        }
+
+        void client.listDirectory(workspaceRoot, plan.directoryPath).then(
+          () => openFilesExplorerAt(plan.directoryPath),
+          () => openFileLocation(),
+        );
       },
     );
 
