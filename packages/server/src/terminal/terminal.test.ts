@@ -553,10 +553,14 @@ describe("createTerminal", () => {
     // Replay the snapshot the way the client does on tab switch and read the
     // row back the way a selection copy would.
     const restored = new xterm.Terminal({ cols: 80, rows: 10, allowProposedApi: true });
-    await new Promise<void>((resolve) =>
-      restored.write(renderTerminalSnapshotToAnsi(state), resolve),
-    );
-    expect(restored.buffer.active.getLine(0)?.translateToString(true)).toBe(text);
+    try {
+      await new Promise<void>((resolve) =>
+        restored.write(renderTerminalSnapshotToAnsi(state), resolve),
+      );
+      expect(restored.buffer.active.getLine(0)?.translateToString(true)).toBe(text);
+    } finally {
+      restored.dispose();
+    }
 
     // The continuation cell must stay empty so the restore path can skip it.
     expect(state.grid[0][0].char).toBe("통");
