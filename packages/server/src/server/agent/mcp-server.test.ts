@@ -240,6 +240,7 @@ function buildAgentManagerSpies() {
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
+    steerOrReplaceActiveTurn: vi.fn().mockResolvedValue({ status: "inactive" }),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
@@ -3895,6 +3896,89 @@ describe("send_agent_prompt MCP tool", () => {
     expect(response.structuredContent.guidance).toBe(
       "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
+  });
+
+  it("steers a busy agent instead of interrupting it for agent-scoped prompts", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const steerOrReplaceActiveTurn = vi.fn().mockResolvedValue({ status: "steered" });
+    const replaceAgentRun = vi.fn();
+    Object.assign(spies.agentManager, { steerOrReplaceActiveTurn, replaceAgentRun });
+    spies.agentManager.hasInFlightRun.mockReturnValue(true);
+    spies.agentManager.getAgent.mockImplementation((agentId: string) =>
+      agentId === "parent-agent"
+        ? ({
+            id: "parent-agent",
+            cwd: existingCwd,
+            workspaceId: "wks_parent",
+            provider: "claude",
+          } as ManagedAgent)
+        : ({
+            id: "busy-agent",
+            cwd: existingCwd,
+            lifecycle: "running",
+            currentModeId: null,
+            availableModes: [],
+            config: { title: "Busy" },
+          } as ManagedAgent),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const tool = registeredTool(server, "send_agent_prompt");
+    const parsed = await tool.inputSchema.safeParseAsync({
+      agentId: "busy-agent",
+      prompt: "[coord] heads up",
+    });
+    if (!parsed.success) throw new Error("Expected caller send_agent_prompt input to parse");
+    expect(parsed.data).toMatchObject({ activeTurnBehavior: "steer" });
+    await tool.handler(parsed.data as Record<string, unknown>);
+
+    expect(steerOrReplaceActiveTurn).toHaveBeenCalledWith(
+      "busy-agent",
+      "[coord] heads up",
+      undefined,
+    );
+    expect(replaceAgentRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps interrupting a busy agent for top-level prompts", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const steerOrReplaceActiveTurn = vi.fn().mockResolvedValue({ status: "steered" });
+    const replaceAgentRun = vi.fn().mockResolvedValue((async function* noop() {})());
+    Object.assign(spies.agentManager, { steerOrReplaceActiveTurn, replaceAgentRun });
+    spies.agentManager.hasInFlightRun.mockReturnValue(true);
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "busy-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Busy" },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+
+    const tool = registeredTool(server, "send_agent_prompt");
+    const parsed = await tool.inputSchema.safeParseAsync({
+      agentId: "busy-agent",
+      prompt: "stop and do this",
+      background: true,
+    });
+    if (!parsed.success) throw new Error("Expected top-level send_agent_prompt input to parse");
+    expect(parsed.data).toMatchObject({ activeTurnBehavior: "interrupt" });
+    await tool.handler(parsed.data as Record<string, unknown>);
+
+    expect(steerOrReplaceActiveTurn).not.toHaveBeenCalled();
+    expect(replaceAgentRun).toHaveBeenCalledWith("busy-agent", "stop and do this", undefined);
   });
 
   it("keeps top-level prompts blocking by default", async () => {

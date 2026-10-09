@@ -5,7 +5,7 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
-import { AgentProfileSchema } from "@getpaseo/protocol/messages";
+import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -1129,6 +1129,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional()
+      .default("steer")
+      .describe(
+        "What to do when the target agent is mid-turn. Agent-scoped default is steer: deliver the prompt into its active turn without interrupting it (falls back to interrupt only when the provider cannot steer). Use interrupt to cancel its current turn.",
+      ),
     background: z
       .boolean()
       .optional()
@@ -1146,6 +1151,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional()
+      .default("interrupt")
+      .describe(
+        "What to do when the target agent is mid-turn: interrupt (default) cancels its current turn; steer delivers the prompt into the active turn.",
+      ),
     background: z
       .boolean()
       .optional()
@@ -1913,6 +1923,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       sessionMode,
       background = Boolean(callerAgentId),
       notifyOnFinish = Boolean(callerAgentId),
+      activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
     }) => {
       function armFinishNotification(): boolean {
         if (!callerAgentId || !notifyOnFinish) {
@@ -1935,6 +1946,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         prompt,
         source: callerAgentId ? { kind: "agent-message", agentId: callerAgentId } : undefined,
         sessionMode,
+        activeTurnBehavior,
         logger: childLogger,
       });
 
