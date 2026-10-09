@@ -1160,6 +1160,7 @@ export const ja: TranslationResources = {
       done: "完了",
     },
     display: {
+      showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",
       grouping: {

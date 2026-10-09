@@ -8,6 +8,9 @@ import { projectTimelineRows } from "./timeline-projection.js";
 const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
 const MAX_TOOL_SUMMARY_CHARS = 200;
+const MAX_FORK_CONTEXT_CHARS = 100_000;
+const MAX_FORK_METADATA_CHARS = 1_000;
+const FORK_HISTORY_OMITTED = "[Earlier chat history omitted]\n";
 
 interface ActivityCuratorOptions {
   maxItems?: number;
@@ -276,7 +279,7 @@ function selectForkContextRows(input: {
 
 function trimContextMetadata(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
+  return trimmed ? trimmed.slice(0, MAX_FORK_METADATA_CHARS) : null;
 }
 
 function buildForkContextText(input: {
@@ -294,6 +297,30 @@ function buildForkContextText(input: {
     header.push(`Source directory: ${cwd}`);
   }
   return `<chat-history-summary>\n${header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
+}
+
+function fitForkContextEntries(entries: ActivityEntry[], budget: number): string {
+  const length = entries.reduce((total, entry) => total + entry.text.length + 1, -1);
+  if (length <= budget) return entries.map((entry) => entry.text).join("\n");
+
+  const selected: string[] = [];
+  let remaining = budget - FORK_HISTORY_OMITTED.length;
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const text = entries[index]!.text;
+    const size = text.length + (selected.length > 0 ? 1 : 0);
+    if (size > remaining) {
+      if (selected.length === 0) {
+        const marker = "\n[Message truncated]\n";
+        const available = remaining - marker.length;
+        const head = Math.ceil(available / 2);
+        selected.push(text.slice(0, head) + marker + text.slice(-(available - head)));
+      }
+      break;
+    }
+    selected.push(text);
+    remaining -= size;
+  }
+  return FORK_HISTORY_OMITTED + selected.toReversed().join("\n");
 }
 
 export function buildAgentForkContextAttachment(input: {
@@ -319,10 +346,10 @@ export function buildAgentForkContextAttachment(input: {
     includeKinds: ["user_message", "assistant_message", "tool_call"],
     includeExternalToolInput: false,
   });
+  const metadata = { agentTitle: input.agentTitle, cwd: input.cwd };
+  const budget = MAX_FORK_CONTEXT_CHARS - buildForkContextText({ body: "", ...metadata }).length;
   const body =
-    entries.length > 0
-      ? entries.map((entry) => entry.text).join("\n")
-      : "No chat history to display.";
+    entries.length > 0 ? fitForkContextEntries(entries, budget) : "No chat history to display.";
   return {
     attachment: {
       type: "text",

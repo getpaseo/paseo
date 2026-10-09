@@ -47,6 +47,7 @@ export interface AgentUpdatesService {
 }
 
 export interface AgentUpdatesServiceDeps {
+  includesWorkspace?(agent: AgentSnapshotPayload, includeBackground?: boolean): Promise<boolean>;
   emit(message: SessionOutboundMessage): void;
   enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload>;
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
@@ -59,6 +60,7 @@ export interface AgentUpdatesServiceDeps {
     project: ProjectPlacementPayload | null,
     agentId: string,
     includeSequence: boolean,
+    includeBackground?: boolean,
   ): T;
   logger: pino.Logger;
 }
@@ -136,6 +138,10 @@ export function matchesAgentUpdatesFilter(input: {
     return false;
   }
 
+  if (agent.internal && filter?.includeInternal !== true) {
+    return false;
+  }
+
   if (filter && !agentThinkingOptionMatchesFilter(agent, filter)) {
     return false;
   }
@@ -160,7 +166,15 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     agent: AgentSnapshotPayload | null,
     project: ProjectPlacementPayload | null,
     agentId: string,
-  ) => deps.sequenceAgentUpdate(payload, agent, project, agentId, sub.syncEnabled === true);
+  ) =>
+    deps.sequenceAgentUpdate(
+      payload,
+      agent,
+      project,
+      agentId,
+      sub.syncEnabled === true,
+      sub.filter?.includeBackground,
+    );
 
   function bufferOrEmit(sub: AgentUpdatesSubscriptionState, payload: AgentUpdatePayload): void {
     if (subscriptions.get(sub.subscriptionId) !== sub) return;
@@ -234,10 +248,16 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     const project = payload.workspaceId
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
+    const backgroundVisible = await Promise.all(
+      observers.map(
+        (sub) => deps.includesWorkspace?.(payload, sub.filter?.includeBackground) ?? true,
+      ),
+    );
     return (
       project !== null &&
       observers.some(
-        (sub) =>
+        (sub, index) =>
+          backgroundVisible[index] &&
           sub.isProviderVisible(payload.provider) &&
           matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter }),
       )
@@ -252,7 +272,9 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       : null;
     for (const sub of observers) {
       const matches =
-        project && matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter });
+        project &&
+        ((await deps.includesWorkspace?.(payload, sub.filter?.includeBackground)) ?? true) &&
+        matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter });
       bufferOrEmit(
         sub,
         sequence(

@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import {
   type GitSetupOptions,
+  type CreateAgentWorktreeTarget,
   type FirstAgentContext,
   type ChangeRequestCheckoutSource,
   type SessionInboundMessage,
@@ -320,7 +321,42 @@ function validateNormalizedGitOptions(input: ValidateNormalizedGitOptionsInput):
   }
 }
 
-export function normalizeGitOptions(
+export function normalizeAgentCreationGitOptions(
+  gitOptions?: GitSetupOptions,
+  legacyWorktreeName?: string,
+  worktree?: CreateAgentWorktreeTarget,
+): NormalizedGitOptions | null {
+  if (worktree && gitOptions) {
+    throw new Error("create_agent_request worktree cannot be combined with git options");
+  }
+  if (worktree) {
+    switch (worktree.mode) {
+      case "branch-off":
+        gitOptions = {
+          createWorktree: true,
+          createNewBranch: true,
+          newBranchName: worktree.newBranch,
+          baseBranch: worktree.base,
+          action: "branch-off",
+          refName: worktree.base,
+        };
+        break;
+      case "checkout-branch":
+        gitOptions = { createWorktree: true, action: "checkout", refName: worktree.branch };
+        break;
+      case "checkout-pr":
+        gitOptions = {
+          createWorktree: true,
+          action: "checkout",
+          githubPrNumber: worktree.prNumber,
+        };
+        break;
+    }
+  }
+  return normalizeGitOptions(gitOptions, legacyWorktreeName);
+}
+
+function normalizeGitOptions(
   gitOptions?: GitSetupOptions,
   legacyWorktreeName?: string,
 ): NormalizedGitOptions | null {

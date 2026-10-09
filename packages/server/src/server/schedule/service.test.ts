@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -904,7 +904,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -982,7 +981,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1052,7 +1050,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1112,7 +1109,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -2866,6 +2862,44 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.status).toBe("failed");
     expect(inspected.runs[0]?.error).toBe("network blip");
   });
+
+  // chmod cannot make a directory unwritable on Windows or for root.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fires again after a tick whose run could not be recorded",
+    async () => {
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async () => ({ agentId: null, output: "ran" }),
+      });
+
+      const created = await service.create({
+        prompt: "ping target",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "agent", agentId: "88888888-8888-4888-8888-888888888888" },
+      });
+
+      const schedulesDir = join(tempDir, "schedules");
+      now = new Date("2026-01-01T00:01:00.000Z");
+      await chmod(schedulesDir, 0o555);
+      try {
+        await expect(service.tick()).rejects.toThrow();
+      } finally {
+        await chmod(schedulesDir, 0o755);
+      }
+
+      await service.tick();
+
+      const inspected = await service.inspect(created.id);
+      expect(inspected.runs).toHaveLength(1);
+      expect(inspected.runs[0]?.status).toBe("succeeded");
+      expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+    },
+  );
 
   test("completes the schedule when a scheduled run targets an archived agent", async () => {
     const service = createScheduleService({

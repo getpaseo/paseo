@@ -1139,6 +1139,7 @@ export const zhCN: TranslationResources = {
       done: "已完成",
     },
     display: {
+      showBackground: "显示后台工作区",
       trigger: "显示偏好",
       heading: "显示",
       grouping: {

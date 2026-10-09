@@ -1164,6 +1164,7 @@ export const ru: TranslationResources = {
       done: "Готово",
     },
     display: {
+      showBackground: "Показать фоновые пространства",
       trigger: "Настройки отображения",
       heading: "Отображение",
       grouping: {
