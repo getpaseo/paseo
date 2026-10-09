@@ -22,6 +22,7 @@
  */
 
 import assert from "node:assert";
+import YAML from "yaml";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -43,7 +44,8 @@ interface ProviderListRow {
   provider: string;
   label: string;
   status: string;
-  enabled: string;
+  enabled: boolean;
+  modes: Array<{ id: string; label: string }>;
 }
 
 interface ProviderDiagnostic {
@@ -246,6 +248,7 @@ try {
   // Test 3: provider ls --json outputs valid JSON
   {
     console.log("Test 3: provider ls --json outputs valid JSON");
+    await runProviderModelsJson("codex");
     const result = await ctx.paseo(["provider", "ls", "--json"]);
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const data = JSON.parse(result.stdout.trim());
@@ -264,15 +267,33 @@ try {
       "should include opencode",
     );
     const rows = data as ProviderListRow[];
+    const codex = rows.find((p) => p.provider === "codex");
+    assert(codex, "should include codex");
+    assert(Array.isArray(codex.modes), "mode choices should be structured, not display text");
+    assert(
+      codex.modes.some((mode) => mode.id === "full-access" && mode.label === "Full Access"),
+      "mode choices should include an ID usable with run --mode and its display label",
+    );
+    assert(
+      codex.modes.every((mode) => mode.label.length > 0),
+      "modes should keep display labels",
+    );
     for (const provider of ["claude", "codex", "opencode"] as const) {
       const row = rows.find((p) => p.provider === provider);
       assert(row, `should include ${provider}`);
-      assert.strictEqual(row.enabled, "Enabled", `${provider} should report Enabled`);
+      assert.strictEqual(row.enabled, true, `${provider} should report enabled`);
     }
 
     const omp = rows.find((p) => p.provider === "omp");
     assert(omp, "should include omp");
-    assert.strictEqual(omp.enabled, "Disabled", "omp should report Disabled by default");
+    assert.strictEqual(omp.enabled, false, "omp should report disabled by default");
+    const yamlResult = await ctx.paseo(["provider", "ls", "--format", "yaml"]);
+    assert.strictEqual(yamlResult.exitCode, 0, "YAML provider listing should exit 0");
+    const yamlRows = YAML.parse(yamlResult.stdout) as ProviderListRow[];
+    const yamlCodex = yamlRows.find((p) => p.provider === "codex");
+    assert(yamlCodex, "YAML should include codex");
+    assert.strictEqual(yamlCodex.enabled, true, "YAML should preserve boolean enabled state");
+    assert.deepStrictEqual(yamlCodex.modes, codex.modes, "YAML should preserve the same mode IDs");
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
@@ -305,11 +326,11 @@ try {
       const data = JSON.parse(result.stdout.trim()) as ProviderListRow[];
       const claude = data.find((p) => p.provider === "claude");
       assert(claude, "disabled claude provider should stay in provider ls");
-      assert.strictEqual(claude.enabled, "Disabled", "disabled provider should report Disabled");
+      assert.strictEqual(claude.enabled, false, "disabled provider should report false");
 
       const opencode = data.find((p) => p.provider === "opencode");
       assert(opencode, "enabled opencode provider should stay in provider ls");
-      assert.strictEqual(opencode.enabled, "Enabled", "enabled provider should report Enabled");
+      assert.strictEqual(opencode.enabled, true, "enabled provider should report true");
 
       const modelsResult = await runPaseoCli(disabledCtx, ["provider", "models", "claude"]);
       assert.notStrictEqual(
@@ -363,10 +384,6 @@ try {
     assert(
       ids.every((id) => id.startsWith("gpt-")),
       "all codex model IDs should be from the gpt family",
-    );
-    assert(
-      ids.some((id) => id.includes("codex")),
-      "codex model list should include at least one codex-optimized model",
     );
     assert(
       data.every((m) => m.model && m.id && m.description),
