@@ -1178,6 +1178,7 @@ export const it: TranslationResources = {
       done: "Completato",
     },
     display: {
+      showBackground: "Mostra ambienti di lavoro in background",
       trigger: "Preferenze di visualizzazione",
       heading: "Visualizzazione",
       grouping: {
