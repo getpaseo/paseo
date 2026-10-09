@@ -6,6 +6,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useMenuContext } from "@/components/ui/menu";
+import { Button } from "@/components/ui/button";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { SPACING } from "@/styles/theme";
 import { FloatingActionButton } from "@/components/ui/floating-action-button";
 import {
   WorkspaceTabPresentationResolver,
@@ -45,6 +49,7 @@ function OpenReviewFeedbackAction({
 }: ReviewFeedbackActionProps) {
   const { t } = useTranslation();
   const { bottom } = useSafeAreaInsets();
+  const isCompact = useIsCompactFormFactor();
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (!open) model.closeMenu();
@@ -52,8 +57,17 @@ function OpenReviewFeedbackAction({
     [model],
   );
   const noteStyle = useMemo(
-    () => [styles.note, { bottom: bottom + bottomOffset + 88 }],
-    [bottom, bottomOffset],
+    () => [
+      styles.note,
+      !isCompact && styles.centered,
+      {
+        bottom:
+          bottom +
+          bottomOffset +
+          (isCompact ? 88 : buttonControlHeight.sm + SPACING[4] + SPACING[2]),
+      },
+    ],
+    [bottom, bottomOffset, isCompact],
   );
   const sending = state.phase.kind === "sending";
   const label = t(sending ? "review.feedback.sending" : "review.feedback.send", {
@@ -91,7 +105,11 @@ function OpenReviewFeedbackAction({
             disabled={!state.canSend}
             bottomInset={bottom + bottomOffset}
           />
-          <DropdownMenuContent sheetTitle={t("review.feedback.chooseAgent")}>
+          <DropdownMenuContent
+            side="top"
+            align="center"
+            sheetTitle={t("review.feedback.chooseAgent")}
+          >
             {state.recipients.map((recipient) => (
               <RecipientOption
                 key={recipient.tab.key}
@@ -125,9 +143,31 @@ function FeedbackTrigger({
   bottomInset: number;
 }) {
   const { triggerRef } = useMenuContext("FeedbackTrigger");
+  const isCompact = useIsCompactFormFactor();
   const press = useCallback(() => {
     void model.press();
   }, [model]);
+  if (!isCompact) {
+    return (
+      <View
+        pointerEvents="box-none"
+        style={[styles.wideAction, { bottom: bottomInset + SPACING[4] }]}
+      >
+        <View ref={triggerRef} collapsable={false}>
+          <Button
+            variant="default"
+            size="sm"
+            leftIcon={Send}
+            accessibilityLabel={label}
+            disabled={disabled}
+            onPress={press}
+          >
+            {label}
+          </Button>
+        </View>
+      </View>
+    );
+  }
   return (
     <FloatingActionButton
       ref={triggerRef}
@@ -220,6 +260,8 @@ function SentNotice({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  wideAction: { position: "absolute", left: 0, right: 0, alignItems: "center" },
+  centered: { alignItems: "center" },
   note: {
     position: "absolute",
     right: theme.spacing[4],

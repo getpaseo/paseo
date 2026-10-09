@@ -1784,30 +1784,41 @@ export function ChangesSurface({
   });
 
   const diffContent: ReactElement = (
-    <DiffBodyContent
-      isStatusLoading={isStatusLoading}
-      statusErrorMessage={statusErrorMessage}
-      notGit={notGit}
-      isDiffLoading={isDiffLoading}
-      diffErrorMessage={diffErrorMessage}
-      diffTooLarge={diffTooLarge}
-      hasChanges={hasChanges}
-      emptyMessage={emptyMessage}
-      emptyAction={emptyAction}
-      checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
-      notRepositoryLabel={t("workspace.git.diff.notRepository")}
-    >
-      <DiffDocument
-        files={files}
-        contentInsetBottom={floatingActionsClearance(
-          [jumpToFileInset, reviewFeedback.clearance],
-          bottomInset,
-        )}
-        collapseState={collapseState}
-        displayPreferences={sharedDisplayPreferences}
-        mode={workingMode}
+    <View style={styles.diffContainer}>
+      <DiffBodyContent
+        isStatusLoading={isStatusLoading}
+        statusErrorMessage={statusErrorMessage}
+        notGit={notGit}
+        isDiffLoading={isDiffLoading}
+        diffErrorMessage={diffErrorMessage}
+        diffTooLarge={diffTooLarge}
+        hasChanges={hasChanges}
+        emptyMessage={emptyMessage}
+        emptyAction={emptyAction}
+        checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
+        notRepositoryLabel={t("workspace.git.diff.notRepository")}
+      >
+        <DiffDocument
+          files={files}
+          contentInsetBottom={floatingActionsClearance(
+            [jumpToFileInset, reviewFeedback.clearance],
+            bottomInset,
+          )}
+          collapseState={collapseState}
+          displayPreferences={sharedDisplayPreferences}
+          mode={workingMode}
+        />
+      </DiffBodyContent>
+      <ReviewFeedbackAction
+        bottomOffset={jumpToFileInset}
+        enabled={enabled}
+        hasDiff={presentation !== "tree"}
+        model={reviewFeedback.model}
+        state={reviewFeedback.state}
+        serverId={serverId}
+        workspaceId={workspaceId}
       />
-    </DiffBodyContent>
+    </View>
   );
   const bodyContent = (
     <ChangesBody
@@ -1938,15 +1949,6 @@ export function ChangesSurface({
 
       <View style={styles.diffContainer}>
         {bodyContent}
-        <ReviewFeedbackAction
-          bottomOffset={jumpToFileInset}
-          enabled={enabled}
-          hasDiff={presentation !== "tree"}
-          model={reviewFeedback.model}
-          state={reviewFeedback.state}
-          serverId={serverId}
-          workspaceId={workspaceId}
-        />
         {showJumpToFile ? (
           <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
         ) : null}

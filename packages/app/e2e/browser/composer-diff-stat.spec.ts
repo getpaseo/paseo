@@ -514,13 +514,11 @@ test.describe("send review feedback", () => {
         await addSavedReview(page, "Review for second agent");
       });
       await test.step("The wide menu includes only local open agents", async () => {
-        await sendFeedback(page, 1);
-        await expectRecipientMenu(page);
-        await captureFeedback(page, "menu-wide");
-        await dismissRecipientMenu(page);
+        await captureWideFeedbackAppearance(page);
       });
       await test.step("Choose the second agent in the compact menu and stay on the diff", async () => {
         await showCompactLayout(page);
+        await captureFeedback(page, "cta-compact");
         await sendFeedback(page, 1);
         await expectRecipientMenu(page);
         await captureFeedback(page, "menu-compact");
@@ -656,6 +654,19 @@ async function expectCompactCommentSheet(page: Page) {
     page.getByRole("button", { name: "Save review comment", exact: true }),
   ).toBeDisabled();
 }
+async function captureWideFeedbackAppearance(page: Page) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expectSavedReview(page, "Review for second agent");
+    await captureFeedback(page, `cta-wide-${colorScheme}-closed`);
+    await sendFeedback(page, 1);
+    await expectRecipientMenu(page);
+    await captureFeedback(page, `cta-wide-${colorScheme}-open`);
+    await dismissRecipientMenu(page);
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+}
+
 async function captureFeedback(page: Page, name: string) {
   await page.screenshot({ path: `/tmp/phase2-feedback-${name}.png` });
 }

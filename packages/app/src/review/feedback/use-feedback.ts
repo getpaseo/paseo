@@ -13,6 +13,9 @@ import { dispatchComposerAgentMessage } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { useSessionStore, selectAgentTurnPresentation } from "@/stores/session-store";
 import { FLOATING_ACTION_BUTTON_CLEARANCE } from "@/components/ui/floating-action-button";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { SPACING } from "@/styles/theme";
 import { i18n } from "@/i18n/i18next";
 import {
   createReviewFeedbackScope,
@@ -29,6 +32,7 @@ export function useReviewFeedback(input: {
   attachment: FeedbackAttachment | null;
 }) {
   const { serverId, reviewDraftKey, workspaceId } = input;
+  const isCompact = useIsCompactFormFactor();
   const workspaceKey = workspaceId
     ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
     : null;
@@ -95,7 +99,10 @@ export function useReviewFeedback(input: {
   return {
     model,
     state,
-    clearance: state.commentCount > 0 ? FLOATING_ACTION_BUTTON_CLEARANCE + 44 : 0,
+    clearance:
+      state.commentCount > 0
+        ? (isCompact ? FLOATING_ACTION_BUTTON_CLEARANCE : buttonControlHeight.sm + SPACING[4]) + 44
+        : 0,
   };
 }
 
