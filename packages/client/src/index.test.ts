@@ -375,6 +375,60 @@ test("project actions list registered projects through the existing RPC", async 
   await client.close();
 });
 
+test("workspace label actions list the catalog and assign labels through the existing RPCs", async () => {
+  const { client, ws } = await connectClient();
+
+  const listPromise = client.workspaces.labels.list({ requestId: "labels-list-request" });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.label.list.request",
+    requestId: "labels-list-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.list.response",
+      payload: {
+        requestId: "labels-list-request",
+        labels: [{ name: "Shop", color: "blue" }],
+        sync: { mode: "snapshot", generation: "labels-generation", headSeq: 1, removals: [] },
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toMatchObject({
+    labels: [{ name: "Shop", color: "blue" }],
+  });
+
+  const workspace = client.workspaces.ref(createWorkspace({ labels: [] }));
+  const assignPromise = workspace.setLabel(
+    { name: "Shop", color: "blue" },
+    true,
+    "label-assign-request",
+  );
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.label.assignment.set.request",
+    requestId: "label-assign-request",
+    workspaceId: "workspace_sdk",
+    label: { name: "Shop", color: "blue" },
+    assigned: true,
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.assignment.set.response",
+      payload: {
+        requestId: "label-assign-request",
+        label: { name: "Shop", color: "blue" },
+        workspaceLabels: ["Shop"],
+      },
+    }),
+  );
+  await expect(assignPromise).resolves.toEqual({
+    label: { name: "Shop", color: "blue" },
+    labels: ["Shop"],
+  });
+  expect(workspace.current()?.labels).toEqual(["Shop"]);
+
+  await client.close();
+});
+
 test("project actions subscribe to existing project updates", async () => {
   const { client, ws } = await connectClient();
   const updates: string[] = [];
