@@ -3,6 +3,7 @@ import {
   getStructuredAgentResponse,
   StructuredAgentResponseError,
 } from "@getpaseo/server/agent-response";
+import type { AgentFeature } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { resolveCallerAgentId } from "../../utils/caller-agent.js";
 import { connectToDaemon } from "../../utils/client.js";
@@ -17,6 +18,12 @@ import { resolve } from "node:path";
 import { lookup } from "mime-types";
 import { parseDuration } from "../../utils/duration.js";
 import { collectMultiple } from "../../utils/command-options.js";
+import {
+  FEATURE_OPTION_DESCRIPTION,
+  parseFeatureFlags,
+  resolveFeatureValues,
+  type AgentFeatureValues,
+} from "../../utils/agent-features.js";
 import { resolveProviderAndModel } from "../../utils/provider-model.js";
 import { buildWorkspaceSource } from "../workspace/create.js";
 
@@ -45,6 +52,7 @@ export function addRunOptions(cmd: Command): Command {
         "Model to use (e.g., claude-sonnet-4-20250514, claude-3-5-haiku-20241022)",
       )
       .option("--thinking <id>", "Thinking option ID to use for this run")
+      .option("--feature <id=value>", FEATURE_OPTION_DESCRIPTION, collectMultiple, [])
       .option("--mode <mode>", "Provider-specific mode (e.g., plan, default, bypass)")
       .option("--new-workspace <local|worktree>", "Create a separate local or worktree workspace")
       .addOption(new Option("--worktree <name>", "Legacy workspace isolation alias").hideHelp())
@@ -122,6 +130,7 @@ export interface AgentRunOptions extends CommandOptions {
   provider?: string;
   model?: string;
   thinking?: string;
+  feature?: string[];
   mode?: string;
   newWorkspace?: string;
   worktree?: string;
@@ -457,6 +466,36 @@ function loadRunImages(
   });
 }
 
+export interface RunFeatureLookupClient {
+  listProviderFeatures(draftConfig: {
+    provider: string;
+    cwd: string;
+    model?: string;
+    modeId?: string;
+    thinkingOptionId?: string;
+  }): Promise<{ features?: AgentFeature[]; error?: string | null }>;
+}
+
+// Feature values are checked against what the provider reports for this exact draft (provider,
+// model, mode, thinking), since a feature such as a service tier exists only for some models.
+export async function resolveRunFeatureValues(
+  client: RunFeatureLookupClient,
+  requested: Record<string, string>,
+  draftConfig: Parameters<RunFeatureLookupClient["listProviderFeatures"]>[0],
+): Promise<AgentFeatureValues | undefined> {
+  if (Object.keys(requested).length === 0) {
+    return undefined;
+  }
+  const result = await client.listProviderFeatures(draftConfig);
+  if (result.error) {
+    throw {
+      code: "FEATURES_UNAVAILABLE",
+      message: `Could not list features for ${draftConfig.provider}: ${result.error}`,
+    } satisfies CommandError;
+  }
+  return resolveFeatureValues(requested, result.features ?? []);
+}
+
 function parseRunLabels(labelFlags: string[] | undefined): Record<string, string> {
   return parseKeyValueFlags(labelFlags, {
     flagName: "--label",
@@ -618,11 +657,21 @@ export async function runRunCommand(
       throw error;
     }
 
+    const requestedFeatures = parseFeatureFlags(options.feature);
     const images = loadRunImages(options.image);
 
     const labels = parseRunLabels(options.label);
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
+
+    // Checked before the workspace is resolved, which may create one.
+    const featureValues = await resolveRunFeatureValues(client, requestedFeatures, {
+      provider: resolvedProviderModel.provider,
+      cwd,
+      model: resolvedProviderModel.model,
+      modeId: options.mode,
+      thinkingOptionId,
+    });
 
     const callerAgentId = await resolveCallerAgentId(client);
     const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId);
@@ -643,6 +692,7 @@ export async function runRunCommand(
             modeId: options.mode,
             model: resolvedProviderModel.model,
             thinkingOptionId,
+            featureValues,
             initialPrompt: structuredPrompt,
             outputSchema,
             images,
@@ -714,6 +764,7 @@ export async function runRunCommand(
       modeId: options.mode,
       model: resolvedProviderModel.model,
       thinkingOptionId,
+      featureValues,
       initialPrompt: prompt,
       images,
       env: requestEnv,

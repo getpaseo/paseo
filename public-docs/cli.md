@@ -42,6 +42,7 @@ Use `paseo run` to start a new agent with a task:
 ```bash
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
+paseo run --provider codex --feature service_tier=priority "refactor the API layer"
 paseo run --no-wait "run the focused test suite"
 paseo run --output-schema schema.json "name this branch"
 paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
@@ -55,6 +56,8 @@ From a human shell, a bare `paseo run` creates a new local workspace for the cur
 Worktree creation accepts `--worktree-mode branch-off|checkout-branch|checkout-pr` plus the matching `--new-branch`/`--base`, `--branch`, or `--pr-number`/`--forge` options. Use `--worktree-slug` to choose the managed directory slug.
 
 When an existing Paseo agent runs the same command, Paseo recognizes it through `PASEO_AGENT_ID`. Without explicit placement, the new agent becomes its subagent in the same workspace. `--workspace` can place that subagent elsewhere without changing its parent.
+
+Use `--feature id=value` to set a provider feature at creation, the same settings the composer shows next to the model, such as Codex Fast (`service_tier=priority`). Repeat it for several features. Paseo checks each id and value against the features the provider reports for that model and lists the valid ones when they don't match. To change features of an existing agent, use `paseo agent update <id> --feature id=value`; the change applies from the agent's next turn.
 
 Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--no-wait`.
 

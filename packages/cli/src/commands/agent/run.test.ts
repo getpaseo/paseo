@@ -3,6 +3,7 @@ import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
 import {
   resolveExistingRunWorkspace,
+  resolveRunFeatureValues,
   runRunCommand,
   waitsForFinish,
   type AgentRunOptions,
@@ -167,5 +168,62 @@ describe("runRunCommand option validation", () => {
       { newWorkspace: "worktree", worktreeMode: "container" },
       /Unsupported worktree mode/,
     );
+  });
+});
+
+describe("run feature values", () => {
+  const draft = { provider: "codex", cwd: "/repo", model: "gpt-5.5", thinkingOptionId: "high" };
+
+  it("does not ask the daemon when no --feature is given", async () => {
+    const client = {
+      async listProviderFeatures(): Promise<never> {
+        throw new Error("unexpected feature lookup");
+      },
+    };
+
+    await expect(resolveRunFeatureValues(client, {}, draft)).resolves.toBeUndefined();
+  });
+
+  it("checks values against the features of the run's provider and model", async () => {
+    const drafts: unknown[] = [];
+    const client = {
+      async listProviderFeatures(draftConfig: unknown) {
+        drafts.push(draftConfig);
+        return {
+          features: [
+            {
+              type: "select" as const,
+              id: "service_tier",
+              label: "Speed",
+              value: "default",
+              options: [
+                { id: "default", label: "Normal" },
+                { id: "priority", label: "Fast" },
+              ],
+            },
+          ],
+        };
+      },
+    };
+
+    await expect(
+      resolveRunFeatureValues(client, { service_tier: "priority" }, draft),
+    ).resolves.toEqual({ service_tier: "priority" });
+    expect(drafts).toEqual([draft]);
+  });
+
+  it("reports a provider that cannot list its features", async () => {
+    const client = {
+      async listProviderFeatures() {
+        return { error: "provider unavailable" };
+      },
+    };
+
+    await expect(
+      resolveRunFeatureValues(client, { service_tier: "priority" }, draft),
+    ).rejects.toMatchObject({
+      code: "FEATURES_UNAVAILABLE",
+      message: "Could not list features for codex: provider unavailable",
+    });
   });
 });

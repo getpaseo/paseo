@@ -2,6 +2,12 @@ import type { Command } from "commander";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import {
+  formatFeatureValues,
+  parseFeatureFlags,
+  resolveFeatureValues,
+  type AgentFeatureValues,
+} from "../../utils/agent-features.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -15,6 +21,7 @@ export interface AgentUpdateResult {
   name: string | null;
   labels: string;
   thinkingOptionId: string | null;
+  features: string;
   noticeType: AgentProviderNotice["type"] | null;
   notice: string | null;
 }
@@ -27,6 +34,7 @@ export const updateSchema: OutputSchema<AgentUpdateResult> = {
     { header: "NAME", field: "name" },
     { header: "LABELS", field: "labels" },
     { header: "THINKING", field: "thinkingOptionId" },
+    { header: "FEATURES", field: "features" },
     { header: "NOTICE", field: "notice" },
   ],
 };
@@ -35,6 +43,7 @@ export interface AgentUpdateOptions extends CommandOptions {
   name?: string;
   label?: string[];
   thinking?: string;
+  feature?: string[];
   host?: string;
 }
 
@@ -56,18 +65,29 @@ export interface AgentUpdateClient {
     agentId: string,
     thinkingOptionId: string,
   ): Promise<AgentProviderNotice | null>;
+  setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
 }
 
 export type AgentChanges =
   | { type: "metadata"; updates: AgentMetadataChanges }
-  | { type: "thinking"; thinkingOptionId: string };
+  | { type: "thinking"; thinkingOptionId: string }
+  | { type: "features"; values: AgentFeatureValues };
+
+// Feature values are parsed before connecting and checked against the agent's own features after
+// it is fetched, so `--feature` arrives here unresolved.
+type ParsedAgentChanges =
+  | Exclude<AgentChanges, { type: "features" }>
+  | { type: "features"; requested: Record<string, string> };
 
 export interface AppliedAgentChanges {
   notice: AgentProviderNotice | null;
 }
 
 export function toAgentUpdateResult(
-  agent: Pick<AgentSnapshotPayload, "id" | "title" | "labels" | "effectiveThinkingOptionId">,
+  agent: Pick<
+    AgentSnapshotPayload,
+    "id" | "title" | "labels" | "effectiveThinkingOptionId" | "features"
+  >,
   appliedChanges: AppliedAgentChanges,
 ): AgentUpdateResult {
   return {
@@ -75,6 +95,7 @@ export function toAgentUpdateResult(
     name: agent.title,
     labels: formatLabels(agent.labels),
     thinkingOptionId: agent.effectiveThinkingOptionId ?? null,
+    features: formatFeatureValues(agent.features),
     noticeType: appliedChanges.notice?.type ?? null,
     notice: appliedChanges.notice?.message ?? null,
   };
@@ -85,6 +106,12 @@ export async function applyAgentChanges(
   agentId: string,
   changes: AgentChanges,
 ): Promise<AppliedAgentChanges> {
+  if (changes.type === "features") {
+    for (const [featureId, value] of Object.entries(changes.values)) {
+      await client.setAgentFeature(agentId, featureId, value);
+    }
+    return { notice: null };
+  }
   if (changes.type === "thinking") {
     // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
     if (client.getLastServerInfoMessage()?.features?.agentThinkingUpdate !== true) {
@@ -149,7 +176,7 @@ function formatLabels(labels: Record<string, string>): string {
   return entries.map(([key, value]) => `${key}=${value}`).join(",");
 }
 
-function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
+function parseAgentChanges(options: AgentUpdateOptions): ParsedAgentChanges {
   const name = options.name?.trim();
   if (options.name !== undefined && !name) {
     throw {
@@ -160,6 +187,8 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
   }
 
   const labels = parseLabelOptions(options.label);
+  const requestedFeatures = parseFeatureFlags(options.feature);
+  const hasFeatureUpdates = Object.keys(requestedFeatures).length > 0;
   const thinkingOptionId = options.thinking?.trim();
   if (options.thinking !== undefined && !thinkingOptionId) {
     throw {
@@ -178,14 +207,25 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
       details: "Run separate agent update commands for runtime settings and metadata.",
     } satisfies CommandError;
   }
-  if (!hasMetadataUpdates && !thinkingOptionId) {
+  if (hasFeatureUpdates && (hasMetadataUpdates || thinkingOptionId)) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--feature cannot be combined with --name, --label or --thinking",
+      details: "Run separate agent update commands for features, thinking and metadata.",
+    } satisfies CommandError;
+  }
+  if (!hasMetadataUpdates && !thinkingOptionId && !hasFeatureUpdates) {
     throw {
       code: "NO_CHANGES_PROVIDED",
       message: "Nothing to update",
-      details: "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>",
+      details:
+        "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>, --feature <id=value>",
     } satisfies CommandError;
   }
 
+  if (hasFeatureUpdates) {
+    return { type: "features", requested: requestedFeatures };
+  }
   if (thinkingOptionId) {
     return { type: "thinking", thinkingOptionId };
   }
@@ -229,7 +269,15 @@ export async function runUpdateCommand(
     }
     const agentId = fetchResult.agent.id;
 
-    const appliedChanges = await applyAgentChanges(client, agentId, changes);
+    // Every value is checked before any is applied, so a bad flag changes nothing.
+    const resolvedChanges: AgentChanges =
+      changes.type === "features"
+        ? {
+            type: "features",
+            values: resolveFeatureValues(changes.requested, fetchResult.agent.features ?? []),
+          }
+        : changes;
+    const appliedChanges = await applyAgentChanges(client, agentId, resolvedChanges);
 
     const updatedResult = await client.fetchAgent({ agentId });
     if (!updatedResult) {
