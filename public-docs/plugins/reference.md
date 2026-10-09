@@ -365,6 +365,7 @@ type UsageScope =
 interface UsageSourceRegistration {
   id: string;
   label: string;
+  provider?: string;
   icon?: string;
   input: ZodType;
   discover(scope: UsageScope): Promise<UsageAccount[]>;
