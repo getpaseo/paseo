@@ -19,6 +19,10 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("amp-acp")).toEqual({ kind: "catalog", id: "amp-acp" });
     expect(resolveProviderIconName("gemini")).toEqual({ kind: "catalog", id: "gemini" });
     expect(resolveProviderIconName("gjc")).toEqual({ kind: "catalog", id: "gjc" });
+    expect(resolveProviderIconName("qoder-cli-cn")).toEqual({
+      kind: "catalog",
+      id: "qoder-cli-cn",
+    });
     expect(resolveProviderIconName("traecli")).toEqual({ kind: "catalog", id: "traecli" });
   });
 
