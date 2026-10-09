@@ -156,3 +156,151 @@ test("composer diff stat reveals Changes, then opens the diff in the focused pan
     await workspace.cleanup();
   }
 });
+
+async function tapFirstAddedDiffLine(page: Page) {
+  const body = page.getByTestId("working-diff-panel").getByTestId("diff-file-0-body");
+  const bounds = await body.boundingBox();
+  if (!bounds) throw new Error("Expanded diff body has no bounds");
+  const fontSize = await page
+    .getByTestId("working-diff-panel")
+    .getByTestId("git-diff-canvas")
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  await page.touchscreen.tap(bounds.x + 120, bounds.y + Math.round(fontSize * 1.5) * 2.5);
+}
+
+async function openReviewDiff(page: Page, workspace: Awaited<ReturnType<typeof seedChangedAgent>>) {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+  await revealComposerChangesInExplorer(page);
+  await openComposerDiff(page);
+  await expect(page.getByTestId("diff-file-0-body")).toBeVisible();
+}
+
+async function saveReviewComment(page: Page, body: string) {
+  await page.getByRole("textbox", { name: "Review comment" }).fill(body);
+  await page.getByRole("button", { name: "Save review comment", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+}
+
+async function cancelReviewComment(page: Page) {
+  await page.getByRole("button", { name: "Cancel review comment", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+}
+
+test.describe("review comments", () => {
+  test.use({ hasTouch: true });
+
+  test("compact review comments open a sheet and preserve saved comments through save, edit, cancel and reload", async ({
+    page,
+  }) => {
+    const workspace = await seedChangedAgent("compact-review-comment-");
+    try {
+      await openReviewDiff(page, workspace);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await tapFirstAddedDiffLine(page);
+      const sheet = page.getByTestId("review-comment-sheet");
+      await expect(sheet).toBeVisible();
+      await expect(page.getByText("README.md · +2", { exact: true })).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "Review comment" })).toBeInViewport({
+        ratio: 1,
+      });
+      await expect(
+        page.getByRole("button", { name: "Save review comment", exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+      await expect(
+        page.getByRole("button", { name: "Cancel review comment", exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+      await expect(
+        page.getByRole("button", { name: "Save review comment", exact: true }),
+      ).toHaveText("Save");
+      await page.screenshot({ path: "/tmp/phase1-comment-sheet.png" });
+      await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Save review comment", exact: true }),
+      ).toBeDisabled();
+      await saveReviewComment(page, "  Please simplify this.  ");
+      await expect(sheet).toHaveCount(0);
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Please simplify this.", { exact: true }),
+      ).toBeVisible();
+
+      await page
+        .getByTestId("working-diff-panel")
+        .getByRole("button", { name: "Edit review comment", exact: true })
+        .click();
+      await expect(page.getByRole("textbox", { name: "Review comment" })).toHaveValue(
+        "Please simplify this.",
+      );
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Please simplify this.", { exact: true }),
+      ).toBeVisible();
+      await page.getByRole("textbox", { name: "Review comment" }).fill("Discard this edit");
+      await cancelReviewComment(page);
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Please simplify this.", { exact: true }),
+      ).toBeVisible();
+      await page
+        .getByTestId("working-diff-panel")
+        .getByRole("button", { name: "Edit review comment", exact: true })
+        .click();
+      await saveReviewComment(page, "Updated comment");
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Updated comment", { exact: true }),
+      ).toBeVisible();
+      await tapFirstAddedDiffLine(page);
+      await page.getByRole("textbox", { name: "Review comment" }).fill("Discard new comment");
+      await cancelReviewComment(page);
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Discard new comment", { exact: true }),
+      ).toHaveCount(0);
+      await page.reload();
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Updated comment", { exact: true }),
+      ).toBeVisible({
+        timeout: 30_000,
+      });
+      await page.screenshot({ path: "/tmp/phase1-compact-comment.png" });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("wide review comments retain inline editing", async ({ page }) => {
+    const workspace = await seedChangedAgent("wide-review-comment-");
+    try {
+      await openReviewDiff(page, workspace);
+      await tapFirstAddedDiffLine(page);
+      await expect(page.getByTestId("inline-review-editor")).toBeVisible();
+      await expect(page.getByTestId("review-comment-sheet")).toHaveCount(0);
+      await saveReviewComment(page, "Wide comment");
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Wide comment", { exact: true }),
+      ).toBeVisible();
+      await page
+        .getByTestId("working-diff-panel")
+        .getByRole("button", { name: "Edit review comment", exact: true })
+        .click();
+      await expect(page.getByTestId("inline-review-editor")).toBeVisible();
+      await cancelReviewComment(page);
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Wide comment", { exact: true }),
+      ).toBeVisible();
+      await sendReviewThroughComposer(page, workspace.agentId);
+      await page.getByTestId("workspace-tab-working_diff").click();
+      await expect(
+        page.getByTestId("working-diff-panel").getByText("Wide comment", { exact: true }),
+      ).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+async function sendReviewThroughComposer(page: Page, agentId: string) {
+  await page.getByTestId(`workspace-tab-agent_${agentId}`).click();
+  await expect(page.getByTestId("composer-review-attachment-pill")).toBeVisible();
+  await page.getByRole("textbox", { name: "Message agent..." }).fill("Address this review");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.getByText("Address this review", { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId("composer-review-attachment-pill")).toHaveCount(0);
+}

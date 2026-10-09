@@ -26,6 +26,7 @@ export const en = {
     back: "Back",
     loading: "Loading...",
     actions: {
+      save: "Save",
       back: "Back",
       cancel: "Cancel",
       close: "Close",

@@ -31,6 +31,7 @@ export const ru: TranslationResources = {
     back: "Назад",
     loading: "Загрузка...",
     actions: {
+      save: "Сохранить",
       back: "Назад",
       cancel: "Отмена",
       close: "Закрыть",

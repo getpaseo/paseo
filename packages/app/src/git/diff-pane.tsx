@@ -31,6 +31,7 @@ import {
 import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
+import { ReviewCommentSheet } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
 import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
@@ -1933,6 +1934,13 @@ export function ChangesSurface({
           <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
         ) : null}
       </View>
+
+      <ReviewCommentSheet
+        enabled={enabled}
+        editor={reviewActions.sheetEditor}
+        reviewActions={reviewActions}
+        onChangeBody={reviewActions.onChangeEditorBody}
+      />
 
       <ChangesCommits
         presentation={presentation}

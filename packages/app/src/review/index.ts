@@ -31,3 +31,5 @@ export {
   SMALL_ACTION_HIT_SLOP,
   useInlineReviewController,
 } from "./surface";
+
+export { ReviewCommentSheet } from "./comment-sheet";

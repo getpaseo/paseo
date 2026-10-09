@@ -31,6 +31,7 @@ export const es: TranslationResources = {
     back: "Atrás",
     loading: "Cargando...",
     actions: {
+      save: "Guardar",
       back: "Atrás",
       cancel: "Cancelar",
       close: "Cerrar",

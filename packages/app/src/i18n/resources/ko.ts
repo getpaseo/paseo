@@ -30,6 +30,7 @@ export const ko: TranslationResources = {
     back: "뒤로",
     loading: "불러오는 중...",
     actions: {
+      save: "저장",
       back: "뒤로",
       cancel: "취소",
       close: "닫기",

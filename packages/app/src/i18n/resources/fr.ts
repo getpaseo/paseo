@@ -31,6 +31,7 @@ export const fr: TranslationResources = {
     back: "Retour",
     loading: "Chargement…",
     actions: {
+      save: "Enregistrer",
       back: "Retour",
       cancel: "Annuler",
       close: "Fermer",
