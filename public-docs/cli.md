@@ -42,7 +42,8 @@ Use `paseo run` to start a new agent with a task:
 ```bash
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
-paseo run --background "run the focused test suite"
+paseo run --no-wait "run the focused test suite"
+paseo run --output-schema schema.json "name this branch"
 paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
 paseo run --workspace <workspace-id> "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
@@ -55,9 +56,14 @@ Worktree creation accepts `--worktree-mode branch-off|checkout-branch|checkout-p
 
 When an existing Paseo agent runs the same command, Paseo recognizes it through `PASEO_AGENT_ID`. Without explicit placement, the new agent becomes its subagent in the same workspace. `--workspace` can place that subagent elsewhere without changing its parent.
 
-Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--background`.
+Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--no-wait`.
 
-By default, `paseo run` waits for completion. Use `--background` to return immediately while the agent keeps running.
+By default, `paseo run` waits for completion. Use `--no-wait` to return immediately while the agent keeps running, the same flag `paseo send` takes.
+
+The old `run --background` and `-d` aliases still mean `--no-wait`. They are deprecated, hidden
+from help, and print a warning to stderr. Use `--no-wait` in scripts. Workspace visibility is
+selected separately with `workspace create --background`; this release does not repurpose
+`run --background`.
 
 ## Projects
 
@@ -116,10 +122,23 @@ paseo workspace create \
   --pr-number 2186
 ```
 
+Add `--background` to hide a workspace from default discovery. Its agents and terminals keep
+ordinary history, persistence, hooks, and restart recovery. `--no-background` explicitly overrides
+caller-workspace inheritance; omission inherits when run by a Paseo agent and defaults to false
+from a human shell. Visibility is creation-only.
+
+```bash
+paseo workspace create --isolation local --background --path /path/to/repo
+paseo run --workspace <workspace-id> --no-wait "review the checkout flow"
+```
+
+Exact workspace and agent IDs remain accessible regardless of listing visibility.
+
 Then list, use, rename, or archive it:
 
 ```bash
 paseo workspace ls
+paseo workspace ls --background               # Also include background workspaces
 paseo run --workspace <workspace-id> "implement authentication"
 paseo workspace rename <workspace-id> "Auth rework"
 paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
@@ -197,6 +216,7 @@ paseo ls                    # Non-archived agents in active workspaces
 paseo ls -a                 # Also include archived agents
 paseo ls -g                 # Non-archived agents across all workspaces
 paseo ls -a -g --json       # All agents, including archived, as JSON
+paseo ls --background       # Also include agents in background workspaces
 ```
 
 ## Streaming output
@@ -391,7 +411,7 @@ The CLI is designed to be used by agents themselves. You can instruct an agent t
 
 ```bash
 # Agent A spawns Agent B and waits for it
-agent_id=$(paseo run --background --quiet --title api-agent "implement the API")
+agent_id=$(paseo run --no-wait --quiet --title api-agent "implement the API")
 paseo wait "$agent_id"
 paseo logs "$agent_id" --tail 5
 ```

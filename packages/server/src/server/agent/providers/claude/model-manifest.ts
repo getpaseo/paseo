@@ -171,9 +171,19 @@ export const CLAUDE_MODEL_MANIFEST = [
     supportsThinkingDisabled: true,
   },
   {
+    id: "claude-haiku-5-5",
+    label: "Haiku 5.5",
+    description: "Haiku 5.5 · Fastest for quick answers",
+    minimumClaudeCodeVersion: "2.1.293",
+    defaultThinkingOptionId: "medium",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
+  },
+  {
     id: "claude-haiku-4-5",
     label: "Haiku 4.5",
-    description: "Haiku 4.5 · Fastest for quick answers",
+    description: "Haiku 4.5 · Previous release",
     contextWindowMaxTokens: 200_000,
   },
 ] as const satisfies readonly ClaudeModelManifestEntry[];

@@ -176,11 +176,11 @@ export function resolveUsageHostId(choice: UsageHostChoice): string | null {
 }
 
 /**
- * The host the Usage screen shows: the picked host while it is connected, even one that cannot
- * report usage so the screen says to update it; else the sidebar row's host; else the first
+ * The host the Usage modal shows: the picked host while it is connected, even one that cannot
+ * report usage so the modal says to update it; else the sidebar row's host; else the first
  * connected host.
  */
-export function resolveUsageScreenHostId(choice: UsageHostChoice): string | null {
+export function resolveUsageModalHostId(choice: UsageHostChoice): string | null {
   const connected = choice.hosts.filter((host) => host.isConnected);
   const picked = connected.find((host) => host.serverId === choice.pickedServerId);
   return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;

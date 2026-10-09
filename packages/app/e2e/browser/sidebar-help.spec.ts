@@ -183,13 +183,16 @@ async function openCompactSidebar(page: Page): Promise<void> {
   await expect(page.getByTestId("sidebar-footer-bottom-line")).toBeVisible();
 }
 
+const MIN_TARGET_SIZE = 44;
+
 async function expectFingerSizedFooterTargets(page: Page): Promise<void> {
   const buttons = page.getByTestId("sidebar-footer-bottom-line").getByRole("button");
   await expect(buttons).toHaveCount(5);
   for (const button of await buttons.all()) {
     const bounds = await button.boundingBox();
-    expect(bounds?.width).toBeGreaterThanOrEqual(44);
-    expect(bounds?.height).toBeGreaterThanOrEqual(44);
+    // Layout can report a 44pt box as 43.99999, so compare at a hundredth of a point.
+    expect(bounds?.width).toBeGreaterThanOrEqual(MIN_TARGET_SIZE - 0.01);
+    expect(bounds?.height).toBeGreaterThanOrEqual(MIN_TARGET_SIZE - 0.01);
     // Glyphs stay at the composer toolbar size (some optically smaller); only the target grows.
     const glyphWidth = await button.locator("svg").first().getAttribute("width");
     expect(Number(glyphWidth)).toBeLessThanOrEqual(20);

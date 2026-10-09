@@ -1,0 +1,1202 @@
+[
+  {
+    "name": "script",
+    "markdown": "<script>alert(1)</script>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "image event",
+    "markdown": "<img src=\"https://example.com/x\" onerror=\"alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "svg event",
+    "markdown": "<svg onload=\"alert(1)\"></svg>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "iframe",
+    "markdown": "<iframe src=\"https://example.com\"></iframe>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTML javascript link",
+    "markdown": "<a href=\"javascript:alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTML block",
+    "markdown": "<div>\n<img src=x onerror=alert(1)>\n</div>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "comment",
+    "markdown": "<!-- <img src=x onerror=alert(1)> -->",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "meta refresh",
+    "markdown": "<meta http-equiv=\"refresh\" content=\"0;url=https://example.com\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "base",
+    "markdown": "<base href=\"https://example.com\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "form",
+    "markdown": "<form action=\"https://example.com\"><input name=\"password\"></form>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "style expression",
+    "markdown": "<p style=\"width:expression(alert(1));position:fixed\">click</p>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "style block",
+    "markdown": "<style>body{display:none}</style>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "closing script",
+    "markdown": "</script><script>alert(1)</script>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTML entities",
+    "markdown": "&lt;img src=x onerror=alert(1)&gt;",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested HTML entities",
+    "markdown": "&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript link",
+    "markdown": "[click](javascript:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript image",
+    "markdown": "![picture](javascript:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript reference link",
+    "markdown": "[click][ref]\n\n[ref]: javascript:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript reference image",
+    "markdown": "![picture][ref]\n\n[ref]: javascript:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript HTML link",
+    "markdown": "<a href=\"javascript:alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript HTML image",
+    "markdown": "<img src=\"javascript:alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript link",
+    "markdown": "[click](JaVaScRiPt:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript image",
+    "markdown": "![picture](JaVaScRiPt:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript reference link",
+    "markdown": "[click][ref]\n\n[ref]: JaVaScRiPt:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript reference image",
+    "markdown": "![picture][ref]\n\n[ref]: JaVaScRiPt:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript HTML link",
+    "markdown": "<a href=\"JaVaScRiPt:alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript HTML image",
+    "markdown": "<img src=\"JaVaScRiPt:alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML link",
+    "markdown": "[click](data:text/html;base64,PHNjcmlwdD4=)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML image",
+    "markdown": "![picture](data:text/html;base64,PHNjcmlwdD4=)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML reference link",
+    "markdown": "[click][ref]\n\n[ref]: data:text/html;base64,PHNjcmlwdD4=",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML reference image",
+    "markdown": "![picture][ref]\n\n[ref]: data:text/html;base64,PHNjcmlwdD4=",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML HTML link",
+    "markdown": "<a href=\"data:text/html;base64,PHNjcmlwdD4=\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML HTML image",
+    "markdown": "<img src=\"data:text/html;base64,PHNjcmlwdD4=\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image link",
+    "markdown": "[click](data:image/png;base64,AAAA)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image image",
+    "markdown": "![picture](data:image/png;base64,AAAA)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image reference link",
+    "markdown": "[click][ref]\n\n[ref]: data:image/png;base64,AAAA",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image reference image",
+    "markdown": "![picture][ref]\n\n[ref]: data:image/png;base64,AAAA",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image HTML link",
+    "markdown": "<a href=\"data:image/png;base64,AAAA\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image HTML image",
+    "markdown": "<img src=\"data:image/png;base64,AAAA\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript link",
+    "markdown": "[click](vbscript:msgbox(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript image",
+    "markdown": "![picture](vbscript:msgbox(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript reference link",
+    "markdown": "[click][ref]\n\n[ref]: vbscript:msgbox(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript reference image",
+    "markdown": "![picture][ref]\n\n[ref]: vbscript:msgbox(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript HTML link",
+    "markdown": "<a href=\"vbscript:msgbox(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript HTML image",
+    "markdown": "<img src=\"vbscript:msgbox(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http link",
+    "markdown": "[click](http://example.com/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http image",
+    "markdown": "![picture](http://example.com/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http reference link",
+    "markdown": "[click][ref]\n\n[ref]: http://example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http reference image",
+    "markdown": "![picture][ref]\n\n[ref]: http://example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http HTML link",
+    "markdown": "<a href=\"http://example.com/path\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http HTML image",
+    "markdown": "<img src=\"http://example.com/path\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp link",
+    "markdown": "[click](ftp://example.com/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp image",
+    "markdown": "![picture](ftp://example.com/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp reference link",
+    "markdown": "[click][ref]\n\n[ref]: ftp://example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp reference image",
+    "markdown": "![picture][ref]\n\n[ref]: ftp://example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp HTML link",
+    "markdown": "<a href=\"ftp://example.com/path\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp HTML image",
+    "markdown": "<img src=\"ftp://example.com/path\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto link",
+    "markdown": "[click](mailto:attacker@example.com)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto image",
+    "markdown": "![picture](mailto:attacker@example.com)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto reference link",
+    "markdown": "[click][ref]\n\n[ref]: mailto:attacker@example.com",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto reference image",
+    "markdown": "![picture][ref]\n\n[ref]: mailto:attacker@example.com",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto HTML link",
+    "markdown": "<a href=\"mailto:attacker@example.com\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto HTML image",
+    "markdown": "<img src=\"mailto:attacker@example.com\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "protocol relative link",
+    "markdown": "[click](//example.com/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "protocol relative image",
+    "markdown": "![picture](//example.com/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "protocol relative reference link",
+    "markdown": "[click][ref]\n\n[ref]: //example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "protocol relative reference image",
+    "markdown": "![picture][ref]\n\n[ref]: //example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "protocol relative HTML link",
+    "markdown": "<a href=\"//example.com/path\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "protocol relative HTML image",
+    "markdown": "<img src=\"//example.com/path\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "relative link",
+    "markdown": "[click](./image.png)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "relative image",
+    "markdown": "![picture](./image.png)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "relative reference link",
+    "markdown": "[click][ref]\n\n[ref]: ./image.png",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "relative reference image",
+    "markdown": "![picture][ref]\n\n[ref]: ./image.png",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "relative HTML link",
+    "markdown": "<a href=\"./image.png\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "relative HTML image",
+    "markdown": "<img src=\"./image.png\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "parent relative link",
+    "markdown": "[click](../login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "parent relative image",
+    "markdown": "![picture](../login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "parent relative reference link",
+    "markdown": "[click][ref]\n\n[ref]: ../login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "parent relative reference image",
+    "markdown": "![picture][ref]\n\n[ref]: ../login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "parent relative HTML link",
+    "markdown": "<a href=\"../login\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "parent relative HTML image",
+    "markdown": "<img src=\"../login\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "root relative link",
+    "markdown": "[click](/login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "root relative image",
+    "markdown": "![picture](/login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "root relative reference link",
+    "markdown": "[click][ref]\n\n[ref]: /login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "root relative reference image",
+    "markdown": "![picture][ref]\n\n[ref]: /login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "root relative HTML link",
+    "markdown": "<a href=\"/login\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "root relative HTML image",
+    "markdown": "<img src=\"/login\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "fragment link",
+    "markdown": "[click](#login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "fragment image",
+    "markdown": "![picture](#login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "fragment reference link",
+    "markdown": "[click][ref]\n\n[ref]: #login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "fragment reference image",
+    "markdown": "![picture][ref]\n\n[ref]: #login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "fragment HTML link",
+    "markdown": "<a href=\"#login\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "fragment HTML image",
+    "markdown": "<img src=\"#login\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "query link",
+    "markdown": "[click](?login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "query image",
+    "markdown": "![picture](?login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "query reference link",
+    "markdown": "[click][ref]\n\n[ref]: ?login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "query reference image",
+    "markdown": "![picture][ref]\n\n[ref]: ?login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "query HTML link",
+    "markdown": "<a href=\"?login\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "query HTML image",
+    "markdown": "<img src=\"?login\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity javascript link",
+    "markdown": "[click](javascript&#58;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity javascript image",
+    "markdown": "![picture](javascript&#58;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity javascript reference link",
+    "markdown": "[click][ref]\n\n[ref]: javascript&#58;alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity javascript reference image",
+    "markdown": "![picture][ref]\n\n[ref]: javascript&#58;alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity javascript HTML link",
+    "markdown": "<a href=\"javascript&#58;alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity javascript HTML image",
+    "markdown": "<img src=\"javascript&#58;alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity letter link",
+    "markdown": "[click](jav&#x61;script:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity letter image",
+    "markdown": "![picture](jav&#x61;script:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity letter reference link",
+    "markdown": "[click][ref]\n\n[ref]: jav&#x61;script:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity letter reference image",
+    "markdown": "![picture][ref]\n\n[ref]: jav&#x61;script:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity letter HTML link",
+    "markdown": "<a href=\"jav&#x61;script:alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "entity letter HTML image",
+    "markdown": "<img src=\"jav&#x61;script:alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested entity link",
+    "markdown": "[click](javascript&amp;#58;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested entity image",
+    "markdown": "![picture](javascript&amp;#58;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested entity reference link",
+    "markdown": "[click][ref]\n\n[ref]: javascript&amp;#58;alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested entity reference image",
+    "markdown": "![picture][ref]\n\n[ref]: javascript&amp;#58;alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested entity HTML link",
+    "markdown": "<a href=\"javascript&amp;#58;alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested entity HTML image",
+    "markdown": "<img src=\"javascript&amp;#58;alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "percent encoded link",
+    "markdown": "[click](javascript%3Aalert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "percent encoded image",
+    "markdown": "![picture](javascript%3Aalert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "percent encoded reference link",
+    "markdown": "[click][ref]\n\n[ref]: javascript%3Aalert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "percent encoded reference image",
+    "markdown": "![picture][ref]\n\n[ref]: javascript%3Aalert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "percent encoded HTML link",
+    "markdown": "<a href=\"javascript%3Aalert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "percent encoded HTML image",
+    "markdown": "<img src=\"javascript%3Aalert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested percent encoded link",
+    "markdown": "[click](javascript%253Aalert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested percent encoded image",
+    "markdown": "![picture](javascript%253Aalert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested percent encoded reference link",
+    "markdown": "[click][ref]\n\n[ref]: javascript%253Aalert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested percent encoded reference image",
+    "markdown": "![picture][ref]\n\n[ref]: javascript%253Aalert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested percent encoded HTML link",
+    "markdown": "<a href=\"javascript%253Aalert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "nested percent encoded HTML image",
+    "markdown": "<img src=\"javascript%253Aalert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tab scheme link",
+    "markdown": "[click](java&#9;script:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tab scheme image",
+    "markdown": "![picture](java&#9;script:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tab scheme reference link",
+    "markdown": "[click][ref]\n\n[ref]: java&#9;script:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tab scheme reference image",
+    "markdown": "![picture][ref]\n\n[ref]: java&#9;script:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tab scheme HTML link",
+    "markdown": "<a href=\"java&#9;script:alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tab scheme HTML image",
+    "markdown": "<img src=\"java&#9;script:alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "newline scheme link",
+    "markdown": "[click](java&#10;script:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "newline scheme image",
+    "markdown": "![picture](java&#10;script:alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "newline scheme reference link",
+    "markdown": "[click][ref]\n\n[ref]: java&#10;script:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "newline scheme reference image",
+    "markdown": "![picture][ref]\n\n[ref]: java&#10;script:alert(1)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "newline scheme HTML link",
+    "markdown": "<a href=\"java&#10;script:alert(1)\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "newline scheme HTML image",
+    "markdown": "<img src=\"java&#10;script:alert(1)\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS credentials link",
+    "markdown": "[click](https://paseo.sh@evil.example/login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS credentials image",
+    "markdown": "![picture](https://paseo.sh@evil.example/login)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS credentials reference link",
+    "markdown": "[click][ref]\n\n[ref]: https://paseo.sh@evil.example/login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS credentials reference image",
+    "markdown": "![picture][ref]\n\n[ref]: https://paseo.sh@evil.example/login",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS credentials HTML link",
+    "markdown": "<a href=\"https://paseo.sh@evil.example/login\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS credentials HTML image",
+    "markdown": "<img src=\"https://paseo.sh@evil.example/login\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "backslash link",
+    "markdown": "[click](https:\\evil.example/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "backslash image",
+    "markdown": "![picture](https:\\evil.example/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "backslash reference link",
+    "markdown": "[click][ref]\n\n[ref]: https:\\evil.example/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "backslash reference image",
+    "markdown": "![picture][ref]\n\n[ref]: https:\\evil.example/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "backslash HTML link",
+    "markdown": "<a href=\"https:\\evil.example/path\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "backslash HTML image",
+    "markdown": "<img src=\"https:\\evil.example/path\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "missing authority link",
+    "markdown": "[click](https:evil.example/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "missing authority image",
+    "markdown": "![picture](https:evil.example/path)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "missing authority reference link",
+    "markdown": "[click][ref]\n\n[ref]: https:evil.example/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "missing authority reference image",
+    "markdown": "![picture][ref]\n\n[ref]: https:evil.example/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "missing authority HTML link",
+    "markdown": "<a href=\"https:evil.example/path\">click</a>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "missing authority HTML image",
+    "markdown": "<img src=\"https:evil.example/path\">",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "javascript autolink",
+    "markdown": "<javascript:alert(1)>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mixed case javascript autolink",
+    "markdown": "<JaVaScRiPt:alert(1)>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data HTML autolink",
+    "markdown": "<data:text/html;base64,PHNjcmlwdD4=>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "data image autolink",
+    "markdown": "<data:image/png;base64,AAAA>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "vbscript autolink",
+    "markdown": "<vbscript:msgbox(1)>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "http autolink",
+    "markdown": "<http://example.com/path>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "ftp autolink",
+    "markdown": "<ftp://example.com/path>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "mailto autolink",
+    "markdown": "<mailto:attacker@example.com>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "HTTPS link",
+    "markdown": "[click](https://example.com/path)",
+    "links": ["https://example.com/path"],
+    "images": []
+  },
+  {
+    "name": "HTTPS image",
+    "markdown": "![picture](https://example.com/image.png)",
+    "links": [],
+    "images": ["https://example.com/image.png"]
+  },
+  {
+    "name": "HTTPS autolink",
+    "markdown": "<https://example.com/path>",
+    "links": ["https://example.com/path"],
+    "images": []
+  },
+  {
+    "name": "bare HTTPS",
+    "markdown": "https://example.com/path",
+    "links": ["https://example.com/path"],
+    "images": []
+  },
+  {
+    "name": "bare HTTP",
+    "markdown": "http://example.com/path",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "deceptive RTL text",
+    "markdown": "[paseo.sh‮evil](https://example.com/path)",
+    "links": ["https://example.com/path"],
+    "images": []
+  },
+  {
+    "name": "title injection",
+    "markdown": "[click](https://example.com/path \"\\\" onmouseover=alert(1)\")",
+    "links": ["https://example.com/path"],
+    "images": []
+  },
+  {
+    "name": "table alignment",
+    "markdown": "| A |\n| :-: |\n| safe |",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "heading",
+    "markdown": "## Heading",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "IRC link",
+    "markdown": "[click](irc://example.com/channel)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "IRC image",
+    "markdown": "![picture](irc://example.com/channel)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "IRC autolink",
+    "markdown": "<irc://example.com/channel>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "IRCS link",
+    "markdown": "[click](ircs://example.com/channel)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "IRCS image",
+    "markdown": "![picture](ircs://example.com/channel)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "IRCS autolink",
+    "markdown": "<ircs://example.com/channel>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "XMPP link",
+    "markdown": "[click](xmpp:attacker@example.com)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "XMPP image",
+    "markdown": "![picture](xmpp:attacker@example.com)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "XMPP autolink",
+    "markdown": "<xmpp:attacker@example.com>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tel link",
+    "markdown": "[click](tel:12345)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tel image",
+    "markdown": "![picture](tel:12345)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "tel autolink",
+    "markdown": "<tel:12345>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "file link",
+    "markdown": "[click](file:///etc/passwd)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "file image",
+    "markdown": "![picture](file:///etc/passwd)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "file autolink",
+    "markdown": "<file:///etc/passwd>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "blob link",
+    "markdown": "[click](blob:https://example.com/id)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "blob image",
+    "markdown": "![picture](blob:https://example.com/id)",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "blob autolink",
+    "markdown": "<blob:https://example.com/id>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "named entity link",
+    "markdown": "[click](javascript&colon;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "named entity image",
+    "markdown": "![picture](javascript&colon;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "named entity autolink",
+    "markdown": "<javascript&colon;alert(1)>",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "double encoded entity link",
+    "markdown": "[click](javascript&amp;colon;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "double encoded entity image",
+    "markdown": "![picture](javascript&amp;colon;alert(1))",
+    "links": [],
+    "images": []
+  },
+  {
+    "name": "double encoded entity autolink",
+    "markdown": "<javascript&amp;colon;alert(1)>",
+    "links": [],
+    "images": []
+  }
+]

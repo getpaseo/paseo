@@ -345,6 +345,10 @@ join active work or reuse committed stages. A persisted resource alone cannot pr
 that a provider accepted its initial prompt. Interrupted side effects with no conclusive
 receipt return an unknown outcome instead of being repeated.
 
+Agent registration commits creation. Rejecting the first prompt is a turn error on that
+agent; reporting creation failure leaves an orphaned agent and invites another Create.
+Receipt replay must not resend the prompt.
+
 `packages/client/src/creation/` owns capability selection and legacy orchestration.
 Callers always pass the initial prompt to agent creation. On an older host, the client
 adapts keyed creation to the legacy create/send sequence; it cannot continue that
