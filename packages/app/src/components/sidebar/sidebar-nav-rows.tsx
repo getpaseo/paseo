@@ -22,7 +22,10 @@ import {
   builtinSidebarNavShortcutAction,
   type BuiltinSidebarNavId,
 } from "@/sidebar-nav/model";
-import { resolveSidebarNavGroupHeight } from "@/sidebar-nav/group-layout";
+import {
+  SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+  resolveSidebarNavGroupHeight,
+} from "@/sidebar-nav/group-layout";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -42,6 +45,7 @@ interface SidebarNavRowProps {
 interface SidebarNavRowsProps extends SidebarNavRowProps {
   /** Style for the group wrapper, which the sidebar owns. */
   style?: StyleProp<ViewStyle>;
+  footerHeight: number | null;
 }
 
 /**
@@ -52,7 +56,7 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  * The group folds down to its header on demand and its rows scroll inside a cap,
  * so plugin contributions never push the workspace list off the sidebar.
  */
-export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps) {
+export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: SidebarNavRowsProps) {
   const { t } = useTranslation();
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
@@ -64,7 +68,12 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
   const groupRef = useRef<View | null>(null);
   const [draggedHeight, setDraggedHeight] = useState<number | null>(null);
   const requestedHeight = draggedHeight ?? storedHeight;
-  const height = resolveSidebarNavGroupHeight({ requestedHeight, viewportHeight });
+  const resolvedFooterHeight = footerHeight ?? SIDEBAR_FOOTER_DEFAULT_HEIGHT;
+  const height = resolveSidebarNavGroupHeight({
+    requestedHeight,
+    viewportHeight,
+    footerHeight: resolvedFooterHeight,
+  });
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const rowsStyle = useMemo(
     () => [styles.rows, requestedHeight === null ? { maxHeight: height } : { height }],
@@ -78,11 +87,15 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
   const commitHeight = useCallback(
     (nextHeight: number) => {
       setStoredHeight(
-        resolveSidebarNavGroupHeight({ requestedHeight: nextHeight, viewportHeight }),
+        resolveSidebarNavGroupHeight({
+          requestedHeight: nextHeight,
+          viewportHeight,
+          footerHeight: resolvedFooterHeight,
+        }),
       );
       setDraggedHeight(null);
     },
-    [setStoredHeight, viewportHeight],
+    [resolvedFooterHeight, setStoredHeight, viewportHeight],
   );
 
   if (visibleItems.length === 0) return null;

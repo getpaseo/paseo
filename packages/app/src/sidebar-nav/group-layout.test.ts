@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SIDEBAR_FOOTER_DEFAULT_HEIGHT,
   SIDEBAR_NAV_GROUP_CHROME_RESERVE,
   SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT,
   resolveSidebarNavGroupHeight,
@@ -30,38 +31,113 @@ describe("resolveSidebarNavGroupMaxHeight", () => {
 
 describe("resolveSidebarNavGroupHeight", () => {
   it("uses the default share until the owner drags the group", () => {
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: null, viewportHeight: 900 })).toBe(300);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: null,
+        viewportHeight: 900,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(300);
   });
 
   it("honours a dragged height between one row and half the window", () => {
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 480, viewportHeight: 900 })).toBe(450);
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 120, viewportHeight: 900 })).toBe(120);
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 10, viewportHeight: 900 })).toBe(
-      SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT,
-    );
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 480,
+        viewportHeight: 900,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(450);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 120,
+        viewportHeight: 900,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(120);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 10,
+        viewportHeight: 900,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT);
   });
 
   it("leaves the sidebar's own chrome room on a short window", () => {
     // A 200px window can spare 200 minus the header, footer and one workspace row.
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 200 })).toBe(
-      200 - SIDEBAR_NAV_GROUP_CHROME_RESERVE,
-    );
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 900 })).toBe(450);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 200,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(200 - SIDEBAR_NAV_GROUP_CHROME_RESERVE);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 900,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(450);
+  });
+
+  it("shrinks the dragged cap when the measured footer is taller", () => {
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 300,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(150);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 300,
+        footerHeight: 120,
+      }),
+    ).toBe(108);
   });
 
   it("never lets the ceiling fall below the default share", () => {
     // Windows this short have no chrome budget at all, so the default share holds.
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 100 })).toBe(
-      resolveSidebarNavGroupMaxHeight(100),
-    );
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 60 })).toBe(
-      resolveSidebarNavGroupMaxHeight(60),
-    );
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 100,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(resolveSidebarNavGroupMaxHeight(100));
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 60,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(resolveSidebarNavGroupMaxHeight(60));
   });
 
   it("falls back to the default share when the height is not a number", () => {
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: Number.NaN, viewportHeight: 600 })).toBe(
-      200,
-    );
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: Number.NaN,
+        viewportHeight: 600,
+        footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+      }),
+    ).toBe(200);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 200,
+        footerHeight: Number.NaN,
+      }),
+    ).toBe(200 - SIDEBAR_NAV_GROUP_CHROME_RESERVE);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 120,
+        footerHeight: -20,
+      }),
+    ).toBe(48);
   });
 });
