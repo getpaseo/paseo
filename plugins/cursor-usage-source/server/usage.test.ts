@@ -229,6 +229,49 @@ describe("cursor usage source", () => {
     });
   });
 
+  it("loads the account's plan name alongside its subscription usage", async () => {
+    process.env.CURSOR_ACCESS_TOKEN = "fixture-token";
+    const requests: string[] = [];
+    const report = await fetchFirst(async (url, init) => {
+      const method = url.toString().split("/").at(-1)!;
+      requests.push(method);
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer fixture-token");
+      return jsonResponse(
+        method === "GetPlanInfo"
+          ? { planInfo: { planName: "Ultra" } }
+          : { planUsage: { totalPercentUsed: 26 } },
+      );
+    });
+    expect(requests.sort()).toEqual(["GetCurrentPeriodUsage", "GetPlanInfo"]);
+    expect(report).toMatchObject({
+      status: "available",
+      planLabel: "Ultra",
+      windows: [{ id: "plan_usage", usedPct: 26 }],
+    });
+  });
+
+  it.each(["unavailable", "malformed", "network error"])(
+    "keeps quota visible when plan metadata is %s",
+    async (failure) => {
+      process.env.CURSOR_ACCESS_TOKEN = "fixture-token";
+      const report = await fetchFirst(async (url) => {
+        if (url.toString().endsWith("/GetPlanInfo")) {
+          if (failure === "network error") throw new Error("Request failed");
+          return failure === "unavailable"
+            ? new Response(null, { status: 503 })
+            : jsonResponse({ planInfo: { planName: 42 } });
+        }
+        return jsonResponse({ planUsage: { totalPercentUsed: 26 } });
+      });
+      expect(report).toMatchObject({
+        status: "available",
+        windows: [{ id: "plan_usage", usedPct: 26 }],
+      });
+      if (report.status !== "available") throw new Error("Expected usage report");
+      expect(report.planLabel).toBeUndefined();
+    },
+  );
+
   it.each([
     ["darwin", ".cursor", {}],
     ["linux", ".config/cursor", {}],

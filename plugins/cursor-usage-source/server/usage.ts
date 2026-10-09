@@ -104,6 +104,10 @@ const CursorAuthStatusSchema = z.object({
   accessToken: z.string().optional(),
 });
 
+const CursorPlanInfoSchema = z.object({
+  planInfo: z.object({ planName: z.string().trim().min(1) }).nullish(),
+});
+
 type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
 
 function parseCursorBillingCycleTimestamp(
@@ -192,19 +196,8 @@ export async function fetchUsage(
   const token = await readToken(input, lookup);
   if (!token) throw new Error("Cursor login store no longer exists");
 
-  const res = await fetchApi(
-    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-    {
-      signal: AbortSignal.timeout(15_000),
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Connect-Protocol-Version": "1",
-      },
-      body: JSON.stringify({}),
-    },
-  );
+  const planLabel = fetchPlanLabel(token, fetchApi);
+  const res = await fetchDashboard("GetCurrentPeriodUsage", token, fetchApi, 15_000);
 
   if (res.status === 401 || res.status === 403)
     return unavailable({ kind: "rejected", status: res.status });
@@ -253,11 +246,40 @@ export async function fetchUsage(
 
   return {
     status: "available",
-    planLabel: undefined,
+    planLabel: await planLabel,
     windows,
     balances,
     details: [],
   };
+}
+
+function fetchDashboard(
+  method: "GetCurrentPeriodUsage" | "GetPlanInfo",
+  token: string,
+  fetchApi: typeof fetch,
+  timeoutMs: number,
+): Promise<Response> {
+  return fetchApi(`https://api2.cursor.sh/aiserver.v1.DashboardService/${method}`, {
+    signal: AbortSignal.timeout(timeoutMs),
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Connect-Protocol-Version": "1",
+    },
+    body: JSON.stringify({}),
+  });
+}
+
+async function fetchPlanLabel(token: string, fetchApi: typeof fetch): Promise<string | undefined> {
+  try {
+    const response = await fetchDashboard("GetPlanInfo", token, fetchApi, 5_000);
+    if (!response.ok) return undefined;
+    return CursorPlanInfoSchema.parse(await response.json()).planInfo?.planName;
+  } catch {
+    // Plan metadata is optional; it must not hide a successful quota response.
+    return undefined;
+  }
 }
 
 async function readToken(
