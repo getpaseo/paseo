@@ -748,7 +748,7 @@ function useWorkspaceIsolation(input: {
   let effectiveIsolation: "local" | "worktree" | "chat" = "local";
   if (isChat) {
     effectiveIsolation = "chat";
-  } else if (isWorktree) {
+  } else if (!supportsMultiplicity || isWorktree) {
     effectiveIsolation = "worktree";
   }
 

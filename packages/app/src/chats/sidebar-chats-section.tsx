@@ -67,12 +67,13 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
   const [collapsed, setCollapsed] = useState(false);
   const [isArchivingAll, setIsArchivingAll] = useState(false);
 
+  const allChatEntries = useMemo(() => {
+    return Array.from(workspaceEntriesByKey.values()).filter(isChatWorkspace);
+  }, [workspaceEntriesByKey]);
+
   const chatEntries = useMemo(() => {
-    return Array.from(workspaceEntriesByKey.values()).filter(
-      (workspace) =>
-        !pinnedWorkspaceKeys?.has(workspace.workspaceKey) && isChatWorkspace(workspace),
-    );
-  }, [pinnedWorkspaceKeys, workspaceEntriesByKey]);
+    return allChatEntries.filter((workspace) => !pinnedWorkspaceKeys?.has(workspace.workspaceKey));
+  }, [allChatEntries, pinnedWorkspaceKeys]);
 
   const anyHostSupportsChat = useMemo(() => {
     if (!supportsChatByServerId || supportsChatByServerId.size === 0) return true;
@@ -100,7 +101,7 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
   }, [activeSelection, allHosts, onWorkspacePress]);
 
   const handleArchiveAllChats = useCallback(async () => {
-    if (chatEntries.length === 0 || isArchivingAll) return;
+    if (allChatEntries.length === 0 || isArchivingAll) return;
 
     const confirmed = await confirmDialog({
       title: t("sidebar.chats.archiveAllConfirmTitle"),
@@ -114,32 +115,7 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
 
     setIsArchivingAll(true);
     try {
-      if (activeSelection) {
-        const isCurrentActiveInChats = chatEntries.some(
-          (entry) =>
-            entry.serverId === activeSelection.serverId &&
-            entry.workspaceId === activeSelection.workspaceId,
-        );
-        if (isCurrentActiveInChats) {
-          redirectIfArchivingActiveWorkspace({
-            serverId: activeSelection.serverId,
-            workspaceId: activeSelection.workspaceId,
-            activeWorkspaceSelection: activeSelection,
-          });
-        }
-      }
-
-      for (const entry of chatEntries) {
-        const workspaceKey = buildWorkspaceTabPersistenceKey({
-          serverId: entry.serverId,
-          workspaceId: entry.workspaceId,
-        });
-        if (workspaceKey) {
-          useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
-        }
-      }
-
-      const targets = chatEntries.map((entry) => ({
+      const targets = allChatEntries.map((entry) => ({
         serverId: entry.serverId,
         workspaceId: entry.workspaceId,
       }));
@@ -149,15 +125,45 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
         workspaces: targets,
       });
 
+      const failedKeySet = new Set(failures.map((f) => `${f.serverId}:${f.workspaceId}`));
+      const successfulEntries = allChatEntries.filter(
+        (entry) => !failedKeySet.has(`${entry.serverId}:${entry.workspaceId}`),
+      );
+
+      for (const entry of successfulEntries) {
+        const workspaceKey = buildWorkspaceTabPersistenceKey({
+          serverId: entry.serverId,
+          workspaceId: entry.workspaceId,
+        });
+        if (workspaceKey) {
+          useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+        }
+      }
+
+      if (activeSelection) {
+        const isCurrentActiveArchived = successfulEntries.some(
+          (entry) =>
+            entry.serverId === activeSelection.serverId &&
+            entry.workspaceId === activeSelection.workspaceId,
+        );
+        if (isCurrentActiveArchived) {
+          redirectIfArchivingActiveWorkspace({
+            serverId: activeSelection.serverId,
+            workspaceId: activeSelection.workspaceId,
+            activeWorkspaceSelection: activeSelection,
+          });
+        }
+      }
+
       if (failures.length > 0) {
         toast.error(t("sidebar.chats.archiveAllFailed"));
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("sidebar.chats.archiveAllFailed"));
+    } catch {
+      toast.error(t("sidebar.chats.archiveAllFailed"));
     } finally {
       setIsArchivingAll(false);
     }
-  }, [activeSelection, chatEntries, isArchivingAll, t, toast]);
+  }, [activeSelection, allChatEntries, isArchivingAll, t, toast]);
 
   const toggleCollapsed = useCallback(() => setCollapsed((prev) => !prev), []);
 

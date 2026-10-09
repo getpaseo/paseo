@@ -2497,6 +2497,11 @@ function ProjectModeList({
       />
     );
 
+  const pinnedWorkspaceKeys = useMemo(
+    () => new Set(pinnedChats.map((workspace) => workspace.workspaceKey)),
+    [pinnedChats],
+  );
+
   const renderProjectChatItem = useCallback(
     (entry: SidebarWorkspaceEntry) => (
       <MemoWorkspaceRowItem
@@ -2577,7 +2582,7 @@ function ProjectModeList({
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       <SidebarChatsSection
         workspaceEntriesByKey={workspaceEntriesByKey}
-        pinnedWorkspaceKeys={new Set(pinnedChats.map((w) => w.workspaceKey))}
+        pinnedWorkspaceKeys={pinnedWorkspaceKeys}
         supportsChatByServerId={supportsChatByServerId}
         onWorkspacePress={onWorkspacePress}
         activeWorkspaceSelection={activeWorkspaceSelection}

@@ -2,6 +2,7 @@ import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-st
 import type { HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
+import { isChatsProject } from "@/chats/model";
 
 export interface WorkspaceSummary {
   id: string;
@@ -285,7 +286,9 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     attachHostWorkspaces(groups, host, hostProjects);
   }
 
-  const projects = Array.from(groups.values()).map(toProjectSummary);
+  const projects = Array.from(groups.values())
+    .map(toProjectSummary)
+    .filter((project) => !isChatsProject(project));
   projects.sort((left, right) => {
     const name = left.projectName.localeCompare(right.projectName);
     if (name !== 0) {
