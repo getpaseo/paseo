@@ -912,6 +912,7 @@ interface CreateChatAgentInput {
   supportsForgeSearch: boolean;
   resolveClient: () => DaemonClient;
   isStillOnCreateScreen: () => boolean;
+  isChat?: boolean;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -979,9 +980,10 @@ function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome>
 }
 
 async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
-  const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
+  const { payload, composerState, ensureWorkspace, serverId, clearDraft, isChat } = input;
   const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
   const { text, attachments, cwd } = payload;
+  const effectiveCwd = isChat ? "" : cwd;
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
   }
@@ -1005,7 +1007,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
     config: {
       provider,
-      cwd,
+      cwd: effectiveCwd,
       modeId: composerState.selectedMode || undefined,
       model: composerState.effectiveModelId || undefined,
       thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
@@ -1018,7 +1020,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   };
   const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
     const { agent } = await ensureWorkspace({
-      cwd,
+      cwd: effectiveCwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
@@ -2228,6 +2230,7 @@ export function NewWorkspaceScreen({
           supportsForgeSearch,
           resolveClient: withConnectedClient,
           isStillOnCreateScreen,
+          isChat: effectiveIsolation === "chat",
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
@@ -2249,6 +2252,7 @@ export function NewWorkspaceScreen({
       creationIdentity,
       chatDraft.clear,
       draftKey,
+      effectiveIsolation,
       ensureWorkspace,
       forkDraftSetup,
       isChatKind,

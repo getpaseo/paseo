@@ -7009,7 +7009,7 @@ function resolveWorkspaceAgentConfig(
   } else if (source.kind === "worktree") {
     fallbackCwd = source.cwd ?? "";
   }
-  const initialCwd = cwd || fallbackCwd;
+  const initialCwd = source.kind === "chat" ? "" : cwd || fallbackCwd;
   const baseConfig: Partial<AgentSessionConfig> = {
     ...(provider ? { provider } : {}),
     ...(initialCwd ? { cwd: initialCwd } : {}),
@@ -7017,7 +7017,7 @@ function resolveWorkspaceAgentConfig(
   };
 
   const merged = config ? { ...baseConfig, ...config } : baseConfig;
-  const effectiveCwd = merged.cwd || fallbackCwd;
+  const effectiveCwd = source.kind === "chat" ? "" : merged.cwd || fallbackCwd;
 
   if (!merged.provider) {
     throw new Error("createAgent requires provider");
