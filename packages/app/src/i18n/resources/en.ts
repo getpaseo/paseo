@@ -1155,6 +1155,7 @@ export const en = {
       done: "Done",
     },
     display: {
+      showBackground: "Show background",
       trigger: "Display preferences",
       heading: "Display",
       grouping: {
