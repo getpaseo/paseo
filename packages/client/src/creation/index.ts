@@ -87,6 +87,16 @@ export class CreationClient {
         error: null,
       });
       if (!agent) return workspace;
+      if (request.source.kind === "chat") {
+        const cwd = workspace.workspace.workspaceDirectory!;
+        const created = await this.legacyAgent({
+          ...agent,
+          config: { ...agent.config!, cwd },
+          workspaceId: workspace.workspace.id,
+          idempotencyKey: `${operation.key}:agent`,
+        });
+        return { ...workspace, agent: created.agent };
+      }
       const subpath =
         relativeCwd ??
         (agent.config?.cwd && workspace.workspace.projectRootPath

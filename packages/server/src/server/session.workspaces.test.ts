@@ -9634,6 +9634,110 @@ test("workspace.create.request with chat source creates a chat workspace in a ra
 
   rmSync(chatDir, { recursive: true, force: true });
 });
+test("workspace.create.request with chat source and initial agent uses workspaceDirectory without cwd error", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+  let createdAgentCwd: string | undefined;
+  const session = createSessionForWorkspaceTests({
+    clientCapabilities: {
+      chat_workspaces: true,
+    },
+    onMessage: (msg) => emitted.push(msg),
+    projectRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(projects.values()),
+      get: async (id) => projects.get(id) ?? null,
+      getOrCreateActiveByRoot: async (allocation) => {
+        const existing = Array.from(projects.values()).find(
+          (p) => !p.archivedAt && p.rootPath === allocation.rootPath,
+        );
+        if (existing) return existing;
+        const project = createPersistedProjectRecord({
+          projectId: "prj_chats",
+          rootPath: allocation.rootPath,
+          kind: allocation.kind,
+          displayName: allocation.displayName,
+          projectKey: allocation.projectKey,
+          createdAt: allocation.timestamp,
+          updatedAt: allocation.timestamp,
+        });
+        projects.set(project.projectId, project);
+        return project;
+      },
+      upsert: async (record) => {
+        projects.set(record.projectId, record);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (id) => workspaces.get(id) ?? null,
+      upsert: async (record) => {
+        workspaces.set(record.id, record);
+      },
+      archive: async () => {},
+      remove: async () => {},
+      subscribeToMutations: () => () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+  session.createSessionAgent = async (input, id) => {
+    createdAgentCwd = input.config.cwd;
+    return {
+      agent: {
+        id: id ?? "agent_chat_1",
+        workspaceId: input.workspaceId,
+        status: "idle",
+        config: input.config,
+        provider: input.config.provider,
+        title: "Chat Agent",
+        source: "caller",
+        model: null,
+        modeId: null,
+        thinkingOptionId: null,
+        featureValues: {},
+        labels: {},
+        activeTurn: null,
+        historySummary: null,
+        createdAt: "2026-10-09T00:00:00.000Z",
+        updatedAt: "2026-10-09T00:00:00.000Z",
+        archivedAt: null,
+        deletedAt: null,
+        lastActiveAt: "2026-10-09T00:00:00.000Z",
+        unreadCount: 0,
+      },
+      initialPromptStarted: true,
+    };
+  };
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-chat-with-agent",
+    source: { kind: "chat" },
+    agent: {
+      config: {
+        provider: "claude",
+        cwd: "",
+      },
+      initialPrompt: "Hello chat",
+    },
+    title: "Chat with Agent",
+  });
+
+  const response = findByType(emitted, "workspace.create.response");
+  expect(response?.payload.error).toBeNull();
+  expect(response?.payload.workspace).toBeDefined();
+  expect(response?.payload.agent).toBeDefined();
+  expect(createdAgentCwd).toBe(response!.payload.workspace!.workspaceDirectory);
+
+  const chatDir = response!.payload.workspace!.workspaceDirectory;
+  rmSync(chatDir, { recursive: true, force: true });
+});
 
 test("workspace.create with chat source downgrades workspaceKind to directory for older clients", async () => {
   const emitted: SessionOutboundMessage[] = [];

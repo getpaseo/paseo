@@ -4092,6 +4092,22 @@ export class Session {
             ? async (id, workspace, onReady) => {
                 if (!workspace?.workspaceDirectory)
                   throw new Error("Created workspace has no directory");
+                if (request.source.kind === "chat") {
+                  return this.createSessionAgent(
+                    {
+                      ...agentInput,
+                      type: "create_agent_request",
+                      requestId,
+                      config: {
+                        ...agentInput.config,
+                        cwd: workspace.workspaceDirectory,
+                      },
+                      workspaceId: workspace.id,
+                    },
+                    id,
+                    onReady,
+                  );
+                }
                 let sourceCwd: string;
                 if (request.source.kind === "directory") {
                   sourceCwd = request.source.path;
@@ -4100,7 +4116,10 @@ export class Session {
                 } else {
                   sourceCwd = workspace.workspaceDirectory;
                 }
-                const relativeCwd = relative(resolve(sourceCwd), resolve(agentInput.config.cwd));
+                const agentCwd = agentInput.config?.cwd
+                  ? resolve(agentInput.config.cwd)
+                  : resolve(sourceCwd);
+                const relativeCwd = relative(resolve(sourceCwd), agentCwd);
                 if (
                   relativeCwd === ".." ||
                   relativeCwd.startsWith(`..${sep}`) ||
