@@ -62,6 +62,7 @@ interface PluginRuntimePort {
 
 interface PluginServiceDependencies {
   usageAgents?: AgentUsageLookup;
+  isUsageProviderEnabled?: (provider: string) => boolean;
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
@@ -107,6 +108,8 @@ export class PluginService {
       300_000,
       this.logger,
       dependencies.usageAgents,
+      undefined,
+      dependencies.isUsageProviderEnabled,
     );
     this.runtime =
       dependencies.runtime ??
@@ -583,6 +586,7 @@ export class PluginService {
         this.usageSources.register({
           id: source.id,
           label: source.label,
+          provider: source.provider,
           icon: source.icon,
           discover: async (scope) => {
             const result = await this.runtime.discoverUsage(pluginId, source.id, scope);

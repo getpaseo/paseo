@@ -3,16 +3,114 @@ import { UsageSourceRegistry } from "./index.js";
 
 function source(input: {
   id: string;
+  provider?: string;
   discover?: () => Promise<Array<{ key: string; label?: string; input: unknown }>>;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
     id: input.id,
+    provider: input.provider,
     label: input.id,
     discover: input.discover ?? (async () => []),
     fetch: input.fetch ?? (async () => ({ status: "available", windows: [] })),
   };
 }
+
+test("provider-bound sources follow enablement before discovery, fetch, and cached refresh", async () => {
+  const enabled = new Set(["cursor"]);
+  let grokDiscoveries = 0;
+  let grokFetches = 0;
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    undefined,
+    undefined,
+    (provider) => enabled.has(provider),
+  );
+  registry.register(
+    source({
+      id: "grok",
+      provider: "grok",
+      discover: async () => {
+        grokDiscoveries++;
+        return [{ key: "installed", input: {} }];
+      },
+      fetch: async () => {
+        grokFetches++;
+        return { status: "available", windows: [] };
+      },
+    }),
+  );
+  registry.register(
+    source({
+      id: "cursor",
+      provider: "cursor",
+      discover: async () => [{ key: "plan", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "independent-billing",
+      discover: async () => [{ key: "account", input: {} }],
+    }),
+  );
+  expect((await registry.listReports()).map((r) => r.sourceId)).toEqual([
+    "cursor",
+    "independent-billing",
+  ]);
+  expect(grokDiscoveries).toBe(0);
+  expect(grokFetches).toBe(0);
+  enabled.add("grok");
+  expect((await registry.listReports()).map((r) => r.sourceId)).toContain("grok");
+  expect(grokFetches).toBe(1);
+  enabled.delete("grok");
+  expect(await registry.listReports({ reportIds: ["grok:installed"], forceRefresh: true })).toEqual(
+    [],
+  );
+  expect((await registry.listReports()).map((r) => r.sourceId)).not.toContain("grok");
+  expect(grokDiscoveries).toBe(1);
+  expect(grokFetches).toBe(1);
+});
+
+test("disabling a provider while usage loads prevents streaming its report", async () => {
+  let enabled = true;
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let started!: () => void;
+  const fetching = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    undefined,
+    undefined,
+    () => enabled,
+  );
+  registry.register(
+    source({
+      id: "grok",
+      provider: "grok",
+      discover: async () => [{ key: "one", input: {} }],
+      fetch: async () => {
+        started();
+        await gate;
+        return { status: "available", windows: [] };
+      },
+    }),
+  );
+  const updates: string[] = [];
+  const listing = registry.listReports({ onReport: (report) => updates.push(report.id) });
+  await fetching;
+  enabled = false;
+  finish();
+  expect(await listing).toEqual([]);
+  expect(updates).toEqual([]);
+});
 
 test("discovery preserves account IDs and updates input after token rotation", async () => {
   const registry = new UsageSourceRegistry();

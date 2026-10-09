@@ -184,6 +184,51 @@ describe("cursor usage source", () => {
     });
   });
 
+  it("uses subscription percentages even when metered spend exceeds the dollar allowance", async () => {
+    process.env.CURSOR_ACCESS_TOKEN = "fixture-token";
+    const report = await fetchFirst(async () =>
+      jsonResponse({
+        billingCycleEnd: "1792697143000",
+        planUsage: {
+          totalSpend: 79034,
+          includedSpend: 40000,
+          bonusSpend: 39034,
+          limit: 40000,
+          totalPercentUsed: 25.29088,
+          autoPercentUsed: 26.344666666666665,
+          apiPercentUsed: 0,
+        },
+      }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [
+        { id: "plan_usage", label: "Total", usedPct: 25.29088, summary: true, tone: "ok" },
+        { id: "cursor_usage", label: "Cursor", usedPct: 26.344666666666665, tone: "ok" },
+        { id: "third_party_usage", label: "Third Party", usedPct: 0, tone: "ok" },
+      ],
+      balances: [],
+    });
+    if (report.status !== "available") throw new Error("Expected usage report");
+    expect(report.windows.every((w) => w.resetsAt === new Date(1792697143000).toISOString())).toBe(
+      true,
+    );
+  });
+
+  it("preserves zero subscription usage and does not invent missing breakdowns", async () => {
+    process.env.CURSOR_ACCESS_TOKEN = "fixture-token";
+    const report = await fetchFirst(async () =>
+      jsonResponse({
+        planUsage: { totalPercentUsed: "0", autoPercentUsed: null },
+      }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [{ id: "plan_usage", usedPct: 0, remainingPct: 100, resetsAt: null }],
+      balances: [],
+    });
+  });
+
   it.each([
     ["darwin", ".cursor", {}],
     ["linux", ".config/cursor", {}],

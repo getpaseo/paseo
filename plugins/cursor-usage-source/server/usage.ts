@@ -10,9 +10,11 @@ import {
   toneFromUsedPct,
   usedPctOf,
   unavailable,
+  windowFromUsedPct,
   type UsageAccount,
   type UsageReport,
   type UsageBalance,
+  type UsageWindow,
 } from "@getpaseo/plugin/server/usage";
 
 const ApiNumberSchema = z.coerce.number().finite();
@@ -89,6 +91,9 @@ const CursorUsageResponseSchema = z.object({
       bonusSpend: ApiNullableNumberSchema,
       remaining: ApiNullableNumberSchema,
       limit: ApiNullableNumberSchema,
+      totalPercentUsed: ApiNullableNumberSchema,
+      autoPercentUsed: ApiNullableNumberSchema,
+      apiPercentUsed: ApiNullableNumberSchema,
     })
     .nullish(),
   billingCycleStart: CursorBillingCycleTimestampSchema,
@@ -207,8 +212,30 @@ export async function fetchUsage(
 
   const resp = CursorUsageResponseSchema.parse(await res.json());
   const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
+  const windows: UsageWindow[] = [];
   const balances: UsageBalance[] = [];
   if (resp.planUsage) {
+    // Metered dollars include bonus usage and do not measure subscription quota.
+    // Use Cursor's explicit percentages whenever it supplies them.
+    for (const [id, label, usedPct] of [
+      ["plan_usage", "Total", resp.planUsage.totalPercentUsed],
+      ["cursor_usage", "Cursor", resp.planUsage.autoPercentUsed],
+      ["third_party_usage", "Third Party", resp.planUsage.apiPercentUsed],
+    ] as const) {
+      if (usedPct === null) continue;
+      windows.push(
+        windowFromUsedPct({
+          id,
+          label,
+          utilizationPct: usedPct,
+          resetsAt: billingCycleEnd,
+          summary: id === "plan_usage",
+          tone: toneFromUsedPct(usedPct),
+        }),
+      );
+    }
+  }
+  if (resp.planUsage && windows.length === 0) {
     const totalSpend = centsToDollars(resp.planUsage.totalSpend);
     const remaining = centsToDollars(resp.planUsage.remaining);
     const limit = centsToDollars(resp.planUsage.limit);
@@ -227,7 +254,7 @@ export async function fetchUsage(
   return {
     status: "available",
     planLabel: undefined,
-    windows: [],
+    windows,
     balances,
     details: [],
   };

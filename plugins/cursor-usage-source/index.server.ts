@@ -5,6 +5,7 @@ import { fetchUsage, discover } from "./server/usage.js";
 export default function contribute(server: PluginServerContext) {
   server.registerUsageSource({
     id: "cursor",
+    provider: "cursor",
     label: "Cursor",
     icon: "icon.svg",
     input: inputSchema,

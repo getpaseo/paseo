@@ -78,6 +78,8 @@ export type UsageScope = z.infer<typeof UsageScopeSchema>;
 export interface UsageSourceRegistration {
   id: string;
   label: string;
+  /** When set, discover and fetch only while this agent provider is registered and enabled. */
+  provider?: string;
   icon?: string;
   input: ZodType;
   /** Accounts for this scope only. The same key in any scope identifies the same account. */

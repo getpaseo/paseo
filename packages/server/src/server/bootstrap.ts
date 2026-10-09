@@ -620,6 +620,10 @@ export async function createPaseoDaemon(
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
   const pluginRuntime: PluginService = new PluginService(logger, daemonConfigStore, daemonVersion, {
+    isUsageProviderEnabled: (provider) =>
+      providerSnapshotManager
+        .getSnapshot()
+        .records.some(({ entry }) => entry.provider === provider && entry.enabled),
     usageAgents: {
       hasAgent: (id) => agentManager.getAgent(id) !== null,
       usageSession: (id) => agentManager.usageSession(id),

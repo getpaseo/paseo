@@ -14,6 +14,7 @@ import {
 export interface UsageSource {
   id: string;
   label: string;
+  provider?: string;
   icon?: string;
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
@@ -69,6 +70,7 @@ export class UsageSourceRegistry {
     private readonly logger: Pick<Logger, "warn"> = { warn: console.warn },
     private readonly agents: AgentUsageLookup = { hasAgent: () => false, usageSession: () => null },
     private readonly deadlineMs = 20_000,
+    private readonly isProviderEnabled: (provider: string) => boolean = () => true,
   ) {}
 
   register(source: UsageSource): void {
@@ -106,18 +108,24 @@ export class UsageSourceRegistry {
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
-    return Promise.all(
+    const entries = await Promise.all(
       [...new Set(ids)].flatMap((id) => {
         const known = reports.get(id);
-        if (!known) return [];
+        if (!known || !this.isSourceEnabled(known.source)) return [];
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
+            if (!this.isSourceEnabled(known.source)) return null;
             options.onReport?.(entry);
             return entry;
           }),
         ];
       }),
     );
+    return entries.filter((entry) => entry !== null);
+  }
+
+  private isSourceEnabled(source: UsageSource): boolean {
+    return source.provider === undefined || this.isProviderEnabled(source.provider);
   }
 
   private pruneAgents(): void {
@@ -193,7 +201,11 @@ export class UsageSourceRegistry {
       ...[...this.byAgent.values()].map((agent) => agent.reports),
     ]) {
       for (const [id, report] of reports) {
-        if (this.sources.get(report.source.id) !== report.source) continue;
+        if (
+          this.sources.get(report.source.id) !== report.source ||
+          !this.isSourceEnabled(report.source)
+        )
+          continue;
         const known = this.known.get(id);
         if (!known) {
           this.known.set(id, { ...report, logins: [...report.logins] });
@@ -209,34 +221,36 @@ export class UsageSourceRegistry {
 
   private async discover(scope: UsageScope): Promise<Map<string, KnownReport>> {
     const discovered = await Promise.all(
-      [...this.sources.values()].map(async (source) => {
-        const reports = new Map<string, KnownReport>();
-        try {
-          const accounts = z
-            .array(
-              z.object({
-                key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
-                label: z.string().optional(),
-                harness: z.string().min(1).optional(),
-                input: z.json(),
-              }),
-            )
-            .parse(await source.discover(scope));
-          for (const account of accounts) {
-            const id = `${source.id}:${account.key}`;
-            const known = reports.get(id);
-            // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
-            const login = { input: account.input, harness: account.harness ?? source.label };
-            if (known) {
-              if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
-                known.logins.push(login);
-            } else reports.set(id, { source, logins: [login], label: account.label });
+      [...this.sources.values()]
+        .filter((source) => this.isSourceEnabled(source))
+        .map(async (source) => {
+          const reports = new Map<string, KnownReport>();
+          try {
+            const accounts = z
+              .array(
+                z.object({
+                  key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+                  label: z.string().optional(),
+                  harness: z.string().min(1).optional(),
+                  input: z.json(),
+                }),
+              )
+              .parse(await source.discover(scope));
+            for (const account of accounts) {
+              const id = `${source.id}:${account.key}`;
+              const known = reports.get(id);
+              // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
+              const login = { input: account.input, harness: account.harness ?? source.label };
+              if (known) {
+                if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
+                  known.logins.push(login);
+              } else reports.set(id, { source, logins: [login], label: account.label });
+            }
+          } catch (error) {
+            this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
           }
-        } catch (error) {
-          this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
-        }
-        return reports;
-      }),
+          return reports;
+        }),
     );
     const merged = new Map<string, KnownReport>();
     for (const reports of discovered) {
