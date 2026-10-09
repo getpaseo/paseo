@@ -196,6 +196,8 @@ try {
   for (const args of [
     ["worktree", "ls", "--json"],
     ["worktree", "ls", "--cwd", repo, "--json"],
+    ["worktree", "ls", "--cwd", "./repository", "--json"],
+    ["worktree", "ls", "--host", `127.0.0.1:${daemon.port}`, "--cwd", ".", "--json"],
   ]) {
     const explicit = args.includes("--cwd");
     const result = await runPaseoCli(daemon, args, {
@@ -209,6 +211,17 @@ try {
   for (const args of [
     ["worktree", "archive", "missing", "--json"],
     ["worktree", "archive", "missing", "--cwd", repo, "--json"],
+    ["worktree", "archive", "missing", "--cwd", "./repository", "--json"],
+    [
+      "worktree",
+      "archive",
+      "missing",
+      "--host",
+      `127.0.0.1:${daemon.port}`,
+      "--cwd",
+      ".",
+      "--json",
+    ],
   ]) {
     const result = await runPaseoCli(daemon, args, {
       cwd: args.includes("--cwd") ? daemon.workDir : repo,

@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { basename } from "node:path";
 import { connectToDaemon } from "../../utils/client.js";
+import { resolveRepositoryDirectory } from "./repository-directory.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
 /** Worktree list item for display */
@@ -47,7 +48,7 @@ export async function runLsCommand(
   options: WorktreeLsOptions,
   _command: Command,
 ): Promise<WorktreeLsResult> {
-  const cwd = options.cwd ?? process.cwd();
+  const cwd = resolveRepositoryDirectory(options);
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {

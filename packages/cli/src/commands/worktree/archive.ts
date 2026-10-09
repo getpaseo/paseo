@@ -2,6 +2,7 @@ import path from "path";
 import type { Command } from "commander";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { resolveRepositoryDirectory } from "./repository-directory.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -50,7 +51,7 @@ export async function runArchiveCommandWithDeps(
   deps: { connectToDaemon: typeof connectToDaemon },
 ): Promise<WorktreeArchiveCommandResult> {
   const host = getDaemonHost({ target: options.daemonTarget });
-  const cwd = options.cwd ?? process.cwd();
+  const cwd = resolveRepositoryDirectory(options);
 
   // Validate arguments
   if (!nameArg || nameArg.trim().length === 0) {
