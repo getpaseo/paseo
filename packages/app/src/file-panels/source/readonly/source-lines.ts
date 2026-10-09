@@ -3,6 +3,7 @@ import { highlightCodeInSteps, type HighlightToken } from "@getpaseo/highlight";
 /** JavaScript time per slice; the rest of the frame stays free for input and rendering. */
 const SLICE_BUDGET_MS = 12;
 const PLAIN_LINES_PER_UNIT = 2000;
+const MAX_HIGHLIGHTED_TOKENS_PER_LINE = 32;
 
 /**
  * Splits `content` into source lines, highlighted or plain, a time slice per task so a large file
@@ -28,14 +29,19 @@ export function buildSourceLines(
     do {
       const step = steps.next();
       if (step.done) {
-        onLines(step.value);
+        onLines(step.value.map(limitRowTokens));
         return;
       }
-      if (step.value) onLines(step.value);
+      if (step.value) onLines(step.value.map(limitRowTokens));
     } while (performance.now() < deadline);
     cancelSlice = scheduleSlice(runSlice);
   }
   return () => cancelSlice();
+}
+
+function limitRowTokens(tokens: HighlightToken[]): HighlightToken[] {
+  if (tokens.length <= MAX_HIGHLIGHTED_TOKENS_PER_LINE) return tokens;
+  return [{ text: tokens.map((token) => token.text).join(""), style: null }];
 }
 
 /**
