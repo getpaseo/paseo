@@ -1,8 +1,10 @@
 import type { UsageInput } from "../shared/input.js";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import {
   toneFromUsedPct,
@@ -28,10 +30,39 @@ function toIsoStringOrNull(timestampMs: number): string | null {
 // kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
 // depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
 // Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
-// Headless hosts (VPS, cursor-agent only) have no desktop db; their session lives in
-// ~/.config/cursor/auth.json instead.
+// The CLI uses Keychain on macOS, or a platform-specific auth.json with the file store.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+const CURSOR_KEYCHAIN_SERVICE = "cursor-access-token";
+const execFileAsync = promisify(execFile);
+
+interface CursorCredentialLookup {
+  platform?: NodeJS.Platform;
+  readKeychainToken?: () => Promise<string | null>;
+}
+
+async function readCursorKeychainToken(): Promise<string | null> {
+  try {
+    // Matches cursor-agent's default macOS credential store. Read only the access
+    // token; the CLI owns refresh and must remain the only writer of credentials.
+    const { stdout } = await execFileAsync(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", CURSOR_KEYCHAIN_SERVICE, "-a", "cursor-user", "-w"],
+      { timeout: 2_000 },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function cursorAuthPath(platform: NodeJS.Platform): string {
+  const home = homedir();
+  if (platform === "darwin") return join(home, ".cursor", "auth.json");
+  if (platform === "win32")
+    return join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json");
+  return join(process.env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json");
+}
 
 // @types/node@20 predates the node:sqlite typings; declare the slice we use.
 interface CursorStateStatement {
@@ -151,8 +182,9 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
+  lookup: CursorCredentialLookup = {},
 ): Promise<UsageReport> {
-  const token = await readToken(input);
+  const token = await readToken(input, lookup);
   if (!token) throw new Error("Cursor login store no longer exists");
 
   const res = await fetchApi(
@@ -201,16 +233,24 @@ export async function fetchUsage(
   };
 }
 
-async function readToken(input: UsageInput): Promise<string | undefined> {
+async function readToken(
+  input: UsageInput,
+  lookup: CursorCredentialLookup,
+): Promise<string | undefined> {
   if (input.store === "env") return process.env[input.locator];
+  if (input.store === "keychain") {
+    if ((lookup.platform ?? process.platform) !== "darwin") return undefined;
+    return (await (lookup.readKeychainToken ?? readCursorKeychainToken)()) ?? undefined;
+  }
   const token =
     input.store === "sqlite"
       ? await readCursorTokenFromSqlite(input.locator)
       : await readCursorTokenFromAuthJson(input.locator);
   return token ?? undefined;
 }
-export async function discover(): Promise<UsageAccount[]> {
+export async function discover(lookup: CursorCredentialLookup = {}): Promise<UsageAccount[]> {
   const home = homedir();
+  const platform = lookup.platform ?? process.platform;
   const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
     store: "env",
     locator,
@@ -233,8 +273,14 @@ export async function discover(): Promise<UsageAccount[]> {
       ),
       join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
     ].map((locator) => ({ store: "sqlite" as const, locator })),
-    { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
-  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  const cliStore = process.env.AGENT_CLI_CREDENTIAL_STORE;
+  if (cliStore !== "memory") {
+    if (platform === "darwin" && cliStore !== "file")
+      candidates.push({ store: "keychain", locator: CURSOR_KEYCHAIN_SERVICE });
+    candidates.push({ store: "file", locator: cursorAuthPath(platform) });
+  }
+  for (const input of candidates)
+    if (await readToken(input, lookup)) return [{ key: "default", input }];
   return [];
 }

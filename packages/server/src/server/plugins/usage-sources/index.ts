@@ -30,6 +30,11 @@ interface KnownReport {
   label?: string;
 }
 
+interface LoginIdentity {
+  id: string;
+  label?: string;
+}
+
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
   usageSession(id: string): AgentUsageSession | null;
@@ -91,12 +96,13 @@ export class UsageSourceRegistry {
     let ids: string[];
     let reports = this.known;
     if (options.agentId !== undefined) {
-      ids = await this.discoverAgent(options.agentId);
+      ids = await this.discoverAgent(options.agentId, options.forceRefresh);
       reports = this.byAgent.get(options.agentId)?.reports ?? new Map();
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
       this.defaults = await this.discover({ kind: "global" });
+      this.rebindLogins(this.defaults);
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
@@ -121,7 +127,7 @@ export class UsageSourceRegistry {
     this.mergeKnown();
   }
 
-  private async discoverAgent(agentId: string): Promise<string[]> {
+  private async discoverAgent(agentId: string, forceRefresh = false): Promise<string[]> {
     if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
     const session = this.agents.usageSession(agentId);
     if (!session) return [];
@@ -130,7 +136,7 @@ export class UsageSourceRegistry {
       previous?.sessionKey === session.sessionKey &&
       previous.provider === session.provider &&
       previous.model === session.model;
-    if (sameScope) return [...previous.reports.keys()];
+    if (sameScope && !forceRefresh) return [...previous.reports.keys()];
     const reports = await this.discover({
       kind: "session",
       provider: session.provider,
@@ -145,8 +151,39 @@ export class UsageSourceRegistry {
       model: session.model,
       reports,
     });
+    this.rebindLogins(reports);
     this.mergeKnown();
     return [...reports.keys()];
+  }
+
+  private rebindLogins(fresh: Map<string, KnownReport>): void {
+    // Inputs locate mutable login stores. After an account switch, fetching an old
+    // session's locator reads the new account too; move its identity with the store.
+    const identities = new Map<string, LoginIdentity>();
+    for (const [id, report] of fresh) {
+      for (const login of report.logins)
+        identities.set(`${report.source.id}:${loginKey(login)}`, { id, label: report.label });
+    }
+    for (const reports of [this.defaults, ...[...this.byAgent.values()].map((a) => a.reports)]) {
+      if (reports === fresh) continue;
+      const rebound = new Map<string, KnownReport>();
+      for (const [id, report] of reports) {
+        for (const login of report.logins) {
+          const identity = identities.get(`${report.source.id}:${loginKey(login)}`);
+          const currentId = identity?.id ?? id;
+          const current = rebound.get(currentId);
+          if (current) current.logins.push(login);
+          else
+            rebound.set(currentId, {
+              source: report.source,
+              label: identity ? identity.label : report.label,
+              logins: [login],
+            });
+        }
+      }
+      reports.clear();
+      for (const [id, report] of rebound) reports.set(id, report);
+    }
   }
 
   private mergeKnown(): void {

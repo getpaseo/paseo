@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { discover, fetchUsage } from "./usage.js";
+import { inputSchema } from "../shared/input.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 // node:sqlite has no @types/node@20 typings; require it with a narrow local type.
@@ -64,6 +65,8 @@ describe("cursor usage source", () => {
     process.env["USERPROFILE"] = homeDir;
     for (const key of [
       "APPDATA",
+      "XDG_CONFIG_HOME",
+      "AGENT_CLI_CREDENTIAL_STORE",
       "COPILOT_TOKEN",
       "GITHUB_TOKEN",
       "GITHUB_PAT",
@@ -119,6 +122,30 @@ describe("cursor usage source", () => {
     if (!report) throw new Error(`Missing usage source ${id}`);
     return report;
   }
+  it("discovers the macOS Cursor CLI Keychain login and re-reads it when fetching", async () => {
+    let token = "cursor-keychain-first";
+    const readKeychainToken = vi.fn(async () => token);
+    const lookup = { platform: "darwin" as const, readKeychainToken };
+    const accounts = await discover(lookup);
+    expect(accounts).toEqual([
+      { key: "default", input: { store: "keychain", locator: "cursor-access-token" } },
+    ]);
+    const input = inputSchema.parse(accounts[0]?.input);
+    token = "cursor-keychain-rotated";
+    let authorization: string | null = null;
+    const report = await fetchUsage(
+      input,
+      async (_url, init) => {
+        authorization = new Headers(init?.headers).get("Authorization");
+        return jsonResponse({ planUsage: { totalSpend: 100, remaining: 900, limit: 1000 } });
+      },
+      lookup,
+    );
+    expect(authorization).toBe("Bearer cursor-keychain-rotated");
+    expect(report.status).toBe("available");
+    expect(readKeychainToken).toHaveBeenCalledTimes(2);
+  });
+
   it("fetches Cursor usage and normalizes malformed billing dates to null", async () => {
     process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
     fetchApi = mockFetch(
@@ -155,6 +182,49 @@ describe("cursor usage source", () => {
         }),
       ],
     });
+  });
+
+  it.each([
+    ["darwin", ".cursor", {}],
+    ["linux", ".config/cursor", {}],
+    ["linux", "xdg/cursor", { XDG_CONFIG_HOME: "xdg" }],
+    ["win32", "AppData/Roaming/Cursor", {}],
+    ["win32", "roaming/Cursor", { APPDATA: "roaming" }],
+  ] as const)("discovers the %s CLI file store at %s", async (platform, directory, env) => {
+    for (const [name, relative] of Object.entries(env)) process.env[name] = join(homeDir, relative);
+    const folder = join(homeDir, directory);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "auth.json"), JSON.stringify({ accessToken: "fixture-cli" }));
+    const accounts = await discover({ platform, readKeychainToken: async () => null });
+    expect(accounts).toEqual([
+      { key: "default", input: { store: "file", locator: join(folder, "auth.json") } },
+    ]);
+  });
+
+  it("uses the explicit macOS file store without consulting Keychain", async () => {
+    process.env.AGENT_CLI_CREDENTIAL_STORE = "file";
+    const folder = join(homeDir, ".cursor");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "auth.json"), JSON.stringify({ accessToken: "fixture-file" }));
+    const readKeychainToken = vi.fn(async () => "fixture-keychain");
+    expect(await discover({ platform: "darwin", readKeychainToken })).toEqual([
+      { key: "default", input: { store: "file", locator: join(folder, "auth.json") } },
+    ]);
+    expect(readKeychainToken).not.toHaveBeenCalled();
+  });
+
+  it("does not probe Keychain for a memory-only CLI login", async () => {
+    process.env.AGENT_CLI_CREDENTIAL_STORE = "memory";
+    const readKeychainToken = vi.fn(async () => "fixture-keychain");
+    expect(await discover({ platform: "darwin", readKeychainToken })).toEqual([]);
+    expect(readKeychainToken).not.toHaveBeenCalled();
+  });
+
+  it("omits an unavailable Keychain login and never probes it on Linux", async () => {
+    expect(await discover({ platform: "darwin", readKeychainToken: async () => null })).toEqual([]);
+    const readKeychainToken = vi.fn(async () => "fixture-keychain");
+    expect(await discover({ platform: "linux", readKeychainToken })).toEqual([]);
+    expect(readKeychainToken).not.toHaveBeenCalled();
   });
 
   it("reads the Cursor token from the modern cursorAuth/accessToken key in state.vscdb", async () => {
@@ -254,7 +324,7 @@ describe("cursor usage source", () => {
     const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "state.vscdb"), "invalid database");
-    expect(await discover()).toEqual([]);
+    expect(await discover({ platform: "linux" })).toEqual([]);
   });
 });
 
@@ -268,7 +338,7 @@ it("discovery returns a locator when fetch finds cursor credentials", async () =
       return new Response(null, { status: 401 });
     });
     expect(requested).toBe(true);
-    expect(await discover()).toEqual([
+    expect(await discover({ platform: "linux" })).toEqual([
       { key: "default", input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" } },
     ]);
   } finally {
@@ -287,7 +357,7 @@ describe("account discovery", () => {
       process.env.HOME = directory;
       process.env.USERPROFILE = directory;
       if (scenario === "unrelated files") await writeFile(join(directory, "unrelated.json"), "{}");
-      expect(await discover()).toEqual([]);
+      expect(await discover({ platform: "linux" })).toEqual([]);
     } finally {
       for (const key of Object.keys(process.env)) delete process.env[key];
       Object.assign(process.env, original);
@@ -297,7 +367,7 @@ describe("account discovery", () => {
 });
 
 async function fetchFirst(fetchApi: typeof fetch) {
-  const accounts = await discover();
+  const accounts = await discover({ platform: "linux" });
   const account = accounts[0];
   if (!account) throw new Error("No configured account");
   return fetchUsage(account.input as Parameters<typeof fetchUsage>[0], fetchApi);
