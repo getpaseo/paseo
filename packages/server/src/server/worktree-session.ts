@@ -778,7 +778,6 @@ export async function handleWorkspaceSetupRunRequest(
             slug: basename(worktree.worktreePath),
             worktreePath: worktree.worktreePath,
             workspaceCwd: workspace.cwd,
-            runAutoTerminals: true,
           },
           signal,
         ),
@@ -818,7 +817,6 @@ export async function runWorktreeSetupInBackground(
     slug: string;
     worktreePath: string;
     workspaceCwd?: string;
-    runAutoTerminals?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<void> {
@@ -885,15 +883,13 @@ export async function runWorktreeSetupInBackground(
           });
           emitSetupProgress("completed", null);
         }
-        if (options.runAutoTerminals) {
-          await runWorktreeAutoTerminals({
-            workspaceId,
-            worktree,
-            workspaceCwd,
-            terminalManager: dependencies.terminalManager,
-            logger: dependencies.sessionLogger,
-          });
-        }
+        await runWorktreeAutoTerminals({
+          workspaceId,
+          worktree,
+          workspaceCwd,
+          terminalManager: dependencies.terminalManager,
+          logger: dependencies.sessionLogger,
+        });
       }
     } catch (error) {
       if (error instanceof WorktreeSetupError) {
