@@ -1,4 +1,5 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type { PluginAttachmentItem } from "./attachments.js";
 import type { PluginRpcContract } from "./rpc.js";
 
 export interface PluginTheme {
@@ -77,6 +78,8 @@ export interface PluginAttachmentSourceContribution {
   pickerTitle: string;
   searchPlaceholder: string;
   search: PluginRpcContract;
+  /** Called after the picker adds an item to the draft. Failures do not undo the attachment. */
+  onSelect?: (item: PluginAttachmentItem) => void | Promise<void>;
 }
 
 export type PluginTimelineData = JsonValue;
