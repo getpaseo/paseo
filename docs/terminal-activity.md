@@ -51,7 +51,7 @@ Claude hook mapping:
 
 - `UserPromptSubmit` → `running`
 - `Stop`, `StopFailure`, `SessionEnd` → `idle`
-- `Notification` with `reason` or `matcher` equal to `idle_prompt` → `needs-input`
+- `Notification` with `notification_type` equal to `idle_prompt` → `needs-input`
 
 Claude does not run `Stop` when the user interrupts a turn. A standalone Ctrl-C or Escape input
 while terminal activity is working clears the activity without finished attention. The same

@@ -1,6 +1,12 @@
 import { supportsUsageReports } from "@getpaseo/client/internal/daemon-client";
 import { useCallback, useMemo } from "react";
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  skipToken,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { useShallow } from "zustand/shallow";
 import { useFetchQuery } from "@/data/query";
 import {
@@ -13,11 +19,15 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { usageCopy } from "./copy";
 import {
   replaceReport,
+  resolveAgentUsageView,
   resolveUsageRefresh,
   resolveUsageView,
+  settleReports,
   type UsageHost,
   type UsageQueryState,
+  type AgentUsageView,
   type UsageRefresh,
+  upsertReport,
 } from "./model";
 import type { UsageReportEntry, UsageView } from "./types";
 
@@ -25,8 +35,17 @@ import type { UsageReportEntry, UsageView } from "./types";
 // an explicit refresh passes `forceRefresh` and reaches the source's API.
 const REPORTS_STALE_TIME_MS = 60_000;
 
+/** Every report list of a host: its own and each agent's. */
+function hostUsageQueryKey(serverId: string) {
+  return ["usage", serverId] as const;
+}
+
 function usageReportsQueryKey(serverId: string) {
-  return ["usage", "reports", serverId] as const;
+  return [...hostUsageQueryKey(serverId), "reports"] as const;
+}
+
+function agentUsageQueryKey(serverId: string, agentId: string) {
+  return [...hostUsageQueryKey(serverId), "agent", agentId] as const;
 }
 
 function requireClient(serverId: string) {
@@ -35,18 +54,58 @@ function requireClient(serverId: string) {
   return client;
 }
 
-async function listReports(serverId: string, forceRefresh = false): Promise<UsageReportEntry[]> {
-  return (await requireClient(serverId).listUsageReports({ forceRefresh })).reports;
+/**
+ * Lists a host's reports, or one agent's, writing each into `queryKey` as it streams in so a slow
+ * source never holds back the others. The finished list then replaces the streamed one, dropping
+ * any report the host no longer has, but never a report refreshed while the list streamed.
+ */
+async function streamReports(input: {
+  queryClient: QueryClient;
+  queryKey: QueryKey;
+  serverId: string;
+  agentId?: string;
+  forceRefresh?: boolean;
+  /** Once aborted, reports still on their way are dropped instead of written. */
+  signal?: AbortSignal;
+}): Promise<UsageReportEntry[]> {
+  const { queryClient, queryKey, serverId, agentId, forceRefresh = false, signal } = input;
+  const { reports } = await requireClient(serverId).listUsageReports(
+    { agentId, forceRefresh },
+    (report) => {
+      if (signal?.aborted) return;
+      queryClient.setQueryData<UsageReportEntry[]>(queryKey, (current) =>
+        upsertReport(current, report),
+      );
+    },
+  );
+  return settleReports(queryClient.getQueryData<UsageReportEntry[]>(queryKey), reports);
+}
+
+function listReports(
+  queryClient: QueryClient,
+  serverId: string,
+  forceRefresh = false,
+): Promise<UsageReportEntry[]> {
+  return streamReports({
+    queryClient,
+    queryKey: usageReportsQueryKey(serverId),
+    serverId,
+    forceRefresh,
+  });
 }
 
 async function getReport(
   serverId: string,
   reportId: string,
   forceRefresh = false,
+  agentId?: string,
 ): Promise<UsageReportEntry | null> {
   return (
-    (await requireClient(serverId).listUsageReports({ reportIds: [reportId], forceRefresh }))
-      .reports[0] ?? null
+    (
+      await requireClient(serverId).listUsageReports(
+        agentId === undefined ? { reportIds: [reportId], forceRefresh } : { agentId, forceRefresh },
+      )
+    ).reports.find((report) => report.id === reportId) ?? null
   );
 }
 
@@ -57,7 +116,7 @@ function supportsUsage(session: SessionState | undefined): boolean {
 async function refreshReports(queryClient: QueryClient, serverId: string): Promise<void> {
   await queryClient.fetchQuery({
     queryKey: usageReportsQueryKey(serverId),
-    queryFn: () => listReports(serverId, true),
+    queryFn: () => listReports(queryClient, serverId, true),
     staleTime: 0,
   });
 }
@@ -77,7 +136,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
   const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
   const query = useFetchQuery({
     queryKey: usageReportsQueryKey(serverId),
-    queryFn: () => listReports(serverId),
+    queryFn: () => listReports(queryClient, serverId),
     enabled: isConnected && isSupported,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
@@ -93,6 +152,58 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     query: toQueryState(query),
   });
   return { view, refresh };
+}
+
+const NO_REPORTS: UsageReportEntry[] = [];
+
+/**
+ * The reports of the sidebar's usage host, which is connected and reports usage; none until they
+ * load, or without a host.
+ */
+export function useUsageHostReports(serverId: string | null): UsageReportEntry[] {
+  const queryClient = useQueryClient();
+  const query = useFetchQuery({
+    queryKey: usageReportsQueryKey(serverId ?? ""),
+    queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
+    dataShape: "list",
+    staleTimeMs: REPORTS_STALE_TIME_MS,
+  });
+  return query.data ?? NO_REPORTS;
+}
+
+/**
+ * The reports of the account an agent runs under, as its meter's tooltip or sheet shows them.
+ * Fetched while either is mounted, so only while it is open.
+ */
+export function useAgentUsage(serverId: string, agentId: string): AgentUsageView {
+  const queryClient = useQueryClient();
+  const canReport = useHostReportsUsage(serverId);
+  const queryKey = agentUsageQueryKey(serverId, agentId);
+  const query = useFetchQuery({
+    queryKey,
+    // Consuming the signal cancels the request when the details close, so a reopen sends a new
+    // request instead of joining one scoped to the login the agent ran under before.
+    queryFn: ({ signal }) => streamReports({ queryClient, queryKey, serverId, agentId, signal }),
+    enabled: canReport,
+    // Another agent's reports never stand in while this one's load.
+    dataShape: "value",
+    // Dropped as soon as the details close: an agent resumed under another login keeps its ID, so
+    // reports kept from an earlier open could show the old login. The daemon's cache keeps each
+    // open's request cheap.
+    gcTime: 0,
+    // The daemon's errors (an unknown agent) do not heal on retry, and reopening the details
+    // fetches again; retrying would hold the loading sentence for seconds instead.
+    retry: false,
+    staleTimeMs: REPORTS_STALE_TIME_MS,
+  });
+  return resolveAgentUsageView({ canReport, query: toQueryState(query) });
+}
+
+/** Whether a host is connected and reports usage, read without fetching anything. */
+export function useHostReportsUsage(serverId: string): boolean {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
+  return isConnected && isSupported;
 }
 
 /** Every host with whether it is connected and reports usage, in host order. */
@@ -116,20 +227,23 @@ export function useUsageHosts(): UsageHost[] {
 }
 
 /**
- * Forces the source to fetch one report, and only that report. The result replaces the report
- * in its host's list, so every surface showing it moves together; until then the previous report
- * stays on screen.
+ * Refreshes a host report, or the agent's session reports. The result replaces the card
+ * in the requesting view. Host and agent views can use different logins of the same account.
  */
 export function useReportRefresh(
   serverId: string,
   reportId: string,
+  agentId?: string,
 ): { refresh: () => void; refreshState: UsageRefresh } {
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: () => getReport(serverId, reportId, true),
+    mutationFn: () => getReport(serverId, reportId, true, agentId),
     onSuccess: (report) => {
-      queryClient.setQueryData<UsageReportEntry[]>(usageReportsQueryKey(serverId), (reports) =>
-        reports ? replaceReport(reports, reportId, report) : reports,
+      queryClient.setQueryData<UsageReportEntry[]>(
+        agentId === undefined
+          ? usageReportsQueryKey(serverId)
+          : agentUsageQueryKey(serverId, agentId),
+        (reports) => (reports ? replaceReport(reports, reportId, report) : reports),
       );
     },
   });

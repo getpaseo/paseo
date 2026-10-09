@@ -1,4 +1,3 @@
-import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { readFileSync } from "node:fs";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
@@ -3099,6 +3098,162 @@ test("sends worktree target and autoArchive in create_agent_request", async () =
   );
 
   await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
+});
+
+test("sends internal in create_agent_request when the host advertises internal agents", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { backgroundWorkspaces: true } });
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    background: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      config: { provider: "codex", cwd: "/tmp/project" },
+      background: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "internal agent sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("internal agent sentinel");
+});
+
+test("rejects an internal create before sending when the host predates internal agents", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", background: true }),
+  ).rejects.toThrow("Update the host to use background workspaces.");
+  expect(mock.sent).toHaveLength(0);
+});
+
+test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  // workspaceMultiplicity keeps the fetch on the real workspace directory RPC.
+  mock.triggerOpen({
+    features: { workspaceMultiplicity: true, backgroundWorkspaces: true },
+  });
+  await connectPromise;
+
+  void client
+    .createWorkspace({ source: { kind: "directory", path: "/tmp/project" }, background: true })
+    .catch(() => undefined);
+  void client.fetchWorkspaces({ filter: { includeBackground: true } }).catch(() => undefined);
+  void client.fetchAgents({ filter: { includeBackground: true } }).catch(() => undefined);
+
+  expect(mock.sent.map((frame) => parseSentFrame(frame))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "workspace.create.request", background: true }),
+      expect.objectContaining({
+        type: "fetch_workspaces_request",
+        filter: { includeBackground: true },
+      }),
+      expect.objectContaining({
+        type: "fetch_agents_request",
+        filter: { includeBackground: true },
+      }),
+    ]),
+  );
+});
+
+test("rejects internal workspace creation and internal listings before sending on older hosts", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  await expect(
+    client.createWorkspace({
+      source: { kind: "directory", path: "/tmp/project" },
+      background: true,
+    }),
+  ).rejects.toThrow("Update the host to use background workspaces.");
+  await expect(client.fetchWorkspaces({ filter: { includeBackground: true } })).rejects.toThrow(
+    "Update the host to use background workspaces.",
+  );
+  expect(mock.sent).toHaveLength(0);
+
+  // Agent listings gate on the older internalAgents feature.
+  const olderMock = createMockTransport();
+  const olderClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => olderMock.transport,
+  });
+  clients.push(olderClient);
+  const olderConnect = olderClient.connect();
+  olderMock.triggerOpen({ features: {} });
+  await olderConnect;
+  await expect(olderClient.fetchAgents({ filter: { includeBackground: true } })).rejects.toThrow(
+    "Update the host to use background workspaces.",
+  );
+  expect(olderMock.sent).toHaveLength(0);
 });
 
 test("sends structured attachments with create_agent_request", async () => {
@@ -6575,138 +6730,84 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   });
 });
 
-test.each(["claude", "codex", "copilot", "cursor", "zai", "grok", "kimi", "minimax"])(
-  "released-host %s icon matches its source plugin",
-  (sourceId) => {
-    const icon = readFileSync(
-      new URL(`../../../plugins/${sourceId}-usage-source/icon.svg`, import.meta.url),
-      "utf8",
-    );
-    expect(legacyUsageIcon(sourceId)).toBe(icon);
-  },
-);
-
-test("unknown released-host sources have no icon", () => {
-  expect(legacyUsageIcon("unknown")).toBeUndefined();
-  expect(legacyUsageIcon("toString")).toBeUndefined();
-});
-
-test("maps released-host usage reports and filters report IDs", async () => {
-  const mock = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger: createMockLogger(),
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-  const connected = client.connect();
-  mock.triggerOpen({ features: { providerUsageList: true } });
-  await connected;
-  const providers = [
-    {
-      providerId: "claude",
-      displayName: "Claude",
+test.each([
+  {
+    status: "available",
+    report: {
       status: "available",
-      planLabel: null,
-      fetchedAt: null,
-      windows: [{ id: "session", label: "Session", usedPct: 25 }],
-      error: null,
-    },
-    {
-      providerId: "codex",
-      displayName: "Codex",
-      status: "error",
-      planLabel: "Pro",
-      fetchedAt: "2026-09-29T00:00:00.000Z",
       windows: [],
-      balances: [],
-      details: [],
-      error: "unavailable",
+      balances: undefined,
+      details: undefined,
+      planLabel: undefined,
     },
-  ];
-  const extraProviders = ["copilot", "cursor", "zai", "grok", "kimi", "minimax", "unknown"].map(
-    (providerId) => Object.assign({}, providers[0]!, { providerId, displayName: providerId }),
-  );
-  providers.push(...extraProviders);
-  const reports = [
-    {
-      id: "claude",
-      sourceId: "claude",
-      sourceLabel: "Claude",
-      icon: readFileSync(
-        new URL("../../../plugins/claude-usage-source/icon.svg", import.meta.url),
-        "utf8",
-      ),
-      account: {},
-      fetchedAt: "2026-09-30T00:00:00.000Z",
-      report: {
-        status: "available",
-        planLabel: undefined,
-        windows: providers[0]!.windows,
-        balances: undefined,
-        details: undefined,
-        error: undefined,
-      },
-    },
-    {
-      id: "codex",
-      sourceId: "codex",
-      sourceLabel: "Codex",
-      icon: readFileSync(
-        new URL("../../../plugins/codex-usage-source/icon.svg", import.meta.url),
-        "utf8",
-      ),
-      account: {},
-      fetchedAt: "2026-09-29T00:00:00.000Z",
-      report: {
-        status: "error",
-        planLabel: "Pro",
-        windows: [],
-        balances: [],
-        details: [],
-        error: "unavailable",
-      },
-    },
-  ];
-  reports.push(
-    ...extraProviders.map((provider) =>
-      Object.assign({}, reports[0]!, {
-        id: provider.providerId,
-        sourceId: provider.providerId,
-        sourceLabel: provider.displayName,
-        icon: legacyUsageIcon(provider.providerId),
-      }),
-    ),
-  );
-  for (const reportIds of [undefined, ["codex", "missing"], []]) {
+  },
+  { status: "error", report: { status: "error", error: "" } },
+  {
+    status: "unavailable",
+    report: { status: "unavailable", problem: { kind: "no_quota", detail: "" } },
+  },
+] as const)(
+  "maps released-host $status usage and filters report IDs",
+  async ({ status, report }) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { providerUsageList: true } });
+    await connected;
     const result = client.listUsageReports({
       requestId: "legacy-usage",
-      reportIds,
+      reportIds: ["claude"],
       forceRefresh: true,
     });
-    expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    expect(parseSentFrame(mock.sent[0])).toEqual({
       type: "provider.usage.list.request",
       requestId: "legacy-usage",
     });
+    const provider = {
+      providerId: "claude",
+      displayName: "Claude",
+      status,
+      windows: [],
+      planLabel: null,
+      fetchedAt: null,
+      error: null,
+    };
     mock.triggerMessage(
       wrapSessionMessage({
         type: "provider.usage.list.response",
         payload: {
           requestId: "legacy-usage",
           fetchedAt: "2026-09-30T00:00:00.000Z",
-          providers,
+          providers: [provider, { ...provider, providerId: "codex" }],
         },
       }),
     );
     expect(await result).toStrictEqual({
       requestId: "legacy-usage",
-      reports:
-        reportIds === undefined ? reports : reports.filter((entry) => reportIds.includes(entry.id)),
+      reports: [
+        {
+          id: "claude",
+          sourceId: "claude",
+          sourceLabel: "Claude",
+          icon: readFileSync(
+            new URL("../../../plugins/claude-usage-source/icon.svg", import.meta.url),
+            "utf8",
+          ),
+          account: {},
+          fetchedAt: "2026-09-30T00:00:00.000Z",
+          report,
+        },
+      ],
     });
-  }
-});
+  },
+);
 
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();
@@ -7261,11 +7362,15 @@ test("uses modern usage RPC when both capabilities are advertised", async () => 
   const connected = client.connect();
   mock.triggerOpen({ features: { usageSources: true, providerUsageList: true } });
   await connected;
-  const result = client.listUsageReports({
-    requestId: "modern-usage",
-    reportIds: ["claude:work"],
-    forceRefresh: true,
-  });
+  const updates: unknown[] = [];
+  const result = client.listUsageReports(
+    {
+      requestId: "modern-usage",
+      reportIds: ["claude:work"],
+      forceRefresh: true,
+    },
+    (report) => updates.push(report),
+  );
   expect(parseSentFrame(mock.sent[0])).toEqual({
     type: "usage.list_reports.request",
     requestId: "modern-usage",
@@ -7285,8 +7390,35 @@ test("uses modern usage RPC when both capabilities are advertised", async () => 
       },
     ],
   };
-  mock.triggerMessage(wrapSessionMessage({ type: "usage.list_reports.response", payload }));
+  const report = payload.reports[0];
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.update",
+      payload: { requestId: "foreign", report },
+    }),
+  );
+  expect(updates).toEqual([]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.update",
+      payload: { requestId: payload.requestId, report },
+    }),
+  );
+  expect(updates).toEqual([report]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.response",
+      payload: { requestId: payload.requestId, error: null },
+    }),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.update",
+      payload: { requestId: payload.requestId, report },
+    }),
+  );
   expect(await result).toStrictEqual(payload);
+  expect(updates).toEqual([report]);
 });
 
 test("rejects usage requests when the host has neither capability", async () => {
@@ -7305,3 +7437,93 @@ test("rejects usage requests when the host has neither capability", async () => 
   await expect(client.listUsageReports()).rejects.toThrow("Update the host to see usage.");
   expect(mock.sent).toEqual([]);
 });
+
+test("usage request timeout detaches its update listener", async () => {
+  vi.useFakeTimers();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { usageSources: true } });
+    await connected;
+    const updates: unknown[] = [];
+    const result = client.listUsageReports({ requestId: "timeout-usage" }, (report) =>
+      updates.push(report),
+    );
+    const rejected = expect(result).rejects.toThrow("Timeout waiting for message (60000ms)");
+    await vi.advanceTimersByTimeAsync(60_001);
+    await rejected;
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "usage.list_reports.update",
+        payload: {
+          requestId: "timeout-usage",
+          report: {
+            id: "source:late",
+            account: {},
+            sourceId: "source",
+            sourceLabel: "Source",
+            fetchedAt: "2026-01-01T00:00:00.000Z",
+            report: { status: "available", windows: [] },
+          },
+        },
+      }),
+    );
+    expect(updates).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test.each([false, true])(
+  "agent provenance requires host support=%s while human sends remain compatible",
+  async (supported) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "provenance",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { agentMessageProvenance: supported } });
+    await connecting;
+    if (!supported) {
+      await expect(
+        client.sendAgentMessage("recipient", "review", { sourceAgentId: "server::sender" }),
+      ).rejects.toThrow("Update the Paseo host");
+      expect(transport.sent).toHaveLength(0);
+    }
+    const send = client.sendAgentMessage("recipient", "review", {
+      messageId: "delivery",
+      ...(supported ? { sourceAgentId: "server::sender" } : {}),
+    });
+    const request = parseSentFrame(transport.sent[0]);
+    expect(request).toMatchObject({
+      type: "send_agent_message_request",
+      text: "review",
+      messageId: "delivery",
+    });
+    expect(request.sourceAgentId).toBe(supported ? "server::sender" : undefined);
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          error: null,
+        },
+      }),
+    );
+    await send;
+  },
+);

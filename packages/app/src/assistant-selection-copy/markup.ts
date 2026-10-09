@@ -5,6 +5,8 @@ export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
 export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
+export const MARKDOWN_COPY_SRC_ATTRIBUTE = "data-paseo-markdown-src";
+export const MARKDOWN_COPY_ALT_ATTRIBUTE = "data-paseo-markdown-alt";
 
 /**
  * Trailing line breaks, with any indentation that followed the last one.
@@ -60,6 +62,18 @@ export function markdownCopyCodeBlockDataSet(language: string | null | undefined
   return {
     ...markdownCopyDataSet.pre,
     ...(fenceLanguage ? { paseoMarkdownLanguage: fenceLanguage } : {}),
+  } as const;
+}
+
+/**
+ * An image copies as the Markdown it came from. The rendered `img` points at a preview
+ * URL for data and workspace images, and carries no alt text of its own.
+ */
+export function markdownCopyImageDataSet(source: string, alt: string | undefined) {
+  return {
+    paseoMarkdownTag: "img",
+    paseoMarkdownSrc: source,
+    ...(alt ? { paseoMarkdownAlt: alt } : {}),
   } as const;
 }
 

@@ -10,6 +10,8 @@ category: Orchestration
 
 Paseo lets your coding agents coordinate other agents, split work across providers and machines, and keep tasks moving automatically.
 
+You can also start and supervise each task yourself in the desktop app. [Run parallel tasks in separate worktrees](/docs/parallel-development), inspect their diffs, and test each app in a terminal and browser before choosing what to merge.
+
 ## What your agents can do
 
 - **Choose providers and models:** launch other agents using any provider and model configured on the host.
@@ -46,12 +48,12 @@ See the [MCP reference](/docs/mcp) for tool configuration and the full catalog. 
 Agents with shell access can also use the Paseo CLI. This route does not require enabling tool injection. With Paseo installed, a running host, and Codex configured:
 
 ```bash
-paseo run --provider codex --background \
+paseo run --provider codex --no-wait \
   "Review this branch without changing files"
 paseo ls -a
 ```
 
-The first command starts a worker and returns immediately; the second lists agents from active workspaces, including archived agents. When a Paseo agent runs the command, the worker becomes its subagent in the same workspace. From your own terminal, it starts in a new local workspace.
+The first command starts a worker and returns immediately; the second lists archived and background agents as well. When a Paseo agent runs the command, the worker becomes its subagent in the same workspace. From your own terminal, it starts in a new local workspace.
 
 See the [CLI reference](/docs/cli) for follow-ups, output, worktrees, and remote hosts.
 

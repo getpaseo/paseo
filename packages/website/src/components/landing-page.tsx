@@ -1,15 +1,15 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import * as React from "react";
 import {
   ArrowRight,
   Blocks,
   Bot,
-  BookOpen,
   Braces,
-  Coffee,
   Compass,
   ExternalLink,
   Gem,
   GitFork,
+  LayoutPanelLeft,
   Laptop,
   Lock,
   Merge,
@@ -18,6 +18,7 @@ import {
   Smartphone,
   Terminal,
   Users,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -73,16 +74,17 @@ import { isMobilePlatform } from "~/platform";
 import { useRelease, useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
 import {
+  AntigravityIcon,
   ClaudeCodeIcon,
   CodexIcon,
   CursorIcon,
+  MuseCodeIcon,
+  OmpIcon,
   OpenCodeIcon,
   PiIcon,
-  MuseCodeIcon,
-  AntigravityIcon,
 } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
-import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
+import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
 import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
@@ -161,16 +163,18 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.Rea
   );
 }
 
-const CLAUDE_CODE_BADGE_ICON = <ClaudeCodeIcon className="h-6 w-6" />;
-const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
-const ANTIGRAVITY_BADGE_ICON = <AntigravityIcon className="h-6 w-6" />;
-const MUSE_CODE_BADGE_ICON = <MuseCodeIcon className="h-6 w-6" />;
-const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
-const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
-const CURSOR_BADGE_ICON = <CursorIcon className="h-6 w-6" />;
+const FEATURED_AGENTS = [
+  { name: "Claude Code", Icon: ClaudeCodeIcon },
+  { name: "Codex", Icon: CodexIcon },
+  { name: "OpenCode", Icon: OpenCodeIcon },
+  { name: "Pi", Icon: PiIcon },
+  { name: "OMP", Icon: OmpIcon },
+  { name: "Cursor", Icon: CursorIcon },
+  { name: "Muse Code", Icon: MuseCodeIcon },
+  { name: "Antigravity", Icon: AntigravityIcon },
+] as const;
 
-const FEATURED_AGENT_COUNT = 5;
-const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENT_COUNT;
+const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENTS.length;
 
 const SOCIAL_PROOF_TWEETS = [
   {
@@ -254,7 +258,7 @@ const SOCIAL_PROOF_ROWS = [
 
 type SocialProofTweet = (typeof SOCIAL_PROOF_TWEETS)[number];
 
-function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
+function AgentBadge({ name, Icon }: (typeof FEATURED_AGENTS)[number]) {
   const [hovered, setHovered] = React.useState(false);
   const handleMouseEnter = React.useCallback(() => setHovered(true), []);
   const handleMouseLeave = React.useCallback(() => setHovered(false), []);
@@ -265,7 +269,7 @@ function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {icon}
+      <Icon className="h-6 w-6" />
       <AnimatePresence>
         {hovered && (
           <motion.span
@@ -429,32 +433,22 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
   );
 }
 
-const PROVIDER_ICON_CLASS = "h-5 w-5 sm:h-7 sm:w-7";
-
 function MultiProviderSection() {
-  const providers = [
-    { name: "Claude Code", icon: <ClaudeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Codex", icon: <CodexIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "OpenCode", icon: <OpenCodeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Antigravity", icon: <AntigravityIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Muse Code", icon: <MuseCodeIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Pi", icon: <PiIcon className={PROVIDER_ICON_CLASS} /> },
-    { name: "Cursor", icon: <CursorIcon className={PROVIDER_ICON_CLASS} /> },
-  ];
-
   return (
     <FeatureSection
       title="Works with your tools"
       description="Bring your subscriptions, skills and configuration"
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
-        {providers.map((p) => (
+        {FEATURED_AGENTS.map((agent) => (
           <div
-            key={p.name}
+            key={agent.name}
             className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:gap-3 sm:px-5 sm:py-4"
           >
-            <span className="shrink-0 text-white/80">{p.icon}</span>
-            <span className="truncate text-sm font-medium sm:text-base">{p.name}</span>
+            <span className="shrink-0 text-white/80">
+              <agent.Icon className="h-5 w-5 sm:h-7 sm:w-7" />
+            </span>
+            <span className="truncate text-sm font-medium sm:text-base">{agent.name}</span>
           </div>
         ))}
         <a
@@ -483,7 +477,7 @@ function TurnkeySection() {
             <div className="space-y-0.5">
               <h3 className="text-xl font-medium text-white/90">Desktop app</h3>
               <p className="max-w-lg text-sm leading-relaxed text-white/50">
-                The one click experience, download the app and it just works
+                The one click experience, download the app and it just works, no server required
               </p>
             </div>
           </div>
@@ -493,8 +487,8 @@ function TurnkeySection() {
           <div className="grid gap-4 md:grid-cols-3">
             <TurnkeyExtensionCard
               icon={Smartphone}
-              title="Mobile and web"
-              description="Connect to the same workspaces from any client"
+              title="Mobile"
+              description="Full client and native, not a WebView"
               ctaHref="/download"
               ctaLabel="Download"
             />
@@ -799,90 +793,105 @@ function SdkAutomationExample() {
 
 function ExtensibleSection() {
   return (
-    <FeatureSection title="Make it yours" description="Extend Paseo to work just the way you want">
-      <div className="grid gap-4 md:grid-cols-2">
-        <ExtensibleCard
-          icon={Puzzle}
-          title="Plugins"
-          description="Plugins can add server-side functionality and modify the client with custom components. They work across all clients, including mobile"
-          links={PLUGIN_CARD_LINKS}
-        />
-        <ExtensibleCard
-          icon={GitFork}
-          title="Fork the repo"
-          description="Paseo is licensed under Apache 2.0. You can inspect the implementation, fork the project, and adapt it to your workflow or organization"
-          links={FORK_CARD_LINKS}
-        />
+    <FeatureSection
+      title="Extend it with plugins"
+      description="Add new panels and functionality that work in desktop, web and mobile"
+    >
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+        <div className="flex flex-col gap-6 border-b border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
+          <div className="flex items-center gap-4">
+            <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3 text-muted-foreground">
+              <Puzzle className="h-6 w-6" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-xl font-medium text-white/90">Plugins</h3>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <a
+              href={PLUGINS_BROWSE.href}
+              {...(PLUGINS_BROWSE.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+              className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
+            >
+              Browse plugins
+              <ArrowRight className="h-3.5 w-3.5" />
+            </a>
+            <a
+              href="/docs/plugins"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
+            >
+              Plugin docs
+            </a>
+          </div>
+        </div>
+
+        <div className="p-6 md:p-8">
+          <div className="grid gap-4 md:grid-cols-3">
+            {PLUGIN_CAPABILITIES.map((capability) => (
+              <PluginCapabilityCard key={capability.title} {...capability} />
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between md:px-8">
+          <p className="text-sm text-white/45">Paseo is Apache 2.0.</p>
+          <a
+            href="https://github.com/getpaseo/paseo"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <GitFork className="h-4 w-4" strokeWidth={1.5} />
+            Fork the repo
+            <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+          </a>
+        </div>
       </div>
     </FeatureSection>
   );
 }
 
-interface ExtensibleCardLink {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  external?: boolean;
-  /** Accent links stand out without hover, for destinations worth noticing. */
-  accent?: boolean;
-}
+const PLUGINS_BROWSE = PLUGINS_LINKED
+  ? { href: "/plugins", external: false }
+  : { href: "https://paseo.cafe", external: true };
 
-const PLUGIN_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
-  { href: "/docs/plugins", label: "Plugin documentation", icon: BookOpen },
+const PLUGIN_CAPABILITIES: ReadonlyArray<{
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}> = [
   {
-    href: "https://paseo.cafe",
-    label: "Community plugins",
-    icon: Coffee,
-    external: true,
-    accent: true,
+    icon: LayoutPanelLeft,
+    title: "UI",
+    description: "Screens, workspace panels, sidebar items, slash commands, and themes",
+  },
+  {
+    icon: Workflow,
+    title: "Agent lifecycle",
+    description:
+      "Change configuration, environment, and MCP servers. Answer permissions. Follow up when a turn ends",
+  },
+  {
+    icon: Bot,
+    title: "Providers",
+    description: "Add a coding agent as a provider, used the same way as the built-in ones",
   },
 ];
 
-const FORK_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
-  {
-    href: "https://github.com/getpaseo/paseo",
-    label: "View the repository",
-    icon: GitHubIcon,
-    external: true,
-  },
-];
-
-function ExtensibleCard({
+function PluginCapabilityCard({
   icon: Icon,
   title,
   description,
-  links,
 }: {
   icon: LucideIcon;
   title: string;
   description: string;
-  links: ReadonlyArray<ExtensibleCardLink>;
 }) {
   return (
-    <div className="flex min-h-64 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-6">
-      <div className="mb-8 text-muted-foreground">
-        <Icon className="h-6 w-6" strokeWidth={1.5} />
+    <div className="flex flex-col rounded-xl border border-white/10 bg-white/[0.025] p-5">
+      <div className="mb-5 text-muted-foreground">
+        <Icon className="h-5 w-5" strokeWidth={1.5} />
       </div>
-      <h3 className="text-lg font-medium text-white/85">{title}</h3>
+      <h3 className="font-medium text-white/85">{title}</h3>
       <p className="mt-2 text-sm leading-relaxed text-white/45">{description}</p>
-      <div className="mt-auto flex flex-col items-start gap-3 pt-6">
-        {links.map((link) => (
-          <a
-            key={link.href}
-            href={link.href}
-            {...(link.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-            className={
-              link.accent
-                ? "inline-flex items-center gap-2 text-sm text-emerald-300/85 transition-colors hover:text-emerald-200"
-                : "inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
-            }
-          >
-            <link.icon className="h-4 w-4" />
-            {link.label}
-            {link.external ? <ExternalLink className="h-3.5 w-3.5 opacity-70" /> : null}
-          </a>
-        ))}
-      </div>
     </div>
   );
 }
@@ -906,8 +915,7 @@ const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: 
   {
     icon: Merge,
     title: "Unified",
-    description:
-      "Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, and more, all used the same way.",
+    description: "Every coding agent, used the same way. Switch providers any time.",
   },
   {
     icon: Blocks,
@@ -927,17 +935,17 @@ function PhilosophySection() {
       title="Philosophy"
       description="What Paseo stands for, and what every feature is built on"
     >
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {PRINCIPLES.map((principle) => (
           <div
             key={principle.title}
-            className="rounded-xl border border-white/10 bg-white/[0.025] p-6"
+            className="rounded-xl border border-white/10 bg-white/[0.025] p-5"
           >
-            <div className="mb-8 text-extra-muted-foreground">
-              <principle.icon className="h-6 w-6" strokeWidth={1.5} />
+            <div className="flex items-center gap-3">
+              <principle.icon className="h-5 w-5 text-extra-muted-foreground" strokeWidth={1.5} />
+              <h3 className="font-medium text-white/85">{principle.title}</h3>
             </div>
-            <h3 className="text-lg font-medium text-white/85">{principle.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-white/45">{principle.description}</p>
+            <p className="mt-3 text-sm leading-relaxed text-white/45">{principle.description}</p>
           </div>
         ))}
       </div>
@@ -966,13 +974,9 @@ function GetStarted() {
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pt-6">
         <span className="text-xs text-muted-foreground">Supports</span>
         <div className="flex items-center gap-1">
-          <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
-          <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
-          <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
-          <AgentBadge name="Antigravity" icon={ANTIGRAVITY_BADGE_ICON} />
-          <AgentBadge name="Muse Code" icon={MUSE_CODE_BADGE_ICON} />
-          <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
-          <AgentBadge name="Cursor" icon={CURSOR_BADGE_ICON} />
+          {FEATURED_AGENTS.map((agent) => (
+            <AgentBadge key={agent.name} name={agent.name} Icon={agent.Icon} />
+          ))}
         </div>
         <a
           href="/agents"
@@ -994,7 +998,7 @@ function DesktopDownloadButton({ platform }: { platform: DesktopPlatform }) {
   const download = getDesktopDownload(useRelease(), platform);
   const Icon = download.icon;
   return (
-    <a href={download.href} target="_blank" rel="noopener noreferrer" className={PRIMARY_CTA_CLASS}>
+    <a href={download.href} className={PRIMARY_CTA_CLASS}>
       <Icon className="h-4 w-4" />
       Download for {download.label}
     </a>

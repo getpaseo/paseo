@@ -93,6 +93,15 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
+Desktop packaging ships the entire built-in plugin directory as an external resource,
+including declarations. The external esbuild compiler cannot read Electron's `app.asar`
+filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.
+Built-ins can import only host modules (`@getpaseo/plugin/*`, `zod`) and Node built-ins:
+outside the archive, nothing resolves an npm dependency, and the dist build test cannot catch
+one because it resolves through the repository's `node_modules`.
+The packaged-app smoke check requires every listed built-in to start without relying on
+account credentials.
+
 Built-ins run in process and remain active independently of `pluginsEnabled`. They are
 absent from the installed plugin list and source configuration; their client bundles
 appear in the plugin catalog. Editing one in development requires a daemon restart.
@@ -106,33 +115,53 @@ the bundled integration; an entry with `extends` shadows it with a custom provid
 [provider contributions](#contribute-a-provider) for the contract and
 [Muse Code](../public-docs/muse-code.md) for setup, per-agent options, and version limitations.
 
+## Install from a registry
+
+`paseo plugin add owner/slug` installs the registry's reviewed artifact by default.
+Browse published plugins at [paseo.sh/plugins](https://paseo.sh/plugins).
+Use `git:owner/repository` or a full Git URL for a Git source. Registry installs
+keep the registry URL and ID, so update checks use its approved pin. Explicit version/ref
+selection is unavailable for registry installs; install an explicit source to select your own.
+
+Registry overviews are untrusted author content, even before installation. Render them with
+`@getpaseo/protocol/plugin-overview`: no raw HTML, HTTPS-only links and images, no relative
+URLs, and isolated external links. The website adapter and corpus tests live in
+`packages/website/src/plugins/overview.tsx` and `overview.test.tsx`; the reusable corpus is
+`packages/protocol/tests/fixtures/plugin-overview.json`. A future app overview must share
+this policy. Installed-plugin descriptions in the app remain plain text.
+
+Use `host/owner/slug` for a registry at `https://host`, or set
+`PASEO_PLUGIN_REGISTRY` to change the default base (including a path prefix).
+Private registry credentials live in daemon config under
+`pluginRegistries: { "host": { "authorization": "Bearer token" } }`.
+Restart your daemon after changing these startup settings. Credentials go only to the registry,
+never artifact hosts or redirects. Git/npm use their own host authentication.
+
+The [open registry protocol](https://github.com/getpaseo/plugins/blob/main/PROTOCOL.md)
+owns static hosting, record shapes, pins, and advisory install counts.
+
 ## Install a Git source
 
-GitHub repositories use an `owner/repository` shorthand. Other hosts use a Git URL. An existing
-directory always wins over shorthand resolution.
+GitHub repositories use `git:owner/repository` or `github:owner/repository`. Other hosts use a Git
+URL.
 
 ```bash
-paseo plugin add owner/repository
-paseo plugin add https://gitlab.com/group/repository.git
-paseo plugin add https://git.example.com/owner/repository.git
-paseo plugin add owner/monorepo:plugins/review
-paseo plugin add owner/repository --ref main
-paseo plugin ls
-paseo plugin update review
-paseo plugin update --all
+paseo plugin install git:owner/repository
+paseo plugin install https://gitlab.com/group/repository.git
+paseo plugin install git:owner/monorepo:plugins/review
+paseo plugin install github:owner/repository --ref main
 ```
 
-Append `:relative/path` to the source when the plugin lives below the repository root.
-
-`--ref` chooses the initial branch, tag, or commit once. Ordinary updates resolve the remote's
-current default HEAD and ask for approval. `ls` reports the installed commit without contacting the remote.
-Removing a Git source deletes Paseo's managed checkout.
+Append `:relative/path` for a plugin below the repository root. `--ref` chooses the initial
+branch, tag, or commit once. Updates of explicit Git sources resolve the remote's default HEAD
+and ask for approval. `ls` reports the installed commit without contacting the remote.
 
 ## Managed source ownership
 
 The [public source reference](../public-docs/plugins/reference.md#plugin-sources) owns identifier
-syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. Both clients send the source unchanged
-through `installPluginSource`; only the daemon resolves host paths and acquires sources.
+syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. The CLI resolves directory sources before
+calling `installPluginSource`; see the public source reference for CLI and app path semantics.
+Only the daemon reads plugin files and acquires sources.
 
 `ManagedPluginSources` owns acquisition and offline source description. Config stores the active
 directory; sources.json stores managed kind and the Git acquisition remote. The remote is needed
@@ -224,7 +253,7 @@ dependency; shared types must not refer to React components, hooks, Node APIs, o
 | Entry                                                | Owns                                                                       | May depend on          |
 | ---------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
 | `@getpaseo/plugin`                                   | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
-| `@getpaseo/plugin/server`                            | Server contribution/handler contexts and lifecycle contracts               | Shared and server code |
+| `@getpaseo/plugin/server`                            | Server contexts, lifecycle contracts, and CLI process launch               | Shared and server code |
 | `@getpaseo/plugin/server/provider`, `/server/acp`    | Server provider contracts and adapters                                     | Shared and server code |
 | `@getpaseo/plugin/client`                            | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
 | `@getpaseo/plugin/client/react-native`, `/client/ui` | Host-provided UI components                                                | Shared and client code |
@@ -464,9 +493,9 @@ SVG or URL.
 
 ## Usage sources
 
-Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. `input` is a Zod schema checked inside the plugin process before `fetch(input)` runs. `discover()` returns the inputs for accounts found on the host; an empty list omits the source from host usage. `fetch()` returns a report with a stable `account.key` so the daemon can deduplicate accounts and cache by source and input. A failed input or fetch becomes an error report for that source. `icon` uses the same sanitized SVG file rules as provider icons.
+Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage modal falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same sanitized SVG file rules as provider icons.
 
-The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients. See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the author contract and minimum version.
+The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
 
 ## Contribute sidebar items
 

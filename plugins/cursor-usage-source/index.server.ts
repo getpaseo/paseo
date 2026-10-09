@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { inputSchema } from "./shared/input.js";
-import { fetchUsage, identify } from "./server/usage.js";
+import { fetchUsage, discover } from "./server/usage.js";
 
 export default function contribute(server: PluginServerContext) {
   server.registerUsageSource({
@@ -8,8 +8,7 @@ export default function contribute(server: PluginServerContext) {
     label: "Cursor",
     icon: "icon.svg",
     input: inputSchema,
-    discover: async () => [{}],
-    identify,
+    discover: (scope) => (scope.kind === "global" ? discover() : Promise.resolve([])),
     fetch: fetchUsage,
   });
   return () => {};
