@@ -1,4 +1,5 @@
 import type { UsageProblem } from "@getpaseo/protocol/messages";
+import { i18n } from "@/i18n/i18next";
 import { formatCompactTimeAgo, formatCompactTimeAgoAsProse } from "@/utils/time";
 
 // User-facing copy for the usage surfaces, kept in one file so localization is a
@@ -13,23 +14,41 @@ export const usageCopy = {
     const ago = formatCompactTimeAgoAsProse(formatCompactTimeAgo(new Date(problem.expiresAt), now));
     return `Login expired ${ago}. ${remedy}`;
   },
-  title: "Usage",
-  planUsage: "Plan usage",
+  get title() {
+    return i18n.t("providerUsage.title");
+  },
+  get planUsage() {
+    return i18n.t("providerUsage.title");
+  },
   options: "Settings",
-  refresh: "Refresh",
-  refreshAll: "Refresh all",
-  refreshing: "Refreshing...",
+  get refresh() {
+    return i18n.t("providerUsage.refresh");
+  },
+  get refreshAll() {
+    return i18n.t("providerUsage.refreshAll");
+  },
+  get refreshing() {
+    return i18n.t("providerUsage.refreshing");
+  },
   refreshFailed: "Unable to refresh usage",
   updated: "Updated",
-  loading: "Loading usage...",
-  empty: "No usage data",
+  get loading() {
+    return i18n.t("providerUsage.loading");
+  },
+  get empty() {
+    return i18n.t("providerUsage.empty");
+  },
   noHosts: "No connected hosts",
-  errorTitle: "Unable to load usage",
+  get errorTitle() {
+    return i18n.t("providerUsage.errorTitle");
+  },
   agentError: (reason: string) => `Unable to load usage: ${reason}`,
   hostUnavailable: (host: string) => `Connect to ${host} to see usage`,
   hostUpgradeRequired: (host: string) => `Update ${host} to see usage`,
   clientUnavailable: "Host connection is not ready",
-  retry: "Try again",
+  get retry() {
+    return i18n.t("providerUsage.retry");
+  },
   pin: "Pin",
   unpin: "Unpin",
   displayAs: "Percentages",

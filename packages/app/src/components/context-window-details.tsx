@@ -17,6 +17,8 @@ interface ContextWindowDetailsProps {
   showTitle: boolean;
   /** Whether the usage cards have a Refresh button; without one they show their freshness. */
   refreshable: boolean;
+  /** Keep a long report list inside the floating tooltip's viewport. */
+  scrollable?: boolean;
 }
 
 /**
@@ -30,6 +32,7 @@ export function ContextWindowDetails({
   sessionCost,
   showTitle,
   refreshable,
+  scrollable,
 }: ContextWindowDetailsProps) {
   const { t } = useTranslation();
   return (
@@ -55,7 +58,12 @@ export function ContextWindowDetails({
           <Text style={styles.detail}>{t("contextWindow.sessionCost", { cost: sessionCost })}</Text>
         ) : null}
       </View>
-      <AgentUsage serverId={serverId} agentId={agentId} refreshable={refreshable} />
+      <AgentUsage
+        serverId={serverId}
+        agentId={agentId}
+        refreshable={refreshable}
+        scrollable={scrollable}
+      />
     </>
   );
 }
