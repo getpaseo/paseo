@@ -175,7 +175,7 @@ export async function sampleTabsDuringTransition(
     function sample() {
       const tabs = Array.from(
         document.querySelectorAll<HTMLElement>(
-          '[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])',
+          '[data-testid^="workspace-tab-"][role="button"][aria-selected]',
         ),
       ).filter((element) => element.getClientRects().length > 0);
       scope.__paseoTabTrackFrames?.push(
@@ -188,7 +188,10 @@ export async function sampleTabsDuringTransition(
         requestAnimationFrame(sample);
       }
     }
-    requestAnimationFrame(sample);
+    // Establish the known-good pre-action state synchronously. Starting on the
+    // next animation frame lets the action race the first sample, which can
+    // misclassify a not-yet-painted test harness frame as a transition blank.
+    sample();
   }, durationMs);
   await action();
   await page.waitForTimeout(durationMs + 100);

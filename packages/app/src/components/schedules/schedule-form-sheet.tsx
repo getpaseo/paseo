@@ -24,7 +24,7 @@ import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { createControlGeometry, type FieldControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { CadenceEditor } from "@/components/schedules/cadence-editor";
 import {
   SelectField,
@@ -661,8 +661,8 @@ function ScheduleTargetFields({
     [],
   );
   const modelTriggerLeading = useMemo(
-    () => <ProviderGlyph provider={state.selectedProvider} />,
-    [state.selectedProvider],
+    () => <ProviderGlyph provider={state.selectedProvider} serverId={state.selectedServerId} />,
+    [state.selectedProvider, state.selectedServerId],
   );
   const renderModelTrigger = useCallback(
     ({
@@ -1019,11 +1019,17 @@ function ThinkingOptionItem({
   );
 }
 
-function ProviderGlyph({ provider }: { provider: string | null }): ReactElement | null {
+function ProviderGlyph({
+  provider,
+  serverId,
+}: {
+  provider: string | null;
+  serverId: string | null;
+}): ReactElement | null {
+  const Icon = useProviderIcon(provider ?? "", serverId);
   if (!provider) {
     return null;
   }
-  const Icon = getProviderIcon(provider);
   return <Icon size={16} color={styles.providerIcon.color} />;
 }
 

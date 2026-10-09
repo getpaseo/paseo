@@ -9,31 +9,24 @@ const AGENT_ID = "agent-1";
 interface RecordedOpenedTab {
   key: string;
   target: WorkspaceTabTarget;
-}
-
-interface RecordedPin {
-  key: string;
-  agentId: string;
+  pin: boolean;
 }
 
 function createFakeLayout() {
   const openedTabs: RecordedOpenedTab[] = [];
-  const pinnedAgents: RecordedPin[] = [];
   return {
     openedTabs,
-    pinnedAgents,
     openTab: ({
       workspaceKey: key,
       target,
+      pin = false,
     }: {
       workspaceKey: string;
       target: WorkspaceTabTarget;
+      pin?: boolean;
     }) => {
-      openedTabs.push({ key, target });
+      openedTabs.push({ key, target, pin });
       return target.kind === "agent" ? target.agentId : null;
-    },
-    pinAgent: (key: string, agentId: string) => {
-      pinnedAgents.push({ key, agentId });
     },
   };
 }
@@ -52,8 +45,33 @@ describe("prepareWorkspaceTab", () => {
     );
 
     expect(layout.openedTabs).toEqual([
-      { key: "server-1:/repo/worktree", target: { kind: "agent", agentId: AGENT_ID } },
+      {
+        key: "server-1:/repo/worktree",
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: false,
+      },
     ]);
-    expect(layout.pinnedAgents).toEqual([]);
+  });
+
+  it("requests pinned visibility in the same command that reveals an agent", () => {
+    const layout = createFakeLayout();
+
+    prepareWorkspaceTab(
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: true,
+      },
+      layout,
+    );
+
+    expect(layout.openedTabs).toEqual([
+      {
+        key: "server-1:/repo/worktree",
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: true,
+      },
+    ]);
   });
 });

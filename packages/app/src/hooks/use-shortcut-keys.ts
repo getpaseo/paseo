@@ -5,12 +5,14 @@ import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-over
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 
-export function useShortcutKeys(actionId: string): ShortcutKey[][] | null {
+/** `null` action ids are accepted so callers can keep the hook unconditional. */
+export function useShortcutKeys(actionId: string | null): ShortcutKey[][] | null {
   const { overrides } = useKeyboardShortcutOverrides();
   const isMac = getShortcutOs() === "mac";
   const isDesktopApp = getIsElectronRuntime();
 
   return useMemo(() => {
+    if (actionId === null) return null;
     return resolveShortcutKeysForAction(actionId, overrides, {
       isMac,
       isDesktop: isDesktopApp,

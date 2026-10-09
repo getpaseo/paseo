@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import { treeRowPaddingLeft } from "@/components/tree-primitives";
 import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
@@ -38,11 +39,9 @@ function CommitsSectionSkeleton() {
 
 function CommitsSectionContent({
   query,
-  now,
   onCommitPress,
 }: {
   query: Exclude<CheckoutCommitsQueryResult, { status: "unsupported" }>;
-  now: Date;
   onCommitPress: (sha: string) => void;
 }) {
   const { t } = useTranslation();
@@ -75,7 +74,6 @@ function CommitsSectionContent({
           commit={commit}
           isFirst={index === 0}
           isLast={index === workspaceCommits.length - 1}
-          now={now}
           onCommitPress={onCommitPress}
         />
       ))}
@@ -91,9 +89,7 @@ export function CommitsSection({
   onCollapsedChange,
 }: CommitsSectionProps) {
   const { t } = useTranslation();
-  const isPanelActive = useRetainedPanelActive();
-  const [now, setNow] = useState(() => new Date());
-  const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
+  const insets = useSafeAreaInsets();
   const query = useCheckoutCommitsQuery({
     serverId,
     cwd,
@@ -101,23 +97,16 @@ export function CommitsSection({
   });
 
   const handleToggleSection = useCallback(() => {
-    if (collapsed) {
-      setNow(new Date());
-    }
     onCollapsedChange?.(!collapsed);
   }, [collapsed, onCollapsedChange]);
-
-  useEffect(() => {
-    if (collapsed || !isPanelActive) {
-      return;
-    }
-    const interval = setInterval(() => setNow(new Date()), 10_000);
-    return () => clearInterval(interval);
-  }, [collapsed, isPanelActive]);
 
   const headerChevronStyle = useMemo(
     () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
     [collapsed],
+  );
+  const containerStyle = useMemo(
+    () => [styles.container, { paddingBottom: insets.bottom }],
+    [insets.bottom],
   );
 
   if (query.status === "unsupported") {
@@ -129,7 +118,7 @@ export function CommitsSection({
       : null;
 
   return (
-    <View style={styles.container}>
+    <View style={containerStyle}>
       <Pressable
         accessibilityRole="button"
         testID="commits-section-header"
@@ -153,9 +142,7 @@ export function CommitsSection({
           </Text>
         )}
       </Pressable>
-      {collapsed ? null : (
-        <CommitsSectionContent query={query} now={displayNow} onCommitPress={onCommitPress} />
-      )}
+      {collapsed ? null : <CommitsSectionContent query={query} onCommitPress={onCommitPress} />}
     </View>
   );
 }
@@ -169,7 +156,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
+    // Same leading rail as a depth-0 tree row, so the disclosure chevron lines up
+    // with the folder chevrons above it.
+    paddingLeft: treeRowPaddingLeft(0),
     paddingRight: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     flexShrink: 0,

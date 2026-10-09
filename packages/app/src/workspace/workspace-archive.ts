@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import {
   clearWorkspaceArchivePending,
   markWorkspaceArchivePending,
@@ -50,7 +51,7 @@ function hideWorkspaceOptimistically(
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
   });
-  useSessionStore.getState().removeWorkspace(workspace.serverId, workspace.workspaceId);
+  getHostRuntimeStore().removeWorkspaceSnapshot(workspace.serverId, workspace.workspaceId);
   return { workspace: snapshot };
 }
 
@@ -64,7 +65,7 @@ function restoreOptimisticallyHiddenWorkspace(input: {
     workspaceId: input.workspaceId,
   });
   if (input.snapshot.workspace) {
-    useSessionStore.getState().mergeWorkspaces(input.serverId, [input.snapshot.workspace]);
+    getHostRuntimeStore().acceptWorkspaceSnapshots(input.serverId, [input.snapshot.workspace]);
   }
 }
 

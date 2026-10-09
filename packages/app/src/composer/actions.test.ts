@@ -18,18 +18,19 @@ import {
   type MessageSubmissionRecord,
 } from "@/composer/submission/model";
 import {
+  uploadFileAttachments,
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
-  findGithubItemByOption,
-  isAttachmentSelectedForGithubItem,
+  findForgeItemByOption,
+  isAttachmentSelectedForForgeItem,
   openComposerAttachment,
   pickAndPersistImages,
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
-  toggleGithubAttachment,
-  toggleGithubAttachmentFromPicker,
+  toggleForgeAttachment,
+  toggleForgeAttachmentFromPicker,
   type MessageSubmissionWriter,
   type AttachmentPersister,
   type ComposerCancelClient,
@@ -961,19 +962,19 @@ describe("openComposerAttachment", () => {
   });
 });
 
-describe("toggleGithubAttachment", () => {
+describe("toggleForgeAttachment", () => {
   it("appends a GitHub issue when not already attached", () => {
-    const next = toggleGithubAttachment([], issueItem);
+    const next = toggleForgeAttachment([], issueItem);
     expect(next).toEqual([{ kind: "forge_issue", item: issueItem }]);
   });
 
   it("appends a GitHub PR when not already attached", () => {
-    const next = toggleGithubAttachment([], prItem);
+    const next = toggleForgeAttachment([], prItem);
     expect(next).toEqual([{ kind: "forge_change_request", item: prItem }]);
   });
 
   it("removes an existing GitHub item with the same kind+number", () => {
-    const next = toggleGithubAttachment([{ kind: "github_issue", item: issueItem }], issueItem);
+    const next = toggleForgeAttachment([{ kind: "github_issue", item: issueItem }], issueItem);
     expect(next).toEqual([]);
   });
 
@@ -983,7 +984,7 @@ describe("toggleGithubAttachment", () => {
       { kind: "github_pr", item: prItem },
     ];
     const otherIssue: ForgeSearchItem = { ...issueItem, number: 999 };
-    const next = toggleGithubAttachment(start, otherIssue);
+    const next = toggleForgeAttachment(start, otherIssue);
     expect(next).toEqual([
       { kind: "github_issue", item: issueItem },
       { kind: "github_pr", item: prItem },
@@ -992,41 +993,41 @@ describe("toggleGithubAttachment", () => {
   });
 });
 
-describe("toggleGithubAttachmentFromPicker", () => {
+describe("toggleForgeAttachmentFromPicker", () => {
   it("marks an existing GitHub item as removed when picker toggle removes it", () => {
-    const markGithubAttachmentRemoved = vi.fn();
+    const markForgeAttachmentRemoved = vi.fn();
     const attachment: UserComposerAttachment = { kind: "github_pr", item: prItem };
 
-    const next = toggleGithubAttachmentFromPicker({
+    const next = toggleForgeAttachmentFromPicker({
       current: [attachment],
       item: prItem,
-      markGithubAttachmentRemoved,
+      markForgeAttachmentRemoved,
     });
 
     expect(next).toEqual([]);
-    expect(markGithubAttachmentRemoved).toHaveBeenCalledTimes(1);
-    expect(markGithubAttachmentRemoved).toHaveBeenCalledWith(attachment);
+    expect(markForgeAttachmentRemoved).toHaveBeenCalledTimes(1);
+    expect(markForgeAttachmentRemoved).toHaveBeenCalledWith(attachment);
   });
 
   it("does not mark a GitHub item removed when picker toggle adds it", () => {
-    const markGithubAttachmentRemoved = vi.fn();
+    const markForgeAttachmentRemoved = vi.fn();
 
-    const next = toggleGithubAttachmentFromPicker({
+    const next = toggleForgeAttachmentFromPicker({
       current: [],
       item: issueItem,
-      markGithubAttachmentRemoved,
+      markForgeAttachmentRemoved,
     });
 
     expect(next).toEqual([{ kind: "forge_issue", item: issueItem }]);
-    expect(markGithubAttachmentRemoved).not.toHaveBeenCalled();
+    expect(markForgeAttachmentRemoved).not.toHaveBeenCalled();
   });
 });
 
-describe("findGithubItemByOption / isAttachmentSelectedForGithubItem", () => {
+describe("findForgeItemByOption / isAttachmentSelectedForForgeItem", () => {
   it("locates items via their composite kind:number id", () => {
-    expect(findGithubItemByOption([issueItem, prItem], "issue:101")).toBe(issueItem);
-    expect(findGithubItemByOption([issueItem, prItem], "change_request:202")).toBe(prItem);
-    expect(findGithubItemByOption([issueItem], "change_request:404")).toBeUndefined();
+    expect(findForgeItemByOption([issueItem, prItem], "issue:101")).toBe(issueItem);
+    expect(findForgeItemByOption([issueItem, prItem], "change_request:202")).toBe(prItem);
+    expect(findForgeItemByOption([issueItem], "change_request:404")).toBeUndefined();
   });
 
   it("recognizes when an attachment list already contains a matching GitHub item", () => {
@@ -1035,7 +1036,90 @@ describe("findGithubItemByOption / isAttachmentSelectedForGithubItem", () => {
       { kind: "github_issue", item: issueItem },
       reviewWorkspaceAttachment("ignored"),
     ];
-    expect(isAttachmentSelectedForGithubItem(attachments, issueItem)).toBe(true);
-    expect(isAttachmentSelectedForGithubItem(attachments, prItem)).toBe(false);
+    expect(isAttachmentSelectedForForgeItem(attachments, issueItem)).toBe(true);
+    expect(isAttachmentSelectedForForgeItem(attachments, prItem)).toBe(false);
   });
+});
+
+describe("file upload preparation", () => {
+  it("waits for file bytes and daemon acknowledgement before returning the attachment", async () => {
+    let resolveRead!: (bytes: Uint8Array) => void;
+    const read = new Promise<Uint8Array>((resolve) => {
+      resolveRead = resolve;
+    });
+    let acknowledge!: (result: Awaited<ReturnType<ComposerSendClient["uploadFile"]>>) => void;
+    const response = new Promise<Awaited<ReturnType<ComposerSendClient["uploadFile"]>>>(
+      (resolve) => {
+        acknowledge = resolve;
+      },
+    );
+    const sent: string[] = [];
+    const upload = uploadFileAttachments({
+      client: {
+        sendAgentMessage: async () => {},
+        uploadFile: async (file) => {
+          sent.push(file.fileName);
+          expect(file.bytes).toEqual(new Uint8Array([1, 2]));
+          return response;
+        },
+      },
+      files: [
+        { fileName: "sample.bin", mimeType: "application/octet-stream", readBytes: () => read },
+      ],
+    });
+    let completed = false;
+    void upload.then(() => {
+      completed = true;
+      return undefined;
+    });
+    expect(sent).toEqual([]);
+    resolveRead(new Uint8Array([1, 2]));
+    await Promise.resolve();
+    expect(sent).toEqual(["sample.bin"]);
+    expect(completed).toBe(false);
+    const file = {
+      type: "uploaded_file" as const,
+      id: "file-1",
+      fileName: "sample.bin",
+      mimeType: "application/octet-stream",
+      size: 2,
+      path: "/uploads/sample.bin",
+    };
+    acknowledge({ requestId: "req-1", file, error: null });
+    await expect(upload).resolves.toEqual([{ kind: "file", attachment: file }]);
+  });
+
+  it.each(["unreadable", "oversized"])(
+    "does not upload a batch containing a later %s file",
+    async (failure) => {
+      let sends = 0;
+      await expect(
+        uploadFileAttachments({
+          client: {
+            sendAgentMessage: async () => {},
+            uploadFile: async () => {
+              sends++;
+              throw new Error("unexpected send");
+            },
+          },
+          files: [
+            {
+              fileName: "valid.bin",
+              mimeType: "application/octet-stream",
+              readBytes: async () => new Uint8Array([1]),
+            },
+            {
+              fileName: "missing.bin",
+              mimeType: "application/octet-stream",
+              readBytes: async () => {
+                if (failure === "oversized") return new Uint8Array(50 * 1024 * 1024 + 1);
+                throw new Error("read failed");
+              },
+            },
+          ],
+        }),
+      ).rejects.toThrow(failure === "unreadable" ? "read failed" : "too large");
+      expect(sends).toBe(0);
+    },
+  );
 });

@@ -6,6 +6,10 @@ import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
 } from "@/stores/session-store";
+import {
+  clearWorkspaceArchivePending,
+  markWorkspaceArchivePending,
+} from "@/contexts/session-workspace-upserts";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
 
 function workspace(id: string, projectId = "project"): WorkspaceDescriptorPayload {
@@ -149,6 +153,52 @@ it("commits the authoritative snapshot before buffered project updates", () => {
   store.clearSession(serverId);
 });
 
+it("preserves unchanged project identity when another project changes", () => {
+  const serverId = "project-identity";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const first = normalizeProjectDescriptor({
+    projectId: "first",
+    projectDisplayName: "First",
+    projectRootPath: "/repo/first",
+    projectKind: "git",
+  });
+  const second = normalizeProjectDescriptor({
+    projectId: "second",
+    projectDisplayName: "Second",
+    projectRootPath: "/repo/second",
+    projectKind: "git",
+  });
+  replica.commitSnapshot(
+    {
+      workspaces: new Map(),
+      projects: new Map([
+        ["first", first],
+        ["second", second],
+      ]),
+    },
+    [],
+  );
+  const previousSecond = useSessionStore.getState().sessions[serverId]?.projects.get("second");
+
+  replica.commitSnapshot(
+    {
+      workspaces: new Map(),
+      projects: new Map([
+        ["first", { ...first, projectDisplayName: "Updated" }],
+        ["second", { ...second }],
+      ]),
+    },
+    [],
+  );
+
+  expect(useSessionStore.getState().sessions[serverId]?.projects.get("second")).toBe(
+    previousSecond,
+  );
+  store.clearSession(serverId);
+});
+
 it("does not invent a null-key project from a workspace update", () => {
   const serverId = "workspace-before-project-update";
   const store = useSessionStore.getState();
@@ -161,4 +211,22 @@ it("does not invent a null-key project from a workspace update", () => {
   expect(session?.workspaces.has("main")).toBe(true);
   expect(session?.projects.has("fresh-project")).toBe(false);
   store.clearSession(serverId);
+});
+
+it("does not restore a targeted cached workspace while its archive is pending", () => {
+  const serverId = "cached-workspace-during-archive";
+  const workspaceId = "archived-workspace";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  markWorkspaceArchivePending({ serverId, workspaceId });
+
+  try {
+    replica.commitCachedWorkspace(normalizeWorkspaceDescriptor(workspace(workspaceId)), undefined);
+
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)).toBe(false);
+  } finally {
+    clearWorkspaceArchivePending({ serverId, workspaceId });
+    store.clearSession(serverId);
+  }
 });

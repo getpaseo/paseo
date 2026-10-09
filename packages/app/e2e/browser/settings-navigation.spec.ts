@@ -72,18 +72,14 @@ test.describe("Settings sidebar navigation", () => {
     await openSettingsSection(page, "appearance");
     await expectSettingsHeader(page, "Appearance");
     await expectAppearanceContent(page);
+
+    await clickSettingsBackToWorkspace(page);
+    await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
 
   test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
-  });
-
-  test("the + Add host button opens the add-host method modal", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openAddHostFlow(page);
-    await expectAddHostMethodOptions(page);
   });
 
   test("direct connection advanced URI round-trips SSL and password into the form", async ({
@@ -92,6 +88,7 @@ test.describe("Settings sidebar navigation", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await openAddHostFlow(page);
+    await expectAddHostMethodOptions(page);
     await selectHostConnectionType(page, "direct");
 
     await toggleHostAdvanced(page);
@@ -115,10 +112,34 @@ test.describe("Settings sidebar navigation", () => {
     await expectDirectHostUriHidden(page);
   });
 
-  test("sidebar shows a Back to workspace row that leaves /settings", async ({ page }) => {
+  test("Escape lets settings dropdowns and modals close before leaving settings", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
     await openSettings(page);
-    await clickSettingsBackToWorkspace(page);
+
+    await test.step("a dropdown owns Escape", async () => {
+      await openSettingsSection(page, "appearance");
+      await page.getByLabel(/Theme:/).click();
+      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toBeVisible();
+
+      await page.keyboard.press("Escape");
+
+      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings(\/|$)/);
+    });
+
+    await test.step("a modal owns Escape", async () => {
+      await openAddHostFlow(page);
+      await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
+
+      await page.keyboard.press("Escape");
+
+      await expect(page.getByText("Add connection", { exact: true })).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings(\/|$)/);
+    });
+
+    await page.keyboard.press("Escape");
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
 });
@@ -126,60 +147,36 @@ test.describe("Settings sidebar navigation", () => {
 test.describe("Settings — compact master-detail", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("/settings renders only the sidebar list (no section content)", async ({ page }) => {
+  test("opens compact app and host details and returns through the settings list", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
     await openCompactSettings(page, buildOpenProjectRoute());
 
     await expectSettingsSidebarSections(page, ["general", "diagnostics", "about"]);
     await expectCompactSettingsList(page);
 
-    await expectSettingsBackButton(page);
-    await goBackInSettings(page);
-    await expect(page).not.toHaveURL(/\/settings(\/|$)/);
-  });
+    await test.step("open app details and return to the list", async () => {
+      await openSettingsSection(page, "diagnostics");
+      await expectAppRoute(page, buildSettingsSectionRoute("diagnostics"));
+      await expectDiagnosticsContent(page);
+      await expectSettingsSidebarHidden(page);
+      await expectSettingsBackButton(page);
+      await goBackInSettings(page);
+      await expectCompactSettingsList(page);
+    });
 
-  test("tapping a section pushes /settings/[section] and shows a back button", async ({ page }) => {
-    await gotoAppShell(page);
-    await openCompactSettings(page, buildOpenProjectRoute());
-
-    await openSettingsSection(page, "diagnostics");
-    await expectAppRoute(page, buildSettingsSectionRoute("diagnostics"));
-    await expectDiagnosticsContent(page);
-    await expectSettingsSidebarHidden(page);
-    await expectSettingsBackButton(page);
-  });
-
-  test("back from a section detail returns to the /settings list", async ({ page }) => {
-    await gotoAppShell(page);
-    await openCompactSettings(page, buildOpenProjectRoute());
-
-    await openSettingsSection(page, "about");
-    await expectAppRoute(page, buildSettingsSectionRoute("about"));
-
-    await goBackInSettings(page);
-    await expectCompactSettingsList(page);
-    await expectSettingsBackButton(page);
-  });
-
-  test("tapping a host section row pushes /settings/hosts/[serverId]/connections", async ({
-    page,
-  }) => {
-    await gotoAppShell(page);
-    await openCompactSettings(page, buildOpenProjectRoute());
-
-    await openCompactSettingsHost(page);
-    await expectSettingsBackButton(page);
-    await expectSettingsSidebarHidden(page);
-  });
-
-  test("back from a host detail returns to the /settings list", async ({ page }) => {
-    await gotoAppShell(page);
-    await openCompactSettings(page, buildOpenProjectRoute());
-
-    await openCompactSettingsHost(page);
-    await goBackInSettings(page);
-    await expectAppRoute(page, buildSettingsRoute());
-    await expectSettingsSidebarVisible(page);
+    await test.step("open host details and return through the list", async () => {
+      await openCompactSettingsHost(page);
+      await expectSettingsBackButton(page);
+      await expectSettingsSidebarHidden(page);
+      await goBackInSettings(page);
+      await expectAppRoute(page, buildSettingsRoute());
+      await expectSettingsSidebarVisible(page);
+      await expectSettingsBackButton(page);
+      await goBackInSettings(page);
+      await expect(page).not.toHaveURL(/\/settings(\/|$)/);
+    });
   });
 
   test("host picker settings opens Overview and backs through the settings list", async ({

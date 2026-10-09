@@ -7,7 +7,13 @@ import {
   expectFileTabOpen,
 } from "../support/helpers/file-explorer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { gotoAppShell } from "../support/helpers/app";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+
+const APP_SETTINGS_KEY = "@paseo:app-settings";
 
 const RED_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
@@ -90,6 +96,70 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("jumps to each relative reference to the same file", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "relative-reference-qa-",
+      title: "Relative line references",
+      initialPrompt: "Show both references",
+      featureValues: {
+        mockAssistantResponse: "First `src/router.go:46`. Then `src/router.go:403`.",
+      },
+    });
+    try {
+      await mkdir(path.join(session.cwd, "src"));
+      await writeFile(
+        path.join(session.cwd, "src/router.go"),
+        Array.from({ length: 450 }, (_, n) => `// line ${n + 1}`).join("\n"),
+      );
+      await openAgentRoute(page, session);
+      for (const line of [46, 403, 46]) {
+        await page
+          .getByTestId(`workspace-tab-agent_${session.agentId}`)
+          .filter({ visible: true })
+          .click();
+        await page.getByText(`src/router.go:${line}`, { exact: true }).click();
+        await expect(page.getByLabel(`Line ${line}, column 1`)).toBeVisible();
+      }
+      await page.screenshot({ path: test.info().outputPath("relative-line-target.png") });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("shows an absolute POSIX assistant file link relative to the workspace on hover", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "file-link-tooltip-" });
+    const filePath = path.join(workspace.repoPath, "src", "target.ts");
+    try {
+      const agent = await workspace.client.createAgent({
+        provider: "mock",
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Absolute file link tooltip",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+        initialPrompt: "Show the file link",
+        featureValues: { mockAssistantResponse: `[Open target](${filePath}:42-45)` },
+      });
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      const workspaceRow = page.getByTestId(
+        `sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`,
+      );
+      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
+      await workspaceRow.click();
+      await page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).click();
+
+      const fileLink = page.getByRole("link", { name: "Open target" }).first();
+      await expect(fileLink).toBeVisible({ timeout: 15_000 });
+      await fileLink.hover();
+      await expect(page.getByText("src/target.ts:42-45", { exact: true })).toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("renders a lockfile-sized read-only source with a bounded CodeMirror DOM", async ({
     page,
   }) => {
@@ -218,6 +288,12 @@ test.describe("CodeMirror workspace file editing", () => {
   });
 
   test("clicking the editor focuses its pane beside an agent", async ({ page }) => {
+    await page.addInitScript((settingsKey) => {
+      localStorage.setItem(
+        settingsKey,
+        JSON.stringify({ openInSidePane: { explorerFiles: true } }),
+      );
+    }, APP_SETTINGS_KEY);
     const target = "target.ts:42";
     const session = await seedAgentWithFileLink({
       target,
@@ -233,7 +309,12 @@ test.describe("CodeMirror workspace file editing", () => {
       await openAgentRoute(page, session);
 
       await openWorkspaceFile(page, "target.ts");
-      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+      await expect(
+        page
+          .locator('[data-testid^="workspace-pane-"]')
+          .getByTestId("workspace-tabs-row")
+          .filter({ visible: true }),
+      ).toHaveCount(2);
 
       await page
         .getByTestId(`workspace-tab-agent_${session.agentId}`)
@@ -530,6 +611,16 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
+    const imageCanvas = page.getByTestId("image-file-preview-canvas");
+    await expect(imageCanvas).toBeVisible();
+    await imageCanvas.hover();
+    const transformedContent = imageCanvas.locator(":scope > div").first();
+    const fittedImageBox = await transformedContent.boundingBox();
+    expect(fittedImageBox).not.toBeNull();
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await expect
+      .poll(async () => (await transformedContent.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(fittedImageBox!.width * 1.2);
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);

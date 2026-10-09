@@ -271,18 +271,6 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.pane.split.down",
     },
     {
-      name: "matches Cmd+Shift+M to maximize the Explorer pane on macOS",
-      event: { key: "M", code: "KeyM", metaKey: true, shiftKey: true },
-      context: { isMac: true },
-      action: "workspace.explorer.maximize.toggle",
-    },
-    {
-      name: "matches Ctrl+Shift+M to maximize the Explorer pane on non-macOS",
-      event: { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true },
-      context: { isMac: false },
-      action: "workspace.explorer.maximize.toggle",
-    },
-    {
       name: "matches Cmd+Shift+ArrowRight to focus pane right on macOS",
       event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true },
       context: { isMac: true },
@@ -562,6 +550,36 @@ describe("keyboard-shortcuts", () => {
     expectNoShortcutResolution({ event, context });
   });
 
+  // A rebound pane-focus shortcut has to fire wherever the user is typing.
+  // Its default combo carries `editable: false` so that Cmd+Shift+Arrow keeps
+  // selecting text (the two cases above), and that guard describes the default
+  // combo rather than the action, so it must not survive the rebind.
+  describe("a rebound pane-focus shortcut", () => {
+    const PANE_FOCUS_DOWN_BINDING = "workspace-pane-focus-down-cmd-shift-down";
+    // macOS emits U+2206 for Option+J; the stored combo comes from the code.
+    const altJ = { key: "\u2206", code: "KeyJ", altKey: true };
+
+    it.each(["message-input", "editable"] as const)("fires with %s focused", (focusScope) => {
+      const result = resolveShortcut({
+        event: altJ,
+        context: { isMac: true, focusScope },
+        bindings: buildEffectiveBindings({ [PANE_FOCUS_DOWN_BINDING]: "Alt+J" }),
+      });
+
+      expect(result.match?.action).toBe("workspace.pane.focus.down");
+    });
+
+    it("still fires outside a text field", () => {
+      const result = resolveShortcut({
+        event: altJ,
+        context: { isMac: true, focusScope: "other" },
+        bindings: buildEffectiveBindings({ [PANE_FOCUS_DOWN_BINDING]: "Alt+J" }),
+      });
+
+      expect(result.match?.action).toBe("workspace.pane.focus.down");
+    });
+  });
+
   it("prefers advancing chord candidates over single-combo matches on the same prefix", () => {
     const bindings = buildEffectiveBindings({
       "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+W S",
@@ -603,6 +621,42 @@ describe("keyboard-shortcuts", () => {
       context: { isDesktop: true, focusScope: "browser" },
       action: "workspace.tab.menu.open",
     });
+  });
+
+  it("completes a chord whose second step carries a modifier", () => {
+    const bindings = buildEffectiveBindings({
+      "command-center-toggle-ctrl-k-non-mac": "Ctrl+K Ctrl+J",
+    });
+
+    // The browser emits a keydown for the bare Control key before every combo,
+    // so the stream for Ctrl+K, release, Ctrl+J is four keydowns, not two.
+    const firstModifier = resolveShortcut({
+      event: { key: "Control", code: "ControlLeft", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      bindings,
+    });
+    const firstStep = resolveShortcut({
+      event: { key: "k", code: "KeyK", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      chordState: firstModifier.nextChordState,
+      bindings,
+    });
+    expect(firstStep.nextChordState.step).toBe(1);
+
+    const secondModifier = resolveShortcut({
+      event: { key: "Control", code: "ControlLeft", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      chordState: firstStep.nextChordState,
+      bindings,
+    });
+    const secondStep = resolveShortcut({
+      event: { key: "j", code: "KeyJ", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      chordState: secondModifier.nextChordState,
+      bindings,
+    });
+
+    expect(secondStep.match?.action).toBe("command-center.toggle");
   });
 
   it("schedules a chord reset timeout for advancing candidates", () => {
@@ -654,7 +708,6 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
-        "workspace-explorer-maximize": ["mod", "shift", "M"],
         "cycle-agent-mode": ["shift", "Tab"],
       },
     },
@@ -674,7 +727,6 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["mod", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
-        "workspace-explorer-maximize": ["mod", "shift", "M"],
       },
     },
     {
@@ -683,7 +735,6 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
-        "workspace-explorer-maximize": ["ctrl", "shift", "M"],
       },
     },
     {

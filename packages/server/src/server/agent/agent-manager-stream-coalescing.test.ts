@@ -7,6 +7,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "./agent-manager.js";
 import { AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS } from "./agent-stream-coalescer.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
+import { projectTimelineRows } from "./timeline-projection.js";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -357,8 +358,24 @@ function getTimelineItems(rows: AgentTimelineRow[]): AgentTimelineItem[] {
   return rows.map((row) => row.item);
 }
 
+// The leading-edge flush emits the first chunk of a burst as its own row. Clients
+// read the projected timeline, where mergeAssistantChunks/mergeReasoningChunks
+// join those contiguous rows back together, so history reads the same either way.
+function getProjectedTimelineItems(rows: AgentTimelineRow[]): AgentTimelineItem[] {
+  return projectTimelineRows({ rows, mode: "projected" }).map((entry) => entry.item);
+}
+
 function expectContiguousRowSeqs(rows: AgentTimelineRow[], expected: number[]): void {
-  expect(rows.map((row) => row.seq)).toEqual(expected);
+  const projected = projectTimelineRows({ rows, mode: "projected" });
+  const covered = projected.flatMap((row) =>
+    row.sourceSeqRanges.flatMap((range) =>
+      Array.from(
+        { length: range.endSeq - range.startSeq + 1 },
+        (_, index) => range.startSeq + index,
+      ),
+    ),
+  );
+  expect([...new Set(covered)].sort((a, b) => a - b)).toEqual(expected);
 }
 
 function expectContiguousLiveSeqs(events: AgentManagerEvent[], expected: number[]): void {
@@ -505,29 +522,39 @@ describe("target coalesced behavior", () => {
       }
       await waitForSessionEventQueue();
 
+      // Leading edge: the first chunk is already out, the other 999 are buffered.
       await vi.advanceTimersByTimeAsync(BEFORE_COALESCE_WINDOW_MS);
-      expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(0);
-      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(0);
+      expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
+        { type: "assistant_message", text: "x" },
+      ]);
+      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(1);
       const rows = await harness.manager.getTimelineRows(agentId);
       const events = getTimelineStreamEvents(harness.events, agentId);
 
       expect(rows).toHaveLength(1);
-      expect(events).toHaveLength(1);
-      expect(rows[0]?.item).toEqual({
-        type: "assistant_message",
-        text: "x".repeat(1000),
-      });
+      expect(events).toHaveLength(2);
+      expect(getTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "x".repeat(1000) },
+      ]);
       expect(events.map((event) => (event.type === "agent_stream" ? event.event : null))).toEqual([
         {
           type: "timeline",
           provider: "codex",
-          item: { type: "assistant_message", text: "x".repeat(1000) },
+          item: { type: "assistant_message", text: "x" },
+        },
+        {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "x".repeat(999) },
         },
       ]);
-      expectContiguousRowSeqs(rows, [1]);
-      expectContiguousLiveSeqs(events, [1]);
+      expectContiguousRowSeqs(rows, [1, 2]);
+      expectContiguousLiveSeqs(events, [1, 2]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "x".repeat(1000) },
+      ]);
     } finally {
       harness.cleanup();
     }
@@ -549,9 +576,12 @@ describe("target coalesced behavior", () => {
       const events = getTimelineStreamEvents(harness.events, agentId);
 
       expect(getTimelineItems(rows)).toEqual([{ type: "reasoning", text: "r".repeat(100) }]);
-      expect(events).toHaveLength(1);
-      expectContiguousRowSeqs(rows, [1]);
-      expectContiguousLiveSeqs(events, [1]);
+      expect(events).toHaveLength(2);
+      expectContiguousRowSeqs(rows, [1, 2]);
+      expectContiguousLiveSeqs(events, [1, 2]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "reasoning", text: "r".repeat(100) },
+      ]);
     } finally {
       harness.cleanup();
     }
@@ -570,20 +600,26 @@ describe("target coalesced behavior", () => {
       session.pushEvent(timelineEvent(runningToolCall));
       await waitForSessionEventQueue();
 
-      expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(0);
-      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(0);
+      // Only the leading chunk is out; the running tool call stays buffered with
+      // the rest of the text rather than forcing an early flush.
+      expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
+        { type: "assistant_message", text: "a" },
+      ]);
+      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
       expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
         { type: "assistant_message", text: "a".repeat(500) },
         runningToolCall,
       ]);
-      expectContiguousLiveSeqs(getTimelineStreamEvents(harness.events, agentId), [1, 2]);
+      expectContiguousLiveSeqs(getTimelineStreamEvents(harness.events, agentId), [1, 2, 3]);
 
       for (let i = 0; i < 500; i++) {
         session.pushEvent(assistant("b"));
       }
       await waitForSessionEventQueue();
+      // The "b" burst arrives inside the window that just flushed, so it gets no
+      // leading flush of its own and coalesces whole.
       await vi.advanceTimersByTimeAsync(BEFORE_COALESCE_WINDOW_MS);
       expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(2);
 
@@ -596,8 +632,13 @@ describe("target coalesced behavior", () => {
         runningToolCall,
         { type: "assistant_message", text: "b".repeat(500) },
       ]);
-      expectContiguousRowSeqs(rows, [1, 2, 3]);
-      expectContiguousLiveSeqs(events, [1, 2, 3]);
+      expectContiguousRowSeqs(rows, [1, 2, 3, 4]);
+      expectContiguousLiveSeqs(events, [1, 2, 3, 4]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "a".repeat(500) },
+        runningToolCall,
+        { type: "assistant_message", text: "b".repeat(500) },
+      ]);
     } finally {
       harness.cleanup();
     }
@@ -614,18 +655,24 @@ describe("target coalesced behavior", () => {
       }
       await waitForSessionEventQueue();
 
+      // The leading edge flushes the first snapshot; the remaining 199 collapse to
+      // the latest one. Both carry the same callId, so the projection folds them
+      // into a single tool call row.
       await vi.advanceTimersByTimeAsync(BEFORE_COALESCE_WINDOW_MS);
-      expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(0);
-      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(0);
+      expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
+        toolCall({ output: "chunk-0" }),
+      ]);
+      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(1);
       const rows = await harness.manager.getTimelineRows(agentId);
       const events = getTimelineStreamEvents(harness.events, agentId);
 
       expect(getTimelineItems(rows)).toEqual([toolCall({ output: "chunk-199" })]);
-      expect(events).toHaveLength(1);
-      expectContiguousRowSeqs(rows, [1]);
-      expectContiguousLiveSeqs(events, [1]);
+      expect(events).toHaveLength(2);
+      expectContiguousRowSeqs(rows, [1, 2]);
+      expectContiguousLiveSeqs(events, [1, 2]);
+      expect(getProjectedTimelineItems(rows)).toEqual([toolCall({ output: "chunk-199" })]);
     } finally {
       harness.cleanup();
     }
@@ -651,9 +698,13 @@ describe("target coalesced behavior", () => {
         toolCall({ callId: "tool-1", output: "one-b" }),
         toolCall({ callId: "tool-2", output: "two-b" }),
       ]);
-      expect(events).toHaveLength(2);
-      expectContiguousRowSeqs(rows, [1, 2]);
-      expectContiguousLiveSeqs(events, [1, 2]);
+      expect(events).toHaveLength(3);
+      expectContiguousRowSeqs(rows, [1, 2, 3]);
+      expectContiguousLiveSeqs(events, [1, 2, 3]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        toolCall({ callId: "tool-1", output: "one-b" }),
+        toolCall({ callId: "tool-2", output: "two-b" }),
+      ]);
     } finally {
       harness.cleanup();
     }
@@ -668,7 +719,10 @@ describe("target coalesced behavior", () => {
       session.pushEvent(assistant("before"));
       session.pushEvent(timelineEvent(toolCall({ output: "running" })));
       await waitForSessionEventQueue();
-      expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(0);
+      // "before" led the burst; the running tool call is still buffered.
+      expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
+        { type: "assistant_message", text: "before" },
+      ]);
 
       session.pushEvent(timelineEvent(toolCall({ status: "completed", output: "done" })));
       await waitForSessionEventQueue();
@@ -823,12 +877,18 @@ describe("target coalesced behavior", () => {
 
       expect(getTimelineItems(firstRows)).toEqual([{ type: "assistant_message", text: "aa" }]);
       expect(getTimelineItems(secondRows)).toEqual([{ type: "assistant_message", text: "bb" }]);
-      expect(firstEvents).toHaveLength(1);
-      expect(secondEvents).toHaveLength(1);
-      expectContiguousRowSeqs(firstRows, [1]);
-      expectContiguousRowSeqs(secondRows, [1]);
-      expectContiguousLiveSeqs(firstEvents, [1]);
-      expectContiguousLiveSeqs(secondEvents, [1]);
+      expect(firstEvents).toHaveLength(2);
+      expect(secondEvents).toHaveLength(2);
+      expectContiguousRowSeqs(firstRows, [1, 2]);
+      expectContiguousRowSeqs(secondRows, [1, 2]);
+      expectContiguousLiveSeqs(firstEvents, [1, 2]);
+      expectContiguousLiveSeqs(secondEvents, [1, 2]);
+      expect(getProjectedTimelineItems(firstRows)).toEqual([
+        { type: "assistant_message", text: "aa" },
+      ]);
+      expect(getProjectedTimelineItems(secondRows)).toEqual([
+        { type: "assistant_message", text: "bb" },
+      ]);
       rmSync(secondWorkdir, { recursive: true, force: true });
     } finally {
       harness.cleanup();
@@ -849,10 +909,7 @@ describe("target coalesced behavior", () => {
       const rows = await harness.manager.getTimelineRows(agentId);
       const events = getTimelineStreamEvents(harness.events, agentId);
 
-      expect(getTimelineItems(rows)).toEqual([
-        { type: "assistant_message", text: "codex" },
-        { type: "assistant_message", text: "claude" },
-      ]);
+      expect(getTimelineItems(rows)).toEqual([{ type: "assistant_message", text: "codexclaude" }]);
       expect(events.map((event) => (event.type === "agent_stream" ? event.event : null))).toEqual([
         { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "codex" } },
         {
@@ -923,10 +980,14 @@ describe("target coalesced behavior", () => {
       const rows = await harness.manager.getTimelineRows(agentId);
       const events = getTimelineStreamEvents(harness.events, agentId);
 
+      // The empty chunk is dropped before the coalescer, so " " leads the burst.
       expect(getTimelineItems(rows)).toEqual([{ type: "assistant_message", text: " \n\tdone" }]);
-      expect(events).toHaveLength(1);
-      expectContiguousRowSeqs(rows, [1]);
-      expectContiguousLiveSeqs(events, [1]);
+      expect(events).toHaveLength(2);
+      expectContiguousRowSeqs(rows, [1, 2]);
+      expectContiguousLiveSeqs(events, [1, 2]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: " \n\tdone" },
+      ]);
     } finally {
       harness.cleanup();
     }
@@ -1117,11 +1178,14 @@ describe("target coalesced behavior", () => {
       expect(getTimelineItems(rows)).toEqual([
         { type: "assistant_message", text: "abc" },
         TOOL_CALL,
+      ]);
+      expect(timelineEvents).toHaveLength(4);
+      expectContiguousRowSeqs(rows, [1, 2, 3, 4]);
+      expectContiguousLiveSeqs(timelineEvents, [1, 2, 3, 4]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "abc" },
         TOOL_CALL,
       ]);
-      expect(timelineEvents).toHaveLength(3);
-      expectContiguousRowSeqs(rows, [1, 2, 3]);
-      expectContiguousLiveSeqs(timelineEvents, [1, 2, 3]);
     } finally {
       idempotencyHarness.cleanup();
     }
@@ -1150,9 +1214,8 @@ describe("target coalesced behavior", () => {
       session.pushEvent(assistant("A"));
       await waitForSessionEventQueue();
 
-      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
-      await waitForSessionEventQueue();
-
+      // "A" flushes on the leading edge; the chunk the subscriber pushes during
+      // that flush must land in the next window, not corrupt this one.
       const rowsAfterFirstFlush = await reentryHarness.manager.getTimelineRows(agentId);
       expect(getTimelineItems(rowsAfterFirstFlush)).toEqual([
         { type: "assistant_message", text: "A" },
@@ -1165,8 +1228,7 @@ describe("target coalesced behavior", () => {
       const rowsAfterSecondFlush = await reentryHarness.manager.getTimelineRows(agentId);
       const timelineEvents = getTimelineStreamEvents(reentryHarness.events, agentId);
       expect(getTimelineItems(rowsAfterSecondFlush)).toEqual([
-        { type: "assistant_message", text: "A" },
-        { type: "assistant_message", text: "B" },
+        { type: "assistant_message", text: "AB" },
       ]);
       expect(timelineEvents).toHaveLength(2);
       expectContiguousRowSeqs(rowsAfterSecondFlush, [1, 2]);
@@ -1184,25 +1246,31 @@ describe("target coalesced behavior", () => {
       const { agentId, session } = await createManagedSession(harness);
 
       session.pushEvent(assistant("flush"));
+      session.pushEvent(assistant("-pending"));
       await waitForSessionEventQueue();
 
-      expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(0);
+      // "flush" left on the leading edge; "-pending" is what manager.flush() drains.
+      expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
+        { type: "assistant_message", text: "flush" },
+      ]);
       await harness.manager.flush();
 
       const rows = await harness.manager.getTimelineRows(agentId);
       const events = getTimelineStreamEvents(harness.events, agentId);
-      expect(getTimelineItems(rows)).toEqual([{ type: "assistant_message", text: "flush" }]);
-      expect(events).toHaveLength(1);
+      expect(getTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "flush-pending" },
+      ]);
+      expect(events).toHaveLength(2);
 
       await vi.advanceTimersByTimeAsync(100);
       expect(await harness.manager.getTimelineRows(agentId)).toHaveLength(1);
-      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(1);
+      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(2);
     } finally {
       harness.cleanup();
     }
   });
 
-  test("history hydration is uncoalesced and immediate", async () => {
+  test("history hydration projects immediately without waiting for a streaming window", async () => {
     vi.useFakeTimers();
     const harness = createHarness();
     try {
@@ -1213,20 +1281,16 @@ describe("target coalesced behavior", () => {
 
       const rows = await harness.manager.getTimelineRows(agentId);
       expect(getTimelineItems(rows)).toEqual([
-        { type: "assistant_message", text: "a1" },
-        { type: "assistant_message", text: "a2" },
-        { type: "reasoning", text: "r1" },
-        { type: "reasoning", text: "r2" },
+        { type: "assistant_message", text: "a1a2" },
+        { type: "reasoning", text: "r1r2" },
       ]);
       expectContiguousRowSeqs(rows, [1, 2, 3, 4]);
       expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(100);
       expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
-        { type: "assistant_message", text: "a1" },
-        { type: "assistant_message", text: "a2" },
-        { type: "reasoning", text: "r1" },
-        { type: "reasoning", text: "r2" },
+        { type: "assistant_message", text: "a1a2" },
+        { type: "reasoning", text: "r1r2" },
       ]);
     } finally {
       harness.cleanup();
@@ -1257,7 +1321,16 @@ describe("target coalesced behavior", () => {
           type: "timeline",
           provider: "codex",
           turnId: "turn-1",
-          item: { type: "assistant_message", text: "hello world" },
+          item: { type: "assistant_message", text: "hello " },
+        },
+      });
+      await expect(stream.next()).resolves.toEqual({
+        done: false,
+        value: {
+          type: "timeline",
+          provider: "codex",
+          turnId: "turn-1",
+          item: { type: "assistant_message", text: "world" },
         },
       });
       await expect(stream.next()).resolves.toEqual({
@@ -1269,6 +1342,9 @@ describe("target coalesced behavior", () => {
       const rows = await harness.manager.getTimelineRows(agentId);
       const streamEvents = getStreamEvents(harness.events, agentId);
       expect(getTimelineItems(rows)).toEqual([{ type: "assistant_message", text: "hello world" }]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "hello world" },
+      ]);
       expect(streamEvents[0]).toMatchObject({
         type: "agent_stream",
         event: { type: "turn_started", provider: "codex", turnId: "turn-1" },
@@ -1279,10 +1355,19 @@ describe("target coalesced behavior", () => {
           type: "timeline",
           provider: "codex",
           turnId: "turn-1",
-          item: { type: "assistant_message", text: "hello world" },
+          item: { type: "assistant_message", text: "hello " },
         },
       });
       expect(streamEvents[2]).toMatchObject({
+        type: "agent_stream",
+        event: {
+          type: "timeline",
+          provider: "codex",
+          turnId: "turn-1",
+          item: { type: "assistant_message", text: "world" },
+        },
+      });
+      expect(streamEvents[3]).toMatchObject({
         type: "agent_stream",
         event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },
       });
@@ -1312,10 +1397,15 @@ describe("target coalesced behavior", () => {
         { type: "reasoning", text: "r1r2" },
         { type: "assistant_message", text: "b1b2" },
       ]);
-      expectContiguousRowSeqs(rows, [1, 2, 3]);
+      expectContiguousRowSeqs(rows, [1, 2, 3, 4]);
       const timelineEvents = getTimelineStreamEvents(harness.events, agentId);
-      expect(timelineEvents).toHaveLength(3);
-      expectContiguousLiveSeqs(timelineEvents, [1, 2, 3]);
+      expect(timelineEvents).toHaveLength(4);
+      expectContiguousLiveSeqs(timelineEvents, [1, 2, 3, 4]);
+      expect(getProjectedTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "a1a2" },
+        { type: "reasoning", text: "r1r2" },
+        { type: "assistant_message", text: "b1b2" },
+      ]);
 
       await vi.advanceTimersByTimeAsync(100);
       expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
@@ -1323,7 +1413,7 @@ describe("target coalesced behavior", () => {
         { type: "reasoning", text: "r1r2" },
         { type: "assistant_message", text: "b1b2" },
       ]);
-      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(3);
+      expect(getTimelineStreamEvents(harness.events, agentId)).toHaveLength(4);
     } finally {
       harness.cleanup();
     }

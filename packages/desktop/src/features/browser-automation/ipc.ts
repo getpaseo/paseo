@@ -1,4 +1,3 @@
-import type { Rectangle } from "electron";
 import { ipcMain } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
@@ -16,7 +15,7 @@ import {
   promptShimInstallScript,
   promptShimRestoreScript,
 } from "./dialog-handling.js";
-import { executeAutomationCommand } from "./service.js";
+import { BrowserTabClosedError, executeAutomationCommand } from "./service.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -92,6 +91,7 @@ interface ConsoleMessageEmitter {
 }
 
 interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
+  removeListener(event: "destroyed", listener: () => void): void;
   readonly id: number;
   readonly debugger: WebContentsDebugger;
   getURL(): string;
@@ -105,9 +105,13 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   goBack(): void;
   goForward(): void;
   reload(): void;
-  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
+  beginFrameSubscription(onlyDirty: boolean, callback: (image: TabImage) => void): void;
+  endFrameSubscription(): void;
   invalidate(): void;
+  getBackgroundThrottling(): boolean;
+  setBackgroundThrottling(allowed: boolean): void;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  insertText(text: string): Promise<void>;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
@@ -128,9 +132,19 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
+    captureFrame: (signal) => captureViewportFrame(contents, signal),
     invalidate: () => contents.invalidate(),
+    withFrameProduction: async (capture) => {
+      const previous = contents.getBackgroundThrottling();
+      contents.setBackgroundThrottling(false);
+      try {
+        return await capture();
+      } finally {
+        if (!contents.isDestroyed()) contents.setBackgroundThrottling(previous);
+      }
+    },
     sendInputEvent: (event) => contents.sendInputEvent(event),
+    insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
@@ -141,6 +155,41 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         return contents.debugger.sendCommand(command, params ?? {});
       }),
   };
+}
+
+function captureViewportFrame(
+  contents: BrowserAutomationWebContents,
+  signal: AbortSignal,
+): Promise<TabImage> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const stop = () => {
+      signal.removeEventListener("abort", abort);
+      contents.removeListener("destroyed", destroyed);
+      if (!contents.isDestroyed()) contents.endFrameSubscription();
+    };
+    const abort = () => {
+      stop();
+      reject(signal.reason);
+    };
+    const destroyed = () => {
+      stop();
+      reject(new BrowserTabClosedError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    contents.once("destroyed", destroyed);
+    try {
+      // A resized resident guest can paint while capturePage's surface-copy
+      // request remains pending. Subscribe to its rendered frames instead.
+      contents.beginFrameSubscription(false, (image) => {
+        stop();
+        resolve(image);
+      });
+    } catch (error) {
+      stop();
+      reject(error);
+    }
+  });
 }
 
 function getCdpQueue(contentsId: number): CdpSessionQueue {

@@ -1,13 +1,15 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { withUnistyles } from "react-native-unistyles";
+import { RenderProfile } from "@/utils/render-profiler";
 import { createDiffPalette, retainDiffPalette } from "./palette";
 import { DiffSurface } from "./surface";
-import type { DiffDocumentProps, DiffPalette } from "./types";
+import type { DiffDocumentProps, DiffHeaderTypography, DiffPalette } from "./types";
 
 export type { DiffDocumentProps, WorkingDiffMode } from "./types";
 
 type ThemedDiffDocumentProps = DiffDocumentProps & {
   palette: DiffPalette;
+  headerTypography: DiffHeaderTypography;
 };
 
 const EMPTY_PATHS: string[] = [];
@@ -44,8 +46,17 @@ function ThemedDiffDocument(props: ThemedDiffDocumentProps) {
 
 const StyledDiffDocument = withUnistyles(ThemedDiffDocument, (theme) => ({
   palette: createDiffPalette(theme),
+  headerTypography: {
+    family: theme.fontFamily.ui,
+    size: theme.fontSize.base,
+    statSize: theme.fontSize.sm,
+  },
 }));
 
 export function DiffDocument(props: DiffDocumentProps) {
-  return <StyledDiffDocument {...props} />;
+  return (
+    <RenderProfile id="DiffDocument">
+      <StyledDiffDocument {...props} />
+    </RenderProfile>
+  );
 }

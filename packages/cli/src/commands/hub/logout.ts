@@ -28,6 +28,7 @@ interface HubLogoutOptions {
   disconnectDaemon?: boolean;
   force?: boolean;
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   json?: boolean;
 }
 
@@ -53,7 +54,7 @@ export async function runHubLogout(
   let daemonStatus: HubStatus | null = null;
   const shouldInspectDaemon = options.disconnectDaemon === true || mayPrompt;
   if (shouldInspectDaemon) {
-    daemonStatus = await withHubDaemon(dependencies.daemon, options.host, async (daemon) =>
+    daemonStatus = await withHubDaemon(dependencies.daemon, options.daemonTarget, async (daemon) =>
       daemon.getHubStatus().then((response) => response.status),
     );
   }
@@ -72,9 +73,13 @@ export async function runHubLogout(
     options,
     `Disconnecting this daemon from ${active.origin}`,
   );
-  const disconnect = await withHubDaemon(dependencies.daemon, options.host, async (daemon) => {
-    return daemon.disconnectHub(options.force ?? false);
-  });
+  const disconnect = await withHubDaemon(
+    dependencies.daemon,
+    options.daemonTarget,
+    async (daemon) => {
+      return daemon.disconnectHub(options.force ?? false);
+    },
+  );
   dependencies.credentials.logoutActive();
   return logoutResult({
     origin: active.origin,

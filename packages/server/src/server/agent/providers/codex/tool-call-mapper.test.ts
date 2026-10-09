@@ -91,6 +91,24 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("keeps a quoted PowerShell payload intact after removing launch flags", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-wrapper-powershell-quoted-payload",
+        status: "running",
+        command: "powershell.exe -NoProfile -Command \"Get-ChildItem 'C:\\work space'\"",
+        cwd: "C:\\repo",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "shell",
+      command: "Get-ChildItem 'C:\\work space'",
+      cwd: "C:\\repo",
+    });
+  });
+
   it("unwraps cmd wrapper arrays for commandExecution on Windows", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem({
@@ -636,6 +654,29 @@ describe("codex tool-call mapper", () => {
         output: null,
       },
     });
+  });
+
+  it.each([
+    {
+      type: "commandExecution",
+      id: "codex-declined-command",
+      status: "declined",
+      command: "printf ok > /outside/permission.txt",
+      cwd: "/tmp/repo",
+      aggregatedOutput: null,
+      exitCode: null,
+    },
+    {
+      type: "fileChange",
+      id: "codex-declined-patch",
+      status: "declined",
+      changes: [],
+    },
+  ])("settles a declined $type as failed instead of running", (threadItem) => {
+    const item = expectMapped(mapCodexToolCallFromThreadItem(threadItem));
+
+    expect(item.callId).toBe(threadItem.id);
+    expect(item.status).toBe("failed");
   });
 
   it("maps unknown tools to unknown detail with raw payloads", () => {

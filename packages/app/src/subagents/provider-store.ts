@@ -3,22 +3,16 @@ import type {
   ProviderSubagentDescriptorPayload,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { DaemonConnectionError, type DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { create } from "zustand";
 import { applyStreamEvent } from "@/types/stream";
+import {
+  processTimelineResponse,
+  processAgentStreamEvent,
+  type TimelineCursor,
+} from "@/timeline/session-stream-reducers";
 import type { StreamItem } from "@/types/stream";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
-
-type ProviderSubagentTimelineItem = Extract<
-  Extract<SessionOutboundMessage, { type: "agent.provider_subagents.update" }>["payload"],
-  { kind: "timeline" }
->["item"];
-
-interface ProviderSubagentTimelineRow {
-  provider: ProviderSubagentDescriptorPayload["provider"];
-  item: ProviderSubagentTimelineItem;
-  timestamp: string;
-}
 
 export interface ProviderSubagentTimelineState {
   tail: StreamItem[];
@@ -26,13 +20,17 @@ export interface ProviderSubagentTimelineState {
   epoch: string | null;
   lastSeq: number;
   hasOlder: boolean;
-  rows: Map<number, ProviderSubagentTimelineRow>;
+  cursor: TimelineCursor | undefined;
+  needsRefresh: boolean;
 }
 
 interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
+  /** Parents whose list this client asked for, so a resubscribed update feed can catch them up. */
+  trackedParents: Set<string>;
+  trackParent(serverId: string, parentAgentId: string): void;
   hideFromTrack(serverId: string, parentAgentId: string, subagentIds: readonly string[]): void;
   replaceList(
     serverId: string,
@@ -89,6 +87,7 @@ export function refreshProviderSubagents(
   const pending = clientRequests.get(requestKey);
   if (pending) return pending;
 
+  useProviderSubagentStore.getState().trackParent(serverId, parentAgentId);
   const request = client
     .listProviderSubagents(parentAgentId)
     .then((payload) => {
@@ -106,13 +105,35 @@ function parentPrefix(serverId: string, parentAgentId: string): string {
   return `${serverId}\0${parentAgentId}\0`;
 }
 
+/**
+ * Updates are not replayed across a reconnect, so a child that finished or started while the
+ * update feed was down stays stale until its parent is listed again. Call this once the feed has
+ * resubscribed, so every update after the list is delivered.
+ */
+export async function resyncProviderSubagents(
+  client: ProviderSubagentListClient,
+  serverId: string,
+): Promise<void> {
+  const serverPrefix = `${serverId}\0`;
+  const parentAgentIds = [...useProviderSubagentStore.getState().trackedParents]
+    .filter((key) => key.startsWith(serverPrefix))
+    .map((key) => key.slice(serverPrefix.length, -1));
+  await Promise.all(
+    parentAgentIds.map((parentAgentId) =>
+      // A parent that was archived meanwhile has nothing left to catch up.
+      refreshProviderSubagents(client, serverId, parentAgentId).catch(() => undefined),
+    ),
+  );
+}
+
 const EMPTY_TIMELINE: ProviderSubagentTimelineState = {
   tail: [],
   head: [],
   epoch: null,
   lastSeq: 0,
   hasOlder: false,
-  rows: new Map(),
+  cursor: undefined,
+  needsRefresh: false,
 };
 
 function providerSubagentTerminalEvent(
@@ -130,72 +151,35 @@ function providerSubagentTerminalEvent(
   return { type: "turn_completed", provider: subagent.provider };
 }
 
-function buildTimelineState(
-  rows: ProviderSubagentTimelineState["rows"],
-  epoch: string | null,
+function settleTimeline(
+  timeline: ProviderSubagentTimelineState,
   descriptor?: ProviderSubagentDescriptorPayload,
-  hasOlder = false,
 ): ProviderSubagentTimelineState {
-  let timeline = { tail: [] as StreamItem[], head: [] as StreamItem[] };
-  for (const [, row] of [...rows].sort(([left], [right]) => left - right)) {
-    timeline = applyStreamEvent({
-      ...timeline,
-      event: { type: "timeline", provider: row.provider, item: row.item },
-      timestamp: new Date(row.timestamp),
-    });
-  }
-  const terminalEvent = descriptor ? providerSubagentTerminalEvent(descriptor) : null;
-  if (terminalEvent && descriptor) {
-    timeline = applyStreamEvent({
-      ...timeline,
-      event: terminalEvent,
-      timestamp: new Date(descriptor.updatedAt),
-    });
-  }
+  const event = descriptor ? providerSubagentTerminalEvent(descriptor) : null;
+  if (!event || !descriptor) return timeline;
   return {
     ...timeline,
-    epoch,
-    lastSeq: rows.size ? Math.max(...rows.keys()) : 0,
-    hasOlder,
-    rows,
+    ...applyStreamEvent({
+      tail: timeline.tail,
+      head: timeline.head,
+      event,
+      timestamp: new Date(descriptor.updatedAt),
+    }),
   };
-}
-
-function buildTimelineResponseRows(
-  existing: ProviderSubagentTimelineState | undefined,
-  payload: Extract<
-    SessionOutboundMessage,
-    { type: "agent.provider_subagents.timeline.get.response" }
-  >["payload"],
-  provider: ProviderSubagentDescriptorPayload["provider"],
-): ProviderSubagentTimelineState["rows"] {
-  const rows = new Map<number, ProviderSubagentTimelineRow>();
-  for (const row of payload.rows) {
-    rows.set(row.seq, { provider, item: row.item, timestamp: row.timestamp });
-  }
-  if (payload.reset || existing?.epoch !== payload.epoch) {
-    return rows;
-  }
-  if (payload.direction !== "tail") {
-    return new Map([...existing.rows, ...rows]);
-  }
-
-  let nextSeq = payload.rows.length
-    ? Math.max(...payload.rows.map((row) => row.seq)) + 1
-    : payload.window.maxSeq + 1;
-  for (const [seq, row] of [...existing.rows].sort(([left], [right]) => left - right)) {
-    if (seq < nextSeq) continue;
-    if (seq !== nextSeq) break;
-    rows.set(seq, row);
-    nextSeq += 1;
-  }
-  return rows;
 }
 
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
+  trackedParents: new Set(),
+  trackParent(serverId, parentAgentId) {
+    set((state) => {
+      const prefix = parentPrefix(serverId, parentAgentId);
+      if (state.trackedParents.has(prefix)) return state;
+      return { trackedParents: new Set(state.trackedParents).add(prefix) };
+    });
+  },
   hideFromTrack(serverId, parentAgentId, subagentIds) {
     set((state) => {
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
@@ -229,10 +213,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         const current = timelines.get(key);
         const previous = state.descriptors.get(key);
         if (current && previous?.status !== subagent.status) {
-          timelines.set(
-            key,
-            buildTimelineState(current.rows, current.epoch, subagent, current.hasOlder),
-          );
+          timelines.set(key, settleTimeline(current, subagent));
         }
       }
       return { descriptors, timelines, hiddenFromTrack };
@@ -257,10 +238,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         const current = state.timelines.get(key);
         if (current && previous?.status !== payload.subagent.status) {
           timelines = new Map(state.timelines);
-          timelines.set(
-            key,
-            buildTimelineState(current.rows, current.epoch, payload.subagent, current.hasOlder),
-          );
+          timelines.set(key, settleTimeline(current, payload.subagent));
         }
         return { descriptors, timelines, hiddenFromTrack };
       }
@@ -281,30 +259,33 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       if (payload.seq <= current.lastSeq) {
         return state;
       }
-      const rows = new Map(current.rows);
-      rows.set(payload.seq, {
-        provider: payload.provider,
-        item: payload.item,
-        timestamp: payload.timestamp,
-      });
-      const descriptor = state.descriptors.get(key);
-      const next =
-        descriptor && descriptor.status !== "running"
-          ? buildTimelineState(rows, payload.epoch, descriptor, current.hasOlder)
-          : applyStreamEvent({
-              tail: current.tail,
-              head: current.head,
-              event: { type: "timeline", provider: payload.provider, item: payload.item },
-              timestamp: new Date(payload.timestamp),
-            });
-      const timelines = new Map(state.timelines);
-      timelines.set(key, {
-        ...next,
+      const next = processAgentStreamEvent({
+        currentTail: current.tail,
+        currentHead: current.head,
+        currentCursor: current.cursor,
+        hasAuthoritativeBaseline: current.cursor !== undefined,
+        event: { type: "timeline", provider: payload.provider, item: payload.item },
+        timestamp: new Date(payload.timestamp),
+        seq: payload.seq,
         epoch: payload.epoch,
-        lastSeq: payload.seq,
-        hasOlder: current.hasOlder,
-        rows,
       });
+      const timelines = new Map(state.timelines);
+      timelines.set(
+        key,
+        settleTimeline(
+          {
+            tail: next.tail,
+            head: next.head,
+            epoch: payload.epoch,
+            lastSeq: payload.seq,
+            cursor: next.cursor ?? current.cursor,
+            hasOlder: current.hasOlder,
+            needsRefresh:
+              current.needsRefresh || next.sideEffects.some((effect) => effect.type === "catch_up"),
+          },
+          state.descriptors.get(key),
+        ),
+      );
       return { timelines };
     });
   },
@@ -316,11 +297,115 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
     set((state) => {
       const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
       const existing = state.timelines.get(key);
-      const rows = buildTimelineResponseRows(existing, payload, provider);
-      const descriptor = state.descriptors.get(key);
+      const current = existing ?? EMPTY_TIMELINE;
+      // Normalize optional wire metadata at the child timeline boundary. Legacy
+      // notices are complete singleton items; history always comes from a projected host.
+      const entries = payload.rows.map((row) => ({
+        ...row,
+        provider,
+        seqStart: row.seqStart ?? row.seq,
+        seqEnd: row.seqEnd ?? row.seq,
+      }));
+      const result = processTimelineResponse({
+        payload: {
+          ...payload,
+          agentId: payload.subagentId,
+          projection: "projected",
+          startCursor:
+            payload.startCursor ??
+            (entries.length ? { seq: Math.min(...entries.map((entry) => entry.seqStart)) } : null),
+          endCursor:
+            payload.endCursor ??
+            (entries.length ? { seq: Math.max(...entries.map((entry) => entry.seqEnd)) } : null),
+          entries,
+        },
+        currentTail: current.tail,
+        currentHead: current.head,
+        currentCursor: current.cursor,
+        isInitializing: current.cursor === undefined,
+        hasActiveInitDeferred: current.cursor === undefined,
+        initRequestDirection: "tail",
+        sendingClientMessageIds: [],
+      });
       const timelines = new Map(state.timelines);
-      timelines.set(key, buildTimelineState(rows, payload.epoch, descriptor, payload.hasOlder));
+      timelines.set(
+        key,
+        settleTimeline(
+          {
+            tail: result.tail,
+            head: result.head,
+            epoch: payload.epoch,
+            lastSeq:
+              payload.reset || current.epoch !== payload.epoch
+                ? (result.cursor?.endSeq ?? 0)
+                : Math.max(current.lastSeq, result.cursor?.endSeq ?? 0),
+            cursor: result.cursor ?? undefined,
+            hasOlder:
+              result.older === "unchanged" ? current.hasOlder : result.older === "available",
+            needsRefresh:
+              result.sideEffects.some((effect) => effect.type === "catch_up") &&
+              (payload.hasNewer || current.lastSeq > (result.cursor?.endSeq ?? 0)),
+          },
+          state.descriptors.get(key),
+        ),
+      );
       return { timelines };
     });
   },
 }));
+
+/** Owns child history bootstrap and recovery while a pane observes the child. */
+export function observeProviderSubagentTimeline({
+  client,
+  serverId,
+  parentAgentId,
+  subagentId,
+  limit,
+  reportError,
+}: {
+  client: Pick<DaemonClient, "fetchProviderSubagentTimeline">;
+  serverId: string;
+  parentAgentId: string;
+  subagentId: string;
+  limit: number;
+  reportError: (error: unknown) => void;
+}): () => void {
+  const key = providerSubagentKey(serverId, parentAgentId, subagentId);
+  let active = true;
+  let fetching = false;
+  const refresh = async () => {
+    if (!active || fetching) return;
+    fetching = true;
+    let succeeded = false;
+    try {
+      const payload = await client.fetchProviderSubagentTimeline(parentAgentId, subagentId, {
+        direction: "tail",
+        limit,
+      });
+      if (active) useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
+      succeeded = true;
+    } catch (error) {
+      // A later stream update or reopening the pane retries a disconnected read.
+      if (!(error instanceof DaemonConnectionError)) throw error;
+    } finally {
+      fetching = false;
+      if (
+        succeeded &&
+        active &&
+        useProviderSubagentStore.getState().timelines.get(key)?.needsRefresh
+      )
+        requestRefresh();
+    }
+  };
+  const requestRefresh = () => {
+    void refresh().catch(reportError);
+  };
+  const unsubscribe = useProviderSubagentStore.subscribe((state) => {
+    if (state.timelines.get(key)?.needsRefresh) requestRefresh();
+  });
+  requestRefresh();
+  return () => {
+    active = false;
+    unsubscribe();
+  };
+}

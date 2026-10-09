@@ -1,8 +1,6 @@
 import type { Command } from "commander";
-import { homedir } from "node:os";
-import { basename, join, sep } from "node:path";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { basename } from "node:path";
+import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
 /** Worktree list item for display */
@@ -27,19 +25,6 @@ function extractWorktreeName(path: string): string {
   return basename(path);
 }
 
-export function resolvePaseoHomePath(): string {
-  return process.env.PASEO_HOME ?? join(homedir(), ".paseo");
-}
-
-export function resolvePaseoWorktreesDir(): string {
-  return join(resolvePaseoHomePath(), "worktrees");
-}
-
-function isAgentInManagedWorktree(agentCwd: string): boolean {
-  const worktreesDir = resolvePaseoWorktreesDir();
-  return agentCwd === worktreesDir || agentCwd.startsWith(worktreesDir + sep);
-}
-
 /** Schema for worktree ls output */
 export const worktreeLsSchema: OutputSchema<WorktreeListItem> = {
   idField: "name",
@@ -61,20 +46,7 @@ export async function runLsCommand(
   options: WorktreeLsOptions,
   _command: Command,
 ): Promise<WorktreeLsResult> {
-  const host = getDaemonHost({ host: options.host });
-
-  let client: DaemonClient;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
-    };
-    throw error;
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
@@ -96,9 +68,7 @@ export async function runLsCommand(
     // Build a map of worktree paths to agent IDs
     const worktreeAgentMap = new Map<string, string>();
     for (const agent of agents) {
-      if (isAgentInManagedWorktree(agent.cwd)) {
-        worktreeAgentMap.set(agent.cwd, agent.id.slice(0, 7));
-      }
+      worktreeAgentMap.set(agent.cwd, agent.id.slice(0, 7));
     }
 
     const items: WorktreeListItem[] = response.worktrees.map((wt) => ({

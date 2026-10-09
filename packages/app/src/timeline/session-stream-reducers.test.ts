@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   createUserMessage,
   hydrateStreamState,
@@ -22,17 +23,23 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+type TimelineResponseEntry = ProcessTimelineResponseInput["payload"]["entries"][number];
+
 function makeTimelineEntry(
   seq: number,
   text: string,
-  type: string = "assistant_message",
+  type: "assistant_message" | "user_message" | "reasoning" = "assistant_message",
   seqEnd = seq,
-) {
+): TimelineResponseEntry {
+  let item: AgentTimelineItem;
+  if (type === "assistant_message") item = { type, text };
+  else if (type === "user_message") item = { type, text };
+  else item = { type, text };
   return {
     seqStart: seq,
     seqEnd,
     provider: "claude",
-    item: { type, text },
+    item,
     timestamp: new Date(1000 + seq).toISOString(),
   };
 }
@@ -41,8 +48,9 @@ function makeToolCallTimelineEntry(
   seq: number,
   callId: string,
   status: "running" | "completed",
-  detail: Record<string, unknown>,
-) {
+  detail: ToolCallDetail,
+  turnId?: string,
+): TimelineResponseEntry {
   return {
     seqStart: seq,
     seqEnd: seq,
@@ -54,6 +62,24 @@ function makeToolCallTimelineEntry(
       status,
       detail,
       error: null,
+    },
+    ...(turnId ? { turnId } : {}),
+    timestamp: new Date(1000 + seq).toISOString(),
+  };
+}
+
+function makePluginTimelineEntry(seq: number, status: string): TimelineResponseEntry {
+  return {
+    seqStart: seq,
+    seqEnd: seq,
+    provider: "claude",
+    item: {
+      type: "plugin" as const,
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status },
     },
     timestamp: new Date(1000 + seq).toISOString(),
   };
@@ -1875,14 +1901,14 @@ describe("processTimelineResponse", () => {
     expect(assistants[0]).toMatchObject({ text: "Hello", messageId: "answer-1" });
   });
 
-  it("replaces every promoted assistant block when reconciling a projected message", () => {
+  it("replaces the whole live assistant message when reconciling projected history", () => {
     const live = processAgentStreamEvents({
       events: [makeStreamReducerEvent(makeAssistantTimelineEvent("First paragraph.\n\nSec"), 2)],
       currentTail: [],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
     });
-    expect(getAssistantTexts(live.tail)).toHaveLength(1);
+    expect(getAssistantTexts(live.tail)).toHaveLength(0);
     expect(getAssistantTexts(live.head)).toHaveLength(1);
 
     const result = processTimelineResponse({
@@ -2147,7 +2173,7 @@ describe("processTimelineResponse", () => {
       [...result.tail, ...result.head]
         .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
         .map((item) => item.text),
-    ).toEqual(["New prompt", "First paragraph.", "Second paragraph", "Missed answer"]);
+    ).toEqual(["New prompt", "First paragraph.\n\nSecond paragraph", "Missed answer"]);
   });
 
   it("does not move a prompt or its live answer around catch-up tool history", () => {
@@ -2185,7 +2211,6 @@ describe("processTimelineResponse", () => {
 
     expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
       "user_message",
-      "assistant_message",
       "assistant_message",
       "tool_call",
     ]);
@@ -2751,7 +2776,7 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
   });
 
-  it("keeps live assistant blocks ordered when merging a disjoint prompt-jump window", () => {
+  it("keeps whole live assistant messages ordered when merging a disjoint prompt-jump window", () => {
     const live = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(
@@ -2766,8 +2791,7 @@ describe("processTimelineResponse", () => {
       currentCursor: undefined,
     });
     expect(getAssistantTexts([...live.tail, ...live.head])).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
 
     const result = processTimelineResponse({
@@ -2789,8 +2813,7 @@ describe("processTimelineResponse", () => {
     });
 
     expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
   });
 
@@ -3173,12 +3196,14 @@ describe("processTimelineResponse", () => {
 
   it("coalesces tool call lifecycle rows across the older-page prepend boundary", () => {
     const callId = "toolu_boundary";
+    const turnId = "turn-boundary";
     const currentTail = hydrateStreamState(
       [
         {
           event: {
             type: "timeline",
             provider: "claude",
+            turnId,
             item: makeToolCallTimelineEntry(3, callId, "completed", {
               type: "read",
               filePath: "/tmp/example.ts",
@@ -3206,11 +3231,17 @@ describe("processTimelineResponse", () => {
         startCursor: { seq: 1 },
         endCursor: { seq: 2 },
         entries: [
-          makeToolCallTimelineEntry(1, callId, "running", {
-            type: "unknown",
-            input: { file_path: "/tmp/example.ts" },
-            output: null,
-          }),
+          makeToolCallTimelineEntry(
+            1,
+            callId,
+            "running",
+            {
+              type: "unknown",
+              input: { file_path: "/tmp/example.ts" },
+              output: null,
+            },
+            turnId,
+          ),
         ],
       },
     });
@@ -3225,12 +3256,49 @@ describe("processTimelineResponse", () => {
       })),
     ).toEqual([
       {
-        id: `agent_tool_${callId}`,
+        id: `agent_tool_turn:${turnId}/${callId}`,
         callId,
         status: "completed",
         detailType: "read",
       },
     ]);
+  });
+
+  it("keeps the newest plugin row across the older-page prepend boundary", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makePluginTimelineEntry(3, "complete").item,
+          },
+          timestamp: new Date(3000),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 5 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [makePluginTimelineEntry(1, "running")],
+      },
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      data: { status: "complete" },
+    });
   });
 
   it("removes a reconciled submitted prompt before coalescing a tool call at the pagination seam", () => {
@@ -3297,6 +3365,8 @@ describe("processTimelineResponse", () => {
 
   it("does not coalesce tool call lifecycle rows away from the prepend boundary", () => {
     const callId = "toolu_not_boundary";
+    const olderTurnId = "autonomous-turn-1";
+    const currentTurnId = "autonomous-turn-2";
     const currentTail = hydrateStreamState(
       [
         {
@@ -3307,6 +3377,7 @@ describe("processTimelineResponse", () => {
           event: {
             type: "timeline",
             provider: "claude",
+            turnId: currentTurnId,
             item: makeToolCallTimelineEntry(4, callId, "completed", {
               type: "read",
               filePath: "/tmp/example.ts",
@@ -3334,11 +3405,17 @@ describe("processTimelineResponse", () => {
         startCursor: { seq: 1 },
         endCursor: { seq: 2 },
         entries: [
-          makeToolCallTimelineEntry(1, callId, "running", {
-            type: "unknown",
-            input: { file_path: "/tmp/example.ts" },
-            output: null,
-          }),
+          makeToolCallTimelineEntry(
+            1,
+            callId,
+            "running",
+            {
+              type: "unknown",
+              input: { file_path: "/tmp/example.ts" },
+              output: null,
+            },
+            olderTurnId,
+          ),
           makeTimelineEntry(2, "older chunk "),
         ],
       },
@@ -3354,7 +3431,7 @@ describe("processTimelineResponse", () => {
     ).toEqual([
       {
         kind: "tool_call",
-        id: `agent_tool_${callId}`,
+        id: `agent_tool_turn:${olderTurnId}/${callId}`,
         status: "running",
         text: null,
       },
@@ -3366,7 +3443,7 @@ describe("processTimelineResponse", () => {
       },
       {
         kind: "tool_call",
-        id: `agent_tool_${callId}`,
+        id: `agent_tool_turn:${currentTurnId}/${callId}`,
         status: "completed",
         text: null,
       },
@@ -3900,7 +3977,7 @@ describe("processAgentStreamEvents", () => {
     expect(getAssistantTexts(result.head)).toEqual(["Identified"]);
   });
 
-  it("keeps a promoted live image block identity when the turn completes", () => {
+  it("keeps the whole live message identity when the turn completes", () => {
     const imageMarkdown = "![Architecture](docs/architecture.png)";
     const streaming = processAgentStreamEvents({
       events: [
@@ -3912,9 +3989,11 @@ describe("processAgentStreamEvents", () => {
       currentCursor: undefined,
     });
 
-    expect([streaming.changedTail, streaming.changedHead]).toEqual([true, true]);
-    expect(getAssistantTexts(streaming.tail)).toEqual(["Introductory paragraph"]);
-    expect(getAssistantTexts(streaming.head)).toEqual([imageMarkdown]);
+    expect([streaming.changedTail, streaming.changedHead]).toEqual([false, true]);
+    expect(getAssistantTexts(streaming.tail)).toEqual([]);
+    expect(getAssistantTexts(streaming.head)).toEqual([
+      `Introductory paragraph\n\n${imageMarkdown}`,
+    ]);
     const liveImageId = streaming.head[0]?.id;
 
     const completed = processAgentStreamEvent({
@@ -3929,13 +4008,12 @@ describe("processAgentStreamEvents", () => {
         item.kind === "assistant_message",
     );
     expect(assistantBlocks.map((item) => [item.id, item.text])).toEqual([
-      [streaming.tail[0]?.id, "Introductory paragraph"],
-      [liveImageId, imageMarkdown],
+      [liveImageId, `Introductory paragraph\n\n${imageMarkdown}`],
     ]);
     expect(assistantBlocks.filter((item) => item.id === liveImageId)).toHaveLength(1);
   });
 
-  it("preserves a live block trailing newline after promoting completed markdown blocks", () => {
+  it("preserves all newlines in the accumulated live message", () => {
     const result = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(
@@ -3952,21 +4030,17 @@ describe("processAgentStreamEvents", () => {
       currentCursor: undefined,
     });
 
-    expect(result.changedTail).toBe(true);
+    expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(true);
-    expect(result.tail).toHaveLength(1);
-    expect(result.tail[0]).toMatchObject({
-      kind: "assistant_message",
-      text: "Done. I added `[TimelineMerge] ...` logging around the suspicious merge/reconcile paths.",
-    });
+    expect(result.tail).toHaveLength(0);
     expect(result.head).toHaveLength(1);
     expect(result.head[0]).toMatchObject({
       kind: "assistant_message",
-      text: "Changed:\n- [timeline-debug.ts]",
+      text: "Done. I added `[TimelineMerge] ...` logging around the suspicious merge/reconcile paths.\n\nChanged:\n- [timeline-debug.ts]",
     });
   });
 
-  it("does not promote a markdown block that is still inside an open code fence", () => {
+  it("preserves an open code fence in the whole source message", () => {
     const result = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(makeTimelineEvent("Before fence\n\n```ts\nconst a = 1;"), 1),
@@ -3977,16 +4051,12 @@ describe("processAgentStreamEvents", () => {
       currentCursor: undefined,
     });
 
-    expect(result.changedTail).toBe(true);
-    expect(result.tail).toHaveLength(1);
-    expect(result.tail[0]).toMatchObject({
-      kind: "assistant_message",
-      text: "Before fence",
-    });
+    expect(result.changedTail).toBe(false);
+    expect(result.tail).toHaveLength(0);
     expect(result.head).toHaveLength(1);
     expect(result.head[0]).toMatchObject({
       kind: "assistant_message",
-      text: "```ts\nconst a = 1;\n\nconst b = 2;",
+      text: "Before fence\n\n```ts\nconst a = 1;\n\nconst b = 2;",
     });
   });
 
@@ -4095,8 +4165,7 @@ describe("processAgentStreamEvents", () => {
     expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
       "ABC",
       imageMarkdown,
-      "D",
-      "E",
+      "D\n\nE",
     ]);
   });
 

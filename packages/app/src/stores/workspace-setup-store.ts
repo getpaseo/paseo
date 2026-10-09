@@ -1,3 +1,5 @@
+import { createNameId } from "mnemonic-id";
+import { generateDraftId } from "@/stores/draft-keys";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -34,15 +36,19 @@ export function shouldShowWorkspaceSetup(snapshot: WorkspaceSetupSnapshot | null
   if (!snapshot) {
     return false;
   }
-  return snapshot.error !== null || snapshot.detail.commands.length > 0;
+  return (
+    snapshot.status === "blocked" || snapshot.error !== null || snapshot.detail.commands.length > 0
+  );
 }
 
 export function shouldSeedWorkspaceSetupTab(snapshot: WorkspaceSetupSnapshot | null): boolean {
-  return snapshot?.status === "failed";
+  return snapshot?.status === "failed" || snapshot?.status === "blocked";
 }
 
 interface WorkspaceSetupStoreState {
-  pendingWorkspaceSetup: PendingWorkspaceSetup | null;
+  pendingWorkspaceSetup:
+    | (PendingWorkspaceSetup & { creationId: string; worktreeSlug: string })
+    | null;
   snapshots: Record<string, WorkspaceSetupSnapshot>;
   requestedKeys: Set<string>;
   surfacedFailedSetupKeys: Set<string>;
@@ -69,7 +75,13 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
   requestedKeys: new Set(),
   surfacedFailedSetupKeys: new Set(),
   beginWorkspaceSetup: (value) => {
-    set({ pendingWorkspaceSetup: value });
+    set({
+      pendingWorkspaceSetup: {
+        ...value,
+        creationId: generateDraftId(),
+        worktreeSlug: createNameId(),
+      },
+    });
   },
   clearWorkspaceSetup: () => {
     set({ pendingWorkspaceSetup: null });
@@ -82,7 +94,7 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
 
     set((state) => {
       const surfacedFailedSetupKeys = new Set(state.surfacedFailedSetupKeys);
-      if (payload.status !== "failed") {
+      if (payload.status !== "failed" && payload.status !== "blocked") {
         surfacedFailedSetupKeys.delete(key);
       }
       return {
@@ -105,7 +117,10 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
 
     let claimed = false;
     set((state) => {
-      if (state.snapshots[key]?.status !== "failed" || state.surfacedFailedSetupKeys.has(key)) {
+      if (
+        !["failed", "blocked"].includes(state.snapshots[key]?.status ?? "") ||
+        state.surfacedFailedSetupKeys.has(key)
+      ) {
         return state;
       }
       claimed = true;

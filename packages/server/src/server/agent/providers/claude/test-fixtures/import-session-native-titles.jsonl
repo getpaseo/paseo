@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"Review this project"},"cwd":"/tmp/paseo-claude-native-title","sessionId":"native-title-session"}
+{"type":"ai-title","aiTitle":"Initial generated title","sessionId":"native-title-session"}
+{"parentUuid":null,"message":{"role":"user","content":"Focus on the import flow"},"type" : "user","cwd":"/tmp/paseo-claude-native-title","sessionId":"native-title-session"}
+{"type":"ai-title","aiTitle":"Latest generated title","sessionId":"native-title-session"}
+{"type":"custom-title","customTitle":"First custom title","sessionId":"native-title-session"}
+{"type":"custom-title","customTitle":"My research session","sessionId":"native-title-session"}

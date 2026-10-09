@@ -1,16 +1,37 @@
 import {
   ClipOp,
+  PaintStyle,
   Skia,
+  StrokeCap,
+  StrokeJoin,
   type SkCanvas,
   type SkPaint,
   type SkPicture,
 } from "@shopify/react-native-skia";
+import {
+  DIFF_FILE_HEADER_CONTENT_HEIGHT,
+  DIFF_FILE_HEADER_HEIGHT,
+  DIFF_FILE_HEADER_ICON_SIZE,
+  DIFF_FILE_HEADER_LEFT,
+  DIFF_FILE_HEADER_RIGHT,
+  DIFF_FILE_HEADER_TEXT_GAP,
+  allocateDiffHeaderTextWidths,
+  diffFileChangeKind,
+  directorySuffix,
+  fileNameForPath,
+  formatDiffCount,
+} from "@/git/file-header-presentation";
 import { DIFF_BODY_BORDER_HEIGHT, expandedBodyBorderTop, visibleRowRange } from "./model";
 import { nativeTextRuns } from "./native-text-runs";
 import { horizontalOffsetForPath, type DiffHorizontalOffsets } from "./horizontal-offsets";
 import { codeLineNumberTone } from "./palette";
 import { reviewBackgroundPaint, reviewDividerHeight, reviewGapTop } from "./review-paint";
-import type { NativeTextLayout } from "./text.native";
+import {
+  shapeNativeHeaderText,
+  type NativeHeaderTextLayout,
+  type NativeShapedHeaderText,
+  type NativeTextLayout,
+} from "./text.native";
 import type {
   DiffCell,
   DiffDocumentModel,
@@ -31,6 +52,10 @@ export interface NativePaints {
   additionBackground: SkPaint;
   deletionBackground: SkPaint;
   headerSurface: SkPaint;
+  headerBorder: SkPaint;
+  statusSuccess: SkPaint;
+  statusDanger: SkPaint;
+  statusWarning: SkPaint;
   emptyBackground: SkPaint;
   text: Record<string, SkPaint>;
 }
@@ -46,6 +71,10 @@ export function createNativePaints(palette: DiffPalette): NativePaints {
     additionBackground: paint(palette.additionBackground),
     deletionBackground: paint(palette.deletionBackground),
     headerSurface: paint(palette.headerSurface),
+    headerBorder: paint(palette.headerBorder),
+    statusSuccess: paint(palette.statusSuccess),
+    statusDanger: paint(palette.statusDanger),
+    statusWarning: paint(palette.statusWarning),
     emptyBackground: paint(palette.emptyBackground),
     text: Object.fromEntries(
       [
@@ -53,6 +82,156 @@ export function createNativePaints(palette: DiffPalette): NativePaints {
       ].map((color) => [color, paint(color)]),
     ),
   };
+}
+
+export function recordNativeHeaderPicture(input: {
+  file: DiffFileSection;
+  viewportWidth: number;
+  textLayout: NativeHeaderTextLayout;
+  paints: NativePaints;
+}): SkPicture {
+  const recorder = Skia.PictureRecorder();
+  const canvas = recorder.beginRecording(
+    Skia.XYWHRect(0, 0, input.viewportWidth, DIFF_FILE_HEADER_HEIGHT),
+  );
+  canvas.drawRect(
+    Skia.XYWHRect(0, DIFF_FILE_HEADER_HEIGHT - 1, input.viewportWidth, 1),
+    input.paints.headerBorder,
+  );
+  const iconX = input.viewportWidth - DIFF_FILE_HEADER_RIGHT - DIFF_FILE_HEADER_ICON_SIZE;
+  const additions = `+${formatDiffCount(input.file.file.additions)}`;
+  const deletions = `-${formatDiffCount(input.file.file.deletions)}`;
+  const additionsText = shapeNativeHeaderText({
+    layout: input.textLayout,
+    text: additions,
+    size: "stat",
+    tone: "statusSuccess",
+  });
+  const deletionsText = shapeNativeHeaderText({
+    layout: input.textLayout,
+    text: deletions,
+    size: "stat",
+    tone: "statusDanger",
+  });
+  const statX = iconX - 8 - additionsText.width - 4 - deletionsText.width;
+  paintNativeHeaderText(canvas, additionsText, statX);
+  paintNativeHeaderText(canvas, deletionsText, statX + additionsText.width + 4);
+  paintNativeChangeIcon(
+    canvas,
+    input.file,
+    iconX,
+    (DIFF_FILE_HEADER_CONTENT_HEIGHT - DIFF_FILE_HEADER_ICON_SIZE) / 2,
+    input.paints,
+  );
+
+  const available = Math.max(0, statX - DIFF_FILE_HEADER_LEFT);
+  const name = fileNameForPath(input.file.path);
+  const directory = directorySuffix(input.file.path).trimStart();
+  const fitted = fitNativeHeaderText(input.textLayout, name, directory, available);
+  canvas.save();
+  canvas.clipRect(
+    Skia.XYWHRect(DIFF_FILE_HEADER_LEFT, 0, available, DIFF_FILE_HEADER_CONTENT_HEIGHT),
+    ClipOp.Intersect,
+    false,
+  );
+  paintNativeHeaderText(canvas, fitted.name, DIFF_FILE_HEADER_LEFT);
+  if (fitted.directory.width > 0) {
+    paintNativeHeaderText(
+      canvas,
+      fitted.directory,
+      DIFF_FILE_HEADER_LEFT + fitted.name.width + DIFF_FILE_HEADER_TEXT_GAP,
+    );
+  }
+  canvas.restore();
+  const picture = recorder.finishRecordingAsPicture();
+  additionsText.paragraph.dispose();
+  deletionsText.paragraph.dispose();
+  fitted.name.paragraph.dispose();
+  fitted.directory.paragraph.dispose();
+  return picture;
+}
+
+function paintNativeHeaderText(canvas: SkCanvas, text: NativeShapedHeaderText, x: number): void {
+  text.paragraph.paint(canvas, x, (DIFF_FILE_HEADER_CONTENT_HEIGHT - text.height) / 2);
+}
+
+function fitNativeHeaderText(
+  layout: NativeHeaderTextLayout,
+  name: string,
+  directory: string,
+  available: number,
+): { name: NativeShapedHeaderText; directory: NativeShapedHeaderText } {
+  let nameText = shapeNativeHeaderText({ layout, text: name, size: "body", tone: "foreground" });
+  let directoryText = shapeNativeHeaderText({
+    layout,
+    text: directory,
+    size: "body",
+    tone: "foregroundMuted",
+  });
+  if (nameText.width + (directory ? 4 + directoryText.width : 0) <= available) {
+    return { name: nameText, directory: directoryText };
+  }
+
+  const widths = allocateDiffHeaderTextWidths({
+    available,
+    nameWidth: nameText.width,
+    directoryWidth: directoryText.width,
+  });
+  if (widths.name < nameText.width) {
+    nameText.paragraph.dispose();
+    nameText = shapeNativeHeaderText({
+      layout,
+      text: name,
+      size: "body",
+      tone: "foreground",
+      maximumWidth: widths.name,
+    });
+  }
+  directoryText.paragraph.dispose();
+  directoryText = shapeNativeHeaderText({
+    layout,
+    text: widths.directory > 0 ? directory : "",
+    size: "body",
+    tone: "foregroundMuted",
+    maximumWidth: widths.directory,
+  });
+  return { name: nameText, directory: directoryText };
+}
+
+function paintNativeChangeIcon(
+  canvas: SkCanvas,
+  file: DiffFileSection,
+  x: number,
+  y: number,
+  paints: NativePaints,
+): void {
+  const change = diffFileChangeKind(file.file);
+  let source = paints.statusWarning;
+  if (change === "added") source = paints.statusSuccess;
+  else if (change === "deleted") source = paints.statusDanger;
+  const stroke = source.copy();
+  stroke.setStyle(PaintStyle.Stroke);
+  stroke.setStrokeWidth(DIFF_FILE_HEADER_ICON_SIZE / 12);
+  stroke.setStrokeCap(StrokeCap.Round);
+  stroke.setStrokeJoin(StrokeJoin.Round);
+  const scale = DIFF_FILE_HEADER_ICON_SIZE / 24;
+  canvas.drawRRect(
+    Skia.RRectXY(
+      Skia.XYWHRect(x + 3 * scale, y + 3 * scale, 18 * scale, 18 * scale),
+      2 * scale,
+      2 * scale,
+    ),
+    stroke,
+  );
+  if (change === "added") {
+    canvas.drawLine(x + 8 * scale, y + 12 * scale, x + 16 * scale, y + 12 * scale, stroke);
+    canvas.drawLine(x + 12 * scale, y + 8 * scale, x + 12 * scale, y + 16 * scale, stroke);
+  } else if (change === "deleted") {
+    canvas.drawLine(x + 8 * scale, y + 12 * scale, x + 16 * scale, y + 12 * scale, stroke);
+  } else {
+    canvas.drawCircle(x + 12 * scale, y + 12 * scale, scale, stroke);
+  }
+  stroke.dispose();
 }
 
 function paint(color: string): SkPaint {

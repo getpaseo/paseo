@@ -25,14 +25,13 @@ import {
 //
 // The sentinel becomes `$0` (a positional shell parameter, not string
 // interpolation into the script source), so the prompt reaches the process
-// exactly as typed with no injection risk. `sleep` keeps the terminal alive
-// long enough for the UI to attach and render the output before it exits —
-// a bare `echo` exits before the frontend subscribes to its output.
+// exactly as typed with no injection risk. `cat` waits for input until project
+// cleanup kills the terminal, so attachment does not race a fixed process lifetime.
 const PROMPT_PROFILE: TerminalProfile = {
   id: "e2e-echo-prompt",
   name: "Echo Prompt",
   command: "/bin/sh",
-  args: ["-c", 'echo captured: "$0"; sleep 10', "{{{prompt}}}"],
+  args: ["-c", 'echo captured: "$0"; exec cat', "{{{prompt}}}"],
 };
 
 // No sentinel anywhere: takes no prompt, composer goes read-only.
@@ -40,7 +39,7 @@ const BARE_PROFILE: TerminalProfile = {
   id: "e2e-echo-bare",
   name: "Bare Echo",
   command: "/bin/sh",
-  args: ["-c", "echo bare-launch-static-line; sleep 10"],
+  args: ["-c", "echo bare-launch-static-line; exec cat"],
 };
 
 test.describe("New workspace: launching a terminal", () => {
@@ -88,7 +87,7 @@ test.describe("New workspace: launching a terminal", () => {
       });
       await selectLaunchOption(page, BARE_PROFILE.id);
       await expect(terminalPromptInput(page)).toHaveCount(0);
-      await expectTerminalPreviewCommand(page, "/bin/sh -c echo bare-launch-static-line; sleep 10");
+      await expectTerminalPreviewCommand(page, "/bin/sh -c echo bare-launch-static-line; exec cat");
       await expect(terminalLaunchSubmit(page)).toHaveText("Launch");
     });
 

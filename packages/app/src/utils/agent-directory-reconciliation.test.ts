@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import type { Agent } from "@/stores/session-store";
 import { reconcileAgentDirectory } from "./agent-directory-reconciliation";
 
 function snapshot(id: string, status: AgentSnapshotPayload["status"]): AgentSnapshotPayload {
@@ -50,28 +49,9 @@ function entry(id: string, status: AgentSnapshotPayload["status"]): FetchAgentsE
   };
 }
 
-function replica(id: string, status: Agent["status"]): Agent {
-  return {
-    ...snapshot(id, status),
-    activeTurn: null,
-    serverId: "server",
-    createdAt: new Date("2026-07-12T10:00:00.000Z"),
-    updatedAt: new Date("2026-07-12T10:00:00.000Z"),
-    lastActivityAt: new Date("2026-07-12T10:00:00.000Z"),
-    lastUserMessageAt: null,
-    attentionTimestamp: null,
-    archivedAt: null,
-    parentAgentId: null,
-  };
-}
-
 describe("agent directory reconciliation", () => {
-  it("reports snapshot-only and buffered running transitions exactly once", () => {
+  it("preserves snapshot and buffered protocol status without interpreting liveness", () => {
     const result = reconcileAgentDirectory({
-      previous: new Map([
-        ["snapshot", replica("snapshot", "running")],
-        ["buffered", replica("buffered", "running")],
-      ]),
       snapshot: [entry("snapshot", "idle"), entry("buffered", "running")],
       deltas: [
         {
@@ -87,8 +67,7 @@ describe("agent directory reconciliation", () => {
       ],
     });
 
-    expect(result.stoppedRunningAgentIds).toEqual(["snapshot", "buffered"]);
-    expect(result.entries.map(({ agent }) => [agent.id, agent.status])).toEqual([
+    expect(result.map(({ agent }) => [agent.id, agent.status])).toEqual([
       ["snapshot", "idle"],
       ["buffered", "idle"],
     ]);
@@ -96,7 +75,6 @@ describe("agent directory reconciliation", () => {
 
   it("preserves ordered upserts and removals received after page one", () => {
     const result = reconcileAgentDirectory({
-      previous: new Map(),
       snapshot: [entry("updated", "idle"), entry("removed", "idle")],
       deltas: [
         {
@@ -108,9 +86,7 @@ describe("agent directory reconciliation", () => {
       ],
     });
 
-    expect(result.entries.map(({ agent }) => [agent.id, agent.title])).toEqual([
-      ["updated", "live"],
-    ]);
+    expect(result.map(({ agent }) => [agent.id, agent.title])).toEqual([["updated", "live"]]);
   });
 
   it("keeps newer page metadata when a stale buffered upsert arrives", () => {
@@ -120,7 +96,6 @@ describe("agent directory reconciliation", () => {
       projectName: "stale project",
     };
     const result = reconcileAgentDirectory({
-      previous: new Map([["agent", replica("agent", "running")]]),
       snapshot: [
         {
           ...entry("agent", "running"),
@@ -145,16 +120,14 @@ describe("agent directory reconciliation", () => {
     });
 
     expect({
-      title: result.entries[0]?.agent.title,
-      status: result.entries[0]?.agent.status,
-      projectName: result.entries[0]?.project.projectName,
-      stopped: result.stoppedRunningAgentIds,
-    }).toEqual({ title: "newer page", status: "running", projectName: "repo", stopped: [] });
+      title: result[0]?.agent.title,
+      status: result[0]?.agent.status,
+      projectName: result[0]?.project.projectName,
+    }).toEqual({ title: "newer page", status: "running", projectName: "repo" });
   });
 
   it("clears a snapshot stop when a newer buffered upsert is running", () => {
     const result = reconcileAgentDirectory({
-      previous: new Map([["agent", replica("agent", "running")]]),
       snapshot: [entry("agent", "idle")],
       deltas: [
         {
@@ -168,13 +141,11 @@ describe("agent directory reconciliation", () => {
       ],
     });
 
-    expect(result.entries[0]?.agent.status).toBe("running");
-    expect(result.stoppedRunningAgentIds).toEqual([]);
+    expect(result[0]?.agent.status).toBe("running");
   });
 
   it("accepts usage from a stale buffered upsert without regressing metadata", () => {
     const result = reconcileAgentDirectory({
-      previous: new Map(),
       snapshot: [
         {
           ...entry("agent", "idle"),
@@ -201,9 +172,9 @@ describe("agent directory reconciliation", () => {
     });
 
     expect({
-      title: result.entries[0]?.agent.title,
-      status: result.entries[0]?.agent.status,
-      usage: result.entries[0]?.agent.lastUsage,
+      title: result[0]?.agent.title,
+      status: result[0]?.agent.status,
+      usage: result[0]?.agent.lastUsage,
     }).toEqual({
       title: "newer page",
       status: "idle",
@@ -213,7 +184,6 @@ describe("agent directory reconciliation", () => {
 
   it("preserves usage when a stale buffered upsert omits it", () => {
     const result = reconcileAgentDirectory({
-      previous: new Map(),
       snapshot: [
         {
           ...entry("agent", "idle"),
@@ -236,6 +206,6 @@ describe("agent directory reconciliation", () => {
       ],
     });
 
-    expect(result.entries[0]?.agent.lastUsage).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(result[0]?.agent.lastUsage).toEqual({ inputTokens: 10, outputTokens: 5 });
   });
 });

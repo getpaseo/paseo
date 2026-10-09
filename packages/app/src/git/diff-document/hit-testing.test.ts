@@ -4,6 +4,8 @@ import {
   characterOffsetAtPoint,
   hitTestDiffDocument,
   orderedSelection,
+  selectAllSource,
+  selectCellSource,
   selectedSourceText,
 } from "./hit-testing";
 import { buildDiffDocumentModel } from "./model";
@@ -104,6 +106,64 @@ describe("diff hit testing", () => {
       }),
     ).toBeNull();
   });
+
+  it("selects one source line for context-menu copy", () => {
+    const model = buildModel("copy this", { wrapLines: false });
+    const cell = changedCell(model);
+
+    expect(selectedSourceText(model, selectCellSource(model, position(model, cell, 4)))).toBe(
+      "copy this",
+    );
+  });
+
+  it("selects all diff source in document order", () => {
+    const model = buildModel("first", { wrapLines: false });
+
+    expect(selectedSourceText(model, selectAllSource(model)!)).toBe("@@ -1,0 +1,2 @@\nfirst\ntail");
+  });
+
+  it("selects all source from one split side without interleaving panes", () => {
+    const model = buildModel("unused", { files: [splitFile()], layout: "split" });
+    const changedRow = model.rows.find(
+      (row) => row.kind === "line" && row.cells.length === 2 && row.cells.every(Boolean),
+    );
+    expect(changedRow?.kind).toBe("line");
+
+    const left = changedRow!.kind === "line" ? changedRow!.cells[0]! : null;
+    const right = changedRow!.kind === "line" ? changedRow!.cells[1]! : null;
+    expect(selectedSourceText(model, selectAllSource(model, position(model, left!, 0))!)).toBe(
+      "@@ -1,2 +1,2 @@\nold-one\nold-two",
+    );
+    expect(selectedSourceText(model, selectAllSource(model, position(model, right!, 0))!)).toBe(
+      "new-one\nnew-two",
+    );
+  });
+
+  it("defaults split hunk-header select-all to the new pane", () => {
+    const model = buildModel("unused", { files: [splitFile()], layout: "split" });
+    const header = model.rows
+      .filter((row) => row.kind === "line")
+      .flatMap((row) => row.cells)
+      .find((cell) => cell?.type === "header");
+    expect(header).toBeDefined();
+
+    expect(selectedSourceText(model, selectAllSource(model, position(model, header!, 0))!)).toBe(
+      "new-one\nnew-two",
+    );
+  });
+
+  it("falls back to the old pane for a deletion-only split hunk", () => {
+    const model = buildModel("unused", { files: [deletedSplitFile()], layout: "split" });
+    const header = model.rows
+      .filter((row) => row.kind === "line")
+      .flatMap((row) => row.cells)
+      .find((cell) => cell?.type === "header");
+    expect(header).toBeDefined();
+
+    expect(selectedSourceText(model, selectAllSource(model, position(model, header!, 0))!)).toBe(
+      "@@ -1,2 +1,0 @@\nold-one\nold-two",
+    );
+  });
 });
 
 function buildModel(changedContent: string, overrides: Partial<BuildDiffDocumentModelInput> = {}) {
@@ -147,6 +207,11 @@ function buildModel(changedContent: string, overrides: Partial<BuildDiffDocument
       deletionBackground: "#100",
       emptyBackground: "#111",
       selection: "blue",
+      headerActiveSurface: "#222",
+      headerBorder: "#333",
+      statusSuccess: "green",
+      statusDanger: "red",
+      statusWarning: "orange",
       syntax: {},
     },
     labels: { binary: "Binary", tooLarge: "Too large" },
@@ -201,6 +266,29 @@ function splitFile(): ParsedDiffFile {
           { type: "remove", content: "old-two" },
           { type: "add", content: "new-one" },
           { type: "add", content: "new-two" },
+        ],
+      },
+    ],
+  };
+}
+
+function deletedSplitFile(): ParsedDiffFile {
+  return {
+    path: "src/deleted.ts",
+    isNew: false,
+    isDeleted: true,
+    additions: 0,
+    deletions: 2,
+    hunks: [
+      {
+        oldStart: 1,
+        oldCount: 2,
+        newStart: 1,
+        newCount: 0,
+        lines: [
+          { type: "header", content: "@@ -1,2 +1,0 @@" },
+          { type: "remove", content: "old-one" },
+          { type: "remove", content: "old-two" },
         ],
       },
     ],

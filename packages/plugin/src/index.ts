@@ -1,36 +1,22 @@
-export {
-  PluginAttachmentItemSchema,
-  PluginAttachmentSearchPayloadSchema,
-  defineAttachmentSource,
-  defineRpc,
-  type PluginAttachmentItem,
-  type PluginAttachmentSearchPayload,
-  type PluginRpcContract,
-} from "./server.js";
+// Shared SDK entry. Keep runtime-specific imports and re-exports on /client or /server.
 export type {
-  PluginAttachmentSourceContribution,
-  PluginAgentCommandContext,
-  PluginAgentPanelProps,
-  PluginAgentSnapshot,
-  PluginCleanup,
-  PluginCommandCapabilities,
-  PluginCommandCenterItemContribution,
-  PluginContribution,
-  PluginContext,
-  PluginGlobalCommandContext,
-  PluginHandlerContext,
-  PluginHostProps,
   PluginTheme,
-  PluginSidebarContribution,
-  PluginSurfaceContribution,
-  PluginSurfaceProps,
+  PluginWorkspaceSnapshot,
+  PluginAgentSnapshot,
   PluginThemeColors,
   PluginThemeContribution,
-  PluginWorkspaceCommandContext,
-  PluginWorkspacePanelContribution,
-  PluginWorkspacePanelProps,
-  PluginWorkspaceSnapshot,
+  PluginAttachmentSourceContribution,
+  PluginTimelineData,
+  PluginTimelineItem,
+  PluginTimelineTransformResult,
+  PluginCleanup,
 } from "./contracts.js";
-export { usePaseo } from "./paseo-context.js";
-export { useAgent, useWorkspace } from "./client-state.js";
-export { useRpc } from "./rpc-context.js";
+export { defineSettings, settingsRpc, type SettingsDefinition } from "./settings.js";
+export {
+  defineAttachmentSource,
+  PluginAttachmentItemSchema,
+  PluginAttachmentSearchPayloadSchema,
+  type PluginAttachmentItem,
+  type PluginAttachmentSearchPayload,
+} from "./attachments.js";
+export { defineRpc, type PluginRpcContract, type RpcInput, type RpcOutput } from "./rpc.js";

@@ -140,14 +140,15 @@ async function main(): Promise<void> {
     await client.connect();
     const seen = new Set<string>();
     client.on("checkout_status_update", (message) => seen.add(message.payload.cwd));
+    await client.observeEvents(["checkout_status_update"]).ready;
     const workspaces = await client.fetchWorkspaces({
-      subscribe: { subscriptionId: `startup-git-${scenario}` },
+      subscribe: {},
       sort: [{ key: "activity_at", direction: "desc" }],
       page: { limit: 200 },
     });
     await client.fetchAgents({
       scope: "active",
-      subscribe: { subscriptionId: `startup-agents-${scenario}` },
+      subscribe: {},
       page: { limit: 200 },
     });
 

@@ -146,20 +146,37 @@ async function installPinRpcGate(
 }
 
 test.describe("Pin workspace shortcut", () => {
-  test("keeps project creation reachable after pinning its only workspace", async ({ page }) => {
+  test("dispatches pin once and keeps project creation reachable", async ({ page }) => {
     const workspace = await seedWorkspace({
       repoPrefix: "pin-project-creation-",
       title: "Pinned workspace",
     });
 
     try {
+      const gate = await installPinRpcGate(page);
+
       await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
-      await page.keyboard.press(PIN_SHORTCUT);
-      await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
 
-      await openNewWorkspaceComposer(page, workspace);
-      await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
+      await test.step("sends one RPC for each pin transition", async () => {
+        await page.keyboard.press(PIN_SHORTCUT);
+        await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+        expect(gate.sentCount()).toBe(1);
+
+        await page.keyboard.press(PIN_SHORTCUT);
+        await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
+        expect(gate.sentCount()).toBe(2);
+        await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
+      });
+
+      await test.step("keeps the pinned project available to workspace creation", async () => {
+        await page.keyboard.press(PIN_SHORTCUT);
+        await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+        expect(gate.sentCount()).toBe(3);
+
+        await openNewWorkspaceComposer(page, workspace);
+        await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
+      });
     } finally {
       await workspace.cleanup();
     }
@@ -202,34 +219,6 @@ test.describe("Pin workspace shortcut", () => {
       await page.keyboard.press(PIN_SHORTCUT);
 
       await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("sends exactly one pin RPC per press when the row is rendered and selected", async ({
-    page,
-  }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "pin-shortcut-expanded-" });
-
-    try {
-      const gate = await installPinRpcGate(page);
-
-      await gotoAppShell(page);
-      await openWorkspace(page, workspace.workspaceId);
-
-      await page.keyboard.press(PIN_SHORTCUT);
-      await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
-      // Counting frames catches a press that produces zero or two RPCs — a misfiring in-flight
-      // guard, or a second dispatch path. It cannot detect a duplicate handler registration:
-      // `keyboardActionDispatcher.dispatch` returns at the first handler that returns true, so a
-      // shadowed second handler is unobservable from outside by design.
-      expect(gate.sentCount()).toBe(1);
-
-      await page.keyboard.press(PIN_SHORTCUT);
-      await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
-      expect(gate.sentCount()).toBe(2);
-      await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
     } finally {
       await workspace.cleanup();
     }

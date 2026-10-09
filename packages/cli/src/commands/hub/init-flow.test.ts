@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "vitest";
@@ -21,11 +21,11 @@ afterEach(async () => {
 });
 
 describe("Hub guided setup continuation", () => {
-  it("uses the login origin and connected daemon to validate, write, and deploy without replaying setup prompts", async () => {
+  it("offers daemon connection after login, then points to Hub without scaffolding files", async () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     const daemon = new SetupDaemon();
-    const prompts = new PromptAnswers([true, true], ["codex", "gpt-5", "full-access"], ["U123"]);
+    const prompts = new PromptAnswers([true, false], [], []);
     const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
     const environment = setupEnvironment(cwd, credentials, daemon, prompts, calls);
 
@@ -43,44 +43,18 @@ describe("Hub guided setup continuation", () => {
     );
 
     assert.deepEqual(prompts.confirmations, [
-      "Connect this daemon to this Hub?",
-      "Initialize and deploy a starter workflow?",
+      "Connect this daemon to Paseo Hub?\n\nConnecting lets Hub identify this daemon and show whether it is online.\nIt does not allow Hub to create workspaces or run agents.",
+      "Allow Hub automations to run agents on this daemon?\n\nThis lets workflows triggered from GitHub, Slack, Discord, Linear, and other integrations create workspaces and run agents here.\n\nAgents can access files and run commands allowed by their workspace runtime.",
     ]);
-    assert.deepEqual(prompts.selections, [
-      "Starter agent provider",
-      "Starter agent model",
-      "Starter agent mode",
-    ]);
-    assert.deepEqual(prompts.selectionOptions, [
-      ["Codex"],
-      ["GPT-5 (suggested)", "GPT-5 mini"],
-      ["Read only", "Full access (suggested)"],
-    ]);
+    assert.deepEqual(prompts.selections, []);
     assert.deepEqual(prompts.messages, [
-      "Hub app connections ready for this workflow:\nSlack — Paseo\n\nOnly configured connections are shown. To add another, open Hub → Apps, then run `paseo hub init` again.",
-      "Using Slack — Paseo",
+      "Daemon connected with no permissions.\n\nEnable Hub automations later:\n  paseo hub permissions grant hub.execute",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
     ]);
-    assert.deepEqual(calls, [
-      { operation: "token", origin: "https://hub.test" },
-      { operation: "projects", origin: "https://hub.test" },
-      { operation: "setup", origin: "https://hub.test" },
-      { operation: "resources", origin: "https://hub.test" },
-      {
-        operation: "validate",
-        origin: "https://hub.test",
-        files: [".paseo/hub.yml", ".paseo/workflows/slack-help.yml"],
-      },
-      {
-        operation: "install",
-        origin: "https://hub.test",
-        files: [".paseo/hub.yml", ".paseo/workflows/slack-help.yml"],
-      },
-    ]);
+    assert.deepEqual(calls, [{ operation: "token", origin: "https://hub.test" }]);
     assert.equal(daemon.connections, 1);
-    assert.deepEqual(daemon.snapshotCwds, [cwd]);
-    const hub = await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8");
-    assert.match(hub, /daemon: macbook/u);
-    assert.match(hub, /provider: codex\n    model: gpt-5\n    mode: full-access/u);
+    assert.deepEqual(daemon.snapshotCwds, []);
+    await assert.rejects(readFile(path.join(cwd, ".paseo", "hub.yml")), { code: "ENOENT" });
   });
 
   it("prints exact actionable resume commands for login continuation declines", async () => {
@@ -95,22 +69,36 @@ describe("Hub guided setup continuation", () => {
       setupEnvironment(cwd, credentials, daemon, connectDeclined, []),
     );
     assert.deepEqual(connectDeclined.messages, [
-      "Skipped daemon connection. Run: paseo hub connect https://hub.test; then paseo hub init",
+      "Skipped daemon connection. Connect later with: paseo hub connect https://hub.test",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
     ]);
-
-    const initDeclined = new PromptAnswers([true, false], [], []);
-    await continueHubGuidedSetup(
-      "https://hub.test",
-      setupEnvironment(cwd, credentials, daemon, initDeclined, []),
-    );
-    assert.deepEqual(initDeclined.messages, ["Skipped starter workflow. Run: paseo hub init"]);
   });
 
-  it("keeps login successful when no Hub app connection can initialize a workflow", async () => {
+  it("does not reopen onboarding or widen permissions for an existing connection", async () => {
+    const cwd = await temporaryDirectory();
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const daemon = new SetupDaemon();
+    await daemon.connectHub("https://hub.test", "existing-token", []);
+    const prompts = new PromptAnswers([], [], []);
+
+    await continueHubGuidedSetup(
+      "https://hub.test",
+      setupEnvironment(cwd, credentials, daemon, prompts, []),
+    );
+
+    assert.deepEqual(prompts.confirmations, []);
+    assert.deepEqual(prompts.messages, [
+      "This daemon is already connected to https://hub.test. Permissions: None.",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
+    ]);
+  });
+
+  it("does not require a Hub app connection during login", async () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     const daemon = new SetupDaemon();
-    const prompts = new PromptAnswers([true, true], [], []);
+    const prompts = new PromptAnswers([false], [], []);
 
     await runHubLogin(
       "https://hub.test",
@@ -124,7 +112,13 @@ describe("Hub guided setup continuation", () => {
           continueHubGuidedSetup(
             origin,
             setupEnvironment(cwd, credentials, daemon, prompts, [], {
-              setupResources: { github: [], slack: [], discord: [] },
+              configurationResources: {
+                daemons: [],
+                github: [],
+                slack: [],
+                discord: [],
+                linear: [],
+              },
             }),
           ),
         reporter: { progress() {} },
@@ -132,22 +126,82 @@ describe("Hub guided setup continuation", () => {
     );
 
     assert.deepEqual(prompts.messages, [
-      "No Hub app connection is ready for this workflow.\nConnect GitHub, Slack, or Discord in Hub → Apps, then run `paseo hub init` again.",
+      "Skipped daemon connection. Connect later with: paseo hub connect https://hub.test",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
     ]);
   });
 
-  it("keeps hub init's existing replacement confirmation", async () => {
+  it("preserves an existing legacy bundle while adding the organization trigger", async () => {
     const cwd = await temporaryDirectory();
     await mkdir(path.join(cwd, ".paseo"));
-    const prompts = new PromptAnswers([false], [], []);
+    await writeFile(path.join(cwd, ".paseo", "hub.yml"), "legacy: bundle\n");
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const prompts = new PromptAnswers([], ["codex", "gpt-5", "full-access"], ["U123"]);
+
+    await runHubGuidedSetup(setupEnvironment(cwd, credentials, new SetupDaemon(), prompts, []), {
+      origin: "https://hub.test",
+      daemonId: "daemon-1",
+      deploy: false,
+    });
+
+    assert.equal(await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8"), "legacy: bundle\n");
+    assert.match(
+      await readFile(path.join(cwd, ".paseo", "triggers", "slack-help.yml"), "utf8"),
+      /name: slack-help/u,
+    );
+    assert.deepEqual(prompts.confirmations, []);
+  });
+
+  it("asks before replacing only the selected trigger file", async () => {
+    const cwd = await temporaryDirectory();
+    const triggerPath = path.join(cwd, ".paseo", "triggers", "slack-help.yml");
+    await mkdir(path.dirname(triggerPath), { recursive: true });
+    await writeFile(triggerPath, "name: keep-me\n");
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const prompts = new PromptAnswers([false], ["codex", "gpt-5", "full-access"], ["U123"]);
+    const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
 
     await assert.rejects(
-      runHubGuidedSetup(
-        setupEnvironment(cwd, new MemoryCredentials(), new SetupDaemon(), prompts, []),
-      ),
-      /Existing .paseo\/ bundle left unchanged/u,
+      runHubGuidedSetup(setupEnvironment(cwd, credentials, new SetupDaemon(), prompts, calls), {
+        origin: "https://hub.test",
+        daemonId: "daemon-1",
+        deploy: true,
+      }),
+      /.paseo\/triggers\/slack-help.yml left unchanged/u,
     );
-    assert.deepEqual(prompts.confirmations, ["Replace the existing .paseo/ Hub bundle?"]);
+
+    assert.equal(await readFile(triggerPath, "utf8"), "name: keep-me\n");
+    assert.deepEqual(prompts.confirmations, [
+      "Replace the existing .paseo/triggers/slack-help.yml?",
+    ]);
+    assert.deepEqual(
+      calls.map(({ operation }) => operation),
+      ["resources", "validate-trigger"],
+    );
+  });
+
+  it("rejects a symlinked trigger directory without writing outside the project", async () => {
+    const cwd = await temporaryDirectory();
+    const outside = await temporaryDirectory();
+    await mkdir(path.join(cwd, ".paseo"));
+    await symlink(outside, path.join(cwd, ".paseo", "triggers"));
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const prompts = new PromptAnswers([], ["codex", "gpt-5", "full-access"], ["U123"]);
+
+    await assert.rejects(
+      runHubGuidedSetup(setupEnvironment(cwd, credentials, new SetupDaemon(), prompts, []), {
+        origin: "https://hub.test",
+        daemonId: "daemon-1",
+        deploy: false,
+      }),
+      (error: unknown) =>
+        error instanceof Error && "code" in error && error.code === "HUB_TRIGGER_UNSAFE_PATH",
+    );
+
+    await assert.rejects(readFile(path.join(outside, "slack-help.yml")), { code: "ENOENT" });
   });
 
   it("writes the explicitly selected Claude mode when the daemon has no default", async () => {
@@ -178,14 +232,14 @@ describe("Hub guided setup continuation", () => {
       ["Sonnet (suggested)"],
       ["Auto"],
     ]);
-    assert.match(
-      await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8"),
-      /provider: claude\n    model: sonnet\n    mode: auto/u,
-    );
+    const trigger = await readFile(path.join(cwd, ".paseo", "triggers", "slack-help.yml"), "utf8");
+    assert.match(trigger, /provider: claude\n    model: sonnet\n    mode: auto/u);
     assert.deepEqual(
       calls.slice(-2).map(({ operation }) => operation),
-      ["validate", "install"],
+      ["validate-trigger", "install-trigger"],
     );
+    assert.deepEqual(calls.at(-2)?.files, [trigger]);
+    assert.deepEqual(calls.at(-1)?.files, [trigger]);
   });
 
   it("stops before runtime discovery and file writes when no Hub app connection is usable", async () => {
@@ -198,15 +252,50 @@ describe("Hub guided setup continuation", () => {
     await assert.rejects(
       runHubGuidedSetup(
         setupEnvironment(cwd, credentials, daemon, prompts, [], {
-          setupResources: { github: [], slack: [], discord: [] },
+          configurationResources: {
+            daemons: [{ id: "daemon-1", slug: "macbook" }],
+            github: [],
+            slack: [],
+            discord: [],
+            linear: [],
+          },
         }),
         { origin: "https://hub.test", daemonId: "daemon-1", deploy: true },
       ),
-      /No Hub app connection is ready for this workflow/u,
+      /No Hub app connection is ready for this trigger/u,
     );
 
     assert.equal(daemon.snapshotCwds.length, 0);
-    await assert.rejects(readFile(path.join(cwd, ".paseo", "hub.yml")), { code: "ENOENT" });
+    await assert.rejects(readFile(path.join(cwd, ".paseo", "triggers", "slack-help.yml")), {
+      code: "ENOENT",
+    });
+  });
+
+  it("does not offer an agent runtime that cannot author the required execution mode", async () => {
+    const cwd = await temporaryDirectory();
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const daemon = new SetupDaemon([
+      {
+        provider: "pi",
+        status: "ready",
+        enabled: true,
+        models: [{ provider: "pi", id: "default", label: "Default", isDefault: true }],
+        modes: [],
+      },
+    ]);
+    const prompts = new PromptAnswers([], [], ["U123"]);
+
+    await assert.rejects(
+      runHubGuidedSetup(setupEnvironment(cwd, credentials, daemon, prompts, []), {
+        origin: "https://hub.test",
+        daemonId: "daemon-1",
+        deploy: true,
+      }),
+      /No agent runtime with an execution mode is available/u,
+    );
+
+    assert.deepEqual(prompts.selections, []);
   });
 
   it("waits for fresh-daemon provider discovery before offering runtime choices", async () => {
@@ -242,7 +331,7 @@ function setupEnvironment(
   prompts: PromptAnswers,
   calls: Array<{ operation: string; origin: string; files?: readonly string[] }>,
   options: {
-    setupResources?: Awaited<ReturnType<HubHttpClient["listSetupResources"]>>;
+    configurationResources?: Awaited<ReturnType<HubHttpClient["listConfigurationResources"]>>;
   } = {},
 ): HubGuidedSetupEnvironment {
   const hub = {
@@ -250,42 +339,37 @@ function setupEnvironment(
       calls.push({ operation: "token", origin });
       return "one-time-enrollment-token-with-enough-length";
     },
-    async listProjects(origin: string) {
-      calls.push({ operation: "projects", origin });
-      return [{ id: "a50e05af-4f20-4c8f-8dcc-58e5ea360663", slug: "studio", name: "Studio" }];
-    },
-    async listSetupResources(origin: string) {
-      calls.push({ operation: "setup", origin });
+    async listConfigurationResources(origin: string) {
+      calls.push({ operation: "resources", origin });
       return (
-        options.setupResources ?? {
+        options.configurationResources ?? {
+          daemons: [{ id: "daemon-1", slug: "macbook" }],
           github: [],
           discord: [],
-          slack: [{ teamId: "T123", teamName: "Paseo" }],
+          slack: [{ slug: "paseo", teamName: "Paseo" }],
+          linear: [],
         }
       );
     },
-    async listConfigurationResources(origin: string) {
-      calls.push({ operation: "resources", origin });
-      return { daemons: [{ id: "daemon-1", slug: "macbook" }], github: [], discord: [], slack: [] };
-    },
-    async validateConfiguration(input: { origin: string; files: readonly { path: string }[] }) {
+    async validateTrigger(origin: string, _apiKey: string, yaml: string) {
       calls.push({
-        operation: "validate",
-        origin: input.origin,
-        files: input.files.map(({ path: filePath }) => filePath),
+        operation: "validate-trigger",
+        origin,
+        files: [yaml],
       });
-      return { projectSlug: "studio", valid: true };
+      return { name: "slack-help", valid: true };
     },
-    async installConfiguration(input: { origin: string; files: readonly { path: string }[] }) {
+    async installTrigger(origin: string, _apiKey: string, yaml: string) {
       calls.push({
-        operation: "install",
-        origin: input.origin,
-        files: input.files.map(({ path: filePath }) => filePath),
+        operation: "install-trigger",
+        origin,
+        files: [yaml],
       });
       return {
-        projectSlug: "studio",
+        triggerId: "a50e05af-4f20-4c8f-8dcc-58e5ea360663",
+        name: "slack-help",
         version: 1,
-        versionId: "a50e05af-4f20-4c8f-8dcc-58e5ea360663",
+        revisionId: "2de5b143-1c88-42db-8a8d-71ca2af97830",
         active: true,
       };
     },
@@ -368,6 +452,7 @@ class SetupDaemon implements HubDaemonClient {
   connections = 0;
   readonly snapshotCwds: Array<string | undefined> = [];
   private origin: string | null = null;
+  private currentPermissions: string[] = [];
 
   constructor(
     readonly providerEntries: readonly ProviderSnapshotEntry[] = [
@@ -390,14 +475,26 @@ class SetupDaemon implements HubDaemonClient {
     private readonly providerEntrySequence?: readonly (readonly ProviderSnapshotEntry[])[],
   ) {}
 
-  async connectHub(origin: string) {
+  async connectHub(origin: string, _token: string, permissions: readonly string[] = []) {
     this.connections += 1;
     this.origin = origin;
-    return { status: status(origin) };
+    this.currentPermissions = [...permissions];
+    return { status: status(origin, permissions) };
+  }
+
+  async updateHubPermissions(input: { grant?: readonly string[]; revoke?: readonly string[] }) {
+    const permissions = new Set(this.origin === null ? [] : this.currentPermissions);
+    for (const permission of input.revoke ?? []) permissions.delete(permission);
+    for (const permission of input.grant ?? []) permissions.add(permission);
+    this.currentPermissions = [...permissions];
+    return { status: status(this.origin ?? "https://hub.test", this.currentPermissions) };
   }
 
   async getHubStatus() {
-    return { status: this.origin === null ? disconnectedStatus() : status(this.origin) };
+    return {
+      status:
+        this.origin === null ? disconnectedStatus() : status(this.origin, this.currentPermissions),
+    };
   }
 
   async getProvidersSnapshot(options?: { cwd?: string }) {
@@ -416,12 +513,12 @@ class SetupDaemon implements HubDaemonClient {
   async close() {}
 }
 
-function status(origin: string): HubStatus {
+function status(origin: string, permissions: readonly string[] = []): HubStatus {
   return {
     state: "connected",
     daemonId: "daemon-1",
     hubOrigin: origin,
-    scopes: [],
+    permissions: [...permissions],
     connectedAt: null,
     lastError: null,
   };
@@ -432,7 +529,7 @@ function disconnectedStatus(): HubStatus {
     state: "not_connected",
     daemonId: null,
     hubOrigin: null,
-    scopes: [],
+    permissions: [],
     connectedAt: null,
     lastError: null,
   };

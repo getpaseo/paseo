@@ -26,9 +26,10 @@ export function HorizontalScroll({
   const scrollId = useId();
   const [isAtLeftEdge, setIsAtLeftEdge] = useState(true);
   const edgeRef = useRef(true);
+  const path = file.path;
   const handler = useAnimatedScrollHandler({
     onScroll(event) {
-      offsets.value = { ...offsets.value, [file.path]: event.contentOffset.x };
+      offsets.value = { ...offsets.value, [path]: event.contentOffset.x };
     },
   });
   useEffect(() => {

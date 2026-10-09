@@ -1,6 +1,6 @@
 import { isAbsolutePath } from "@/utils/path";
 
-export type OpenFileDisposition = "main" | "side";
+export type OpenFileDisposition = "main" | "preferred" | "side";
 
 export interface WorkspaceFileLocation {
   path: string;
@@ -129,6 +129,17 @@ function startsWithPath(value: string, prefix: string): boolean {
     : value.startsWith(prefix);
 }
 
+function pathWithinRoot(root: string, relativePath: string): string {
+  return root.endsWith("/") ? `${root}${relativePath}` : `${root}/${relativePath}`;
+}
+
+/** Whether an absolute path names the workspace directory itself. */
+export function isWorkspaceRootPath(input: { path: string; workspaceRoot: string }): boolean {
+  const path = normalizeAbsolutePath(input.path.trim().replace(/\\/g, "/"));
+  const root = normalizeAbsolutePath(input.workspaceRoot.trim().replace(/\\/g, "/"));
+  return path !== null && root !== null && pathsEqual(path, root);
+}
+
 export interface ResolvedWorkspaceFilePaths {
   /** Absolute path on the host, suitable for opening in an editor / file manager. */
   absolutePath: string;
@@ -159,7 +170,7 @@ export function resolveWorkspaceFilePaths(input: {
     if (pathsEqual(normalizedFile, workspaceRoot)) {
       return null;
     }
-    const prefix = `${workspaceRoot}/`;
+    const prefix = pathWithinRoot(workspaceRoot, "");
     const relativePath = startsWithPath(normalizedFile, prefix)
       ? normalizedFile.slice(prefix.length)
       : null;
@@ -174,5 +185,5 @@ export function resolveWorkspaceFilePaths(input: {
   if (!relativePath) {
     return null;
   }
-  return { absolutePath: `${workspaceRoot}/${relativePath}`, relativePath };
+  return { absolutePath: pathWithinRoot(workspaceRoot, relativePath), relativePath };
 }

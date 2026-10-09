@@ -8,18 +8,22 @@ import {
   FolderPlus,
   History,
   Home,
+  Import,
   Keyboard,
+  PanelLeft,
   Plus,
   Settings,
 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
-import { getIsElectronRuntime } from "@/constants/layout";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
+import { useImportSession } from "@/hooks/use-import-session";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
@@ -50,8 +54,12 @@ const ThemedSettings = withUnistyles(Settings, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const ThemedHome = withUnistyles(Home, (theme) => ({ color: theme.colors.foregroundMuted }));
+const ThemedImport = withUnistyles(Import, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedFolder = withUnistyles(Folder, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedCircleDashed = withUnistyles(CircleDashed, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const ThemedPanelLeft = withUnistyles(PanelLeft, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 
@@ -83,6 +91,10 @@ function HomeIcon({ size }: CommandCenterIconProps) {
   return <ThemedHome size={size} strokeWidth={2.2} />;
 }
 
+function ImportIcon({ size }: CommandCenterIconProps) {
+  return <ThemedImport size={size} strokeWidth={2.2} />;
+}
+
 function FolderIcon({ size }: CommandCenterIconProps) {
   return <ThemedFolder size={size} strokeWidth={2.2} />;
 }
@@ -91,12 +103,17 @@ function CircleDashedIcon({ size }: CommandCenterIconProps) {
   return <ThemedCircleDashed size={size} strokeWidth={2.2} />;
 }
 
+function PanelLeftIcon({ size }: CommandCenterIconProps) {
+  return <ThemedPanelLeft size={size} strokeWidth={2.2} />;
+}
+
 export function CommandCenterRootActions() {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const { overrides } = useKeyboardShortcutOverrides();
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAddProject = useOpenAddProject();
+  const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
   const settingsRoute = useMemo<Href>(() => buildSettingsRoute(), []);
   const homeRoute = useMemo<Href>(() => buildOpenProjectRoute(), []);
   const sessionsRoute = useMemo<Href>(() => buildSessionsRoute(), []);
@@ -106,6 +123,10 @@ export function CommandCenterRootActions() {
   // each time host filters are reconciled.
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
+  const isCompact = useIsCompactFormFactor();
+  const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
+  const toggleDesktopAgentList = usePanelStore((state) => state.toggleDesktopAgentList);
+  const toggleAgentList = isCompact ? toggleMobileAgentList : toggleDesktopAgentList;
   const shortcutPlatform = useMemo(
     () => ({ isMac: getShortcutOs() === "mac", isDesktop: getIsElectronRuntime() }),
     [],
@@ -153,11 +174,29 @@ export function CommandCenterRootActions() {
         },
       },
       {
-        id: "home",
+        id: "import-session",
         group: "actions",
         groupRank: 0,
         rank: 2,
-        keywords: ["home", "start", "import", "session", "pair", "device", "providers"],
+        keywords: ["import", "session", "terminal"],
+        visibility: "always",
+        run: () => {
+          clearCommandCenterFocusRestoreElement();
+          openImportSession();
+        },
+        presentation: {
+          kind: "action",
+          title: t("importSession.title"),
+          sectionTitle: t("shell.commandCenter.actions"),
+          icon: ImportIcon,
+        },
+      },
+      {
+        id: "home",
+        group: "actions",
+        groupRank: 0,
+        rank: 3,
+        keywords: ["home", "start", "pair", "device", "providers"],
         visibility: "query",
         run: () => {
           clearCommandCenterFocusRestoreElement();
@@ -174,7 +213,7 @@ export function CommandCenterRootActions() {
         id: "history",
         group: "actions",
         groupRank: 0,
-        rank: 3,
+        rank: 4,
         keywords: ["history", "sessions", "recent"],
         visibility: "always",
         run: () => {
@@ -192,7 +231,7 @@ export function CommandCenterRootActions() {
         id: "schedules",
         group: "actions",
         groupRank: 0,
-        rank: 4,
+        rank: 5,
         keywords: ["schedules", "scheduled", "automation", "recurring"],
         visibility: "always",
         run: () => {
@@ -210,7 +249,7 @@ export function CommandCenterRootActions() {
         id: "settings",
         group: "actions",
         groupRank: 0,
-        rank: 5,
+        rank: 6,
         keywords: ["settings", "preferences", "config", "configuration"],
         visibility: "always",
         run: () => {
@@ -227,6 +266,33 @@ export function CommandCenterRootActions() {
             undefined,
         },
       },
+      // Toggle left sidebar is global: it calls the panel store directly and works on every route.
+      // The right sidebar and focus toggles do NOT belong here — their handlers live in
+      // workspace-screen.tsx behind `enabled: isRouteFocused && ...`, so registering them globally
+      // would list entries that silently no-op off a workspace route. They live in
+      // workspace-contributions.ts instead. That is why the three toggles render in two
+      // non-adjacent sections; don't "tidy" them back together.
+      {
+        id: "toggle-left-sidebar",
+        group: "actions",
+        groupRank: 0,
+        rank: 8,
+        keywords: ["toggle", "sidebar", "left", "panel", "workspaces"],
+        visibility: "query",
+        run: () => {
+          clearCommandCenterFocusRestoreElement();
+          toggleAgentList();
+        },
+        presentation: {
+          kind: "action",
+          title: t("settings.shortcuts.help.toggleLeftSidebar"),
+          sectionTitle: t("shell.commandCenter.actions"),
+          icon: PanelLeftIcon,
+          shortcutKeys:
+            resolveShortcutKeysForAction("toggle-left-sidebar", overrides, shortcutPlatform) ??
+            undefined,
+        },
+      },
     ];
 
     if (shortcutsAvailable) {
@@ -234,7 +300,7 @@ export function CommandCenterRootActions() {
         id: "keyboard-shortcuts",
         group: "actions",
         groupRank: 0,
-        rank: 6,
+        rank: 7,
         keywords: ["keyboard", "shortcuts", "keys", "hotkeys"],
         visibility: "always",
         run: () => setShortcutsDialogOpen(true),
@@ -269,6 +335,7 @@ export function CommandCenterRootActions() {
     homeRoute,
     keyboardActionDispatcher,
     openAddProject,
+    openImportSession,
     overrides,
     schedulesRoute,
     sessionsRoute,
@@ -278,8 +345,9 @@ export function CommandCenterRootActions() {
     shortcutPlatform,
     shortcutsAvailable,
     t,
+    toggleAgentList,
   ]);
 
   useCommandCenterActions({ sourceId: "root", enabled: true, actions });
-  return null;
+  return importSessionSheet;
 }

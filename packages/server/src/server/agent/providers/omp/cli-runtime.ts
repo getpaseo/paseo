@@ -1,13 +1,15 @@
+import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
-  JSONL_RPC_DEFAULT_TIMEOUT_MS,
+  JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
-  supportsJsonlRpcProtocolV2,
   type JsonlRpcLaunch,
 } from "../jsonl-rpc-process.js";
+import { establishOmpProtocol } from "./protocol-session.js";
 import {
   buildOmpLaunch,
   type OmpRuntime,
@@ -25,7 +27,7 @@ import {
   OmpModelsResultSchema,
   OmpPromptAckSchema,
   OmpRpcCommandSchema,
-  OmpRuntimeEventSchema,
+  parseOmpRuntimeEvent,
   OmpSessionStateSchema,
   OmpSessionStatsSchema,
   type OmpThinkingLevel,
@@ -45,14 +47,14 @@ import {
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
-/** How long to wait for OMP's startup `ready` frame before failing startup. */
-const OMP_READY_TIMEOUT_MS = 10_000;
 
 export interface OmpCliRuntimeOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
   commandsRpcName?: "get_available_commands";
+  readyTimeoutMs?: number;
+  requestTimeoutMs?: number;
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -73,6 +75,7 @@ export class OmpCliRuntime implements OmpRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
+    launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
     const [command, ...args] = launch.argv;
     const processLaunch: JsonlRpcLaunch = {
       command,
@@ -85,15 +88,19 @@ export class OmpCliRuntime implements OmpRuntime {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "OMP RPC",
+      defaultRequestTimeoutMs: this.options.requestTimeoutMs,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
     input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
-      await negotiateOmpProtocolV2(process, this.options.logger);
+      await establishOmpProtocol(process, this.options.logger, {
+        readyTimeoutMs: this.options.readyTimeoutMs,
+        requestTimeoutMs: this.options.requestTimeoutMs,
+      });
       input.signal?.throwIfAborted();
-      return new OmpCliRuntimeSession(process, this.commandsRpcName);
+      return new OmpCliRuntimeSession(process, this.commandsRpcName, launch.env);
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
@@ -104,60 +111,6 @@ export class OmpCliRuntime implements OmpRuntime {
   }
 }
 
-/**
- * Wait for OMP to advertise readiness and negotiate RPC protocol v2 when it is
- * supported. OMP caps protocol-v1 single-line frames at 1 MiB; `get_available_models`
- * (and other large payloads) can exceed that and are returned as an overflow error.
- * Protocol v2 lifts the ceiling to 64 MiB by chunking oversized frames, which the
- * JSONL transport reassembles. Supported OMP versions send a `ready` frame immediately
- * after launch; startup fails if the process exits or never becomes ready.
- */
-async function negotiateOmpProtocolV2(process: JsonlRpcProcess, logger: Logger): Promise<void> {
-  const ready = await waitForOmpReadyFrame(process);
-  if (!supportsJsonlRpcProtocolV2(ready)) {
-    return;
-  }
-  const response = (await process.request(
-    { type: "negotiate_protocol", protocolVersion: 2 },
-    JSONL_RPC_DEFAULT_TIMEOUT_MS,
-  )) as { protocolVersion?: unknown } | undefined;
-  if (response?.protocolVersion !== 2) {
-    throw new Error("OMP did not accept RPC protocol v2");
-  }
-  logger.debug({}, "Negotiated OMP RPC protocol v2 (chunked frame transport)");
-}
-
-function waitForOmpReadyFrame(process: JsonlRpcProcess): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let unsubscribeMessage = (): void => {};
-    let unsubscribeExit = (): void => {};
-    let timer: NodeJS.Timeout | undefined;
-    const finish = (result: Record<string, unknown> | Error): void => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      unsubscribeMessage();
-      unsubscribeExit();
-      if (result instanceof Error) {
-        reject(result);
-      } else {
-        resolve(result);
-      }
-    };
-    unsubscribeMessage = process.onMessage((message) => {
-      if (message.type === "ready") {
-        finish(message);
-      }
-    });
-    unsubscribeExit = process.onExit(({ error }) => finish(error));
-    timer = setTimeout(
-      () => finish(new Error("Timed out waiting for OMP to become ready")),
-      OMP_READY_TIMEOUT_MS,
-    );
-  });
-}
-
 class OmpCliRuntimeSession implements OmpRuntimeSession {
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
   activeBranchEntryId?: string;
@@ -165,16 +118,21 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: "get_available_commands",
+    private readonly launchEnvironment: Record<string, string>,
   ) {
     process.onMessage((message) => {
-      const event = OmpRuntimeEventSchema.safeParse(message);
-      if (event.success) {
-        this.emit(event.data);
+      const event = parseOmpRuntimeEvent(message);
+      if (event) {
+        this.emit(event);
       }
     });
     process.onExit(({ error }) => {
       this.emit({ type: "process_exit", error: error.message });
     });
+  }
+
+  get environment(): Record<string, string> {
+    return this.launchEnvironment;
   }
 
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void {
@@ -198,10 +156,13 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async compact(customInstructions?: string): Promise<void> {
-    await this.request({
-      type: "compact",
-      ...(customInstructions ? { customInstructions } : {}),
-    });
+    await this.request(
+      {
+        type: "compact",
+        ...(customInstructions ? { customInstructions } : {}),
+      },
+      JSONL_RPC_NO_TIMEOUT,
+    );
   }
 
   async setAutoCompaction(enabled: boolean): Promise<void> {
@@ -209,11 +170,16 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.requestStopWork({ type: "abort" });
   }
 
   async getState(): Promise<OmpSessionState> {
     return OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
+  }
+
+  async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
+    const result = await this.request({ type: "set_fast_mode", enabled });
+    return z.object({ enabled: z.boolean(), active: z.boolean() }).parse(result);
   }
 
   async getMessages(): Promise<OmpAgentMessage[]> {
@@ -309,8 +275,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return data.messages ?? [];
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
-    this.process.send({ type: "steer", message, ...(images?.length ? { images } : {}) });
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
   }
 
   followUp(
@@ -344,6 +313,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+  }
+
+  private requestStopWork(command: OmpRpcCommand): Promise<void> {
+    return this.process.requestStopWork(OmpRpcCommandSchema.parse(command));
   }
 
   private emit(event: OmpRuntimeEvent): void {

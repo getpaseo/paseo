@@ -1,3 +1,4 @@
+import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
@@ -30,19 +31,12 @@ const DEFAULT_PI_COMMAND: [string, ...string[]] = [
 ];
 const DEFAULT_COMMANDS_RPC_NAME = "get_commands";
 
-/**
- * Pi RPC timeout policy:
- * - Control-plane / accept-and-stream (`prompt`, `get_state`, `abort`, …): default 30s
- * - Long-running blocking LLM jobs (`compact`): no wall-clock timeout — complete on
- *   response, process death, or session close (`JsonlRpcProcess.failAll` / `close`).
- */
-const PI_COMPACT_REQUEST_TIMEOUT_MS = JSONL_RPC_NO_TIMEOUT;
-
 export interface PiCliRuntimeOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
   commandsRpcName?: string;
+  requestTimeoutMs?: number;
   spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -63,6 +57,7 @@ export class PiCliRuntime implements PiRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
+    launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
     const [command, ...args] = launch.argv;
     const processLaunch: JsonlRpcLaunch = {
       command,
@@ -75,6 +70,7 @@ export class PiCliRuntime implements PiRuntime {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "Pi RPC",
+      defaultRequestTimeoutMs: this.options.requestTimeoutMs,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
@@ -82,7 +78,7 @@ export class PiCliRuntime implements PiRuntime {
       await process.close(input.signal.reason);
       input.signal.throwIfAborted();
     }
-    return new PiCliRuntimeSession(process, this.commandsRpcName);
+    return new PiCliRuntimeSession(process, this.commandsRpcName, launch.env);
   }
 }
 
@@ -92,6 +88,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: string,
+    private readonly launchEnvironment: Record<string, string>,
   ) {
     process.onMessage((message) => {
       this.emit(message as PiRuntimeEvent);
@@ -99,6 +96,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     process.onExit(({ error }) => {
       this.emit({ type: "process_exit", error: error.message });
     });
+  }
+
+  get environment(): Record<string, string> {
+    return this.launchEnvironment;
   }
 
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void {
@@ -127,17 +128,26 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return { requestId };
   }
 
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
+  }
+
+  async clearQueue(): Promise<void> {
+    await this.requestStopWork({ type: "clear_queue" });
+  }
+
   async compact(customInstructions?: string): Promise<void> {
-    // Compact is a blocking LLM summarization job; Pi only returns the RPC
-    // response after the summary is written. A control-plane 30s timeout falsely
-    // fails long sessions while the real compact continues (issue #1946).
-    await this.request(
-      {
-        type: "compact",
-        ...(customInstructions ? { customInstructions } : {}),
-      },
-      PI_COMPACT_REQUEST_TIMEOUT_MS,
-    );
+    await this.waitForCompletion({
+      type: "compact",
+      ...(customInstructions ? { customInstructions } : {}),
+    });
   }
 
   async setAutoCompaction(enabled: boolean): Promise<void> {
@@ -145,7 +155,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.requestStopWork({ type: "abort" });
   }
 
   async getState(): Promise<PiSessionState> {
@@ -232,6 +242,17 @@ class PiCliRuntimeSession implements PiRuntimeSession {
 
   request(command: PiRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(command, timeoutMs);
+  }
+
+  private requestStopWork(command: PiRpcCommand): Promise<void> {
+    return this.process.requestStopWork(command);
+  }
+
+  private async waitForCompletion(command: PiRpcCommand): Promise<void> {
+    // Pi only replies after its compaction work is durable. Its child process and
+    // session close paths already reject pending RPCs, so no elapsed-time failure
+    // is useful here.
+    await this.process.request(command, JSONL_RPC_NO_TIMEOUT);
   }
 
   private emit(event: PiRuntimeEvent): void {

@@ -70,7 +70,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Custom Tool Name",
+      displayName: "Custom tool name",
     });
   });
 
@@ -98,7 +98,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Worktree Setup",
+      displayName: "Worktree setup",
       summary: "feature-branch",
     });
   });
@@ -116,7 +116,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Exec Command",
+      displayName: "Exec command",
     });
   });
 

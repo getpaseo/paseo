@@ -22,6 +22,7 @@
  */
 
 import assert from "node:assert";
+import { getAvailablePort } from "./helpers/network.ts";
 import { $ } from "zx";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -31,8 +32,8 @@ $.verbose = false;
 
 console.log("=== Permit Allow/Deny Command Tests ===\n");
 
-// Get random port that's definitely not in use (never 6767)
-const port = 10000 + Math.floor(Math.random() * 50000);
+// Allocate an unused endpoint for connection-error and argument-validation checks.
+const port = await getAvailablePort();
 const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
 
 try {
@@ -65,7 +66,7 @@ try {
   {
     console.log("Test 3: permit allow handles daemon not running");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit allow abc123 req456`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit allow abc123 req456`.nothrow();
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, "should fail when daemon not running");
     const output = result.stdout + result.stderr;
@@ -81,7 +82,7 @@ try {
   {
     console.log("Test 4: permit deny handles daemon not running");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit deny abc123 req456`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit deny abc123 req456`.nothrow();
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, "should fail when daemon not running");
     const output = result.stdout + result.stderr;
@@ -97,7 +98,7 @@ try {
   {
     console.log("Test 5: permit allow --all flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit allow abc123 --all`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit allow abc123 --all`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --all flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -108,7 +109,7 @@ try {
   {
     console.log("Test 6: permit deny --all flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit deny abc123 --all`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit deny abc123 --all`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --all flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -119,7 +120,7 @@ try {
   {
     console.log("Test 7: permit deny --message flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit deny abc123 req456 --message "Not allowed"`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit deny abc123 req456 --message "Not allowed"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --message flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -130,7 +131,7 @@ try {
   {
     console.log("Test 8: permit deny --interrupt flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit deny abc123 req456 --interrupt`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit deny abc123 req456 --interrupt`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --interrupt flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -141,7 +142,7 @@ try {
   {
     console.log("Test 9: permit allow --input flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit allow abc123 req456 --input '{"key":"value"}'`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit allow abc123 req456 --input '{"key":"value"}'`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --input flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -152,7 +153,7 @@ try {
   {
     console.log("Test 10: permit allow requires req_id or --all");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit allow abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit allow abc123`.nothrow();
     // This might fail due to daemon not running first, or due to missing argument
     // The important thing is it doesn't crash with an unhandled error
     assert.notStrictEqual(result.exitCode, 0, "should fail without req_id or --all");
@@ -163,7 +164,7 @@ try {
   {
     console.log("Test 11: permit deny requires req_id or --all");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit deny abc123`.nothrow();
+      await $`PASEO_HOME=${paseoHome} npx paseo --host localhost:${port} permit deny abc123`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail without req_id or --all");
     console.log("✓ permit deny requires req_id or --all\n");
   }

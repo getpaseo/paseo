@@ -13,6 +13,16 @@ const patchedPackages = [
     patchPrefix: "react-native-markdown-display+",
   },
   {
+    nodeModulesPath: "node_modules/react-native-uitextview",
+    patchPrefix: "react-native-uitextview+",
+  },
+  // Remove after react-native-unistyles ships
+  // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  {
+    nodeModulesPath: "node_modules/react-native-unistyles",
+    patchPrefix: "react-native-unistyles+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },

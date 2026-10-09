@@ -25,7 +25,7 @@ const agent: Agent = {
   id: "agent-1",
   provider: "codex",
   status: "running",
-  activeTurn: null,
+  turn: { phase: "idle", cancellationRequestId: null },
   createdAt: new Date("2026-08-16T10:01:00.000Z"),
   updatedAt: new Date("2026-08-16T10:02:00.000Z"),
   lastUserMessageAt: null,

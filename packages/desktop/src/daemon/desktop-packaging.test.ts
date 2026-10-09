@@ -63,6 +63,22 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("uses an Electron runtime whose Squirrel handoff explicitly wakes ShipIt", () => {
+    const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>;
+    };
+    const electronVersion = pkg.devDependencies?.electron ?? "0.0.0";
+    const electronMajor = Number(electronVersion.split(".")[0]);
+
+    expect(electronMajor).toBeGreaterThanOrEqual(44);
+  });
+
+  it("requires macOS 13 or newer in the packaged application", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain('minimumSystemVersion: "13.0.0"');
+  });
+
   it("unpacks server zsh shell integration files for external shells", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
@@ -160,4 +176,17 @@ describe("desktop packaging", () => {
       rmSync(bundle.root, { recursive: true, force: true });
     }
   });
+});
+
+it("installs the Linux helper as root-owned 4755 regardless of root's namespace access", () => {
+  const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+  expect(config).toContain("afterInstall: scripts/linux-sandbox/after-install.tpl");
+  const installer = readFileSync(
+    join(packageRoot, "scripts/linux-sandbox/after-install.tpl"),
+    "utf8",
+  );
+  expect(installer).not.toContain("unshare");
+  expect(installer).toContain("chown root:root '/opt/${sanitizedProductName}/chrome-sandbox'");
+  expect(installer).toContain("chmod 4755 '/opt/${sanitizedProductName}/chrome-sandbox'");
+  expect(installer).not.toContain("chmod 0755");
 });

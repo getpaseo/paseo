@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { changesStateSchema, defaultChangesState } from "./state";
 
-describe("Changes presentation state", () => {
-  it("drops the persisted mode without resetting the remaining presentation", () => {
+describe("Changes pane state", () => {
+  it("drops preferences formerly persisted per pane without resetting local document state", () => {
     expect(
       changesStateSchema.parse({
         ...defaultChangesState,
@@ -10,11 +10,8 @@ describe("Changes presentation state", () => {
         baseRef: "origin/main",
         layout: "split",
         wrapLines: true,
+        hideWhitespace: true,
       }),
-    ).toEqual({
-      ...defaultChangesState,
-      layout: "split",
-      wrapLines: true,
-    });
+    ).toEqual(defaultChangesState);
   });
 });

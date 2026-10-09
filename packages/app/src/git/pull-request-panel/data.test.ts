@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type {
+  CheckoutPipelineJob,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
-import { isPipelineActiveStatus, mapPipelineStatus } from "@/git/forges/gitlab";
+import {
+  countGitlabPipelineJobs,
+  isPipelineActiveStatus,
+  mapPipelineStatus,
+} from "@/git/forges/gitlab";
+import { i18n } from "@/i18n/i18next";
 import { IDENTITY_COLOR_NAMES, identityColor } from "@/styles/identity-colors";
 import {
   deriveAvatarColor,
   formatAge,
-  getActivityVerb,
-  getStateLabel,
+  getActivityVerbKey,
+  getStateLabelKey,
   mapPrPaneData,
 } from "./data";
 
@@ -108,7 +114,7 @@ describe("mapPrPaneData", () => {
     );
   });
 
-  it("drops checks with null URLs to preserve the pressable check contract", () => {
+  it("keeps checks with null URLs by linking them to the pull request", () => {
     const data = mapPrPaneData(
       status({
         checks: [
@@ -126,6 +132,12 @@ describe("mapPrPaneData", () => {
         status: "success",
         url: "https://example.com/checks/1",
       },
+      {
+        provider: "github",
+        name: "legacy status",
+        status: "pending",
+        url: "https://github.com/getpaseo/paseo/pull/42",
+      },
     ]);
   });
 
@@ -141,9 +153,20 @@ describe("mapPrPaneData", () => {
             duration: "1m",
           },
           { name: "failure", status: "failure", url: "https://example.com/2" },
-          { name: "pending", status: "pending", url: "https://example.com/3" },
+          {
+            name: "approval",
+            status: "pending",
+            traits: ["action_required"],
+            url: "https://example.com/3",
+          },
           { name: "skipped", status: "skipped", url: "https://example.com/4" },
           { name: "cancelled", status: "cancelled", url: "https://example.com/5" },
+          {
+            name: "manual",
+            status: "skipped",
+            traits: ["manual"],
+            url: "https://example.com/6",
+          },
         ],
       }),
       baseTimeline,
@@ -159,9 +182,27 @@ describe("mapPrPaneData", () => {
         url: "https://example.com/1",
       },
       { provider: "github", name: "failure", status: "failure", url: "https://example.com/2" },
-      { provider: "github", name: "pending", status: "pending", url: "https://example.com/3" },
+      {
+        provider: "github",
+        name: "approval",
+        status: "pending",
+        traits: ["action_required"],
+        url: "https://example.com/3",
+      },
       { provider: "github", name: "skipped", status: "skipped", url: "https://example.com/4" },
-      { provider: "github", name: "cancelled", status: "skipped", url: "https://example.com/5" },
+      {
+        provider: "github",
+        name: "cancelled",
+        status: "cancelled",
+        url: "https://example.com/5",
+      },
+      {
+        provider: "github",
+        name: "manual",
+        status: "skipped",
+        traits: ["manual"],
+        url: "https://example.com/6",
+      },
     ]);
   });
 
@@ -588,7 +629,7 @@ describe("mapPrPaneData", () => {
     ]);
   });
 
-  it("keeps Forgejo branding for aggregate Gitea-family CI status", () => {
+  it("keeps Forgejo branding and warning presentation for aggregate CI status", () => {
     const data = mapPrPaneData(
       status({
         forge: "forgejo",
@@ -598,7 +639,7 @@ describe("mapPrPaneData", () => {
           forge: "gitea",
           mergeable: true,
           hasMerged: false,
-          ciStatus: "failure",
+          ciStatus: "warning",
         },
       }),
       baseTimeline,
@@ -611,6 +652,7 @@ describe("mapPrPaneData", () => {
         provider: "forgejo",
         name: "CI",
         status: "failure",
+        traits: ["warning"],
         url: "https://forgejo.example.com/group/repo/pulls/7",
       },
     ]);
@@ -667,8 +709,39 @@ describe("mapPipelineStatus", () => {
     expect(mapPipelineStatus("created")).toBe("pending");
     expect(mapPipelineStatus("waiting_for_resource")).toBe("pending");
     expect(mapPipelineStatus("preparing")).toBe("pending");
+    expect(mapPipelineStatus("canceling")).toBe("pending");
     expect(mapPipelineStatus("scheduled")).toBe("pending");
     expect(mapPipelineStatus("anything-else")).toBe("pending");
+  });
+
+  it("separates blocking outcomes from allowed failures and optional manual jobs", () => {
+    const job = (id: number, jobStatus: string, allowFailure: boolean): CheckoutPipelineJob => ({
+      id,
+      name: `job-${id}`,
+      stage: "test",
+      status: jobStatus,
+      rawStatus: jobStatus,
+      url: null,
+      allowFailure,
+      durationSeconds: null,
+    });
+    expect(
+      countGitlabPipelineJobs([
+        job(1, "success", false),
+        job(2, "failed", false),
+        job(3, "failed", true),
+        job(4, "pending", false),
+        job(5, "manual", true),
+        job(6, "manual", false),
+      ]),
+    ).toEqual({
+      success: 1,
+      failure: 1,
+      warning: 1,
+      actionRequired: 1,
+      manual: 1,
+      pending: 1,
+    });
   });
 
   it("marks running and queued pipeline statuses as live for polling", () => {
@@ -677,6 +750,7 @@ describe("mapPipelineStatus", () => {
     expect(isPipelineActiveStatus("created")).toBe(true);
     expect(isPipelineActiveStatus("waiting_for_resource")).toBe(true);
     expect(isPipelineActiveStatus("preparing")).toBe(true);
+    expect(isPipelineActiveStatus("canceling")).toBe(true);
     expect(isPipelineActiveStatus("scheduled")).toBe(true);
     expect(isPipelineActiveStatus("success")).toBe(false);
     expect(isPipelineActiveStatus("failed")).toBe(false);
@@ -706,37 +780,34 @@ describe("formatAge", () => {
   });
 });
 
-describe("getStateLabel", () => {
+const english = i18n.getFixedT("en");
+const french = i18n.getFixedT("fr");
+
+describe("getStateLabelKey", () => {
   it.each([
-    ["open", "Open"],
-    ["draft", "Draft"],
-    ["merged", "Merged"],
-    ["closed", "Closed"],
-  ] as const)("maps %s → %s", (state, expected) => {
-    expect(getStateLabel(state)).toBe(expected);
+    ["open", "Open", "Ouverte"],
+    ["draft", "Draft", "Brouillon"],
+    ["merged", "Merged", "Fusionnée"],
+    ["closed", "Closed", "Fermée"],
+  ] as const)("labels %s as %s, and %s in French", (state, englishLabel, frenchLabel) => {
+    expect(english(getStateLabelKey(state))).toBe(englishLabel);
+    expect(french(getStateLabelKey(state))).toBe(frenchLabel);
   });
 });
 
-describe("getActivityVerb", () => {
-  it("returns Commented for comment kind", () => {
-    expect(getActivityVerb({ kind: "comment" })).toBe("Commented");
-  });
-
-  it("returns Approved for approved review", () => {
-    expect(getActivityVerb({ kind: "review", reviewState: "approved" })).toBe("Approved");
-  });
-
-  it("returns Requested changes for changes_requested review", () => {
-    expect(getActivityVerb({ kind: "review", reviewState: "changes_requested" })).toBe(
+describe("getActivityVerbKey", () => {
+  it.each([
+    [{ kind: "comment" }, "Commented", "A commenté"],
+    [{ kind: "review", reviewState: "approved" }, "Approved", "A approuvé"],
+    [
+      { kind: "review", reviewState: "changes_requested" },
       "Requested changes",
-    );
-  });
-
-  it("returns Reviewed for a commented review with body (generic case)", () => {
-    expect(getActivityVerb({ kind: "review", reviewState: "commented" })).toBe("Reviewed");
-  });
-
-  it("returns Reviewed when reviewState is undefined", () => {
-    expect(getActivityVerb({ kind: "review" })).toBe("Reviewed");
+      "A demandé des modifications",
+    ],
+    [{ kind: "review", reviewState: "commented" }, "Reviewed", "A relu"],
+    [{ kind: "review" }, "Reviewed", "A relu"],
+  ] as const)("labels %o as %s, and %s in French", (item, englishVerb, frenchVerb) => {
+    expect(english(getActivityVerbKey(item))).toBe(englishVerb);
+    expect(french(getActivityVerbKey(item))).toBe(frenchVerb);
   });
 });

@@ -37,7 +37,7 @@ function resolveChatTab(
 /**
  * The chat a file should attach to. The focused pane answers first, then the tab it
  * came from — a file opened beside a chat belongs to that chat. Failing both, any
- * chat the user can see: standing in the Side panel looking at Changes, "add to
+ * chat the user can see: standing in the Explorer sidebar looking at Changes, "add to
  * chat" plainly means the chat in the pane next to it.
  */
 export function resolveFocusedChatTarget(input: {

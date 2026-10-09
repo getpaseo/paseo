@@ -105,4 +105,4 @@ Schedules default to UTC. Pass `--timezone <IANA>` to interpret cron fields in a
 
 Schedules wait for the next matching cron time by default. Pass `--run-now` to start one immediate run on creation.
 
-When targeting a remote daemon with `--host`, pass `--cwd`; your local working directory may not exist on the remote machine.
+Start the command with `paseo --host <target> schedule create ...` when targeting a remote daemon. Pass `--cwd`; your local working directory may not exist on the remote machine.

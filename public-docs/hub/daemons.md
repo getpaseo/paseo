@@ -8,7 +8,7 @@ category: Hub
 
 # Daemons in Hub
 
-A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, then any project can reference it.
+A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, then triggers can reference it.
 
 ## Connect
 
@@ -20,7 +20,7 @@ paseo hub login https://hub.example.com
 
 The CLI prints a URL and a verification code and opens your browser. The approved login is stored under `PASEO_HOME`.
 
-In an interactive terminal, login then offers to finish setup: whether to connect this daemon, and whether to initialize and deploy a starter workflow. Both default to yes. Declining the connection prints `paseo hub connect <origin>; then paseo hub init`, since connecting alone leaves the project without a workflow. Declining only the starter prints `paseo hub init`. `--json` or non-TTY login only logs in. [Quickstart](/docs/hub/quickstart) walks through the questions.
+In an interactive terminal, login offers to connect this daemon and separately asks whether to allow Hub automations to run agents. Connection defaults to yes; execution permission defaults to no. It then links to **Triggers** and prints `paseo hub init` for creating a starter trigger as code. `--json` or non-TTY login only logs in. [Quickstart](/docs/hub/quickstart) walks through connection and initialization.
 
 Enroll the daemon on its own when you declined, or when the machine is already logged in:
 
@@ -65,6 +65,18 @@ paseo hub logout --disconnect-daemon           # remove both identities
 paseo hub logout --disconnect-daemon --force   # drop local authority when Hub is unreachable
 ```
 
+## Let Hub run agents on it
+
+Enrolling a daemon does not let Hub start agents on it. That is the separate `hub.execute` permission, which login asks about and defaults to no. Grant it from the machine at any time:
+
+```sh
+paseo hub permissions list
+paseo hub permissions grant hub.execute
+paseo hub permissions revoke hub.execute
+```
+
+Until it is granted, Hub keeps the daemon for identity and presence only. The Daemons page shows it as **Connected only** with the grant command, and Home's checklist reads **Cannot run agents**. [Hub security](/docs/hub/security#choose-daemon-authority) covers what the permission allows once granted.
+
 ## Reference it from configuration
 
 ```yaml
@@ -107,6 +119,6 @@ If Hub loses the create response, or the daemon restarts mid-execution, Hub rese
 | Offline           | Enrolled but not currently connected           |
 | Revoked           | Access removed from Hub                        |
 
-An event that arrives while a daemon is offline fails dispatch with `daemon_not_connected`. Nothing is queued for later. The event is in the project's Activity, and the trigger has to fire again.
+An event that arrives while a daemon is offline fails dispatch with `daemon_not_connected`. Nothing is queued for later. The event is in the project's Activity, and the trigger has to fire again. An offline daemon also blocks saving a trigger that changes its target or agent, because Hub checks that agent against it; see [Saving checks the agent against the daemon](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
 
 Revoking from **Daemons → Revoke daemon** ends the relationship from Hub's side. The daemon keeps running your local agents.

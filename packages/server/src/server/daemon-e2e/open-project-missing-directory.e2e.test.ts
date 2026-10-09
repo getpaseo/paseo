@@ -48,7 +48,7 @@ test("openProject on a nonexistent directory does not broadcast an upsert that i
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   cleanupClients.add(client);
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "missing-dir-agents" } });
+  await client.fetchAgents({ subscribe: {} });
 
   const workspaceEvents: Array<{ kind: "upsert" | "remove"; workspaceId: string }> = [];
   client.subscribe((event: DaemonEvent) => {
@@ -57,7 +57,7 @@ test("openProject on a nonexistent directory does not broadcast an upsert that i
     }
     workspaceEvents.push({ kind: event.payload.kind, workspaceId: event.workspaceId });
   });
-  await client.fetchWorkspaces({ subscribe: { subscriptionId: "missing-dir-workspaces" } });
+  await client.fetchWorkspaces({ subscribe: {} });
 
   const tempParent = await mkdtemp(path.join(os.tmpdir(), "paseo-open-project-"));
   cleanupPaths.add(tempParent);
@@ -77,8 +77,8 @@ test("openProject expands tilde before creating the workspace", async () => {
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   cleanupClients.add(client);
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "tilde-project-agents" } });
-  await client.fetchWorkspaces({ subscribe: { subscriptionId: "tilde-project-workspaces" } });
+  await client.fetchAgents({ subscribe: {} });
+  await client.fetchWorkspaces({ subscribe: {} });
 
   const home = process.env.HOME || os.homedir();
   const workspacePath = await mkdtemp(path.join(home, ".paseo-open-project-"));

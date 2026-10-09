@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { DesktopPlatform, MobilePlatform } from "~/platform";
 
 export function releaseBase(version: string) {
   return `https://github.com/getpaseo/paseo/releases/download/v${version}`;
@@ -26,72 +27,56 @@ export function downloadUrls(release: ReleaseAssetInfo) {
   };
 }
 
+const RELEASE_ASSETS_ORIGIN = "https://github.com";
+const RELEASE_ASSETS_PATH = "/getpaseo/paseo/releases/download/";
+
+/**
+ * The release file a thanks-page link asks for, or null when it is not one of
+ * ours. Parsing normalizes `..` segments, so a link cannot climb out of this
+ * repo's releases into another repo's.
+ */
+export function parseReleaseAssetUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  if (url.origin !== RELEASE_ASSETS_ORIGIN) return null;
+  if (!url.pathname.startsWith(RELEASE_ASSETS_PATH)) return null;
+  return url.href;
+}
+
+/** Download buttons link here; the thanks page starts the download itself. */
+export function thanksPageHref(fileUrl: string): string {
+  return `/download/thanks?${new URLSearchParams({ file: fileUrl })}`;
+}
+
 export const appStoreUrl = "https://apps.apple.com/app/paseo-pocket-engineer/id6758887924";
 export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.paseo";
 export const webAppUrl = "https://app.paseo.sh";
 
-type Platform = "mac-silicon" | "mac-intel" | "windows" | "linux";
-
-export interface DownloadOption {
-  platform: Platform;
+export interface PrimaryDownload {
   label: string;
   href: string;
   icon: (props: React.SVGProps<SVGSVGElement>) => React.ReactElement;
 }
 
-export function getDownloadOptions(release: ReleaseAssetInfo): DownloadOption[] {
+export function getDesktopDownload(
+  release: ReleaseAssetInfo,
+  platform: DesktopPlatform,
+): PrimaryDownload {
   const urls = downloadUrls(release);
-  return [
-    {
-      platform: "mac-silicon",
-      label: "Mac",
-      href: urls.macAppleSilicon,
-      icon: AppleIcon,
-    },
-    {
-      platform: "mac-intel",
-      label: "Mac Intel",
-      href: urls.macIntel,
-      icon: AppleIcon,
-    },
-    {
-      platform: "windows",
-      label: "Windows",
-      href: urls.windowsExeX64,
-      icon: WindowsIcon,
-    },
-    {
-      platform: "linux",
-      label: "Linux",
-      href: urls.linuxAppImage,
-      icon: LinuxIcon,
-    },
-  ];
+  switch (platform) {
+    case "windows":
+      return { label: "Windows", href: thanksPageHref(urls.windowsExeX64), icon: WindowsIcon };
+    case "linux":
+      return { label: "Linux", href: thanksPageHref(urls.linuxAppImage), icon: LinuxIcon };
+    case "mac":
+      return { label: "Mac", href: thanksPageHref(urls.macAppleSilicon), icon: AppleIcon };
+  }
 }
 
-export function useDetectedPlatform(): Platform {
-  const [platform, setPlatform] = React.useState<Platform>("mac-silicon");
-
-  React.useEffect(() => {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes("win")) {
-      setPlatform("windows");
-    } else if (ua.includes("linux")) {
-      setPlatform("linux");
-    } else if (ua.includes("mac")) {
-      // Check for Apple Silicon vs Intel
-      // navigator.platform is deprecated but still the most reliable check
-      const isARM =
-        /arm|aarch64/i.test(navigator.platform) ||
-        // Chrome/Edge on Apple Silicon report x86 platform but have ARM in userAgentData
-        (navigator as unknown as { userAgentData?: { architecture?: string } }).userAgentData
-          ?.architecture === "arm";
-      setPlatform(isARM ? "mac-silicon" : "mac-silicon"); // Default to Silicon for modern Macs
-    }
-  }, []);
-
-  return platform;
-}
+export const MOBILE_STORES: Record<MobilePlatform, PrimaryDownload> = {
+  ios: { label: "iPhone", href: appStoreUrl, icon: AppleIcon },
+  android: { label: "Android", href: playStoreUrl, icon: PlayStoreIcon },
+};
 
 export function AppleIcon(props: React.SVGProps<SVGSVGElement>) {
   return (

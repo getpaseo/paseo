@@ -7,6 +7,7 @@ describe("getBuiltInLaunchOrder", () => {
       "agent",
       "terminal",
       "changes",
+      "diff",
       "files",
       "browser",
       "pullRequest",
@@ -16,8 +17,9 @@ describe("getBuiltInLaunchOrder", () => {
   it("leads with companion tools in a supporting pane", () => {
     expect(getBuiltInLaunchOrder("supporting")).toEqual([
       "changes",
-      "files",
       "terminal",
+      "diff",
+      "files",
       "agent",
       "browser",
       "pullRequest",

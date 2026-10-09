@@ -2,15 +2,7 @@ import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import {
-  ExternalLink,
-  Folder,
-  GitBranch,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  Globe,
-} from "lucide-react-native";
+import { ExternalLink, Folder, GitBranch, Globe } from "lucide-react-native";
 import {
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
@@ -23,6 +15,7 @@ import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
 import type { Theme } from "@/styles/theme";
+import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
@@ -44,9 +37,6 @@ const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedGitBranch = withUnistyles(GitBranch);
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
-const ThemedGitMerge = withUnistyles(GitMerge);
-const ThemedGitPullRequestClosed = withUnistyles(GitPullRequestClosed);
 const ThemedGlobe = withUnistyles(Globe);
 
 /** Stable identity so a row without labels doesn't re-select its items on every render. */
@@ -54,7 +44,6 @@ const EMPTY_LABELS: readonly WorkspaceLabelDefinition[] = [];
 
 const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 /**
@@ -212,7 +201,6 @@ function PullRequestItem({ hint }: { hint: PrHint }) {
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
 
-  const Icon = isHovered ? ThemedExternalLink : PR_ICONS[hint.state];
   return (
     <Pressable
       accessibilityRole="link"
@@ -227,10 +215,11 @@ function PullRequestItem({ hint }: { hint: PrHint }) {
       onHoverOut={handleHoverOut}
       style={pressableItemStyle}
     >
-      <Icon
-        size={META_ICON_SIZE}
-        uniProps={isHovered ? foregroundMapping : PR_COLOR_MAPPINGS[hint.state]}
-      />
+      {isHovered ? (
+        <ThemedExternalLink size={META_ICON_SIZE} uniProps={foregroundMapping} />
+      ) : (
+        <PullRequestStateIcon state={hint.state} size={META_ICON_SIZE} />
+      )}
       <Text style={isHovered ? styles.prTextHovered : styles.prText} numberOfLines={1}>
         {hint.number}
         {/* An open change request is the unremarkable case and says nothing extra; a merged
@@ -310,20 +299,6 @@ function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
 }
 
 const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
-
-const PR_ICONS = {
-  open: ThemedGitPullRequest,
-  merged: ThemedGitMerge,
-  closed: ThemedGitPullRequestClosed,
-} as const;
-
-// Same three colours the hover card gives the same three states — a change request has one
-// identity, and it shouldn't shift when you hover the row that names it.
-const PR_COLOR_MAPPINGS = {
-  open: successMapping,
-  merged: mergedMapping,
-  closed: dangerMapping,
-} as const;
 
 const PR_STATE_LABEL_KEYS = {
   merged: "workspace.git.pr.states.merged",

@@ -59,6 +59,11 @@ const palette: DiffPalette = {
   deletionBackground: "red-bg",
   emptyBackground: "empty",
   selection: "selection",
+  headerActiveSurface: "active-header",
+  headerBorder: "header-border",
+  statusSuccess: "success",
+  statusDanger: "danger",
+  statusWarning: "warning",
   syntax: {},
 };
 

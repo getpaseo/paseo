@@ -75,6 +75,11 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           input.setSelectionRange(selection.start, selection.end);
         }
       },
+      reset: () => {
+        textRef.current = "";
+        const input = inputRef.current as WebTextInputElement | null;
+        if (input && "value" in input) input.value = "";
+      },
       getNativeRef: () => inputRef.current,
     }));
 

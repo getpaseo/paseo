@@ -1,0 +1,116 @@
+export interface BrowserCaptureImage {
+  isEmpty(): boolean;
+  toDataURL(): string;
+}
+
+export interface BrowserCaptureGuest<TImage extends BrowserCaptureImage = BrowserCaptureImage> {
+  isDestroyed(): boolean;
+  getZoomFactor(): number;
+  capturePage(rect: BrowserCaptureRect): Promise<TImage>;
+}
+
+export interface BrowserCaptureRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface BrowserCaptureClipboardPayload<TImage extends BrowserCaptureImage> {
+  text: string | null;
+  image: TImage | null;
+}
+
+interface BrowserCaptureClipboard<TImage extends BrowserCaptureImage> {
+  write(input: BrowserCaptureClipboardPayload<TImage>): Promise<void>;
+}
+
+interface BrowserCaptureDependencies<TImage extends BrowserCaptureImage> {
+  findGuest(browserId: string, hostWebContentsId: number): BrowserCaptureGuest<TImage> | null;
+  decodeImage(dataUrl: string): TImage;
+  clipboard: BrowserCaptureClipboard<TImage>;
+  warn(event: "capture-failed" | "image-decode-failed", details: Record<string, unknown>): void;
+}
+
+export interface BrowserCaptureService {
+  capture(input: {
+    browserId: unknown;
+    hostWebContentsId: number;
+    rect: unknown;
+  }): Promise<string | null>;
+  copy(payload: unknown): Promise<boolean>;
+}
+
+// The renderer measures the element in page CSS pixels, while capturePage
+// takes device-independent pixels, so the page zoom scales the region.
+function captureRect(value: unknown, zoomFactor: number): BrowserCaptureRect | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const coordinates = [record.x, record.y, record.width, record.height];
+  if (
+    !coordinates.every(
+      (coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate),
+    )
+  ) {
+    return null;
+  }
+  const [x, y, width, height] = (coordinates as number[]).map(
+    (coordinate) => coordinate * zoomFactor,
+  );
+  if (width <= 0 || height <= 0) return null;
+  return {
+    x: Math.max(0, Math.round(x)),
+    y: Math.max(0, Math.round(y)),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+function copyPayload(value: unknown): { text: string | null; imageDataUrl: string | null } {
+  if (!value || typeof value !== "object") return { text: null, imageDataUrl: null };
+  const record = value as Record<string, unknown>;
+  return {
+    text: typeof record.text === "string" && record.text.length > 0 ? record.text : null,
+    imageDataUrl:
+      typeof record.imageDataUrl === "string" && record.imageDataUrl.startsWith("data:image")
+        ? record.imageDataUrl
+        : null,
+  };
+}
+
+export function createBrowserCaptureService<TImage extends BrowserCaptureImage>(
+  dependencies: BrowserCaptureDependencies<TImage>,
+): BrowserCaptureService {
+  return {
+    async capture({ browserId, hostWebContentsId, rect }) {
+      if (typeof browserId !== "string" || browserId.trim().length === 0) return null;
+      const guest = dependencies.findGuest(browserId, hostWebContentsId);
+      if (!guest || guest.isDestroyed()) return null;
+      const bounds = captureRect(rect, guest.getZoomFactor());
+      if (!bounds) return null;
+      try {
+        const image = await guest.capturePage(bounds);
+        return image.isEmpty() ? null : image.toDataURL();
+      } catch (error) {
+        dependencies.warn("capture-failed", { browserId, error });
+        return null;
+      }
+    },
+
+    async copy(payload) {
+      const { text, imageDataUrl } = copyPayload(payload);
+      let image: TImage | null = null;
+      if (imageDataUrl) {
+        try {
+          const decoded = dependencies.decodeImage(imageDataUrl);
+          if (!decoded.isEmpty()) image = decoded;
+        } catch (error) {
+          dependencies.warn("image-decode-failed", { error });
+        }
+      }
+      if (!text && !image) return false;
+      await dependencies.clipboard.write({ text, image });
+      return true;
+    },
+  };
+}

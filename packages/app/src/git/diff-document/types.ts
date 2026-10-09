@@ -4,6 +4,8 @@ import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 
 interface DiffDocumentBaseProps {
   files: ParsedDiffFile[];
+  /** Scrollable space kept below the last line so a floating control never traps content. */
+  contentInsetBottom?: number;
   displayPreferences: {
     layout: "unified" | "split";
     wrapLines: boolean;
@@ -20,6 +22,7 @@ export interface WorkingDiffMode {
   focusRequestId?: number;
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   onOpenFile?: (path: string) => void;
+  onOpenToSide?: (path: string) => void;
   onAddToChat?: (path: string) => void;
   onCopyPath?: (path: string) => void;
   onCopyRelativePath?: (path: string) => void;
@@ -60,7 +63,18 @@ export interface DiffPalette {
   deletionBackground: string;
   emptyBackground: string;
   selection: string;
+  headerActiveSurface: string;
+  headerBorder: string;
+  statusSuccess: string;
+  statusDanger: string;
+  statusWarning: string;
   syntax: Record<string, string>;
+}
+
+export interface DiffHeaderTypography {
+  family: string;
+  size: number;
+  statSize: number;
 }
 
 export interface DiffTokenRun {
@@ -149,11 +163,14 @@ export interface DiffDocumentModel {
   layout: "unified" | "split";
   wrapLines: boolean;
   viewportWidth: number;
+  reviewGeometryKey: string;
 }
 
 export interface TextMeasurer {
   measure(text: string, weight?: "regular" | "semibold"): number;
   measureAdvances?(graphemes: readonly string[]): number[];
+  /** Same width as the last cumulative advance, without computing every position. */
+  measureWidth?(graphemes: readonly string[]): number;
 }
 
 export interface BuildDiffDocumentModelInput {
@@ -167,6 +184,7 @@ export interface BuildDiffDocumentModelInput {
   palette: DiffPalette;
   reviewActions?: InlineReviewActions;
   labels: { binary: string; tooLarge: string };
+  materializationWindow?: { top: number; height: number };
   /** A geometry-compatible model whose unchanged file measurements may be reused. */
   reuseFrom?: readonly DiffDocumentModel[];
 }
@@ -205,6 +223,7 @@ export type DiffScrollAnchor =
 
 export type DiffSurfaceProps = DiffDocumentProps & {
   palette: DiffPalette;
+  headerTypography: DiffHeaderTypography;
   collapsedFilePaths: ReadonlySet<string>;
   onToggleFile: (path: string) => void;
   selectedPath: string | null;

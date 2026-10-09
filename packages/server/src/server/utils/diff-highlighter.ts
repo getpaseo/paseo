@@ -332,30 +332,30 @@ export async function highlightDiffWithFileContent(
     return file;
   }
 
-  const reconstructedTokens = buildReconstructedTokenLookups(file);
-  let newTokensByLine = reconstructedTokens.newTokensByLine;
-  let oldTokensByLine = reconstructedTokens.oldTokensByLine;
-
-  if (typeof options.oldFileContent === "string") {
-    oldTokensByLine =
-      buildFullFileTokenLookup(options.oldFileContent, file.path) ?? oldTokensByLine;
-  }
-
+  let newTokensByLine: Map<number, HighlightToken[]> | null = null;
+  const oldTokensByLine =
+    typeof options.oldFileContent === "string"
+      ? buildFullFileTokenLookup(options.oldFileContent, file.path)
+      : null;
   if (typeof options.newFileContent === "string") {
-    newTokensByLine =
-      buildFullFileTokenLookup(options.newFileContent, file.path) ?? newTokensByLine;
+    newTokensByLine = buildFullFileTokenLookup(options.newFileContent, file.path);
+  } else {
+    try {
+      const fileContent = await readFile(resolve(cwd, file.path), "utf-8");
+      newTokensByLine = buildFullFileTokenLookup(fileContent, file.path);
+    } catch {
+      // Deleted or unavailable files use reconstructed tokens below.
+    }
+  }
+
+  if (newTokensByLine && oldTokensByLine)
     return applyTokensToHunks(file, newTokensByLine, oldTokensByLine);
-  }
-
-  const filePath = resolve(cwd, file.path);
-  try {
-    const fileContent = await readFile(filePath, "utf-8");
-    newTokensByLine = buildFullFileTokenLookup(fileContent, file.path) ?? newTokensByLine;
-  } catch {
-    // If file read fails (deleted file, etc.), fall back to reconstructed new-side tokens.
-  }
-
-  return applyTokensToHunks(file, newTokensByLine, oldTokensByLine);
+  const reconstructedTokens = buildReconstructedTokenLookups(file);
+  return applyTokensToHunks(
+    file,
+    newTokensByLine ?? reconstructedTokens.newTokensByLine,
+    oldTokensByLine ?? reconstructedTokens.oldTokensByLine,
+  );
 }
 
 function applyTokensToHunks(

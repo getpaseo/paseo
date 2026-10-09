@@ -64,10 +64,6 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.move-tab.up": { id: "workspace.pane.move-tab.up", scope: "workspace" },
   "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
-  "workspace.explorer.maximize.toggle": {
-    id: "workspace.explorer.maximize.toggle",
-    scope: "workspace",
-  },
   "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
 };
 
@@ -181,6 +177,13 @@ export function routeKeyboardShortcut(
 ): ShortcutAction {
   const passthrough = PASSTHROUGH_DISPATCH[input.action];
   if (passthrough) {
+    if (
+      input.action === "agent.interrupt" &&
+      ctx.pathname.startsWith("/settings") &&
+      !ctx.isMobile
+    ) {
+      return { kind: "navigate-last-workspace" };
+    }
     return dispatch(passthrough);
   }
 

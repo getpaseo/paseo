@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
-import type { StyleProp, ViewStyle } from "react-native";
+import { Keyboard, Pressable, Text, View } from "react-native";
+import type { DimensionValue, StyleProp, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -13,8 +13,6 @@ import {
   useWebOverlayRegistration,
 } from "../lib/overlay-root";
 import {
-  BottomSheetBackdrop,
-  BottomSheetScrollView,
   KEYBOARD_STATUS,
   useBottomSheetInternal,
   type BottomSheetBackgroundProps,
@@ -23,12 +21,14 @@ import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import {
   IsolatedBottomSheetModal,
+  type ContextBridge,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import {
   getBottomSheetVisibleContentHeight,
   getCompactSheetSafeAreaPadding,
 } from "@/components/adaptive-modal-sheet-layout";
+import { ScrollView } from "@/components/ui/scroll-view";
 import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -40,6 +40,11 @@ export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/ada
 // sheet body. Rows whose leading icon should line up with the header must
 // match this padding.
 export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
+
+// The header's close button grows outward from its glyph, so the glyph's
+// trailing rail is the content inset plus this padding. Rows whose trailing
+// glyph should line up with the X must reach the same rail.
+export const SHEET_HEADER_CLOSE_PADDING_SCALE = 2;
 
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
@@ -66,9 +71,17 @@ export interface SheetHeader {
   search?: SheetHeaderSearch;
 }
 
+const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
+const NATIVE_DIALOG_SNAP_POINTS = ["100%"];
 
 const styles = StyleSheet.create((theme) => ({
+  nativeDialogSurface: {
+    flex: 1,
+  },
+  nativeDialogBackground: {
+    backgroundColor: "transparent",
+  },
   desktopOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
@@ -78,6 +91,7 @@ const styles = StyleSheet.create((theme) => ({
     pointerEvents: "auto" as const,
   },
   desktopCard: {
+    overflow: "hidden",
     width: "100%",
     maxWidth: 520,
     maxHeight: "85%",
@@ -121,7 +135,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   closeButton: {
-    padding: theme.spacing[2],
+    padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
     borderRadius: theme.borderRadius.lg,
   },
   searchRow: {
@@ -168,6 +182,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   desktopScrollContainer: {
+    // Grows only when the card has an explicit `desktopHeight`; a content-sized
+    // card has nothing to grow into. Without it a fixed-height card with short
+    // content leaves the footer stranded in the middle.
+    flexGrow: 1,
     flexShrink: 1,
     minHeight: 0,
     position: "relative",
@@ -444,12 +462,19 @@ export interface AdaptiveModalSheetProps {
   testID?: string;
   /** Override the max width of the desktop card. */
   desktopMaxWidth?: number;
+  /** Bound an author-owned list without changing content-sized first-party dialogs. */
+  desktopHeight?: DimensionValue;
+  /** Whether the host supplies the scroll container. Caller-owned lists still share sheet gestures. */
   scrollable?: boolean;
   presentation?: "push" | "replace";
+  /** Full body viewport below the header, including space beyond the content. */
+  bodyStyle?: StyleProp<ViewStyle>;
   /** Layout intent for the sheet body, composed over the sheet's own content inset. */
   contentStyle?: StyleProp<ViewStyle>;
   /** Size compact sheet content to the live snap height instead of its largest snap point. */
   sizeContentToCurrentSnapPoint?: boolean;
+  /** Re-establishes caller-owned contexts inside the native or compact sheet portal. */
+  contextBridge?: ContextBridge | null;
 }
 
 export function AdaptiveModalSheet({
@@ -463,16 +488,19 @@ export function AdaptiveModalSheet({
   snapPoints,
   testID,
   desktopMaxWidth,
+  desktopHeight,
   scrollable = true,
   presentation,
   contentStyle,
-  sizeContentToCurrentSnapPoint = false,
+  bodyStyle,
+  sizeContentToCurrentSnapPoint = true,
+  contextBridge = null,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
-  const isKeyboardVisible = useKeyboardVisibility();
+  const isKeyboardVisible = useKeyboardVisibility(visible);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
     () =>
@@ -480,78 +508,54 @@ export function AdaptiveModalSheet({
         isCompact: isMobile,
         isKeyboardVisible,
         hasFooter: Boolean(footer),
-        baseContentPadding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
-        baseFooterPadding: theme.spacing[3],
         safeAreaBottom: insets.bottom,
       }),
-    [footer, insets.bottom, isKeyboardVisible, isMobile, theme.spacing],
+    [footer, insets.bottom, isKeyboardVisible, isMobile],
   );
-  const compactContentStyle = useMemo(
-    () => [
-      contentStyle,
-      compactSafeAreaPadding.contentPaddingBottom != null
-        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
-        : null,
-    ],
-    [compactSafeAreaPadding.contentPaddingBottom, contentStyle],
+  // Safe-area clearance is a separate layer: it must not replace the caller's
+  // padding (including an explicit zero), and the footer owns it when present.
+  const bodyClearanceStyle = { paddingBottom: compactSafeAreaPadding.contentPaddingBottom ?? 0 };
+  const footerClearanceStyle = useMemo(
+    () => ({ paddingBottom: compactSafeAreaPadding.footerPaddingBottom ?? 0 }),
+    [compactSafeAreaPadding.footerPaddingBottom],
   );
-  const compactStaticContentStyle = useMemo(
-    () => [styles.compactStaticContent, compactContentStyle],
-    [compactContentStyle],
-  );
-  const desktopScrollContentStyle = useMemo(
-    () => [styles.contentGrow, contentStyle],
-    [contentStyle],
-  );
-  const desktopStaticContentStyle = useMemo(
-    () => [styles.desktopStaticContent, contentStyle],
-    [contentStyle],
-  );
-  const footerStyle = useMemo(
-    () => [
-      styles.footer,
-      footerContainerStyle,
-      compactSafeAreaPadding.footerPaddingBottom != null
-        ? { paddingBottom: compactSafeAreaPadding.footerPaddingBottom }
-        : null,
-    ],
-    [compactSafeAreaPadding.footerPaddingBottom, footerContainerStyle],
-  );
+  const footerView = footer ? (
+    <View style={footerClearanceStyle}>
+      <View style={[styles.footer, footerContainerStyle]}>{footer}</View>
+    </View>
+  ) : null;
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
     [theme.colors.palette.zinc],
   );
+  useEffect(() => {
+    if (!isWeb && visible) {
+      // A newly opened sheet owns input. A keyboard belonging to the sheet below
+      // would cover controls in the new sheet, which has no focused input yet.
+      Keyboard.dismiss();
+    }
+  }, [visible]);
+
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
-    isEnabled: isMobile,
+    isEnabled: isMobile || !isWeb,
     onClose,
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
   const [isWebClosing, setIsWebClosing] = useState(false);
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
-  const nativeModalDismissNotifiedRef = useRef(!visible);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
     onDismiss?.();
   }, [handleSheetDismiss, onDismiss]);
-  const notifyNativeModalDismiss = useCallback(() => {
-    if (nativeModalDismissNotifiedRef.current) {
-      return;
-    }
-    nativeModalDismissNotifiedRef.current = true;
-    onDismiss?.();
-  }, [onDismiss]);
-
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
-    ),
-    [],
-  );
 
   const desktopCardStyle = useMemo(
-    () => [styles.desktopCard, desktopMaxWidth != null && { maxWidth: desktopMaxWidth }],
-    [desktopMaxWidth],
+    () => [
+      styles.desktopCard,
+      desktopHeight != null && { height: desktopHeight },
+      desktopMaxWidth != null && { maxWidth: desktopMaxWidth },
+    ],
+    [desktopMaxWidth, desktopHeight],
   );
   const desktopOverlayStyle = useMemo(
     () => [
@@ -584,12 +588,6 @@ export function AdaptiveModalSheet({
   });
 
   useEffect(() => {
-    if (visible) {
-      nativeModalDismissNotifiedRef.current = false;
-    }
-  }, [visible]);
-
-  useEffect(() => {
     if (!isWeb || isMobile) return;
     if (visible) {
       setShouldRenderWeb(true);
@@ -606,41 +604,44 @@ export function AdaptiveModalSheet({
     return () => window.clearTimeout(timeout);
   }, [visible, isMobile, onDismiss, shouldRenderWeb]);
 
-  useEffect(() => {
-    if (isWeb || isMobile || visible || Platform.OS !== "android") return;
-    const timeout = setTimeout(notifyNativeModalDismiss, 0);
-    return () => clearTimeout(timeout);
-  }, [visible, isMobile, notifyNativeModalDismiss]);
-
   if (isMobile) {
     const sheetContent = (
       <>
         <SheetHeaderView header={header} onClose={onClose} testID={testID} />
-        {scrollable ? (
-          <BottomSheetScrollView
-            style={sizeContentToCurrentSnapPoint ? styles.bottomSheetVisibleScroll : undefined}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <SheetContent style={compactContentStyle}>{children}</SheetContent>
-          </BottomSheetScrollView>
-        ) : (
-          <SheetContent style={compactStaticContentStyle}>{children}</SheetContent>
-        )}
-        {footer ? <View style={footerStyle}>{footer}</View> : null}
+        <View style={[styles.compactStaticContent, bodyStyle]}>
+          {scrollable ? (
+            <ScrollView
+              style={styles.bottomSheetVisibleScroll}
+              contentContainerStyle={SCROLL_CONTENT_GROW}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={[styles.contentGrow, bodyClearanceStyle]}>
+                <SheetContent style={[styles.contentGrow, contentStyle]}>{children}</SheetContent>
+              </View>
+            </ScrollView>
+          ) : (
+            <View style={[styles.compactStaticContent, bodyClearanceStyle]}>
+              <SheetContent style={[styles.compactStaticContent, contentStyle]}>
+                {children}
+              </SheetContent>
+            </View>
+          )}
+        </View>
+        {footerView}
       </>
     );
 
     return (
       <IsolatedBottomSheetModal
         ref={sheetRef}
-        contextBridge={null}
+        contextBridge={contextBridge}
         snapPoints={resolvedSnapPoints}
         index={0}
         enableDynamicSizing={false}
         onChange={handleSheetChange}
         onDismiss={handleDismiss}
-        backdropComponent={renderBackdrop}
+        backdropOpacity={0.45}
         enablePanDownToClose
         backgroundComponent={SheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
@@ -658,24 +659,26 @@ export function AdaptiveModalSheet({
     );
   }
 
+  const desktopStaticStyle =
+    desktopHeight == null ? styles.desktopStaticContent : styles.compactStaticContent;
   const cardInner = (
     <OverlayLayerProvider layer={modalLayer}>
       <SheetHeaderView header={header} onClose={onClose} />
-      {scrollable ? (
-        <View style={styles.desktopScrollContainer}>
+      <View style={[scrollable ? styles.desktopScrollContainer : desktopStaticStyle, bodyStyle]}>
+        {scrollable ? (
           <ScrollView
             style={styles.desktopScroll}
-            contentContainerStyle={styles.contentGrow}
+            contentContainerStyle={SCROLL_CONTENT_GROW}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
           >
-            <SheetContent style={desktopScrollContentStyle}>{children}</SheetContent>
+            <SheetContent style={[styles.contentGrow, contentStyle]}>{children}</SheetContent>
           </ScrollView>
-        </View>
-      ) : (
-        <SheetContent style={desktopStaticContentStyle}>{children}</SheetContent>
-      )}
-      {footer ? <View style={footerStyle}>{footer}</View> : null}
+        ) : (
+          <SheetContent style={[desktopStaticStyle, contentStyle]}>{children}</SheetContent>
+        )}
+      </View>
+      {footerView}
     </OverlayLayerProvider>
   );
 
@@ -705,15 +708,28 @@ export function AdaptiveModalSheet({
   }
 
   return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={visible}
-      onRequestClose={onClose}
-      onDismiss={notifyNativeModalDismiss}
-      hardwareAccelerated
+    // Both native presentations share Gorhom's app-wide stack. Independent RN Modals
+    // present from their React ancestor's controller, so a root-owned sibling dialog
+    // cannot present while that controller already has a dialog open on iOS.
+    <IsolatedBottomSheetModal
+      ref={sheetRef}
+      contextBridge={contextBridge}
+      snapPoints={NATIVE_DIALOG_SNAP_POINTS}
+      index={0}
+      enableDynamicSizing={false}
+      onChange={handleSheetChange}
+      onDismiss={handleDismiss}
+      handleComponent={null}
+      backgroundStyle={styles.nativeDialogBackground}
+      enablePanDownToClose={false}
+      enableHandlePanningGesture={false}
+      enableContentPanningGesture={false}
+      keyboardBehavior="extend"
+      keyboardBlurBehavior="restore"
+      accessible={false}
+      presentation={presentation}
     >
-      {desktopContent}
-    </Modal>
+      <View style={styles.nativeDialogSurface}>{desktopContent}</View>
+    </IsolatedBottomSheetModal>
   );
 }

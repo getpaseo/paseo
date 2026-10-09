@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, type ComponentType, type ReactElement } from "react";
 import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import {
@@ -16,11 +16,19 @@ import {
   type WorkspaceTabLaunchItem,
   type WorkspaceTabLaunchPurpose,
 } from "@/workspace-tabs/launcher";
-import type { LucideIcon } from "lucide-react-native";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import type { PaneHost } from "@/panels/panel-manifest";
+import type { PanelIconProps } from "@/panels/panel-registry";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function LaunchItemIconGlyph({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
+function LaunchItemIconGlyph({
+  Icon,
+  color = "",
+}: {
+  Icon: ComponentType<PanelIconProps>;
+  color?: string;
+}) {
   return <Icon size={14} color={color} />;
 }
 
@@ -76,13 +84,23 @@ function LaunchItemShortcut({ actionId }: { actionId: string }) {
 export function WorkspaceNewTabMenuContent({
   serverId,
   purpose,
+  host,
+  panePanelKinds,
   paneId,
 }: {
   serverId: string;
   purpose: WorkspaceTabLaunchPurpose;
+  host: PaneHost;
+  panePanelKinds: readonly WorkspaceTabTarget["kind"][];
   paneId?: string;
 }) {
-  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose });
+  const groups = useWorkspaceTabLaunchCatalog({
+    serverId,
+    purpose,
+    host,
+    surface: "menu",
+    panePanelKinds,
+  });
 
   return (
     <DropdownMenuContent

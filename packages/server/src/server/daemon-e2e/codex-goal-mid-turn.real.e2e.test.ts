@@ -116,7 +116,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         cwd,
@@ -170,7 +170,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         cwd,
@@ -247,7 +247,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         cwd,

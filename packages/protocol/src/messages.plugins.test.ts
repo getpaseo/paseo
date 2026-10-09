@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import {
   MutableDaemonConfigSchema,
@@ -7,6 +8,86 @@ import {
 } from "./messages.js";
 
 describe("plugin protocol compatibility", () => {
+  it.each([undefined, { paseo: ">=0.8.0" }])(
+    "parses plugin catalogs with requirements %j",
+    (requirements) => {
+      const message = {
+        type: "plugin.catalog.get.response",
+        payload: {
+          requestId: "catalog",
+          plugins: [
+            { id: "example", clientBundle: "bundle", ...(requirements ? { requirements } : {}) },
+          ],
+        },
+      };
+      expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+    },
+  );
+  it("preserves manifest metadata in plugin list responses", () => {
+    const message = {
+      type: "plugin.list.response",
+      payload: {
+        requestId: "metadata",
+        plugins: [
+          {
+            id: "review",
+            name: "Review tools",
+            icon: "assets/icon.png",
+            media: ["screenshot.png", "https://example.com/demo.mp4"],
+            path: "/plugins/review",
+            enabled: false,
+            status: "disabled",
+          },
+        ],
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  it("parses plugin timeline append messages and advertises the capability", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.append.request",
+        requestId: "request-append",
+        agentId: "agent-1",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          kind: "review",
+          version: 1,
+          data: { status: "running" },
+        },
+      }),
+    ).toMatchObject({ type: "agent.timeline.append.request" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.timeline.append.response",
+        payload: { requestId: "request-append", seq: 7, epoch: "epoch-1" },
+      }),
+    ).toMatchObject({ type: "agent.timeline.append.response" });
+    expect(
+      StatusMessageSchema.parse({
+        type: "status",
+        payload: {
+          status: "server_info",
+          serverId: "server-1",
+          features: { pluginTimelineItems: true },
+        },
+      }).payload,
+    ).toMatchObject({ features: { pluginTimelineItems: true } });
+  });
+
+  it.each([0, -1, 1.5])("rejects plugin timeline version %s", (version) => {
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.append.request",
+        requestId: "append-1",
+        agentId: "agent-1",
+        item: { type: "plugin", id: "row-1", kind: "review", version, data: {} },
+      }),
+    ).toThrow();
+  });
+
   it("keeps old directory plugin config valid when enabled is absent", () => {
     const config = MutableDaemonConfigSchema.parse({
       mcp: { injectIntoAgents: true },
@@ -39,6 +120,7 @@ describe("plugin protocol compatibility", () => {
           requestId: "request-1",
           plugin: {
             id: "example-work",
+            description: "Reviews changes before merge",
             path: "/plugins/example",
             enabled: true,
             status: "running",
@@ -46,6 +128,69 @@ describe("plugin protocol compatibility", () => {
         },
       }).type,
     ).toBe("plugin.directory.install.response");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "plugin.directory.install.response",
+        payload: {
+          requestId: "request-old-shape",
+          plugin: {
+            id: "example-work",
+            path: "/plugins/example",
+            enabled: true,
+            status: "running",
+          },
+        },
+      }).type,
+    ).toBe("plugin.directory.install.response");
+  });
+
+  it("uses capability-gated source management RPCs", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "plugin.source.install.request",
+        requestId: "request-install",
+        source: "owner/repository:plugins/review",
+        ref: "main",
+      }).type,
+    ).toBe("plugin.source.install.request");
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "plugin.source.install.request",
+        requestId: "request-install-old-client",
+        source: "owner/repository",
+        pluginPath: "plugins/review",
+      }).type,
+    ).toBe("plugin.source.install.request");
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "plugin.source.status.response",
+        payload: {
+          requestId: "request-status",
+          plugins: [
+            {
+              id: "review",
+              source: "git",
+              path: "/plugins/review",
+              currentCommit: "a".repeat(40),
+              latestCommit: "b".repeat(40),
+              commitsBehind: 2,
+              updateAvailable: true,
+            },
+          ],
+        },
+      }).type,
+    ).toBe("plugin.source.status.response");
+
+    const older = StatusMessageSchema.parse({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "older-host",
+        features: { pluginManagement: true },
+      },
+    });
+    expect(older.payload.features?.pluginGitManagement).toBeUndefined();
   });
 
   it("uses a namespaced snapshot RPC for structured plugin logs", () => {
@@ -168,5 +313,39 @@ describe("plugin protocol compatibility", () => {
         payload: { requestId: "request-2", plugin: { id: "extra" } },
       }),
     ).toThrow();
+  });
+});
+
+it("npm metadata leaves legacy plugin rows parseable without extending their closed source enum", () => {
+  const legacyPlugin = z.object({
+    id: z.string(),
+    path: z.string(),
+    enabled: z.boolean(),
+    status: z.enum(["running", "disabled", "failed"]),
+    source: z.enum(["directory", "git"]).optional(),
+  });
+  const plugin = {
+    id: "review",
+    path: "/plugins/review",
+    enabled: true,
+    status: "running",
+    installation: {
+      identity: { kind: "npm", packageName: "@acme/review", pluginPath: "." },
+      currentRevision: "1.2.0",
+    },
+  };
+  const message = SessionOutboundMessageSchema.parse({
+    type: "plugin.list.response",
+    payload: { requestId: "npm", plugins: [plugin] },
+  });
+  expect(legacyPlugin.parse(plugin)).toEqual({
+    id: "review",
+    path: "/plugins/review",
+    enabled: true,
+    status: "running",
+  });
+  expect(message).toEqual({
+    type: "plugin.list.response",
+    payload: { requestId: "npm", plugins: [plugin] },
   });
 });

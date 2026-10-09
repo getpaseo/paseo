@@ -33,11 +33,15 @@ class FakeImage implements TabImage {
 }
 
 class FakeTab implements TabContents {
+  public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
+    return capture();
+  }
   public readonly loadedUrls: string[] = [];
   public readonly scripts: string[] = [];
   public readonly actions: string[] = [];
-  public readonly capturedViewports: Array<{ stayHidden?: boolean }> = [];
+  public readonly capturedViewports: AbortSignal[] = [];
   public readonly debugCommands: Array<{ command: string; params?: Record<string, unknown> }> = [];
+  public readonly insertedText: string[] = [];
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   private readonly captureStartWaiters: Array<() => void> = [];
   private readonly deferredCaptures: Array<(image: TabImage) => void> = [];
@@ -64,10 +68,10 @@ class FakeTab implements TabContents {
   public networkEntries: unknown[] = [];
   public consoleMessages: BrowserAutomationConsoleLogEntry[] = [];
   public dialogsToCapture: BrowserAutomationDialogEvent[] = [];
+  public paintDelayMs = 0;
   public captureNeverPaints = false;
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
-  public viewportCaptureFailuresBeforeSuccess = 0;
   public deferCaptures = false;
   public fullPageScreenshotThrows = false;
   public fullPageScreenshotErrorMessage = "UnknownVizError";
@@ -115,6 +119,9 @@ class FakeTab implements TabContents {
 
   public async executeJavaScript(code: string): Promise<unknown> {
     this.scripts.push(code);
+    if (code.includes("requestAnimationFrame") && this.paintDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.paintDelayMs));
+    }
     if (code.includes("document.body.innerText")) {
       return this.bodyText;
     }
@@ -161,14 +168,10 @@ class FakeTab implements TabContents {
     this.actions.push("reload");
   }
 
-  public async capturePage(options?: { stayHidden?: boolean }): Promise<TabImage> {
-    this.capturedViewports.push(options ?? {});
+  public async captureFrame(signal: AbortSignal): Promise<TabImage> {
+    this.capturedViewports.push(signal);
     this.actions.push("capture");
     this.resolveCaptureStartWaiters();
-    if (this.viewportCaptureFailuresBeforeSuccess > 0) {
-      this.viewportCaptureFailuresBeforeSuccess -= 1;
-      throw new Error(this.captureErrorMessage);
-    }
     if (this.captureThrows) {
       throw new Error(this.captureErrorMessage);
     }
@@ -227,6 +230,10 @@ class FakeTab implements TabContents {
 
   public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
     this.inputEvents.push(event);
+  }
+
+  public async insertText(text: string): Promise<void> {
+    this.insertedText.push(text);
   }
 
   public waitForCaptureStart(count: number): Promise<void> {
@@ -1102,15 +1109,29 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "type", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
-    expect(browser.tab.debugCommands.at(-1)).toEqual({
-      command: "Input.insertText",
-      params: { text: "Ada" },
-    });
-    expect(browser.tab.debugCommands.slice(0, 3).map((entry) => entry.command)).toEqual([
+    expect(browser.tab.insertedText).toEqual(["Ada"]);
+    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
     ]);
+  });
+
+  test("type inserts text through the tab, not the window-wide debugger input", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    const action = await browser.execute({
+      command: "type",
+      args: { browserId: BROWSER_A, text: "Ada" },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-type",
+      ok: true,
+      result: { command: "type", browserId: BROWSER_A },
+    });
+    expect(browser.tab.insertedText).toEqual(["Ada"]);
+    expect(browser.tab.debugCommands).toEqual([]);
   });
 
   test("keypress dispatches a trusted key to the focused element when ref is omitted", async () => {
@@ -1557,7 +1578,8 @@ describe("executeAutomationCommand", () => {
         height: 480,
       },
     });
-    expect(browser.tab.capturedViewports).toEqual([{ stayHidden: false }]);
+    expect(browser.tab.capturedViewports).toHaveLength(1);
+    expect(browser.tab.capturedViewports[0].aborted).toBe(true);
     expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
   });
 
@@ -1583,6 +1605,32 @@ describe("executeAutomationCommand", () => {
         },
       });
       expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+      expect(browser.tab.capturedViewports[0].aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("paint and pixel capture share the five-second screenshot budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.paintDelayMs = 4_000;
+      browser.tab.captureNeverPaints = true;
+      let result: unknown;
+      void browser
+        .execute({
+          command: "screenshot",
+          args: { browserId: BROWSER_A },
+        })
+        .then((value) => {
+          result = value;
+          return value;
+        });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(result).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toMatchObject({ ok: false, error: { code: "screenshot_no_frame" } });
     } finally {
       vi.useRealTimers();
     }
@@ -1600,76 +1648,6 @@ describe("executeAutomationCommand", () => {
     ).rejects.toThrow("capture failed");
 
     expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
-  });
-
-  test("screenshot retries UnknownVizError until the first viewport frame appears", async () => {
-    vi.useFakeTimers();
-    try {
-      const browser = new BrowserAutomationHarness();
-      browser.tab.captureErrorMessage = "UnknownVizError";
-      browser.tab.viewportCaptureFailuresBeforeSuccess = 2;
-
-      const resultPromise = browser.execute({
-        command: "screenshot",
-        args: { browserId: BROWSER_A },
-      });
-      await vi.advanceTimersByTimeAsync(400);
-
-      await expect(resultPromise).resolves.toEqual({
-        requestId: "req-screenshot",
-        ok: true,
-        result: {
-          command: "screenshot",
-          browserId: BROWSER_A,
-          mimeType: "image/png",
-          dataBase64: "iVBORwECAw==",
-          width: 640,
-          height: 480,
-        },
-      });
-      expect(browser.tab.capturedViewports).toHaveLength(3);
-      expect(browser.tab.actions).toEqual([
-        "invalidate",
-        "capture",
-        "invalidate",
-        "capture",
-        "invalidate",
-        "capture",
-      ]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("screenshot returns no-frame after UnknownVizError spends the retry budget", async () => {
-    vi.useFakeTimers();
-    try {
-      const browser = new BrowserAutomationHarness();
-      browser.tab.captureThrows = true;
-      browser.tab.captureErrorMessage = "UnknownVizError";
-
-      const resultPromise = browser.execute({
-        command: "screenshot",
-        args: { browserId: BROWSER_A },
-      });
-      await vi.advanceTimersByTimeAsync(5_000);
-
-      await expect(resultPromise).resolves.toEqual({
-        requestId: "req-screenshot",
-        ok: false,
-        error: {
-          code: "screenshot_no_frame",
-          message: "The tab has not painted yet. Retry the screenshot.",
-          retryable: true,
-        },
-      });
-      expect(browser.tab.capturedViewports.length).toBeGreaterThan(1);
-      expect(browser.tab.actions.filter((action) => action === "invalidate")).toHaveLength(
-        browser.tab.capturedViewports.length,
-      );
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   test("overlapping screenshots serialize through the shared capture queue", async () => {

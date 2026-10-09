@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Why Paseo can't find a provider you've installed, and how to fix the PATH and environment mismatches behind most setup issues.
+description: Fix Linux AppImage launch errors, missing providers, and environment mismatches.
 nav: Common problems
 order: 90
 category: Troubleshooting
@@ -8,7 +8,22 @@ category: Troubleshooting
 
 # Troubleshooting
 
-Almost every "it works in my terminal but not in Paseo" problem is the same thing: Paseo and your terminal aren't searching the same `PATH`. This page covers how to spot that and fix it.
+## AppImage won't open on Linux
+
+Make the downloaded AppImage executable, then launch it from a terminal to see any error:
+
+```bash
+chmod +x Paseo-x86_64.AppImage
+./Paseo-x86_64.AppImage
+```
+
+If it reports `error loading libfuse.so.2`, run without FUSE:
+
+```bash
+./Paseo-x86_64.AppImage --appimage-extract-and-run
+```
+
+The Paseo window should open. You can also install the `.deb` on Debian/Ubuntu or the `.rpm` on Fedora from the [download page](https://paseo.sh/download).
 
 ## Paseo can't find my provider
 
@@ -28,10 +43,10 @@ From a terminal or agent, request the same diagnostic from the affected daemon:
 
 ```bash
 paseo provider diagnostic <provider>
-paseo provider diagnostic <provider> --host <host:port> --json
+paseo --host <host:port> provider diagnostic <provider> --json
 ```
 
-Use `--host` when the affected daemon is not the CLI's default local daemon.
+Use the global `--host` option when the affected daemon is not the CLI's default local daemon.
 
 `not found` together with a **Daemon PATH** that's missing your binary's directory is the common case: that directory is on your terminal's `PATH` but not on Paseo's.
 

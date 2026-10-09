@@ -213,14 +213,18 @@ try {
   );
   const capturedSupervisorLogs = await readCapturedSupervisorLogs(paseoHome, recentSupervisorLogs);
   assert(
-    capturedSupervisorLogs.includes('"msg":"Worker requested shutdown"') &&
-      capturedSupervisorLogs.includes('"reason":"client_shutdown_rpc"'),
+    process.platform === "win32"
+      ? capturedSupervisorLogs.includes('"reason":"client_shutdown_rpc"')
+      : capturedSupervisorLogs.includes("supervisor_received_SIGTERM"),
     `stop should log lifecycle shutdown reason from daemon worker, logs:\n${capturedSupervisorLogs}`,
   );
   assert(
-    capturedSupervisorLogs.includes('"msg":"Supervisor sending signal to worker"') &&
-      capturedSupervisorLogs.includes('"signal":"SIGTERM"'),
-    `stop should log supervisor signal dispatch, logs:\n${capturedSupervisorLogs}`,
+    capturedSupervisorLogs.includes('"msg":"Supervisor requesting graceful worker shutdown"'),
+    `stop should log the graceful worker shutdown request, logs:\n${capturedSupervisorLogs}`,
+  );
+  assert(
+    capturedSupervisorLogs.includes("Server closed"),
+    `stop should run daemon cleanup before the worker exits, logs:\n${capturedSupervisorLogs}`,
   );
   assert(
     !capturedSupervisorLogs.includes("cli_shutdown"),

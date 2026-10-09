@@ -1,6 +1,6 @@
 import type { ProjectIcon } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { replicaCacheStorage } from "@/runtime/replica-cache/storage";
+import { projectIconCacheStorage } from "./icon-cache-storage";
 import type { ProjectIconTarget } from "./icon-target";
 
 const STORAGE_KEY = "@paseo:project-icon-cache";
@@ -197,7 +197,7 @@ export class ProjectIconCache {
   }
 }
 
-export const projectIconCache = new ProjectIconCache(replicaCacheStorage);
+export const projectIconCache = new ProjectIconCache(projectIconCacheStorage);
 
 function resolveLookup(
   target: Pick<ProjectIconTarget, "projectId" | "iconWorkingDir">,

@@ -1,7 +1,7 @@
 import {
   getDesktopHost,
   type DesktopWindowBridge,
-  type DesktopWindowControlsOverlayUpdate,
+  type DesktopWindowChromeUpdate,
 } from "@/desktop/host";
 
 export function getDesktopWindow(): DesktopWindowBridge | null {
@@ -16,12 +16,24 @@ export function getDesktopWindow(): DesktopWindowBridge | null {
   }
 }
 
+export async function minimizeDesktopWindow(): Promise<void> {
+  await getDesktopWindow()?.minimize?.();
+}
+
+export async function closeDesktopWindow(): Promise<void> {
+  await getDesktopWindow()?.close?.();
+}
+
 export async function toggleDesktopMaximize(): Promise<void> {
   const win = getDesktopWindow();
   if (!win || typeof win.toggleMaximize !== "function") {
     return;
   }
   await win.toggleMaximize();
+}
+
+export async function isDesktopMaximized(): Promise<boolean> {
+  return (await getDesktopWindow()?.isMaximized?.()) ?? false;
 }
 
 export async function isDesktopFullscreen(): Promise<boolean> {
@@ -32,13 +44,11 @@ export async function isDesktopFullscreen(): Promise<boolean> {
   return await win.isFullscreen();
 }
 
-export async function updateDesktopWindowControls(
-  update: DesktopWindowControlsOverlayUpdate,
-): Promise<void> {
+export async function updateDesktopWindowChrome(update: DesktopWindowChromeUpdate): Promise<void> {
   const win = getDesktopWindow();
-  if (!win || typeof win.updateWindowControls !== "function") {
+  if (!win || typeof win.updateChrome !== "function") {
     return;
   }
 
-  await win.updateWindowControls(update);
+  await win.updateChrome(update);
 }

@@ -1,10 +1,11 @@
+import { buildAgentMessageDisplay } from "./agent-message-display.js";
 import type { ToolCallTimelineItem } from "./agent-types.js";
 import { getPaseoToolLeafName, isPaseoToolName } from "./tool-name-normalization.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<
   ToolCallTimelineItem,
-  "name" | "status" | "error" | "metadata" | "detail"
+  "name" | "status" | "error" | "metadata" | "detail" | "agentMessage"
 > & {
   cwd?: string;
 };
@@ -47,8 +48,9 @@ function humanizeToolName(name: string): string {
     .replace(/[._-]+/g, " ")
     .split(" ")
     .filter((segment) => segment.length > 0)
-    .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
-    .join(" ");
+    .join(" ")
+    .toLowerCase()
+    .replace(/^./, (character) => character.toUpperCase());
 }
 
 function formatErrorText(error: unknown): string | undefined {
@@ -104,7 +106,7 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
       };
     case "worktree_setup":
       return {
-        displayName: "Worktree Setup",
+        displayName: "Worktree setup",
         summary: input.detail.branchName,
       };
     case "sub_agent":
@@ -150,6 +152,9 @@ function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay 
 }
 
 export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCallDisplayModel {
+  if (input.agentMessage) {
+    return { displayName: buildAgentMessageDisplay(input.agentMessage).displayName };
+  }
   const canonicalDisplay = buildCanonicalDetailDisplay(input);
   const unknownDetailOverride = buildUnknownDetailOverride(input);
   const displayName =

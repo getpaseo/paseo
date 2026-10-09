@@ -5,8 +5,10 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon keeps canonical rows only for its runtime. Provider history is the durable transcript
-authority and repopulates those rows when an agent resumes.
+The daemon retains projected items in memory. Each source event advances the stream sequence,
+then replaces the previous tool state or merges into the current text item. Intermediate payloads
+are never retained for history or catch-up. Provider history is the durable transcript authority
+and rebuilds the projection when an agent resumes.
 
 The invariants are:
 
@@ -67,14 +69,33 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
-The daemon validates that the epoch is current and the exact source sequence still exists before slicing rows. It slices before projection so later lifecycle updates cannot leak into the selected context.
+The daemon validates the epoch and locates the projected item at the selected position. A fork
+includes projected items through that checkpoint. If an item spans the checkpoint and changed
+afterward, the daemon refuses that fork with an actionable error: discarded historical payloads
+cannot be reconstructed from sequence metadata. Forking the current context remains available.
 
 ## Resume behavior
 
-Opening, reconnecting, or revisiting after a selective-delivery coverage gap fetches the latest tail
-page.
-Focus alone does not mutate timeline state; the tail response is compared with the local
+Opening, reconnecting, and returning from app background establish the current timeline through
+bounded catch-up. Switching between continuously subscribed open chats needs no fetch.
+Focus alone does not mutate timeline state; the response is compared with the local
 authoritative range first.
+
+Cached history remains readable during recovery. The chat shows Reconnecting to host while the host is
+offline, then Updating messages until authoritative catch-up completes. Socket connectivity alone cannot
+certify that the displayed conversation is current. The timeline owner publishes freshness; the
+view renders it without a toast timer or a separate resume workflow.
+
+The draft-create handoff has the same lifetime: the viewed-timeline owner releases it when the sync
+stops owing that chat a catch-up, not when the first authoritative page lands. Releasing it at the
+first page leaves a chat this client just created looking hydrated but still catching up, which
+shows Updating messages for a conversation that cannot be out of date. Closing the tab ends the
+obligation too, so a reopened chat starts from authoritative state instead of a stale optimistic
+one; disconnect and backgrounding keep it.
+
+Foregrounding probes a nominally connected session immediately. A healthy response preserves the
+socket; a failed three-second probe starts reconnecting without waiting for the background heartbeat
+or retry backoff. This cannot keep a mobile socket alive after the operating system suspends it.
 
 - The same epoch and `window.maxSeq` is an exact display no-op. The app advances synchronization
   bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
@@ -88,28 +109,54 @@ The installed tail carries `hasOlder`, so history skipped by a replacement remai
 ordinary backward pagination. A backward page is accepted only when it is adjacent to the current
 history start; a response requested from a pre-replacement range is stale and is discarded.
 
+A plan approval keeps the original proposal's tool-call identity through resolution and provider
+history replay. The pending approval UI can hide that tool from presentation, but the client model
+must retain its position. Creating a new history card on rejection places it after the prompt that
+rejected it; changing steer-event ordering would also put new assistant output before that prompt.
+
+## Provider child history
+
+Child transcripts use the same projected-page reconciliation as the main conversation. The client
+retains rendered items and sequence cursors, never a second cache of source events. Pagination
+uses the projected display anchor; live updates advance the source cursor without moving tools.
+
+Clients advertising `projected_subagent_timeline` receive child streams and projected fetches.
+Updated clients require `features.projectedSubagentTimeline` for child history; older hosts show
+an update-host notice for that pane.
+Older clients retain child names/status and receive an upgrade message when opening a child
+conversation. This gate affects only the child transcript; it does not gate the connection,
+main conversation, or current-context forks. A legacy `canonical` root request still receives
+projected items.
+
 ## Client replica lifetime
 
-The host runtime owns each session replica for as long as the host remains registered. React
-providers attach message handlers and UI integrations to that replica, but mounting or unmounting a
-provider must not create or clear it. A provider can remount during Fast Refresh or ordinary UI
-recomposition while the runtime still owns the same directory snapshot and timeline cursors.
+The session projection remains host-scoped for as long as the host is registered. The viewed-timeline
+owner wraps cached preparation, network catch-up, accepted timeline application, and persistence
+behind one interface. React supplies transport and projection operations without selecting a cache
+path or issuing a separate persistence notification.
+
+Active-agent list reconciliation does not own transcript lifetime. An archived agent's fresh
+history response can arrive before the active-list response that omits it. Clearing history there
+would discard accepted rows while the viewed owner still considers them synchronized. Entity
+deletion clears the transcript; list membership changes do not.
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
 
-The durable replica cache persists synchronization authority only when it can store the complete
-current canonical window losslessly. The stored range describes those exact items: `startSeq` drives
-older pagination and `endSeq` drives forward catch-up. Restore paints the items immediately, requests
-`after endSeq`, and requests `before startSeq` when the user loads older history.
+The timeline owner asks durable replica storage for an agent when that agent becomes visible. An
+accepted row paints immediately before subscription acknowledgement or timeline fetch. The stored
+range describes those exact items: `startSeq` drives older pagination and `endSeq` drives forward
+catch-up. The owner requests `after endSeq`, and requests `before startSeq` when the user loads older
+history. Code outside the owner does not distinguish cached and network timelines.
 
 The first resume request is bounded. If it reports more newer history, fetch one latest bounded tail
 instead of replaying every missed page. Live gap recovery still pages forward until current.
 
 If the canonical window exceeds the cache item limit, contains a discontiguous retained range, has a
 live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
-range and keeps a display-only tail. Restore then uses the ordinary bounded `tail` bootstrap. Never
-slice items while retaining the pre-slice range; that falsely certifies discarded source rows.
+range and keeps a display-only tail. Never slice items while retaining the pre-slice range; that
+falsely certifies discarded source rows. A display-only row paints without granting synchronization
+authority, so the owner uses the ordinary bounded `tail` bootstrap.
 
 Live rows received between cache paint and catch-up stay in the separate live head and reconcile with
 the authoritative range through the existing forward-page path. The cache does not persist sync
@@ -126,14 +173,19 @@ replica cache.
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:
 
-- Selective daemons receive every agent visible in any pane plus the most recently viewed hidden
-  agents, up to five subscribed agents. Visible agents always win: if more than five are visible,
-  they all remain subscribed and no hidden agent does. Switching and app backgrounding preserve
-  this connection-scoped hot set, so returning to an agent still covered by it needs no catch-up.
-  Losing window keyboard focus does not make a selected pane invisible. Disconnecting clears hidden
-  hot agents; reconnect restores the currently visible set before authoritative catch-up. Revisiting
-  an evicted retained timeline displays its cached state immediately while authoritative catch-up
-  advances it to the current tail.
+- Selective daemons receive the chats this session has opened, plus any visible agent pane. A chat
+  enters that set the first time the user opens it and leaves when its tab closes or the session
+  ends, independently of mounted or retained React views: switching workspaces, evicting a retained
+  view, app backgrounding, and reconnect all preserve the demand. There is no recent-agent limit.
+  Restored workspace layout is a release signal, never a source. It carries a tab for every chat the
+  user has ever opened on the host, and a catch-up fetch resumes its agent on the daemon, so
+  subscribing from layout spawns a provider session per historical tab at every launch and stamps
+  every one of those workspaces as just used (see
+  [agent lifecycle](agent-lifecycle.md#workspace-activity)). Visible chats get the first catch-up
+  attempt; the rest follow when those attempts settle, including failures, so a failed visible chat
+  does not starve background recovery. Split panes catch up together. Hidden chats update the
+  replica; on web their retained presentation stays suspended until revealed, on native it keeps
+  rendering. Revealing a chat reads the current store and preserves its local UI state.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 
@@ -150,7 +202,7 @@ remaining page through the existing stream reducer. It must not append full proj
 live prefix.
 
 Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
-send-now, and the automatic queue drain in `HostRuntime` — goes through
+send-now, and the host runtime's automatic queue drain — goes through
 `dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
 product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
 footer, and permanently drops attachments because the daemon does not echo them back.
@@ -171,7 +223,7 @@ submission. Overlapping sends settle independently rather than collapsing to one
 message.
 
 Daemons advertising `server_info.features.canonicalSubmittedPrompts` guarantee that every accepted
-prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
+human prompt carrying a client message id is recorded and streamed as a canonical `user_message` with that
 same id. This includes daemon-handled commands that do not allocate a foreground turn; their submitted
 row is recorded before handler output. The app tracks submission transactions only for hosts with this
 capability. Older hosts keep the shipped untracked optimistic-row behavior and roll that row back on RPC
@@ -186,19 +238,33 @@ foreground control ownership remains a separate daemon concern. Cancellation req
 with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
 remain a separate pre-turn registry and retire on canonical acknowledgement.
 
-Canonical turns and visible responses are different boundaries. System-injected prompts are absent from
-the Paseo timeline, so one visible response can span several canonical turns without a user message
-between them. Layout and copy group that response together; lifecycle, timing, tool sequences, and exact
+Canonical turns and visible responses are different boundaries. Agent-originated prompts and lifecycle
+notifications project into tool rows, so they do not create a human-message boundary. Legacy system
+prompts, including schedule injections, remain hidden. One visible response can span several canonical
+turns; layout and copy group that response together while lifecycle, timing, tool sequences, and exact
 fork positions retain the canonical `turnId` boundaries.
+
+Agent-message XML belongs to the daemon's `agent/agent-messages` boundary. Prompt delivery encodes
+provenance; acceptance, provider echoes, import, and replay share its projection. The delivery ID is
+also the projected call ID, so a provider echo cannot create a second row. Sender IDs are opaque and
+do not imply local ownership or authorization. Capture the sender title at delivery: archived or
+removed senders must remain understandable without a live directory lookup.
+
+The optional `agentMessage` payload carries event, sender, and delivered text. Shared client
+presentation (`protocol/agent-message-display`) owns its heading and expanded details. The daemon
+must not construct UI labels or prepend sender labels to the semantic message body. The existing
+`tool_call` / `plain_text` envelope is a compatibility adapter: older clients still parse the row and
+expand its body. New clients use the typed payload, never infer the event from a tool name or parse
+XML. Stream reduction and disk-cache serialization preserve the payload without rendering it.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app
 does not combine anonymous lifecycle events, timestamps, timeline rows, and resume coverage to infer a
-second running state. Disconnect and replica removal remain destructive close boundaries. Elapsed time
-comes only from turn liveness, never from submission records or whichever timeline rows happen to be
-mounted.
+second running state. Disconnect preserves the last replicated turn until cache or network hydration
+advances it; replica removal remains the destructive close boundary. Elapsed time comes only from turn
+liveness, never from submission records or whichever timeline rows happen to be mounted.
 
-The daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
+For human prompts, the daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
 submission's `clientMessageId`, so the row is born with its final identity and remains immutable on
 the wire. A correlated provider echo records the provider's native identity internally without
 dispatching another timeline event. Rewind resolves the wire identity to that provider identity at

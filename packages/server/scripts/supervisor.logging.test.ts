@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,10 +10,25 @@ import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
 
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function runSupervisorFixture(options: {
   workerSource: string;
   restartOnCrash?: boolean;
   timeoutMs?: number;
+  /** POSIX RLIMIT_FSIZE for the supervisor, in 512-byte blocks: writes past it fail like a full disk. */
+  fileSizeLimitBlocks?: number;
+  /** Occupy the log path with a directory so the supervisor cannot open daemon.log. */
+  blockLogPath?: boolean;
+  /** Close the reading end of the supervisor's stdout and stderr as soon as it starts. */
+  closeOutput?: boolean;
 }): Promise<{
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -27,7 +42,13 @@ async function runSupervisorFixture(options: {
   const workerPath = path.join(tempDir, "worker.mjs");
   const runnerPath = path.join(tempDir, "runner.mjs");
 
-  await writeFile(workerPath, options.workerSource);
+  if (options.blockLogPath) {
+    await mkdir(logPath);
+  }
+  await writeFile(
+    workerPath,
+    `process.send?.({ type: "paseo:ready", listen: "fixture", serverId: "srv_fixture" });\n${options.workerSource}`,
+  );
   await writeFile(
     runnerPath,
     `
@@ -50,11 +71,27 @@ async function runSupervisorFixture(options: {
   );
 
   const startedAt = Date.now();
-  const child = spawn(process.execPath, ["--import", "tsx", runnerPath], {
+  const runnerArgs = [process.execPath, "--import", "tsx", runnerPath];
+  const [command, ...args] =
+    options.fileSizeLimitBlocks === undefined
+      ? runnerArgs
+      : [
+          "/bin/sh",
+          "-c",
+          `ulimit -f ${options.fileSizeLimitBlocks} && exec "$@"`,
+          "sh",
+          ...runnerArgs,
+        ];
+  const child = spawn(command, args, {
     cwd: repoRoot,
     env: { ...process.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
+
+  if (options.closeOutput) {
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
 
   let stdout = "";
   let stderr = "";
@@ -86,8 +123,17 @@ async function runSupervisorFixture(options: {
     });
   });
 
-  const log = await readFile(logPath, "utf8");
+  const log = await readLogIfWritten(logPath);
   return { code, signal, elapsedMs: Date.now() - startedAt, log, stdout, stderr };
+}
+
+async function readLogIfWritten(logPath: string): Promise<string> {
+  try {
+    return await readFile(logPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
 }
 
 describe("supervisor durable logging", () => {
@@ -159,6 +205,30 @@ describe("supervisor durable logging", () => {
     expect(result.stderr).toContain('"worker-json-stderr"');
   });
 
+  test("keeps supervising the worker when nobody reads its stdout or stderr", async () => {
+    const result = await runSupervisorFixture({
+      closeOutput: true,
+      workerSource: `
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
+        process.stdout.write("first stdout line\\n");
+        process.stderr.write("first stderr line\\n");
+        setTimeout(() => {
+          process.stdout.write("later stdout line\\n");
+          process.send?.({ type: "paseo:shutdown", reason: "closed_output_probe" });
+        }, 500);
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain("first stderr line\n");
+    expect(result.log).toContain("later stdout line\n");
+    expect(result.log).toContain('"reason":"closed_output_probe"');
+  });
+
   test("preserves raw non-JSON stdout and stderr lines", async () => {
     const result = await runSupervisorFixture({
       workerSource: `
@@ -172,9 +242,12 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain("raw stderr line\n");
   });
 
-  test("logs the worker shutdown reason before signaling the worker", async () => {
+  test("logs the worker shutdown reason before requesting graceful shutdown", async () => {
     const result = await runSupervisorFixture({
       workerSource: `
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
         process.send?.({ type: "paseo:shutdown", reason: "client_shutdown_rpc" });
         setInterval(() => {}, 1000);
       `,
@@ -184,9 +257,50 @@ describe("supervisor durable logging", () => {
     expect(result.signal).toBeNull();
     expect(result.log).toContain('"msg":"Worker requested shutdown"');
     expect(result.log).toContain('"reason":"client_shutdown_rpc"');
-    expect(result.log).toContain('"msg":"Supervisor sending signal to worker"');
-    expect(result.log).toContain('"signal":"SIGTERM"');
+    expect(result.log).toContain('"msg":"Supervisor requesting graceful worker shutdown"');
     expect(result.log).toContain('"workerPid":');
+  });
+
+  test("lets the worker clean up its descendant before supervised shutdown", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: `
+        import { spawn } from "node:child_process";
+
+        const descendant = spawn(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          { detached: true, stdio: "ignore" },
+        );
+        descendant.unref();
+        process.stdout.write(\`DESCENDANT_PID=\${descendant.pid}\\n\`);
+
+        process.on("message", (message) => {
+          if (message?.type !== "paseo:graceful-shutdown") return;
+          descendant.once("exit", () => {
+            process.stdout.write("GRACEFUL_CLEANUP_RAN\\n");
+            process.exit(0);
+          });
+          descendant.kill("SIGTERM");
+        });
+
+        process.send?.({ type: "paseo:shutdown", reason: "descendant_cleanup_probe" });
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    const descendantPid = Number.parseInt(
+      result.stdout.match(/DESCENDANT_PID=(\d+)/)?.[1] ?? "",
+      10,
+    );
+    expect(Number.isInteger(descendantPid)).toBe(true);
+
+    const descendantSurvived = isProcessRunning(descendantPid);
+    if (descendantSurvived) {
+      process.kill(descendantPid, "SIGKILL");
+    }
+
+    expect.soft(result.stdout).toContain("GRACEFUL_CLEANUP_RAN");
+    expect(descendantSurvived).toBe(false);
   });
 
   test("does not restart a worker based on heartbeat absence", async () => {
@@ -195,6 +309,9 @@ describe("supervisor durable logging", () => {
       workerSource: `
         import { existsSync, writeFileSync } from "node:fs";
 
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
         const marker = process.argv[1] + ".started";
         if (!existsSync(marker)) {
           writeFileSync(marker, "started");
@@ -216,26 +333,22 @@ describe("supervisor durable logging", () => {
     expect(result.log).not.toContain('"msg":"Worker heartbeat timed out; restarting worker"');
   }, 25_000);
 
-  test.skipIf(isPlatform("win32"))(
-    "forces shutdown when a worker ignores SIGTERM",
-    async () => {
-      const result = await runSupervisorFixture({
-        timeoutMs: 15_000,
-        workerSource: `
-          process.on("SIGTERM", () => {});
+  test("forces shutdown when a worker ignores the graceful shutdown request", async () => {
+    const result = await runSupervisorFixture({
+      timeoutMs: 15_000,
+      workerSource: `
           process.send?.({ type: "paseo:shutdown", reason: "stalled_worker_shutdown" });
           setInterval(() => {}, 1_000);
         `,
-      });
+    });
 
-      expect(result.code).toBe(0);
-      expect(result.signal).toBeNull();
-      expect(result.log).toContain('"reason":"stalled_worker_shutdown"');
-      expect(result.log).toContain('"msg":"Worker did not exit after SIGTERM; forcing SIGKILL"');
-      expect(result.log).toContain('"signal":"SIGKILL"');
-    },
-    20_000,
-  );
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain('"reason":"stalled_worker_shutdown"');
+    expect(result.log).toContain(
+      '"msg":"Worker did not exit after graceful shutdown request; forcing process tree kill"',
+    );
+  }, 20_000);
 
   test.skipIf(isPlatform("win32"))(
     "restarts after worker exit while a descendant retains the worker stdio",
@@ -246,6 +359,9 @@ describe("supervisor durable logging", () => {
           import { spawn } from "node:child_process";
           import { existsSync, writeFileSync } from "node:fs";
 
+          process.on("message", (message) => {
+            if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+          });
           const marker = process.argv[1] + ".started";
           if (!existsSync(marker)) {
             writeFileSync(marker, "started");
@@ -255,7 +371,6 @@ describe("supervisor durable logging", () => {
               { detached: true, stdio: ["ignore", "inherit", "inherit"] },
             );
             descendant.unref();
-            process.on("SIGTERM", () => process.exit(0));
             process.send?.({ type: "paseo:restart", reason: "stdio_descendant" });
             setInterval(() => {}, 1000);
           } else {
@@ -291,4 +406,55 @@ describe("supervisor durable logging", () => {
       expect(result.log).toContain("Supervisor exiting");
     },
   );
+
+  // POSIX-only: RLIMIT_FSIZE is how the test makes daemon.log writes fail.
+  test.skipIf(isPlatform("win32"))(
+    "keeps supervising the worker when daemon.log can no longer be written",
+    async () => {
+      const result = await runSupervisorFixture({
+        fileSizeLimitBlocks: 128,
+        workerSource: `
+          process.on("message", (message) => {
+            if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+          });
+          const line = '{"level":30,"msg":"' + "x".repeat(1000) + '"}\\n';
+          for (let i = 0; i < 200; i += 1) process.stdout.write(line);
+          setTimeout(() => {
+            process.send?.({ type: "paseo:shutdown", reason: "log_write_failure_probe" });
+          }, 1000);
+          setInterval(() => {}, 1000);
+        `,
+      });
+
+      expect(result.stderr).not.toContain("Unhandled 'error' event");
+      expect(result.code).toBe(0);
+      expect(result.signal).toBeNull();
+    },
+  );
+
+  test("resumes writing daemon.log once the log path is writable again", async () => {
+    const result = await runSupervisorFixture({
+      blockLogPath: true,
+      workerSource: `
+        import { rmdirSync } from "node:fs";
+
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
+        process.stdout.write("line while daemon.log is blocked\\n");
+        setTimeout(() => {
+          rmdirSync(process.argv[1].replace(/worker\\.mjs$/, "daemon.log"));
+          process.stdout.write("line after daemon.log is writable\\n");
+          setTimeout(() => {
+            process.send?.({ type: "paseo:shutdown", reason: "log_recovery_probe" });
+          }, 200);
+        }, 500);
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.log).toContain("line after daemon.log is writable\n");
+    expect(result.log).toContain('"reason":"log_recovery_probe"');
+  });
 });

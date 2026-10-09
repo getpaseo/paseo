@@ -7,6 +7,7 @@ import {
   GitHubAuthenticationError,
   GitHubCliMissingError,
   GitHubCommandError,
+  GITHUB_POLL_ALIGNMENT_MS,
   computeGithubNextInterval,
   createGitHubService,
   parseStatusCheckRollup,
@@ -24,6 +25,7 @@ const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
   "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
+const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
 interface RunnerCall {
   args: string[];
@@ -237,6 +239,76 @@ function currentPullRequestGithubFactsJson(overrides: Record<string, unknown> = 
         },
         ...overrides,
       },
+    },
+  });
+}
+
+function batchPollPrNodeJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    number: 42,
+    url: "https://github.com/acme/widgets/pull/42",
+    title: "Widget PR",
+    state: "MERGED",
+    isDraft: false,
+    baseRefName: "main",
+    headRefName: "feat-a",
+    headRefOid: "oid-42",
+    mergedAt: "2026-08-01T00:00:00Z",
+    mergeable: "UNKNOWN",
+    reviewDecision: null,
+    headRepositoryOwner: { login: "acme" },
+    mergeStateStatus: "CLEAN",
+    autoMergeRequest: null,
+    viewerCanEnableAutoMerge: false,
+    viewerCanDisableAutoMerge: false,
+    viewerCanMergeAsAdmin: false,
+    viewerCanUpdateBranch: false,
+    isMergeQueueEnabled: false,
+    isInMergeQueue: false,
+    ...overrides,
+  };
+}
+
+function batchPollRepositoryJson(
+  nodes: Array<Record<string, unknown>>,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    isFork: false,
+    autoMergeAllowed: true,
+    mergeCommitAllowed: true,
+    squashMergeAllowed: true,
+    rebaseMergeAllowed: true,
+    viewerDefaultMergeMethod: "SQUASH",
+    pullRequests: { nodes },
+    ...overrides,
+  };
+}
+
+function batchPollChecksAliasJson(
+  contexts: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  return {
+    pullRequest: {
+      commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: contexts } } } }] },
+    },
+  };
+}
+
+function batchPollStatusJson(aliases: Record<string, unknown>): string {
+  return JSON.stringify({ data: aliases });
+}
+
+function batchPollStatusWithRateLimitJson(input: {
+  aliases: Record<string, unknown>;
+  limit: number;
+  remaining: number;
+  resetAt: string;
+}): string {
+  return JSON.stringify({
+    data: {
+      ...input.aliases,
+      rateLimit: { limit: input.limit, remaining: input.remaining, resetAt: input.resetAt },
     },
   });
 }
@@ -806,6 +878,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
 
@@ -815,6 +889,7 @@ describe("ForgeService", () => {
       headRepositoryOwner: "fork-owner",
     });
     await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
 
     expect(reads).toEqual([
       expect.objectContaining({
@@ -974,6 +1049,809 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
+  });
+
+  it("batches PR status polls across workspaces into one GraphQL request", async () => {
+    let now = 0;
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 41,
+            url: "https://github.com/acme/widgets/pull/41",
+            headRefName: "feat-a",
+            headRefOid: "oid-a",
+          }),
+        ]),
+        t1: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 52,
+            url: "https://github.com/acme/gadgets/pull/52",
+            headRefName: "feat-b",
+            headRefOid: "oid-b",
+          }),
+        ]),
+      }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+        t1: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      }),
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 41,
+            url: "https://github.com/acme/widgets/pull/41",
+            headRefName: "feat-a",
+            headRefOid: "oid-a",
+          }),
+        ]),
+        t1: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 52,
+            url: "https://github.com/acme/gadgets/pull/52",
+            headRefName: "feat-b",
+            headRefOid: "oid-b",
+          }),
+        ]),
+      }),
+    ]);
+    const slugs: Record<string, string> = { "/ws-a": "acme/widgets", "/ws-b": "acme/gadgets" };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async (cwd) => slugs[cwd] ?? null,
+      now: () => now,
+    });
+    const statusesA: Array<CurrentPullRequestStatus | null> = [];
+    const statusesB: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+      onStatus: (status) => statusesA.push(status),
+    });
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-b",
+      headSha: "oid-b",
+      onStatus: (status) => statusesB.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.args.slice(0, 2)).toEqual(["api", "graphql"]);
+    expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
+    expect(runner.calls[0]?.args[3]).toContain('t1: repository(owner: "acme", name: "gadgets")');
+    expect(runner.calls[0]?.args[3]).toContain('headRefName: "feat-a"');
+    expect(runner.calls[0]?.args[3]).toContain('headRefName: "feat-b"');
+    expect(runner.calls[1]?.args[3]).toContain("pullRequest(number: 41)");
+    expect(runner.calls[1]?.args[3]).toContain("pullRequest(number: 52)");
+    expect(statusesA).toEqual([
+      expect.objectContaining({
+        number: 41,
+        state: "merged",
+        isMerged: true,
+        checksStatus: "success",
+        forgeSpecific: expect.objectContaining({ forge: "github", mergeStateStatus: "CLEAN" }),
+      }),
+    ]);
+    expect(statusesB).toEqual([
+      expect.objectContaining({ number: 52, state: "merged", checksStatus: "success" }),
+    ]);
+
+    // Merged PR checks are frozen: the second cycle reuses the cached rollup
+    // and issues only the discovery request.
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(3);
+    expect(statusesA).toHaveLength(2);
+    expect(statusesA[1]).toEqual(expect.objectContaining({ number: 41, checksStatus: "success" }));
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("batches the first PR status poll after repository identity resolves", async () => {
+    let now = 0;
+    let resolveRepositoryIdentity!: () => void;
+    const repositoryIdentityReady = new Promise<void>((resolve) => {
+      resolveRepositoryIdentity = resolve;
+    });
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 41,
+            url: "https://github.com/acme/widgets/pull/41",
+            headRefName: "feat-a",
+            headRefOid: "oid-a",
+          }),
+        ]),
+        t1: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 52,
+            url: "https://github.com/acme/gadgets/pull/52",
+            headRefName: "feat-b",
+            headRefOid: "oid-b",
+          }),
+        ]),
+      }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([]),
+        t1: batchPollChecksAliasJson([]),
+      }),
+    ]);
+    const slugs: Record<string, string> = { "/ws-a": "acme/widgets", "/ws-b": "acme/gadgets" };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => {
+        await repositoryIdentityReady;
+        return null;
+      },
+      resolveRepoSlug: async (cwd) => {
+        await repositoryIdentityReady;
+        return slugs[cwd] ?? null;
+      },
+      now: () => now,
+    });
+
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+    });
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-b",
+      headSha: "oid-b",
+    });
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(0);
+
+    resolveRepositoryIdentity();
+    await flushMicrotasks();
+    now = GITHUB_POLL_ALIGNMENT_MS;
+    await vi.advanceTimersByTimeAsync(GITHUB_POLL_ALIGNMENT_MS);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.args.slice(0, 2)).toEqual(["api", "graphql"]);
+    expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
+    expect(runner.calls[0]?.args[3]).toContain('t1: repository(owner: "acme", name: "gadgets")');
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("does not let one unresolved repository identity block ready poll targets", async () => {
+    let now = 0;
+    const neverResolves = new Promise<string | null>(() => {});
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 41,
+            url: "https://github.com/acme/widgets/pull/41",
+            state: "OPEN",
+            mergedAt: null,
+            headRefName: "feat-ready",
+            headRefOid: "oid-ready",
+          }),
+        ]),
+      }),
+      batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => (cwd === "/ws-blocked" ? neverResolves : null),
+      resolveRepoSlug: async (cwd) => (cwd === "/ws-blocked" ? neverResolves : "acme/widgets"),
+      now: () => now,
+    });
+    const readyStatuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const blockedSubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-blocked",
+      headRef: "feat-blocked",
+    });
+    const readySubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-ready",
+      headRef: "feat-ready",
+      headSha: "oid-ready",
+      onStatus: (status) => readyStatuses.push(status),
+    });
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+    now = GITHUB_POLL_ALIGNMENT_MS;
+    await vi.advanceTimersByTimeAsync(GITHUB_POLL_ALIGNMENT_MS);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
+    expect(readyStatuses).toEqual([expect.objectContaining({ number: 41 })]);
+
+    blockedSubscription?.unsubscribe();
+    readySubscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("refetches checks for open PRs on every batched poll at fast cadence", async () => {
+    let now = 0;
+    const openNode = batchPollPrNodeJson({
+      number: 7,
+      url: "https://github.com/acme/widgets/pull/7",
+      state: "OPEN",
+      mergedAt: null,
+      headRefName: "feat-a",
+      headRefOid: "oid-open",
+    });
+    const pendingChecks = batchPollChecksAliasJson([
+      { __typename: "StatusContext", context: "ci", state: "PENDING" },
+    ]);
+    const runner = createScriptedRunner([
+      batchPollStatusJson({ t0: batchPollRepositoryJson([openNode]) }),
+      batchPollStatusJson({ t0: pendingChecks }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([openNode]) }),
+      batchPollStatusJson({ t0: pendingChecks }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(2);
+    expect(statuses).toEqual([
+      expect.objectContaining({ number: 7, state: "open", checksStatus: "pending" }),
+    ]);
+
+    now = EXPECTED_GITHUB_FAST_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(4);
+    expect(statuses).toHaveLength(2);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("backs off all batched targets on a failed batch without per-target fallback calls", async () => {
+    let now = 0;
+    const runner = createScriptedRunner([{ error: new Error("network down") }]);
+    const slugs: Record<string, string> = { "/ws-a": "acme/widgets", "/ws-b": "acme/gadgets" };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async (cwd) => slugs[cwd] ?? null,
+      now: () => now,
+    });
+    const errors: unknown[] = [];
+
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onError: (error) => errors.push(error),
+    });
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-b",
+      onError: (error) => errors.push(error),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(1);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(errors).toHaveLength(2);
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("falls back to the per-target lookup when a fork repository has no matching PR", async () => {
+    let now = 0;
+    const runner = createScriptedRunner([
+      batchPollStatusJson({ t0: batchPollRepositoryJson([], { isFork: true }) }),
+      currentPullRequestJson({ headRefName: "feat-a" }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "forkowner/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls[0]?.args.slice(0, 2)).toEqual(["api", "graphql"]);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
+    expect(statuses).toEqual([expect.objectContaining({ number: 42, state: "open" })]);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("redirects a fork poll to its parent and reuses that batch address", async () => {
+    let now = 0;
+    const parent = { owner: { login: "upstream" }, name: "widgets" };
+    const forkPr = batchPollPrNodeJson({
+      url: "https://github.com/upstream/widgets/pull/42",
+      headRefName: "feat-a",
+      headRefOid: "oid-a",
+      headRepositoryOwner: { login: "forkowner" },
+    });
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([], { isFork: true, parent }),
+      }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "forkowner/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls[0]?.args[3]).toContain(
+      't0: repository(owner: "forkowner", name: "widgets")',
+    );
+    expect(runner.calls[1]?.args[3]).toContain(
+      't0: repository(owner: "upstream", name: "widgets")',
+    );
+    expect(statuses).toEqual([
+      expect.objectContaining({ number: 42, repoOwner: "upstream", checksStatus: "success" }),
+    ]);
+
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+
+    expect(runner.calls[3]?.args[3]).toContain(
+      't0: repository(owner: "upstream", name: "widgets")',
+    );
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("treats a missing pullRequests connection as a failed alias", async () => {
+    let now = 0;
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: { isFork: false, autoMergeAllowed: true },
+      }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const errors: unknown[] = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statuses.push(status),
+      onError: (error) => errors.push(error),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(statuses).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(GitHubCommandError);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("treats a malformed checks connection as a failed alias", async () => {
+    let now = 0;
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([batchPollPrNodeJson({ state: "OPEN", mergedAt: null })]),
+      }),
+      batchPollStatusJson({ t0: { pullRequest: {} } }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const errors: unknown[] = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statuses.push(status),
+      onError: (error) => errors.push(error),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(statuses).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(GitHubCommandError);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("pauses a host until reset when a batch reaches the GraphQL reserve", async () => {
+    let now = 0;
+    const resetAt = new Date(EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS).toISOString();
+    const runner = createScriptedRunner([
+      batchPollStatusWithRateLimitJson({
+        aliases: { t0: batchPollRepositoryJson([batchPollPrNodeJson()]) },
+        limit: 5_000,
+        remaining: 2_000,
+        resetAt,
+      }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const errors: unknown[] = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onError: (error) => errors.push(error),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.args[3]).toContain("rateLimit");
+    expect(errors).toHaveLength(1);
+
+    now = EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS);
+    await flushMicrotasks();
+    expect(runner.calls).toHaveLength(1);
+
+    now += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushMicrotasks();
+    expect(runner.calls).toHaveLength(2);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("loads the reset time once when GitHub rejects a batch for rate limiting", async () => {
+    let now = 0;
+    const rateLimitError = Object.assign(new Error("gh exited 1"), {
+      code: 1,
+      stderr: "GraphQL: API rate limit already exceeded for user ID 123",
+    });
+    const runner = createScriptedRunner([
+      { error: rateLimitError },
+      JSON.stringify({ resources: { graphql: { remaining: 0, reset: 300 } } }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls.map((call) => call.args.slice(0, 2))).toEqual([
+      ["api", "graphql"],
+      ["api", "rate_limit"],
+    ]);
+
+    now = EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS);
+    await flushMicrotasks();
+    expect(runner.calls).toHaveLength(2);
+
+    now += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushMicrotasks();
+    expect(runner.calls).toHaveLength(3);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("keeps refetching checks for a closed PR while its checks are still pending", async () => {
+    let now = 0;
+    const closedNode = batchPollPrNodeJson({
+      number: 9,
+      url: "https://github.com/acme/widgets/pull/9",
+      state: "CLOSED",
+      mergedAt: null,
+      headRefName: "feat-a",
+      headRefOid: "oid-closed",
+    });
+    const runner = createScriptedRunner([
+      batchPollStatusJson({ t0: batchPollRepositoryJson([closedNode]) }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "PENDING" },
+        ]),
+      }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([closedNode]) }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-closed",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(2);
+    expect(statuses).toEqual([expect.objectContaining({ number: 9, checksStatus: "pending" })]);
+
+    // Pending checks are never frozen, so the next cycle re-runs the checks
+    // query and observes the completed run.
+    now = EXPECTED_GITHUB_FAST_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(4);
+    expect(statuses[1]).toEqual(expect.objectContaining({ number: 9, checksStatus: "success" }));
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("falls back to the per-target lookup when the batch candidate page is full", async () => {
+    let now = 0;
+    const crowdedNodes = Array.from({ length: 10 }, (_, index) =>
+      batchPollPrNodeJson({
+        number: 100 + index,
+        url: `https://github.com/acme/widgets/pull/${100 + index}`,
+        state: "OPEN",
+        mergedAt: null,
+        headRefName: "feat-a",
+        headRepositoryOwner: { login: "stranger" },
+      }),
+    );
+    const runner = createScriptedRunner([
+      batchPollStatusJson({ t0: batchPollRepositoryJson(crowdedNodes) }),
+      currentPullRequestJson({ headRefName: "feat-a" }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    // Ten same-named fork PRs filled the page, so absence of a self-owned PR
+    // is inconclusive and the target resolves through the legacy path.
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
+    expect(statuses).toEqual([expect.objectContaining({ number: 42, state: "open" })]);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("ignores another fork owner's same-named branch in batched polls without an owner hint", async () => {
+    let now = 0;
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 900,
+            url: "https://github.com/acme/widgets/pull/900",
+            state: "OPEN",
+            mergedAt: null,
+            headRefName: "main",
+            headRepositoryOwner: { login: "stranger" },
+          }),
+        ]),
+      }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "main",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(1);
+    expect(statuses).toEqual([null]);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("recovers healthy aliases from a partially failed batch response", async () => {
+    let now = 0;
+    const partialBody = batchPollStatusJson({
+      t0: batchPollRepositoryJson([
+        batchPollPrNodeJson({
+          number: 41,
+          url: "https://github.com/acme/widgets/pull/41",
+          headRefName: "feat-a",
+          headRefOid: "oid-a",
+        }),
+      ]),
+      t1: null,
+    });
+    const runner = createScriptedRunner([
+      {
+        error: Object.assign(new Error("gh exited 1"), {
+          code: 1,
+          stdout: partialBody,
+          stderr: "GraphQL: Could not resolve to a Repository",
+        }),
+      },
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      }),
+    ]);
+    const slugs: Record<string, string> = { "/ws-a": "acme/widgets", "/ws-b": "acme/missing" };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async (cwd) => slugs[cwd] ?? null,
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const errors: unknown[] = [];
+
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-b",
+      onError: (error) => errors.push(error),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(2);
+    expect(statuses).toEqual([
+      expect.objectContaining({ number: 41, state: "merged", checksStatus: "success" }),
+    ]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(GitHubCommandError);
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
   });
 
   it("fetches PR reviews and issue comments with one GraphQL call sorted chronologically", async () => {
@@ -2447,34 +3325,33 @@ describe("ForgeService", () => {
         name: "parentRepo",
         parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
       }),
-      JSON.stringify([
-        {
-          number: 41,
-          url: "https://github.com/parentOwner/parentRepo/pull/41",
-          title: "Wrong fork owner",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          statusCheckRollup: [],
-          reviewDecision: "REVIEW_REQUIRED",
-          headRepositoryOwner: { login: "otherFork" },
-        },
-        {
-          number: 42,
-          url: "https://github.com/parentOwner/parentRepo/pull/42",
-          title: "Real fork PR",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          statusCheckRollup: [],
-          reviewDecision: "REVIEW_REQUIRED",
-          headRepositoryOwner: { login: "forkOwner" },
-        },
-      ]),
+      JSON.stringify([{ number: 41 }, { number: 42 }]),
+      JSON.stringify({
+        number: 41,
+        url: "https://github.com/parentOwner/parentRepo/pull/41",
+        title: "Wrong fork owner",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: "otherFork" },
+      }),
+      JSON.stringify({
+        number: 42,
+        url: "https://github.com/parentOwner/parentRepo/pull/42",
+        title: "Real fork PR",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -2494,27 +3371,182 @@ describe("ForgeService", () => {
       title: "Real fork PR",
       headRefName: "feature/fork",
     });
-    expect(runner.calls.slice(0, 3).map((call) => call.args)).toEqual([
+    expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
-      [
-        "pr",
-        "list",
-        "--repo",
-        "parentOwner/parentRepo",
-        "--state",
-        "all",
-        "--head",
-        "forkOwner:feature/fork",
-        "--limit",
-        "10",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
+      ["api", `repos/parentOwner/parentRepo/pulls?${FORK_PR_QUERY}`],
+      ["pr", "view", "41", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
+      ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
     ]);
   });
 
-  it("retries scoped PR list without statusCheckRollup when token permissions are insufficient", async () => {
+  it("reads the fork PR carrying the checked-out commit past newer attempts on the branch", async () => {
+    const checkoutSha = "3333333333333333333333333333333333333333";
+    const viewed: number[] = [];
+    const runner: GitHubCommandRunner = async (args) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            owner: { login: "forkOwner" },
+            name: "parentRepo",
+            parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "api") {
+        // Newest first, and the checkout is sitting on the oldest attempt.
+        return {
+          stdout: JSON.stringify([
+            { number: 50, head: { sha: "5".repeat(40) } },
+            { number: 49, head: { sha: "4".repeat(40) } },
+            { number: 48, head: { sha: "8".repeat(40) } },
+            { number: 47, head: { sha: checkoutSha } },
+          ]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "view" && /^\d+$/.test(args[2] ?? "")) {
+        const number = Number(args[2]);
+        viewed.push(number);
+        return {
+          stdout: currentPullRequestJson({
+            number,
+            url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
+            state: "CLOSED",
+            headRefOid: number === 47 ? checkoutSha : `${number}`.repeat(20),
+            headRepositoryOwner: { login: "forkOwner" },
+          }),
+          stderr: "",
+        };
+      }
+      throw noPullRequestError(args);
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: checkoutSha,
+    });
+
+    expect(status).toMatchObject({
+      number: 47,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    expect(viewed).toContain(47);
+    expect(viewed).toHaveLength(3);
+  });
+
+  it("propagates a failed fork PR lookup instead of reporting no pull request", async () => {
+    const rateLimitError = new GitHubCommandError({
+      args: ["api", "repos/parentOwner/parentRepo/pulls"],
+      cwd: "/repo",
+      exitCode: 1,
+      stderr: "API rate limit exceeded",
+    });
+    const runner = createScriptedRunner([
+      { error: noPullRequestError() },
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "parentRepo",
+        parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+      }),
+      { error: rateLimitError },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" }),
+    ).rejects.toThrow(GitHubCommandError);
+  });
+
+  it("resolves a fork PR whose branch name is crowded in the parent repository", async () => {
+    // Mirrors what `gh` really does: `pr list --head` matches the string
+    // against headRefName, so an "owner:branch" head never matches, and a
+    // popular branch name fills the candidate page with other forks' PRs.
+    const calls: RunnerCall[] = [];
+    function parentRepoPullRequest(
+      number: number,
+      headRepositoryOwner: string,
+    ): Record<string, unknown> {
+      return {
+        number,
+        url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
+        title: `PR ${number}`,
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "main",
+        headRefOid: `${number}`.padStart(40, "0"),
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: headRepositoryOwner },
+      };
+    }
+    const crowd = Array.from({ length: 10 }, (_, index) =>
+      parentRepoPullRequest(100 + index, `otherFork${index}`),
+    );
+    const runner: GitHubCommandRunner = async (args, options) => {
+      calls.push({ args, cwd: options.cwd });
+      if (args[0] === "repo" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            owner: { login: "forkOwner" },
+            name: "parentRepo",
+            parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "view" && args[2] === "4984") {
+        return { stdout: JSON.stringify(parentRepoPullRequest(4984, "forkOwner")), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        throw noPullRequestError(args);
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        const headRef = args[args.indexOf("--head") + 1];
+        const limit = Number(args[args.indexOf("--limit") + 1]);
+        const matching = crowd.filter((candidate) => candidate.headRefName === headRef);
+        return { stdout: JSON.stringify(matching.slice(0, limit)), stderr: "" };
+      }
+      if (args[0] === "api" && args[1]?.startsWith("repos/")) {
+        expect(args[1]).toContain("head=forkOwner%3Amain");
+        return { stdout: JSON.stringify([{ number: 4984 }]), stderr: "" };
+      }
+      return { stdout: "{}", stderr: "" };
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "main",
+    });
+
+    expect(status).toMatchObject({
+      number: 4984,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+      headRefName: "main",
+    });
+  });
+
+  it("retries the fork PR view without statusCheckRollup when token permissions are insufficient", async () => {
     const runner = createScriptedRunner([
       currentPullRequestJson({
         number: 7,
@@ -2527,36 +3559,30 @@ describe("ForgeService", () => {
         name: "parentRepo",
         parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
       }),
+      JSON.stringify([{ number: 42 }]),
       {
         error: statusCheckRollupPermissionError([
           "pr",
-          "list",
+          "view",
+          "42",
           "--repo",
           "parentOwner/parentRepo",
-          "--state",
-          "all",
-          "--head",
-          "forkOwner:feature/fork",
           "--json",
           CURRENT_PR_STATUS_FIELDS,
-          "--limit",
-          "10",
         ]),
       },
-      JSON.stringify([
-        {
-          number: 42,
-          url: "https://github.com/parentOwner/parentRepo/pull/42",
-          title: "Real fork PR",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          reviewDecision: "REVIEW_REQUIRED",
-          headRepositoryOwner: { login: "forkOwner" },
-        },
-      ]),
+      JSON.stringify({
+        number: 42,
+        url: "https://github.com/parentOwner/parentRepo/pull/42",
+        title: "Real fork PR",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -2577,34 +3603,17 @@ describe("ForgeService", () => {
       checks: [],
       checksStatus: "none",
     });
-    expect(runner.calls.slice(0, 4).map((call) => call.args)).toEqual([
+    expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
+      ["api", `repos/parentOwner/parentRepo/pulls?${FORK_PR_QUERY}`],
+      ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
       [
         "pr",
-        "list",
+        "view",
+        "42",
         "--repo",
         "parentOwner/parentRepo",
-        "--state",
-        "all",
-        "--head",
-        "forkOwner:feature/fork",
-        "--limit",
-        "10",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
-      [
-        "pr",
-        "list",
-        "--repo",
-        "parentOwner/parentRepo",
-        "--state",
-        "all",
-        "--head",
-        "forkOwner:feature/fork",
-        "--limit",
-        "10",
         "--json",
         CURRENT_PR_STATUS_BASE_FIELDS,
       ],
@@ -2752,21 +3761,20 @@ describe("ForgeService", () => {
         name: "repo",
         parent: { owner: { login: "parentOwner" }, name: "repo" },
       }),
-      JSON.stringify([
-        {
-          number: 88,
-          url: "https://github.com/parentOwner/repo/pull/88",
-          title: "Fork-only PR",
-          state: "OPEN",
-          isDraft: false,
-          baseRefName: "main",
-          headRefName: "feature/fork",
-          mergedAt: null,
-          statusCheckRollup: [],
-          reviewDecision: null,
-          headRepositoryOwner: { login: "forkOwner" },
-        },
-      ]),
+      JSON.stringify([{ number: 88 }]),
+      JSON.stringify({
+        number: 88,
+        url: "https://github.com/parentOwner/repo/pull/88",
+        title: "Fork-only PR",
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "feature/fork",
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: null,
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -2785,7 +3793,7 @@ describe("ForgeService", () => {
       repoName: "repo",
       headRefName: "feature/fork",
     });
-    expect(runner.calls[2]?.args).toContain("forkOwner:feature/fork");
+    expect(runner.calls[2]?.args).toEqual(["api", `repos/parentOwner/repo/pulls?${FORK_PR_QUERY}`]);
   });
 
   it("propagates DNS errors while resolving the current PR view", async () => {

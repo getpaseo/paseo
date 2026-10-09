@@ -30,7 +30,7 @@ export type OmpRuntimeEventMapping =
       logReason: string;
     };
 
-interface StatusLineNoticeInput {
+interface StatusLineInput {
   callId: string;
   name: string;
   label: string;
@@ -70,26 +70,13 @@ function mapNoticeEvent(event: unknown): OmpRuntimeEventMapping {
   if (!parsed.success) {
     return { handled: true, item: null, logReason: "malformed_omp_notice" };
   }
-  const label = parsed.data.source
-    ? `OMP ${parsed.data.level} notice from ${parsed.data.source}`
-    : `OMP ${parsed.data.level} notice`;
   return {
     handled: true,
-    item: buildStatusLineNotice({
-      callId: `omp-notice:${hashParts(parsed.data.level, parsed.data.source ?? "", parsed.data.message)}`,
-      name: "omp_notice",
-      label,
-      text: parsed.data.message,
-      icon: "sparkles",
-      status: parsed.data.level === "error" ? "failed" : "completed",
-      error: parsed.data.level === "error" ? parsed.data.message : undefined,
-      metadata: {
-        synthetic: true,
-        source: "omp_notice",
-        level: parsed.data.level,
-        ...(parsed.data.source ? { eventSource: parsed.data.source } : {}),
-      },
-    }),
+    item: {
+      type: "notification",
+      level: parsed.data.level,
+      message: parsed.data.message,
+    },
   };
 }
 
@@ -103,7 +90,7 @@ function mapGoalUpdatedEvent(event: unknown): OmpRuntimeEventMapping {
   const text = formatGoalText(parsed.data, goal);
   return {
     handled: true,
-    item: buildStatusLineNotice({
+    item: buildStatusLineItem({
       callId: `omp-goal:${goal?.id ?? hashParts(text)}`,
       name: "omp_goal_updated",
       label,
@@ -127,7 +114,7 @@ function mapAutoRetryStartEvent(event: unknown): OmpRuntimeEventMapping {
   const data = parsed.data;
   return {
     handled: true,
-    item: buildStatusLineNotice({
+    item: buildStatusLineItem({
       callId: `omp-auto-retry:${data.attempt}`,
       name: "omp_auto_retry",
       label: `OMP retry ${data.attempt}/${data.maxAttempts}`,
@@ -155,7 +142,7 @@ function mapAutoRetryEndEvent(event: unknown): OmpRuntimeEventMapping {
   const status = data.success ? "completed" : "failed";
   return {
     handled: true,
-    item: buildStatusLineNotice({
+    item: buildStatusLineItem({
       callId: `omp-auto-retry:${data.attempt}`,
       name: "omp_auto_retry",
       label: data.success
@@ -183,7 +170,7 @@ function mapRetryFallbackAppliedEvent(event: unknown): OmpRuntimeEventMapping {
   const data = parsed.data;
   return {
     handled: true,
-    item: buildStatusLineNotice({
+    item: buildStatusLineItem({
       callId: `omp-retry-fallback:${hashParts(data.role, data.from, data.to)}`,
       name: "omp_retry_fallback",
       label: `OMP fallback applied for ${data.role}`,
@@ -208,7 +195,7 @@ function mapRetryFallbackSucceededEvent(event: unknown): OmpRuntimeEventMapping 
   const data = parsed.data;
   return {
     handled: true,
-    item: buildStatusLineNotice({
+    item: buildStatusLineItem({
       callId: `omp-retry-fallback-succeeded:${hashParts(data.role, data.model)}`,
       name: "omp_retry_fallback",
       label: `OMP fallback succeeded for ${data.role}`,
@@ -257,7 +244,7 @@ function mapAutoCompactionEndEvent(event: unknown): OmpRuntimeEventMapping {
   };
 }
 
-function buildStatusLineNotice(input: StatusLineNoticeInput): OmpTelemetryToolCallItem {
+function buildStatusLineItem(input: StatusLineInput): OmpTelemetryToolCallItem {
   const base = {
     type: "tool_call" as const,
     callId: input.callId,

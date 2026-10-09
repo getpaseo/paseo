@@ -1,25 +1,21 @@
-import { shell, ipcMain } from "electron";
-
-const ALLOWED_EXTERNAL_URL_PROTOCOLS = new Set(["http:", "https:"]);
-
-export function isAllowedExternalUrl(value: unknown): value is string {
-  if (typeof value !== "string") {
-    return false;
-  }
-
-  try {
-    const url = new URL(value);
-    return ALLOWED_EXTERNAL_URL_PROTOCOLS.has(url.protocol);
-  } catch {
-    return false;
-  }
+interface ExternalUrlOwner {
+  open(url: string): Promise<void>;
 }
 
-export function registerOpenerHandlers(): void {
-  ipcMain.handle("paseo:opener:openUrl", async (_event, url: unknown) => {
-    if (!isAllowedExternalUrl(url)) {
-      throw new Error("Unsupported external URL");
+const EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
+
+const asExternalUrl = (input: unknown): URL | undefined => {
+  if (typeof input !== "string" || !URL.canParse(input)) return undefined;
+  const candidate = new URL(input);
+  return EXTERNAL_PROTOCOLS.has(candidate.protocol) ? candidate : undefined;
+};
+
+export function createExternalUrlOpener(owner: ExternalUrlOwner) {
+  return async (candidate: unknown): Promise<void> => {
+    const url = asExternalUrl(candidate);
+    if (url === undefined) {
+      throw new Error("Only HTTP(S) URLs can open externally.");
     }
-    await shell.openExternal(url);
-  });
+    return owner.open(url.href);
+  };
 }

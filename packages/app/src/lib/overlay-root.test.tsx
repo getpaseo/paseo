@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useWebOverlayRegistration } from "./overlay-root";
+import { dispatchTopWebOverlayKeyDown, useWebOverlayRegistration } from "./overlay-root";
 
 describe("useWebOverlayRegistration", () => {
   let opener: HTMLButtonElement;
@@ -81,5 +81,11 @@ describe("useWebOverlayRegistration", () => {
     unmount();
 
     expect(openerFocus).toHaveBeenCalled();
+  });
+
+  it("leaves IME composition keys with the focused editor", () => {
+    const event = new KeyboardEvent("keydown", { key: "Process", bubbles: true });
+    expect(dispatchTopWebOverlayKeyDown(event)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
   });
 });

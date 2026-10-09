@@ -1,4 +1,4 @@
-import { test, expect } from "../support/fixtures";
+import { daemonTest, test, expect } from "../support/fixtures";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import {
   closeSetupTab,
@@ -22,7 +22,7 @@ import {
   expectSetupPanel,
   openHomeWithProject,
   navigateToWorkspaceViaSidebar,
-  returnHomeFromWorkspace,
+  leaveWorkspaceViaHistory,
   openWorkspaceScriptsMenu,
   startWorkspaceScriptFromMenu,
   closeWorkspaceScriptsMenu,
@@ -87,8 +87,7 @@ test.describe("Workspace setup streaming", () => {
     try {
       await seedProjectForWorkspaceSetup(client, repo.path);
 
-      // Wait for setup completion via daemon (setup snapshots are per-session,
-      // so the browser session won't receive progress events).
+      // The setup client owns progress before creating the workspace.
       const completed = waitForWorkspaceSetupProgress(
         client,
         (payload) =>
@@ -117,7 +116,7 @@ test.describe("Workspace setup streaming", () => {
     }
   });
 
-  test("streams running and completed setup snapshots for a successful setup", async () => {
+  daemonTest("streams running and completed setup snapshots for a successful setup", async () => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-success-", {
       paseoConfig: {
@@ -195,7 +194,7 @@ test.describe("Workspace setup streaming", () => {
       await expectFailedSetupTabSeededInMainPane(page, workspace.id);
 
       await closeSetupTab(page, workspace.id);
-      await returnHomeFromWorkspace(page);
+      await leaveWorkspaceViaHistory(page);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
       await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
@@ -204,7 +203,42 @@ test.describe("Workspace setup streaming", () => {
     }
   });
 
-  test("emits a completed empty snapshot when no setup commands exist", async () => {
+  test("keeps a workspace usable when its setup config cannot be parsed", async ({ page }) => {
+    const client = await connectWorkspaceSetupClient();
+    const repo = await createTempGitRepo("setup-invalid-config-", {
+      files: [{ path: "paseo.json", content: "{ invalid json\n" }],
+    });
+
+    try {
+      await seedProjectForWorkspaceSetup(client, repo.path);
+      const failed = waitForWorkspaceSetupProgress(
+        client,
+        (payload) => payload.status === "failed",
+      );
+      const workspace = await createWorkspaceThroughDaemon(client, {
+        cwd: repo.path,
+        worktreeSlug: "workspace-setup-invalid-config",
+      });
+      const failedPayload = await failed;
+      expect(failedPayload.error).toContain("Failed to parse paseo.json");
+      expect(failedPayload.detail.commands).toEqual([]);
+
+      await openHomeWithProject(page, repo.path);
+      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await expectFailedSetupTabSeededInMainPane(page, workspace.id);
+      await expect(page.getByText(/Failed to parse paseo\.json at/)).toBeVisible();
+      await closeSetupTab(page, workspace.id);
+      await clickNewChat(page);
+      await expectComposerVisible(page);
+      await openFileExplorer(page);
+      await expectExplorerEntryVisible(page, "paseo.json");
+    } finally {
+      await client.close();
+      await repo.cleanup();
+    }
+  });
+
+  daemonTest("emits a completed empty snapshot when no setup commands exist", async () => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-none-");
 
@@ -283,7 +317,7 @@ test.describe("Workspace setup streaming", () => {
     }
   });
 
-  test("launches workspace scripts through an explicit daemon request", async () => {
+  daemonTest("launches workspace scripts through an explicit daemon request", async () => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-scripts-", {
       paseoConfig: {

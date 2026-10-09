@@ -1,12 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import type { AgentProvider, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentProvider, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import { formatOmpSubagentTitle } from "./subagent-title.js";
+import { mapOmpTodoPhases } from "./todo-mapper.js";
+import { OmpTodoPhaseSchema } from "./rpc-types.js";
 
 interface OmpSessionEntry {
   type?: string;
@@ -15,6 +18,28 @@ interface OmpSessionEntry {
   timestamp?: string | number;
   message?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+type OmpReplayEntry =
+  | { entry: OmpSessionEntry; message: OmpAgentMessage }
+  | { entry: OmpSessionEntry; item: AgentTimelineItem };
+
+export async function readOmpHistoryTodoState(
+  sessionFile: string,
+): Promise<AgentTimelineItem | null> {
+  const entries = await readActiveOmpEntryChain(sessionFile).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult" || message.toolName !== "todo") continue;
+    const details = message.details;
+    if (!details || typeof details !== "object") return null;
+    const phases = OmpTodoPhaseSchema.array().safeParse(Reflect.get(details, "phases"));
+    return phases.success ? mapOmpTodoPhases(phases.data) : null;
+  }
+  return null;
 }
 
 function extractOmpSubagentModel(entries: readonly OmpSessionEntry[]): string | null {
@@ -45,6 +70,7 @@ export async function* streamOmpHistory(input: {
   sessionFile?: string;
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
+  bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
 }): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
@@ -68,21 +94,34 @@ export async function* streamOmpHistory(input: {
     throw error;
   }
   const messages: OmpAgentMessage[] = [];
-  const messageEntries: OmpSessionEntry[] = [];
+  const replayEntries: OmpReplayEntry[] = [];
   const userEntries: OmpCapturedUserMessageEntry[] = [];
   for (const entry of entries) {
+    if (entry.type === "compaction") {
+      replayEntries.push({ entry, item: mapCompactionEntry(entry) });
+      continue;
+    }
     const mapped = mapEntryMessage(entry);
     if (!mapped) continue;
     messages.push(mapped);
-    messageEntries.push(entry);
+    replayEntries.push({ entry, message: mapped });
     if (mapped.role === "user" && entry.id) {
       userEntries.push({ id: entry.id, text: textOf(mapped.content) });
     }
   }
-  const mapper = new OmpHistoryMapper(input.provider, userEntries, OMP_HISTORY_MAPPER_HOOKS);
-  for (let index = 0; index < messages.length; index += 1) {
-    const timestamp = normalizeProviderReplayTimestamp(messageEntries[index]?.timestamp);
-    for (const event of mapper.mapMessages([messages[index]!])) {
+  const mapper = new OmpHistoryMapper(
+    input.provider,
+    userEntries,
+    OMP_HISTORY_MAPPER_HOOKS,
+    input.bridgedTools,
+  );
+  for (const replayEntry of replayEntries) {
+    const timestamp = normalizeProviderReplayTimestamp(replayEntry.entry.timestamp);
+    const events: AgentStreamEvent[] =
+      "item" in replayEntry
+        ? [{ type: "timeline", provider: input.provider, item: replayEntry.item }]
+        : mapper.mapMessages([replayEntry.message]);
+    for (const event of events) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
@@ -326,15 +365,79 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     if (message.role === "system") {
       return null;
     }
+    if (message.role === "developer") {
+      const content = message.content;
+      if (
+        Array.isArray(content) &&
+        content.length === 1 &&
+        content[0]?.type === "text" &&
+        typeof content[0].text === "string" &&
+        isSystemReminder(content[0].text)
+      ) {
+        return null;
+      }
+      return visibleFallback(message.role, message);
+    }
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {
       return message as unknown as OmpAgentMessage;
     }
+    // OMP roles the live timeline does not render either, such as the fileMention that carries
+    // an @-mentioned file's content.
+    if (
+      [
+        "pythonExecution",
+        "hookMessage",
+        "branchSummary",
+        "compactionSummary",
+        "fileMention",
+      ].includes(message.role)
+    ) {
+      return null;
+    }
     return visibleFallback(message.role, message);
+  }
+  if (entry.type === "custom_message") {
+    return mapCustomMessageEntry(entry);
   }
   if (!entry.type || isControlEntryType(entry.type)) {
     return null;
   }
   return visibleFallback(entry.type, entry);
+}
+
+// OMP persists a compaction as a top-level entry; the live timeline shows it as a compaction row.
+// The entry does not record whether a manual /compact or auto-compaction produced it.
+function mapCompactionEntry(entry: OmpSessionEntry): AgentTimelineItem {
+  return {
+    type: "compaction",
+    status: "completed",
+    ...(typeof entry.tokensBefore === "number" ? { preTokens: entry.tokensBefore } : {}),
+  };
+}
+
+// omp 18.1+ persists injected rows (skill prompts, hub messages, job notices) as top-level
+// custom_message entries without a message object; replay them as live custom messages
+function mapCustomMessageEntry(entry: OmpSessionEntry): OmpAgentMessage | null {
+  const content = entry.content;
+  if (typeof content !== "string" && !Array.isArray(content)) {
+    return null;
+  }
+  return {
+    role: "custom",
+    content,
+    id: entry.id,
+    customType: entry.customType,
+    display: entry.display,
+    details: entry.details,
+    attribution: entry.attribution,
+  } as OmpAgentMessage;
+}
+
+// OMP's rule-violation reminder carries attributes: <system-reminder reason="rule_violation" ...>
+function isSystemReminder(text: string): boolean {
+  return (
+    /^<system-reminder[\s>]/.test(text.trimStart()) && text.trimEnd().endsWith("</system-reminder>")
+  );
 }
 
 function isControlEntryType(type: string): boolean {
@@ -348,6 +451,7 @@ function isControlEntryType(type: string): boolean {
     type === "system_prompt" ||
     type === "model_change" ||
     type === "thinking_level_change" ||
+    type === "ttsr_injection" ||
     type === "tool_execution" ||
     type.startsWith("tool_execution_")
   );
@@ -357,6 +461,8 @@ function visibleFallback(role: string, value: Record<string, unknown>): OmpAgent
   let text = "Unsupported history record";
   if (typeof value.content === "string") {
     text = value.content;
+  } else if (Array.isArray(value.content)) {
+    text = textOf(value.content) || text;
   } else if (typeof value.text === "string") {
     text = value.text;
   }

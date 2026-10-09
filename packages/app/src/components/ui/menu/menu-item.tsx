@@ -20,6 +20,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
+import { MENU_ITEM_HEIGHT } from "./menu-geometry";
 
 const ThemedCheck = withUnistyles(Check);
 const ThemedCheckCircle = withUnistyles(CheckCircle);
@@ -42,7 +43,6 @@ const successMapping = (theme: Theme) => ({ color: theme.colors.palette.green[50
  * `lineHeight` to the platform and the content outgrows `minHeight`, which then does nothing and
  * the rows drift taller again. On compact, `minHeight` leads instead and the label centres in it.
  */
-const MENU_ITEM_HEIGHT = { xs: 40, md: 28 } as const;
 const MENU_ITEM_LINE_HEIGHT = 18;
 
 /**

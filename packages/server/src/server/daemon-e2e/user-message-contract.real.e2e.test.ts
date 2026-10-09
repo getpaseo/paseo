@@ -61,7 +61,7 @@ function tmpCwd(provider: ContractProvider): string {
 
 function collectUserMessageEvents(client: DaemonClient, agentId: string): AgentStreamEvent[] {
   const events: AgentStreamEvent[] = [];
-  client.on("agent_stream", (message) => {
+  client.subscribeAgentTimeline(agentId, (message) => {
     if (message.type !== "agent_stream" || message.payload.agentId !== agentId) {
       return;
     }
@@ -103,7 +103,7 @@ describe.each(CONTRACT_CASES)("daemon E2E (real $provider) - user_message contra
       appVersion: "0.1.80",
     });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: `${entry.provider}-user-contract` } });
+    await client.fetchAgents({ subscribe: {} });
   }, 30_000);
 
   afterEach(async () => {

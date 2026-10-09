@@ -187,7 +187,7 @@ export async function createOpenCodeOmoRealRuntime(): Promise<OpenCodeOmoRealRun
     });
     client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "opencode-omo-real" } });
+    await client.fetchAgents({ subscribe: {} });
 
     return {
       client,

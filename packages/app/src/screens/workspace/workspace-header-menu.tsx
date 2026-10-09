@@ -20,7 +20,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import {
+  extraMutedIconColorMapping,
+  iconButtonChromeGlyphSize,
+  iconButtonChromeStyle,
+} from "@/components/ui/icon-button-chrome";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import {
@@ -37,7 +41,6 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
@@ -46,6 +49,14 @@ const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
+function WorkspaceHeaderMenuTriggerIcon() {
+  return (
+    <ThemedEllipsis
+      size={iconButtonChromeGlyphSize("large")}
+      uniProps={extraMutedIconColorMapping}
+    />
+  );
+}
 
 /**
  * The compact header buttons draw at 32pt, under the 44pt touch minimum, and sit flush against
@@ -123,13 +134,16 @@ function WorkspaceHeaderWorkspaceActionItems({
   );
 }
 
-function WorkspaceHeaderMenuTriggerIcon({ hovered, open }: { hovered: boolean; open: boolean }) {
-  const colorMapping = hovered || open ? foregroundColorMapping : mutedColorMapping;
-  return <ThemedEllipsis size={16} uniProps={colorMapping} />;
-}
-
-function renderTriggerIcon({ hovered, open }: { hovered: boolean; open: boolean }) {
-  return <WorkspaceHeaderMenuTriggerIcon hovered={hovered} open={open} />;
+function workspaceHeaderMenuButtonStyle({
+  hovered,
+  pressed,
+  open,
+}: {
+  hovered: boolean;
+  pressed: boolean;
+  open: boolean;
+}) {
+  return iconButtonChromeStyle({ size: "large", state: { hovered, pressed, open } });
 }
 
 /**
@@ -141,11 +155,11 @@ export function WorkspaceHeaderMenuDesktop(props: WorkspaceHeaderWorkspaceAction
     <DropdownMenu>
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
-        style={styles.headerActionButton}
+        style={workspaceHeaderMenuButtonStyle}
         accessibilityRole="button"
         accessibilityLabel={t("workspace.header.actions.workspaceActions")}
       >
-        {renderTriggerIcon}
+        <WorkspaceHeaderMenuTriggerIcon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" width={220} testID="workspace-header-menu">
         <WorkspaceHeaderWorkspaceActionItems {...props} />
@@ -225,12 +239,12 @@ export function WorkspaceHeaderMenuMobile({
     <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
-        style={styles.compactHeaderActionButton}
+        style={workspaceHeaderMenuButtonStyle}
         hitSlop={COMPACT_HEADER_BUTTON_HIT_SLOP}
         accessibilityRole="button"
         accessibilityLabel={t("workspace.header.actions.workspaceActions")}
       >
-        {renderTriggerIcon}
+        <WorkspaceHeaderMenuTriggerIcon />
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
@@ -285,28 +299,9 @@ export function WorkspaceHeaderMenuMobile({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  headerActionButton: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-  },
-  compactHeaderActionButton: {
-    width: {
-      xs: theme.spacing[8],
-      md: buttonControlHeight.xs,
-    },
-    height: {
-      xs: theme.spacing[8],
-      md: buttonControlHeight.xs,
-    },
-    padding: 0,
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+const styles = StyleSheet.create({
   headerMenuProfileIconWrapper: {
     width: 16,
     height: 16,
   },
-}));
+});

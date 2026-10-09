@@ -4,7 +4,7 @@ import { Globe } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { BrowserPane } from "@/desktop/browser/pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelIconProps, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor, type PanelIconProps } from "@/panels/panel-registry";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
@@ -71,9 +71,7 @@ function BrowserPanel() {
   );
 }
 
-export const browserPanelRegistration: PanelRegistration<"browser"> = {
-  kind: "browser",
-  resourceKey: (target) => target.browserId,
+export const browserPanelRegistration = definePanel("browser", {
   component: BrowserPanel,
   useDescriptor: useBrowserPanelDescriptor,
-};
+});

@@ -31,8 +31,10 @@ function makeErrorHandler(reject: (error: Error) => void) {
   };
 }
 
-function makeSpeakToolHandler(resolve: (value: string) => void) {
-  return (msg: SessionMessage<"agent_stream">) => {
+function makeSpeakToolHandler(
+  resolve: (value: string) => void,
+): Parameters<DaemonTestContext["client"]["subscribeAgentTimeline"]>[1] {
+  return (msg) => {
     if (msg.type !== "agent_stream") return;
     if (msg.payload.event.type !== "timeline") return;
     const item = msg.payload.event.item;
@@ -131,7 +133,10 @@ function waitForSignal<T>(
     });
 
     const speakToolPromise = waitForSignal<string>(120000, (resolve, reject) => {
-      const offStream = ctx.client.on("agent_stream", makeSpeakToolHandler(resolve));
+      const offStream = ctx.client.subscribeAgentTimeline(
+        targetAgent.id,
+        makeSpeakToolHandler(resolve),
+      );
       const offError = ctx.client.on("activity_log", makeErrorHandler(reject));
       return () => {
         offStream();

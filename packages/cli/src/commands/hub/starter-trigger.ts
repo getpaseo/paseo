@@ -1,4 +1,4 @@
-import type { HubSetupResources } from "./hub-client/index.js";
+import type { HubConfigurationResources } from "./hub-client/index.js";
 import type { HubInitProvider } from "./init-plan.js";
 
 export interface HubStarterTriggerConnection {
@@ -9,32 +9,36 @@ export interface HubStarterTriggerConnection {
 }
 
 export function availableStarterTriggerConnections(
-  resources: HubSetupResources,
+  resources: HubConfigurationResources,
   githubRepository?: string,
 ): HubStarterTriggerConnection[] {
   return [
-    ...(githubRepository !== undefined &&
-    resources.github.some(({ repositories }) => repositories.includes(githubRepository))
-      ? [
-          {
-            id: `github:${githubRepository}`,
-            label: `GitHub — ${githubRepository}`,
-            provider: "github" as const,
-            filters: { repo: githubRepository },
-          },
-        ]
-      : []),
-    ...resources.slack.map(({ teamId, teamName }) => ({
-      id: `slack:${teamId}`,
+    ...resources.github.flatMap((connection) =>
+      githubRepository !== undefined && connection.repositories.includes(githubRepository)
+        ? [
+            {
+              id: `github:${githubRepository}`,
+              label: `GitHub — ${githubRepository}`,
+              provider: "github" as const,
+              filters: {
+                connection: connection.slug,
+                repo: githubRepository,
+              },
+            },
+          ]
+        : [],
+    ),
+    ...resources.slack.map(({ slug, teamName }) => ({
+      id: `slack:${slug}`,
       label: `Slack — ${teamName}`,
       provider: "slack" as const,
-      filters: { workspace: teamId },
+      filters: { connection: slug },
     })),
-    ...resources.discord.map(({ guildId, guildName }) => ({
-      id: `discord:${guildId}`,
+    ...resources.discord.map(({ slug, guildName }) => ({
+      id: `discord:${slug}`,
       label: `Discord — ${guildName}`,
       provider: "discord" as const,
-      filters: { guild: guildId },
+      filters: { connection: slug },
     })),
   ];
 }

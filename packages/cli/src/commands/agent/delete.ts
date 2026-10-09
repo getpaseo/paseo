@@ -1,7 +1,7 @@
 import type { Command } from "commander";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
+import type { DaemonClient, FetchAgentHistoryEntry } from "@getpaseo/client/internal/daemon-client";
 
 export function addDeleteOptions(cmd: Command): Command {
   return cmd
@@ -34,13 +34,25 @@ export interface AgentDeleteOptions extends CommandOptions {
 
 export type AgentDeleteResult = SingleResult<DeleteResult>;
 
+// History includes archived agents and agents whose provider is unavailable.
+async function fetchHistoryAgents(client: DaemonClient) {
+  const agents: FetchAgentHistoryEntry["agent"][] = [];
+  let cursor: string | undefined;
+  do {
+    const payload = await client.fetchAgentHistory({
+      page: { limit: 200, ...(cursor ? { cursor } : {}) },
+    });
+    agents.push(...payload.entries.map((entry) => entry.agent));
+    cursor = payload.pageInfo.nextCursor ?? undefined;
+  } while (cursor);
+  return agents;
+}
+
 export async function runDeleteCommand(
   id: string | undefined,
   options: AgentDeleteOptions,
   _command: Command,
 ): Promise<AgentDeleteResult> {
-  const host = getDaemonHost({ host: options.host });
-
   if (!id && !options.all && !options.cwd) {
     const error: CommandError = {
       code: "MISSING_ARGUMENT",
@@ -50,33 +62,19 @@ export async function runDeleteCommand(
     throw error;
   }
 
-  let client: DaemonClient;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
-    };
-    throw error;
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
-    const fetchPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
     const deletedIds: string[] = [];
+    let agents: FetchAgentHistoryEntry["agent"][];
 
-    if (options.all) {
-      agents = agents.filter((a) => !a.archivedAt);
-    } else if (options.cwd) {
-      agents = agents.filter((a) => {
-        if (a.archivedAt) return false;
-        return isSameOrDescendantPath(options.cwd!, a.cwd);
-      });
-    } else if (id) {
-      const fetchResult = await client.fetchAgent({ agentId: id });
+    if (options.all || options.cwd) {
+      agents = await fetchHistoryAgents(client);
+      if (!options.all) {
+        agents = agents.filter((a) => isSameOrDescendantPath(options.cwd!, a.cwd));
+      }
+    } else {
+      const fetchResult = await client.fetchAgent({ agentId: id! });
       if (!fetchResult) {
         const error: CommandError = {
           code: "AGENT_NOT_FOUND",
@@ -97,6 +95,7 @@ export async function runDeleteCommand(
           await client.deleteAgent(agent.id);
           return { ok: true as const, id: agent.id };
         } catch (err) {
+          if (err && typeof err === "object" && "code" in err) throw err;
           const message = err instanceof Error ? err.message : String(err);
           return { ok: false as const, id: agent.id, message };
         }

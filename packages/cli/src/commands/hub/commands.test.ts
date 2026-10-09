@@ -9,6 +9,7 @@ import { runHubLogin } from "./login.js";
 import { runHubLogout } from "./logout.js";
 import { runHubProjects } from "./projects.js";
 import { createHubCommand } from "./index.js";
+import { runHubPermissionChange, runHubPermissionsList } from "./permissions.js";
 import type { HubReporter } from "./reporter.js";
 
 const quietReporter: HubReporter = { progress() {} };
@@ -25,7 +26,9 @@ describe("Hub commands", () => {
       "connect",
       "status",
       "disconnect",
+      "permissions",
       "projects",
+      "export",
       "deploy",
       "logout",
     ]);
@@ -92,7 +95,7 @@ describe("Hub commands", () => {
     assert.equal(result.data.origin, "https://hub.paseo.sh");
   });
 
-  it("interactive login continues through the injected guided setup coordinator without invoking a CLI command", async () => {
+  it("interactive login continues through the injected daemon and Hub guidance coordinator", async () => {
     const credentials = new MemoryCredentials();
     const events: string[] = [];
 
@@ -111,8 +114,7 @@ describe("Hub commands", () => {
         isInteractive: () => true,
         continueGuidedSetup: async (origin) => {
           events.push(`connect:${origin}`);
-          events.push("init");
-          events.push("deploy");
+          events.push("show-guidance");
         },
         reporter: { progress: (message) => events.push(`progress:${message}`) },
       },
@@ -123,8 +125,7 @@ describe("Hub commands", () => {
       "login",
       "progress:Logged in",
       "connect:https://hub.test",
-      "init",
-      "deploy",
+      "show-guidance",
     ]);
   });
 
@@ -175,10 +176,85 @@ describe("Hub commands", () => {
 
     assert.deepEqual(observed, [{ origin: "https://hub.test", credential: "stored-human-secret" }]);
     assert.deepEqual(daemon.connections, [
-      { origin: "https://hub.test", token: "one-time-enrollment-token-with-enough-length" },
+      {
+        origin: "https://hub.test",
+        token: "one-time-enrollment-token-with-enough-length",
+        permissions: [],
+      },
     ]);
     assert.equal(daemon.connections[0]?.token.includes("stored-human-secret"), false);
     assert.deepEqual(progress, ["Connecting this daemon to https://hub.test"]);
+  });
+
+  it("grants workflow execution only when explicitly requested", async () => {
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const daemon = new FakeDaemon("https://hub.test");
+
+    await runHubConnect(
+      "https://hub.test",
+      { permissions: ["hub.execute"] },
+      {
+        env: {},
+        credentials,
+        hub: { issueEnrollmentToken: async () => "one-time-token" },
+        daemon: new FakeDaemonConnection(daemon),
+        reporter: quietReporter,
+      },
+    );
+
+    assert.deepEqual(daemon.connections[0]?.permissions, ["hub.execute"]);
+  });
+
+  it("revokes a relationship when an older daemon widens connected-only access", async () => {
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const daemon = new FakeDaemon("https://hub.test");
+    daemon.returnedPermissions = ["hub.execute"];
+
+    await assert.rejects(
+      runHubConnect(
+        "https://hub.test",
+        {},
+        {
+          env: {},
+          credentials,
+          hub: { issueEnrollmentToken: async () => "one-time-token" },
+          daemon: new FakeDaemonConnection(daemon),
+          reporter: quietReporter,
+        },
+      ),
+      /did not honor the requested Hub access/u,
+    );
+
+    assert.equal(daemon.disconnects, 1);
+  });
+
+  it("lists, grants, and revokes semantic Hub permissions without a wizard", async () => {
+    const daemon = new FakeDaemon("https://hub.test");
+    daemon.returnedPermissions = [];
+    const connection = new FakeDaemonConnection(daemon);
+    const progress: string[] = [];
+    const dependencies = {
+      daemon: connection,
+      reporter: { progress: (message: string) => progress.push(message) },
+    };
+
+    const empty = await runHubPermissionsList({}, dependencies);
+    assert.deepEqual(empty.data, []);
+
+    await runHubPermissionChange("grant", "hub.execute", {}, dependencies);
+    const granted = await runHubPermissionsList({}, dependencies);
+    assert.deepEqual(granted.data, [
+      { permission: "hub.execute", description: "Run agents for Hub automations" },
+    ]);
+
+    await runHubPermissionChange("revoke", "hub.execute", {}, dependencies);
+    assert.deepEqual((await runHubPermissionsList({}, dependencies)).data, []);
+    assert.deepEqual(progress, [
+      "Granted hub.execute to https://hub.test",
+      "Revoked hub.execute from https://hub.test",
+    ]);
   });
 
   it("projects reports its normalized destination before listing", async () => {
@@ -524,22 +600,39 @@ class FakeDaemonConnection implements HubDaemonConnection {
 }
 
 class FakeDaemon implements HubDaemonClient {
-  readonly connections: Array<{ origin: string; token: string }> = [];
+  readonly connections: Array<{
+    origin: string;
+    token: string;
+    permissions: readonly string[];
+  }> = [];
   disconnects = 0;
   readonly disconnectForces: boolean[] = [];
   disconnectError: Error | null = null;
   disconnectWarning: string | null = null;
   beforeDisconnect: (() => void) | null = null;
+  returnedPermissions: readonly string[] | null = null;
 
   constructor(private readonly origin: string) {}
 
-  async connectHub(origin: string, token: string) {
-    this.connections.push({ origin, token });
-    return { status: hubStatus("connected", origin) };
+  async connectHub(origin: string, token: string, permissions: readonly string[] = []) {
+    this.connections.push({ origin, token, permissions });
+    return {
+      status: hubStatus("connected", origin, this.returnedPermissions ?? permissions),
+    };
+  }
+
+  async updateHubPermissions(input: { grant?: readonly string[]; revoke?: readonly string[] }) {
+    const current = new Set(this.returnedPermissions ?? []);
+    for (const permission of input.revoke ?? []) current.delete(permission);
+    for (const permission of input.grant ?? []) current.add(permission);
+    this.returnedPermissions = [...current];
+    return { status: hubStatus("connected", this.origin, this.returnedPermissions) };
   }
 
   async getHubStatus() {
-    return { status: hubStatus("connected", this.origin) };
+    return {
+      status: hubStatus("connected", this.origin, this.returnedPermissions ?? ["hub.execute"]),
+    };
   }
 
   async getProvidersSnapshot() {
@@ -560,12 +653,16 @@ class FakeDaemon implements HubDaemonClient {
   async close() {}
 }
 
-function hubStatus(state: string, origin: string | null): HubStatus {
+function hubStatus(
+  state: string,
+  origin: string | null,
+  permissions: readonly string[] = ["hub.execute"],
+): HubStatus {
   return {
     state,
     daemonId: state === "connected" ? "daemon-1" : null,
     hubOrigin: origin,
-    scopes: state === "connected" ? ["hub.execution.*"] : [],
+    permissions: state === "connected" ? [...permissions] : [],
     connectedAt: null,
     lastError: null,
   };

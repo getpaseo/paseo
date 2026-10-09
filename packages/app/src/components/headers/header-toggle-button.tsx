@@ -5,6 +5,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { isWeb } from "@/constants/platform";
+import {
+  iconButtonChromeFrameStyle,
+  iconButtonChromeStyle,
+} from "@/components/ui/icon-button-chrome";
 
 interface HeaderToggleButtonState {
   hovered: boolean;
@@ -42,7 +46,17 @@ export function HeaderToggleButton({
       ? ({ "aria-expanded": expandedState } as Record<string, boolean>)
       : null;
 
-  const combinedStyle = useMemo(() => [headerIconSlotStyle.slot, style], [style]);
+  const combinedStyle = useMemo(
+    () =>
+      ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
+        iconButtonChromeStyle({
+          size: "large",
+          state: { hovered: Boolean(hovered), pressed },
+          disabled: Boolean(disabled),
+          style,
+        }),
+    [disabled, style],
+  );
 
   return (
     <Tooltip delayDuration={tooltipDelayDuration} enabledOnDesktop enabledOnMobile={false}>
@@ -68,16 +82,6 @@ export function HeaderToggleButton({
   );
 }
 
-export const headerIconSlotStyle = StyleSheet.create((theme) => ({
-  slot: {
-    padding: {
-      xs: theme.spacing[3],
-      md: theme.spacing[2],
-    },
-    borderRadius: theme.borderRadius.lg,
-  },
-}));
-
 const styles = StyleSheet.create((theme) => ({
   tooltipRow: {
     flexDirection: "row",
@@ -90,3 +94,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   shortcut: {},
 }));
+
+export const headerIconSlotStyle = {
+  slot: iconButtonChromeFrameStyle("large"),
+};

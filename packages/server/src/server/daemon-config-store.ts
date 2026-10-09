@@ -289,9 +289,19 @@ export function applyMutableProviderConfigToOverrides(
 
   const nextOverrides: Record<string, ProviderOverride> = { ...baseOverrides };
   for (const [providerId, providerConfig] of Object.entries(mutableProviders ?? {})) {
+    const previousOverride = nextOverrides[providerId];
+    const parsedOverride = ProviderOverrideSchema.strip().parse(providerConfig);
     nextOverrides[providerId] = {
-      ...nextOverrides[providerId],
-      ...ProviderOverrideSchema.strip().parse(providerConfig),
+      ...previousOverride,
+      ...parsedOverride,
+      ...(parsedOverride.paseoTools
+        ? {
+            paseoTools: {
+              ...previousOverride?.paseoTools,
+              ...parsedOverride.paseoTools,
+            },
+          }
+        : {}),
     };
   }
 

@@ -1,3 +1,5 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { defaultHostAppearance } from "@/hosts/appearance";
 import {
   useSessionStore,
   type ProjectDescriptor,
@@ -38,4 +40,33 @@ export function seedSessionWorkspaces(
   const store = useSessionStore.getState();
   store.setProjects(serverId, byProjectId.values());
   store.setWorkspaces(serverId, workspaces);
+}
+
+export function seedSessionHosts(serverIds: readonly string[]): void {
+  getHostRuntimeStore().syncHosts(
+    serverIds.map((serverId) => ({
+      serverId,
+      label: serverId,
+      appearance: defaultHostAppearance(),
+      lifecycle: {},
+      connections: [],
+      preferredConnectionId: null,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    })),
+  );
+}
+
+export function seedRuntimeWorkspaces(
+  serverId: string,
+  workspaces: Map<string, WorkspaceDescriptor>,
+): void {
+  const runtime = getHostRuntimeStore();
+  for (const id of useSessionStore.getState().sessions[serverId]?.workspaces.keys() ?? []) {
+    if (!workspaces.has(id)) runtime.removeWorkspaceSnapshot(serverId, id);
+  }
+  for (const workspace of workspaces.values()) {
+    runtime.acceptProjectSnapshot(serverId, projectFromWorkspace(workspace));
+  }
+  runtime.acceptWorkspaceSnapshots(serverId, [...workspaces.values()]);
 }

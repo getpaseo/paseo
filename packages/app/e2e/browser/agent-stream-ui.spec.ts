@@ -88,18 +88,12 @@ test.describe("Agent stream UI", () => {
       }
 
       await page.evaluate((block) => {
-        const evidence = {
-          addedNodes: 0,
-          characterDataMutations: 0,
-          removedNodes: 0,
-        };
+        const evidence = { addedNodes: 0, characterDataMutations: 0, removedNodes: 0 };
         const observer = new MutationObserver((records) => {
           for (const record of records) {
             evidence.addedNodes += record.addedNodes.length;
             evidence.removedNodes += record.removedNodes.length;
-            if (record.type === "characterData") {
-              evidence.characterDataMutations += 1;
-            }
+            if (record.type === "characterData") evidence.characterDataMutations += 1;
           }
         });
         observer.observe(block, { characterData: true, childList: true, subtree: true });
@@ -216,7 +210,9 @@ test.describe("Agent stream UI", () => {
     await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
       timeout: 30_000,
     });
-    await awaitAssistantMessage(page);
+    // Reasoning rows collapse when the mock starts its next assistant response. Wait past
+    // that transition so their temporary height cannot satisfy the scroll-away setup.
+    await awaitAssistantMessage(page, "Now I have a clearer picture.");
     await waitForScrollableChat(page, {
       minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
       timeout: 45_000,

@@ -259,6 +259,89 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test.each(["system", "user", "queue-operation"] as const)(
+    "restores nested background notification ownership from %s history",
+    async (form) => {
+      const nestedId = "toolu_nested";
+      const bashId = "toolu_nested_bash";
+      const timestamp = "2026-07-26T06:28:01.000Z";
+      function notification(toolUseId: string) {
+        const content = `<task-notification><task-id>${toolUseId}-task</task-id><tool-use-id>${toolUseId}</tool-use-id><status>completed</status><summary>Background command completed</summary></task-notification>`;
+        const records = {
+          system: {
+            subtype: "task_notification",
+            task_id: `${toolUseId}-task`,
+            tool_use_id: toolUseId,
+            status: "completed",
+            summary: "Background command completed",
+          },
+          user: { uuid: `${toolUseId}-notification`, message: { role: "user", content } },
+          "queue-operation": { operation: "enqueue", content },
+        };
+        return JSON.stringify({ type: form, timestamp, ...records[form] });
+      }
+      const subagentDir = writeParentSession([
+        taskToolUse(),
+        taskToolResult(),
+        notification(bashId),
+        notification("toolu_root_bash"),
+        notification("toolu_orphan_bash"),
+      ]);
+      function toolEntry(agentId: string, id: string, name: string) {
+        return JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId,
+          message: { role: "assistant", content: [{ type: "tool_use", id, name, input: {} }] },
+        });
+      }
+      writeSubagent({
+        subagentDir,
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [toolEntry(AGENT_ID, nestedId, "Agent")],
+      });
+      writeSubagent({
+        subagentDir,
+        agentId: "nested-agent",
+        meta: JSON.stringify({ toolUseId: nestedId }),
+        sidechainLines: [toolEntry("nested-agent", bashId, "Bash")],
+      });
+      writeSubagent({
+        subagentDir,
+        agentId: "orphan-agent",
+        meta: JSON.stringify({ toolUseId: "missing-parent-tool" }),
+        sidechainLines: [toolEntry("orphan-agent", "toolu_orphan_bash", "Bash")],
+      });
+
+      const replayed = await replayEvents();
+      const rootNotifications = replayed.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "task_notification"
+          ? [event.item.metadata?.toolUseId]
+          : [],
+      );
+      expect(rootNotifications).toEqual(["toolu_root_bash", "toolu_orphan_bash"]);
+      const childNotifications = replayed.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call" &&
+        event.event.item.name === "task_notification"
+          ? [event.event]
+          : [],
+      );
+      expect(childNotifications).toEqual([
+        expect.objectContaining({
+          id: nestedId,
+          timestamp,
+          item: expect.objectContaining({
+            metadata: expect.objectContaining({ toolUseId: bashId }),
+          }),
+        }),
+      ]);
+    },
+  );
+
   test("links a subagent to its Task call through the meta sidecar", async () => {
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
@@ -551,6 +634,72 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(events[0]).toMatchObject({ id: TOOL_USE_ID });
   });
 
+  test.each(["Agent", "Task"] as const)(
+    "labels a background %s call's card with its type and task after a restart",
+    async (toolName) => {
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: {
+                subagent_type: "general-purpose",
+                description: "Count files here",
+                prompt: "Run ls and reply with the number of entries.",
+              },
+            },
+          ]),
+          JSON.stringify({
+            type: "user",
+            sessionId: "replay-session",
+            timestamp: "2026-07-26T06:27:48.000Z",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: TOOL_USE_ID,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                    },
+                  ],
+                },
+              ],
+            },
+            toolUseResult: { isAsync: true, status: "async_launched", agentId: AGENT_ID },
+          }),
+        ],
+        meta: JSON.stringify({
+          agentType: "general-purpose",
+          description: "Count files here",
+          toolUseId: TOOL_USE_ID,
+          spawnDepth: 1,
+          requestShape: "background",
+        }),
+      });
+
+      const cards = (await replayEvents()).flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === TOOL_USE_ID
+          ? [event.item]
+          : [],
+      );
+      expect(cards.at(-1)).toMatchObject({
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "general-purpose",
+          description: "Count files here",
+        },
+      });
+    },
+  );
+
   test("replays the subagent's own transcript onto its timeline", async () => {
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
@@ -562,5 +711,57 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       .filter((event) => event.type === "timeline");
     expect(timeline.length).toBeGreaterThan(0);
     expect(timeline[0]).toMatchObject({ id: TOOL_USE_ID });
+  });
+
+  test("replays a SubagentHandback report as the subagent's final message", async () => {
+    const handbackId = "toolu_handback";
+    const report = "## Verdict\n\n- **Coherent**";
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: handbackId,
+                name: "SubagentHandback",
+                input: { message: report },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: handbackId,
+                content: [
+                  {
+                    type: "text",
+                    text: '{"success":true,"message":"Report delivered to your caller."}',
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    const items = (await replayDescriptors()).flatMap((event) =>
+      event.event.type === "timeline" ? [event.event.item] : [],
+    );
+    expect(items).toEqual([{ type: "assistant_message", text: report }]);
   });
 });

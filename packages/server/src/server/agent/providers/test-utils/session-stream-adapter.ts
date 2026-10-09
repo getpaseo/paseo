@@ -76,3 +76,15 @@ export async function* streamSession(
     }
   }
 }
+
+export async function collectSessionTurnEvents(
+  session: Pick<AgentSession, "startTurn" | "subscribe">,
+  prompt: AgentPromptInput,
+  options?: AgentRunOptions,
+): Promise<AgentStreamEvent[]> {
+  const events: AgentStreamEvent[] = [];
+  for await (const event of streamSession(session, prompt, options)) {
+    events.push(event);
+  }
+  return events;
+}

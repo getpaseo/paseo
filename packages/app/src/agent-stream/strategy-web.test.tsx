@@ -1,6 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
+import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -31,7 +32,7 @@ vi.mock("react-native-unistyles", () => ({
   withUnistyles: (Component: React.ComponentType) => Component,
 }));
 
-function userMessage(index: number): StreamItem {
+function userMessage(index: number): Extract<StreamItem, { kind: "user_message" }> {
   return {
     kind: "user_message",
     id: `message-${index}`,
@@ -52,6 +53,30 @@ function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
     renderLiveHeadRow: (item) => <div>{item.id}</div>,
     renderLiveAuxiliary: () => null,
   };
+}
+
+function MeasuredTestRow({ item }: { item: StreamItem }) {
+  const [loaded, setLoaded] = React.useState(false);
+  const load = React.useCallback(() => setLoaded(true), []);
+  const height = item.kind === "user_message" && item.text === "grown" ? 120 : 24;
+  const measure = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node?.parentElement) return;
+      Object.defineProperty(node.parentElement, "offsetHeight", {
+        configurable: true,
+        value: height,
+      });
+    },
+    [height],
+  );
+  return (
+    <div ref={measure}>
+      <button type="button" onClick={load}>
+        {loaded ? "Loaded" : "Load"}
+      </button>
+      {item.id}
+    </div>
+  );
 }
 
 describe("createWebStreamStrategy", () => {
@@ -144,6 +169,7 @@ describe("createWebStreamStrategy", () => {
             listStyle: null,
             baseListContentContainerStyle: null,
             forwardListContentContainerStyle: null,
+            contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
           })}
         </>,
       );
@@ -151,6 +177,75 @@ describe("createWebStreamStrategy", () => {
 
     expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
+  });
+
+  it("retains a row's DOM and local state when recent history becomes virtualized", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const item = userMessage(0);
+    const renderRow = (rowItem: StreamItem) => <MeasuredTestRow item={rowItem} />;
+    const input: StreamRenderInput = {
+      agentId: "agent",
+      segments: { historyVirtualized: [], historyMounted: [item], liveHead: [] },
+      boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: false },
+      renderers: {
+        renderHistoryVirtualizedRow: renderRow,
+        renderHistoryMountedRow: renderRow,
+        renderLiveHeadRow: renderRow,
+        renderLiveAuxiliary: () => null,
+      },
+      listEmptyComponent: null,
+      viewportRef: React.createRef<StreamViewportHandle>(),
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: () => {},
+      onNearHistoryStart: () => true,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    };
+    act(() => root?.render(strategy.render(input)));
+    const row = container.querySelector('[data-history-row-id="message-0"]')!;
+    act(() => row.querySelector("button")!.click());
+    expect(row.querySelector("button")!.textContent).toBe("Loaded");
+    const viewport = container.querySelector('[data-testid="agent-chat-scroll"]')!;
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
+    act(() =>
+      root?.render(
+        strategy.render({
+          ...input,
+          segments: { historyVirtualized: [item], historyMounted: [userMessage(1)], liveHead: [] },
+          boundary: { ...input.boundary, hasVirtualizedHistory: true },
+        }),
+      ),
+    );
+    expect(container.querySelector('[data-history-row-id="message-0"]')).toBe(row);
+    expect(row.isConnected).toBe(true);
+    expect(row.querySelector("button")!.textContent).toBe("Loaded");
+    act(() =>
+      root?.render(
+        strategy.render({
+          ...input,
+          segments: {
+            historyVirtualized: [{ ...item, text: "grown" }, userMessage(1)],
+            historyMounted: [userMessage(2)],
+            liveHead: [],
+          },
+          boundary: { ...input.boundary, hasVirtualizedHistory: true },
+        }),
+      ),
+    );
+    expect(
+      (container.querySelector('[data-history-row-id="message-1"]') as HTMLElement).style.transform,
+    ).toBe("translateY(120px)");
+    expect(row.querySelector("button")!.textContent).toBe("Loaded");
   });
 
   it("keeps the timeline width stable with an overlay scrollbar", () => {
@@ -187,6 +282,7 @@ describe("createWebStreamStrategy", () => {
           listStyle: null,
           baseListContentContainerStyle: null,
           forwardListContentContainerStyle: null,
+          contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
         }),
       );
     });
@@ -233,6 +329,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -250,6 +347,75 @@ describe("createWebStreamStrategy", () => {
 
     expect(container.textContent).toContain("expanded");
     expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
+  });
+
+  it("rerenders only the history row whose content revision changed", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const host = userMessage(1);
+    const other = userMessage(2);
+    const renderCountById = new Map<string, number>();
+    const HistoryRow = React.memo(function HistoryRow({ item }: { item: StreamItem }) {
+      renderCountById.set(item.id, (renderCountById.get(item.id) ?? 0) + 1);
+      return <div>{item.id}</div>;
+    });
+    const renderInput: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [],
+        historyMounted: [host, other],
+        liveHead: [],
+      },
+      boundary: {
+        hasVirtualizedHistory: false,
+        hasMountedHistory: true,
+        hasLiveHead: false,
+      },
+      renderers: {
+        ...createRenderers(vi.fn()),
+        renderHistoryMountedRow: (item) => <HistoryRow item={item} />,
+      },
+      listEmptyComponent: null,
+      viewportRef,
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    };
+    const unrevised = {
+      contentById: new Set<string>(),
+      displayStateById: new Set<string>(),
+      globalDisplayState: false,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(strategy.render({ ...renderInput, historyRowRevision: unrevised }));
+    });
+    expect(renderCountById.get(host.id)).toBe(1);
+    expect(renderCountById.get(other.id)).toBe(1);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          historyRowRevision: { ...unrevised, contentById: new Set([host.id]) },
+        }),
+      );
+    });
+
+    expect(renderCountById.get(host.id)).toBe(2);
+    expect(renderCountById.get(other.id)).toBe(1);
   });
 
   it("keeps a row mounted when it moves from the live head into mounted history", () => {
@@ -286,6 +452,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -361,6 +528,7 @@ describe("createWebStreamStrategy", () => {
           listStyle: null,
           baseListContentContainerStyle: null,
           forwardListContentContainerStyle: null,
+          contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
         }),
       );
     });
@@ -405,6 +573,7 @@ describe("createWebStreamStrategy", () => {
           listStyle: null,
           baseListContentContainerStyle: null,
           forwardListContentContainerStyle: null,
+          contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
         }),
       );
     });
@@ -415,10 +584,7 @@ describe("createWebStreamStrategy", () => {
     }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 766 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 5725 });
-    Object.defineProperty(scrollContainer, "scrollTop", {
-      configurable: true,
-      value: 4959.1708984375,
-    });
+    scrollContainer.scrollTop = 4959.1708984375;
     scrollTo.mockClear();
 
     act(() => {
@@ -428,10 +594,7 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 5725, behavior: "auto" });
 
     scrollTo.mockClear();
-    Object.defineProperty(scrollContainer, "scrollTop", {
-      configurable: true,
-      value: 4960.5,
-    });
+    scrollContainer.scrollTop = 4960.5;
 
     act(() => {
       viewportRef.current?.scrollToBottom("message-sent");
@@ -440,10 +603,7 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 5725, behavior: "auto" });
 
     scrollTo.mockClear();
-    Object.defineProperty(scrollContainer, "scrollTop", {
-      configurable: true,
-      value: 4967,
-    });
+    scrollContainer.scrollTop = 4967;
 
     act(() => {
       viewportRef.current?.scrollToBottom("message-sent");
@@ -459,7 +619,7 @@ describe("createWebStreamStrategy", () => {
       y?: number,
     ) {
       const top = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
-      Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
+      this.scrollTop = top;
     });
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
@@ -485,6 +645,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -508,7 +669,7 @@ describe("createWebStreamStrategy", () => {
     }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
+    scrollContainer.scrollTop = 0;
 
     act(() => {
       root?.render(
@@ -544,10 +705,7 @@ describe("createWebStreamStrategy", () => {
       y?: number,
     ) {
       const top = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
-      Object.defineProperty(this, "scrollTop", {
-        configurable: true,
-        value: top,
-      });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
 
@@ -578,6 +736,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -604,7 +763,7 @@ describe("createWebStreamStrategy", () => {
     const scrollElement = scrollContainer;
     Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(scrollElement, "scrollHeight", { configurable: true, value: 400 });
-    Object.defineProperty(scrollElement, "scrollTop", { configurable: true, value: 0 });
+    scrollElement.scrollTop = 0;
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
@@ -646,10 +805,7 @@ describe("createWebStreamStrategy", () => {
       y?: number,
     ) {
       const top = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
-      Object.defineProperty(this, "scrollTop", {
-        configurable: true,
-        value: top,
-      });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
 
@@ -687,6 +843,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -707,7 +864,7 @@ describe("createWebStreamStrategy", () => {
     }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1400 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    scrollContainer.scrollTop = 1000;
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
@@ -719,7 +876,7 @@ describe("createWebStreamStrategy", () => {
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
     });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
+    scrollContainer.scrollTop = 0;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
     });
@@ -752,10 +909,7 @@ describe("createWebStreamStrategy", () => {
       y?: number,
     ) {
       const top = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
-      Object.defineProperty(this, "scrollTop", {
-        configurable: true,
-        value: top,
-      });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
 
@@ -792,6 +946,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -812,7 +967,7 @@ describe("createWebStreamStrategy", () => {
     }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1491 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
+    scrollContainer.scrollTop = 0;
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
@@ -821,17 +976,17 @@ describe("createWebStreamStrategy", () => {
     });
     scrollTo.mockClear();
 
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 991 });
+    scrollContainer.scrollTop = 991;
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -900 }));
     });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 91 });
+    scrollContainer.scrollTop = 91;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
     });
     expect(scrollTo).not.toHaveBeenCalled();
 
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
+    scrollContainer.scrollTop = 0;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
     });
@@ -857,10 +1012,7 @@ describe("createWebStreamStrategy", () => {
       y?: number,
     ) {
       const top = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
-      Object.defineProperty(this, "scrollTop", {
-        configurable: true,
-        value: top,
-      });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
 
@@ -891,6 +1043,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -911,7 +1064,7 @@ describe("createWebStreamStrategy", () => {
     }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 550 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 50 });
+    scrollContainer.scrollTop = 50;
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
@@ -923,13 +1076,13 @@ describe("createWebStreamStrategy", () => {
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -30 }));
     });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 20 });
+    scrollContainer.scrollTop = 20;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
     });
     expect(scrollTo).not.toHaveBeenCalled();
 
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 50 });
+    scrollContainer.scrollTop = 50;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
     });
@@ -957,7 +1110,7 @@ describe("createWebStreamStrategy", () => {
   it("keeps following output after geometry, nested-scroll, and zoom wheel events", () => {
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
-      Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
@@ -988,6 +1141,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -1002,7 +1156,7 @@ describe("createWebStreamStrategy", () => {
     Object.defineProperty(scrollContainer, "clientWidth", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "offsetWidth", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    scrollContainer.scrollTop = 1000;
     scrollContainer.getBoundingClientRect = () =>
       ({
         bottom: 500,
@@ -1042,7 +1196,7 @@ describe("createWebStreamStrategy", () => {
       window.dispatchEvent(jitterPointerMove);
     });
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 700 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 800 });
+    scrollContainer.scrollTop = 800;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
 
@@ -1050,11 +1204,11 @@ describe("createWebStreamStrategy", () => {
     nestedScroller.style.overflowY = "auto";
     Object.defineProperty(nestedScroller, "clientHeight", { configurable: true, value: 100 });
     Object.defineProperty(nestedScroller, "scrollHeight", { configurable: true, value: 300 });
-    Object.defineProperty(nestedScroller, "scrollTop", { configurable: true, value: 100 });
+    nestedScroller.scrollTop = 100;
     scrollContainer.append(nestedScroller);
     act(() => {
       nestedScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
-      Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 700 });
+      scrollContainer.scrollTop = 700;
       scrollContainer.dispatchEvent(new Event("scroll"));
       scrollContainer.dispatchEvent(
         new WheelEvent("wheel", { bubbles: true, ctrlKey: true, deltaY: -100 }),
@@ -1077,7 +1231,7 @@ describe("createWebStreamStrategy", () => {
   it("stops following output after scrollbar and middle-button upward scrolling", () => {
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
-      Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
@@ -1107,6 +1261,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -1121,7 +1276,7 @@ describe("createWebStreamStrategy", () => {
     Object.defineProperty(scrollContainer, "clientWidth", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "offsetWidth", { configurable: true, value: 520 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    scrollContainer.scrollTop = 1000;
     scrollContainer.getBoundingClientRect = () =>
       ({
         bottom: 500,
@@ -1149,7 +1304,7 @@ describe("createWebStreamStrategy", () => {
       pointerType: { value: "mouse" },
     });
     act(() => scrollContainer.dispatchEvent(scrollbarPointerDown));
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 700 });
+    scrollContainer.scrollTop = 700;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
 
@@ -1165,7 +1320,7 @@ describe("createWebStreamStrategy", () => {
     });
     expect(scrollTo).not.toHaveBeenCalled();
 
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1300 });
+    scrollContainer.scrollTop = 1300;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     Object.defineProperty(scrollContainer, "offsetWidth", { configurable: true, value: 500 });
     scrollContainer.getBoundingClientRect = () =>
@@ -1193,7 +1348,7 @@ describe("createWebStreamStrategy", () => {
       pointerType: { value: "mouse" },
     });
     act(() => scrollContainer.dispatchEvent(overlayScrollbarPointerDown));
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 900 });
+    scrollContainer.scrollTop = 900;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
 
@@ -1212,7 +1367,7 @@ describe("createWebStreamStrategy", () => {
     });
     expect(scrollTo).not.toHaveBeenCalled();
 
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1400 });
+    scrollContainer.scrollTop = 1400;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     const autoscrollPointerDown = new MouseEvent("pointerdown", {
       bubbles: true,
@@ -1246,7 +1401,7 @@ describe("createWebStreamStrategy", () => {
       window.dispatchEvent(autoscrollPointerUp);
       window.dispatchEvent(autoscrollPointerMove);
     });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    scrollContainer.scrollTop = 1000;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     scrollTo.mockClear();
 
@@ -1307,7 +1462,7 @@ describe("createWebStreamStrategy", () => {
     };
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
-      Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
+      this.scrollTop = top;
     });
     HTMLElement.prototype.scrollTo = scrollTo;
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
@@ -1340,6 +1495,7 @@ describe("createWebStreamStrategy", () => {
       listStyle: null,
       baseListContentContainerStyle: null,
       forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     };
     const renderWithActivity = (active: boolean, input: StreamRenderInput = renderInput) => (
       <RetainedPanelActivity active={active}>{strategy.render(input)}</RetainedPanelActivity>
@@ -1363,12 +1519,18 @@ describe("createWebStreamStrategy", () => {
       throw new Error("Expected retained history rows");
     }
     let rowsShifted = false;
-    scrollContainer.getBoundingClientRect = vi.fn(() => ({ top: 0 }) as DOMRect);
-    firstRow.getBoundingClientRect = vi.fn(() => ({ bottom: rowsShifted ? 4 : 120 }) as DOMRect);
-    secondRow.getBoundingClientRect = vi.fn(() => ({ bottom: rowsShifted ? 120 : 160 }) as DOMRect);
+    scrollContainer.getBoundingClientRect = () => ({ top: 0, height: 500, bottom: 500 }) as DOMRect;
+    firstRow.getBoundingClientRect = () =>
+      ({ top: rowsShifted ? -116 : 0, height: 120, bottom: rowsShifted ? 4 : 120 }) as DOMRect;
+    secondRow.getBoundingClientRect = () =>
+      ({
+        top: rowsShifted ? 4 : 120,
+        height: rowsShifted ? 116 : 40,
+        bottom: rowsShifted ? 120 : 160,
+      }) as DOMRect;
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
+    scrollContainer.scrollTop = 1000;
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
     const viewportObservation = observed.get(scrollContainer);
     expect(viewportObservation).toBeDefined();
@@ -1399,7 +1561,7 @@ describe("createWebStreamStrategy", () => {
     act(() => root?.render(renderWithActivity(false)));
     scrollTo.mockClear();
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2200 });
-    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
+    scrollContainer.scrollTop = 0;
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
       scrollContainer.dispatchEvent(new Event("scroll"));

@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 
 describe("OMP runtime event mapper", () => {
-  test("maps notice events to timeline status lines", () => {
+  test("maps notice events to timeline notifications", () => {
     const event = {
       type: "notice",
       level: "warning",
@@ -14,23 +14,9 @@ describe("OMP runtime event mapper", () => {
     expect(mapOmpRuntimeEventToTimelineItem(event)).toMatchObject({
       handled: true,
       item: {
-        type: "tool_call",
-        callId: expect.stringMatching(/^omp-notice:/),
-        name: "omp_notice",
-        status: "completed",
-        error: null,
-        detail: {
-          type: "plain_text",
-          label: "OMP warning notice from anthropic",
-          text: "Provider quota is getting low",
-          icon: "sparkles",
-        },
-        metadata: {
-          synthetic: true,
-          source: "omp_notice",
-          level: "warning",
-          eventSource: "anthropic",
-        },
+        type: "notification",
+        level: "warning",
+        message: "Provider quota is getting low",
       },
     });
   });

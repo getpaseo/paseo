@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { isOmpSystemNotice, mapOmpSystemNoticeToToolCall } from "./system-notice.js";
+import { isOmpSystemNotice, mapOmpSystemNoticeToNotification } from "./system-notice.js";
 
 const COMPLETED_NOTICE = [
   "<system-notice>",
@@ -24,31 +24,16 @@ describe("omp system notice detection", () => {
   test("ignores regular prompts, including ones that mention the tag mid-message", () => {
     expect(isOmpSystemNotice("please fix the bug")).toBe(false);
     expect(isOmpSystemNotice("what does <system-notice> mean in omp?")).toBe(false);
-    expect(mapOmpSystemNoticeToToolCall("what does <system-notice> mean in omp?")).toBeNull();
+    expect(mapOmpSystemNoticeToNotification("what does <system-notice> mean in omp?")).toBeNull();
   });
 });
 
-describe("omp system notice tool call mapping", () => {
-  test("maps a completed task-result notice to a synthetic completed tool call", () => {
-    expect(mapOmpSystemNoticeToToolCall(COMPLETED_NOTICE)).toEqual({
-      type: "tool_call",
-      callId: "omp-notice:DocsSmokeTwo",
-      name: "task_notification",
-      status: "completed",
-      detail: {
-        type: "plain_text",
-        label: "Background job DocsSmokeTwo completed",
-        text: COMPLETED_NOTICE,
-        icon: "wrench",
-      },
-      metadata: {
-        synthetic: true,
-        source: "omp_system_notice",
-        taskId: "DocsSmokeTwo",
-        subagentType: "explore",
-        status: "completed",
-      },
-      error: null,
+describe("omp system notice notification mapping", () => {
+  test("maps a completed task-result notice to an info notification", () => {
+    expect(mapOmpSystemNoticeToNotification(COMPLETED_NOTICE)).toEqual({
+      type: "notification",
+      level: "info",
+      message: "Background job DocsSmokeTwo completed",
     });
   });
 
@@ -62,11 +47,11 @@ describe("omp system notice tool call mapping", () => {
       "</system-notice>",
     ].join("\n");
 
-    const item = mapOmpSystemNoticeToToolCall(notice);
-    expect(item).toMatchObject({
-      callId: "omp-notice:RepoSmokeOne",
-      status: "failed",
-      error: "Background job RepoSmokeOne failed",
+    const item = mapOmpSystemNoticeToNotification(notice);
+    expect(item).toEqual({
+      type: "notification",
+      level: "error",
+      message: "Background job RepoSmokeOne failed",
     });
   });
 
@@ -80,30 +65,23 @@ describe("omp system notice tool call mapping", () => {
       "</system-notice>",
     ].join("\n");
 
-    expect(mapOmpSystemNoticeToToolCall(notice)).toMatchObject({
-      callId: "omp-notice:DocsSmokeTwo",
-      status: "completed",
-      metadata: {
-        taskId: "DocsSmokeTwo",
-        subagentType: "explore",
-      },
+    expect(mapOmpSystemNoticeToNotification(notice)).toEqual({
+      type: "notification",
+      level: "info",
+      message: "Background job DocsSmokeTwo completed",
     });
   });
 
-  test("maps a notice without a task-result using its first line and a stable hash id", () => {
+  test("maps a notice without a task-result using its first line", () => {
     const notice = "<system-notice>\nThe daemon rotated its logs.\n</system-notice>";
 
-    const first = mapOmpSystemNoticeToToolCall(notice);
-    const second = mapOmpSystemNoticeToToolCall(notice);
+    const first = mapOmpSystemNoticeToNotification(notice);
+    const second = mapOmpSystemNoticeToNotification(notice);
     expect(first).toEqual(second);
-    expect(first).toMatchObject({
-      status: "completed",
-      detail: {
-        type: "plain_text",
-        label: "The daemon rotated its logs.",
-        text: notice,
-      },
+    expect(first).toEqual({
+      type: "notification",
+      level: "info",
+      message: "The daemon rotated its logs.",
     });
-    expect(first?.callId).toMatch(/^omp-notice:[0-9a-f]{12}$/);
   });
 });

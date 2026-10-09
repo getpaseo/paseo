@@ -16,7 +16,8 @@ import {
  *
  * Verified on the wire (Claude Code 2.1.220, Paseo's own query options):
  *
- *   task_started       task_id, tool_use_id, description, subagent_type, task_type
+ *   task_started       task_id, tool_use_id, description, subagent_type, task_type,
+ *                      is_backgrounded
  *   task_updated       task_id, patch.status, patch.is_backgrounded
  *   task_notification  task_id, tool_use_id, status
  *
@@ -39,6 +40,11 @@ interface TaskStartedMessage {
   task_type?: string;
   prompt?: string;
   skip_transcript?: boolean;
+  /**
+   * Set at spawn: true for a task registered in the background. A resumed subagent is always
+   * registered in the background.
+   */
+  is_backgrounded?: boolean;
 }
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
@@ -71,8 +77,8 @@ interface TaskUpdatedMessage {
   task_id: string;
   /**
    * `is_backgrounded` is declared on `SDKTaskUpdatedMessage["patch"]`: it flips when a foreground
-   * task is backgrounded, which is the only signal that separates a child that dies with its turn
-   * from one that was explicitly told to outlive it.
+   * task is moved to the background after `task_started`. Together with `task_started`'s own
+   * flag it separates a child that dies with its turn from one told to outlive it.
    */
   patch?: { status?: string; is_backgrounded?: boolean };
 }
@@ -154,6 +160,10 @@ export class ClaudeTaskProtocolSource {
   private readonly subagentIdByTaskId = new Map<string, string>();
   /** Every announced tool id -> the first tool id that publicly identifies the child. */
   private readonly canonicalIdByToolUseId = new Map<string, string>();
+  /** Tool calls made inside a sidechain, keyed to the direct child that emitted them. */
+  private readonly ownerSubagentIdByToolUseId = new Map<string, string>();
+  /** Announced tasks inherit the owner recorded for their tool call, including local_bash. */
+  private readonly ownerSubagentIdByTaskId = new Map<string, string>();
   /**
    * Every subagent id this source declared. It is the source's whole vocabulary: an id that is
    * not in here was either filtered at declaration or never announced, and this source has
@@ -167,8 +177,8 @@ export class ClaudeTaskProtocolSource {
   /** Workflow invocations already own a real Workflow card in the parent timeline. */
   private readonly idsWithExistingParentToolCard = new Set<string>();
   /**
-   * Declared subagents that were moved to the background. They outlive the turn that spawned
-   * them, so a turn ending is not evidence that they stopped.
+   * Declared subagents running in the background, whether spawned there or moved there later.
+   * They outlive the turn that spawned them, so a turn ending is not evidence that they stopped.
    */
   private readonly backgroundedIds = new Set<string>();
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
@@ -229,6 +239,14 @@ export class ClaudeTaskProtocolSource {
     return subagentId !== undefined && this.declaredIds.has(subagentId);
   }
 
+  /** Resolve a non-subagent task (for example local_bash) to its emitting sidechain. */
+  resolveTaskOwner(taskId: string, toolUseId?: string): string | undefined {
+    return (
+      this.ownerSubagentIdByTaskId.get(taskId) ??
+      (toolUseId ? this.ownerSubagentIdByToolUseId.get(toolUseId) : undefined)
+    );
+  }
+
   needsSyntheticParentToolCard(subagentId: string): boolean {
     return !this.idsWithExistingParentToolCard.has(subagentId);
   }
@@ -259,6 +277,8 @@ export class ClaudeTaskProtocolSource {
   reset(): void {
     this.subagentIdByTaskId.clear();
     this.canonicalIdByToolUseId.clear();
+    this.ownerSubagentIdByToolUseId.clear();
+    this.ownerSubagentIdByTaskId.clear();
     this.declaredIds.clear();
     this.workflowTaskIds.clear();
     this.lastWorkflowResultByTaskId.clear();
@@ -310,32 +330,51 @@ export class ClaudeTaskProtocolSource {
     this.sawAnyTask = true;
 
     const id = readString(message.tool_use_id);
+    const parentSubagentId = id ? this.ownerSubagentIdByToolUseId.get(id) : undefined;
+    if (parentSubagentId) this.ownerSubagentIdByTaskId.set(message.task_id, parentSubagentId);
     // skip_transcript marks ambient housekeeping the transcript should not show.
     if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
     const existingId = this.subagentIdByTaskId.get(message.task_id);
+    this.recordBackgrounded(existingId ?? id, message.is_backgrounded);
     if (existingId) {
-      this.canonicalIdByToolUseId.set(id, existingId);
-      const observations: SubagentObservation[] = [];
-      if (this.lastStatusById.get(existingId) !== "running") {
-        this.lastStatusById.set(existingId, "running");
-        observations.push({ kind: "status", id: existingId, status: "running" });
-      }
-      const prompt =
-        message.task_type === CLAUDE_WORKFLOW_TASK_TYPE
-          ? readString(message.description)
-          : readString(message.prompt);
-      if (prompt) {
-        observations.push({
-          kind: "timeline",
-          id: existingId,
-          item: { type: "user_message", text: prompt },
-        });
-      }
-      return observations;
+      return this.observeExistingTaskStart(message, id, existingId);
     }
 
+    return this.observeNewTaskStart(message, id, parentSubagentId);
+  }
+
+  private observeExistingTaskStart(
+    message: TaskStartedMessage,
+    toolUseId: string,
+    existingId: string,
+  ): SubagentObservation[] {
+    this.canonicalIdByToolUseId.set(toolUseId, existingId);
+    const observations: SubagentObservation[] = [];
+    if (this.lastStatusById.get(existingId) !== "running") {
+      this.lastStatusById.set(existingId, "running");
+      observations.push({ kind: "status", id: existingId, status: "running" });
+    }
+    const prompt =
+      message.task_type === CLAUDE_WORKFLOW_TASK_TYPE
+        ? readString(message.description)
+        : readString(message.prompt);
+    if (prompt) {
+      observations.push({
+        kind: "timeline",
+        id: existingId,
+        item: { type: "user_message", text: prompt },
+      });
+    }
+    return observations;
+  }
+
+  private observeNewTaskStart(
+    message: TaskStartedMessage,
+    id: string,
+    parentSubagentId: string | undefined,
+  ): SubagentObservation[] {
     this.subagentIdByTaskId.set(message.task_id, id);
     this.canonicalIdByToolUseId.set(id, id);
     this.declaredIds.add(id);
@@ -344,8 +383,10 @@ export class ClaudeTaskProtocolSource {
     // An explicit `name` on the Task call wins over the agent type, matching how replay titles the
     // same subagent. Without it a fan-out of five Explores reads as five identical rows.
     const isWorkflow = message.task_type === CLAUDE_WORKFLOW_TASK_TYPE;
-    if (isWorkflow) {
+    if (isWorkflow || parentSubagentId) {
       this.idsWithExistingParentToolCard.add(id);
+    }
+    if (isWorkflow) {
       this.workflowTaskIds.add(message.task_id);
     }
     const title = isWorkflow
@@ -359,6 +400,7 @@ export class ClaudeTaskProtocolSource {
         toolCallId: id,
         ...(title ? { title } : {}),
         ...(description ? { description } : {}),
+        ...(parentSubagentId ? { parentSubagentId } : {}),
       },
     ];
     const initialPresentation = title ? { title } : {};
@@ -379,12 +421,13 @@ export class ClaudeTaskProtocolSource {
 
   private observeTaskUpdated(message: TaskUpdatedMessage): SubagentObservation[] {
     const id = this.subagentIdByTaskId.get(message.task_id);
-    const backgrounded = message.patch?.is_backgrounded;
-    if (id && typeof backgrounded === "boolean") {
-      if (backgrounded) this.backgroundedIds.add(id);
-      else this.backgroundedIds.delete(id);
-    }
+    if (id) this.recordBackgrounded(id, message.patch?.is_backgrounded);
     return this.observeStatus(message.task_id, message.patch?.status);
+  }
+
+  private recordBackgrounded(id: string, backgrounded: boolean | undefined): void {
+    if (backgrounded === true) this.backgroundedIds.add(id);
+    else if (backgrounded === false) this.backgroundedIds.delete(id);
   }
 
   private observeTaskNotification(message: TaskNotificationMessage): SubagentObservation[] {
@@ -447,13 +490,23 @@ export class ClaudeTaskProtocolSource {
    * The model the child is actually running, read off its own assistant frames.
    *
    * Routed through the declaration for the same reason status is: a frame carrying the tool_use
-   * id of a task this source filtered out — ambient housekeeping, a workflow child, a nested
-   * grandchild announced in someone else's session — would otherwise fold to an upsert with no
+   * id of a task this source filtered out — ambient housekeeping or a workflow child — would
+   * otherwise fold to an upsert with no
    * identity and a defaulted "running" status. That is the nameless, never-finishing row the
    * declaration filter exists to prevent, arriving by a different door.
    */
   observeSidechainFrame(message: SDKMessage, subagentId: string): SubagentObservation[] {
     if (message.type !== "assistant" || !this.declaredIds.has(subagentId)) return [];
+    const content = message.message?.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (!block || typeof block !== "object") continue;
+        const record = block as { type?: unknown; id?: unknown };
+        if (record.type === "tool_use" && typeof record.id === "string") {
+          this.ownerSubagentIdByToolUseId.set(record.id, subagentId);
+        }
+      }
+    }
     const model = resolveObservedClaudeModelId(
       typeof message.message?.model === "string" ? message.message.model : undefined,
     );

@@ -20,6 +20,16 @@ const TEST_ENV_DEFAULTS = {
   PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? "0",
 };
 
+function testEnvironment(paseoHome: string): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
+    ...TEST_ENV_DEFAULTS,
+    PASEO_HOME: paseoHome,
+    HOME: paseoHome,
+    USERPROFILE: paseoHome,
+  };
+}
+
 function killPidTree(pid: number, signal: NodeJS.Signals): void {
   if (!Number.isInteger(pid) || pid <= 0) {
     return;
@@ -83,19 +93,25 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
  * Wait for daemon to be ready by testing WebSocket connection
  * Uses `paseo agent ls` which connects via WebSocket
  */
-async function probeDaemon(port: number): Promise<boolean> {
+async function probeDaemon(port: number, paseoHome: string): Promise<boolean> {
   try {
-    const result = await $`PASEO_HOST=localhost:${port} paseo agent ls`.nothrow();
+    const result = await $({
+      env: testEnvironment(paseoHome),
+    })`paseo agent ls --host localhost:${port}`.nothrow();
     return result.exitCode === 0;
   } catch {
     return false;
   }
 }
 
-export async function waitForDaemon(port: number, timeout = 30000): Promise<void> {
+export async function waitForDaemon(
+  port: number,
+  paseoHome: string,
+  timeout = 30000,
+): Promise<void> {
   const deadline = Date.now() + timeout;
   async function poll(): Promise<void> {
-    if (await probeDaemon(port)) return;
+    if (await probeDaemon(port, paseoHome)) return;
     if (Date.now() >= deadline) {
       throw new Error(`Daemon failed to start on port ${port} within ${timeout}ms`);
     }
@@ -110,8 +126,14 @@ export async function waitForDaemon(port: number, timeout = 30000): Promise<void
  */
 export async function startDaemon(port: number, paseoHome: string): Promise<ProcessPromise> {
   $.verbose = false;
-  const daemon =
-    $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} PASEO_RELAY_ENABLED=false PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} CI=true paseo daemon start --foreground`.nothrow();
+  const daemon = $({
+    env: {
+      ...testEnvironment(paseoHome),
+      PASEO_LISTEN: `127.0.0.1:${port}`,
+      PASEO_RELAY_ENABLED: "false",
+      CI: "true",
+    },
+  })`paseo daemon run`.nothrow();
   return daemon;
 }
 
@@ -125,7 +147,7 @@ export async function createTestContext(): Promise<TestContext> {
   // Helper to run CLI commands against test daemon
   const paseo = (args: string[]): ProcessPromise => {
     $.verbose = false;
-    return $`PASEO_HOST=localhost:${port} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} paseo ${args}`.nothrow();
+    return $({ env: testEnvironment(paseoHome) })`paseo --home ${paseoHome} ${args}`.nothrow();
   };
 
   // Cleanup function
@@ -162,7 +184,7 @@ export async function createTestContext(): Promise<TestContext> {
 export async function createTestContextWithDaemon(): Promise<TestContext> {
   const ctx = await createTestContext();
   ctx.daemon = await startDaemon(ctx.port, ctx.paseoHome);
-  await waitForDaemon(ctx.port);
+  await waitForDaemon(ctx.port, ctx.paseoHome);
   return ctx;
 }
 

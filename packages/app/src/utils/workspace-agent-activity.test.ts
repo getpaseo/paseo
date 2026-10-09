@@ -6,6 +6,7 @@ function agent(input: {
   id: string;
   workspaceId?: string;
   status?: Agent["status"];
+  turn?: Agent["turn"];
   updatedAt: string;
   attentionTimestamp?: string | null;
   requiresAttention?: boolean;
@@ -19,7 +20,16 @@ function agent(input: {
     id: input.id,
     provider: "codex",
     status: input.status ?? "idle",
-    activeTurn: input.status === "running" ? { turnId: "turn-1", startedAt: null } : null,
+    turn:
+      input.turn ??
+      (input.status === "running"
+        ? {
+            phase: "open",
+            turnId: "turn-1",
+            startedAt: null,
+            cancellationRequestId: null,
+          }
+        : { phase: "idle", cancellationRequestId: null }),
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date(input.updatedAt),
     lastUserMessageAt: null,
@@ -56,6 +66,41 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("uses turn liveness for running while preserving protocol lifecycle states", () => {
+    const result = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "open",
+          agent({
+            id: "open",
+            workspaceId: "workspace-open",
+            status: "idle",
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ],
+        [
+          "idle-error",
+          agent({
+            id: "idle-error",
+            workspaceId: "workspace-error",
+            status: "error",
+            turn: { phase: "idle", cancellationRequestId: null },
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(result.get("workspace-open")?.status).toBe("running");
+    expect(result.get("workspace-error")?.status).toBe("failed");
+  });
+
   it("keeps the latest active root agent for each workspace", () => {
     const index = buildWorkspaceAgentActivityIndex(
       new Map([

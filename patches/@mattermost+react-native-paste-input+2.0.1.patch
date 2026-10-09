@@ -27,6 +27,18 @@ index 73466dd..8440ac9 100644
    }
  
    auto textSize = textLayoutManager_
+diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
+index 9e429b8..1d10014 100644
+--- a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
++++ b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
+@@ -36,2 +36,2 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+-  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+-    val ic = super.onCreateInputConnection(outAttrs)
++  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
++    val ic = super.onCreateInputConnection(outAttrs) ?: return null
+@@ -58 +58 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+-    return InputConnectionCompat.createWrapper(ic!!, outAttrs, callback)
++    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 index 51b9dfa..501badf 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js

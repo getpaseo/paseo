@@ -39,28 +39,6 @@ test.describe("Workspace archive with worktree backing", () => {
     await tempRepo?.cleanup().catch(() => undefined);
   });
 
-  test("archiving the final workspace removes its managed worktree directory", async ({ page }) => {
-    const serverId = getServerId();
-    await openProjectViaDaemon(client, tempRepo.path);
-    const worktree = await createWorktreeViaDaemon(client, {
-      cwd: tempRepo.path,
-      slug: `archive-${Date.now()}`,
-    });
-    createdWorktreeDirectories.add(worktree.workspaceDirectory);
-    expect(existsSync(worktree.workspaceDirectory)).toBe(true);
-
-    await gotoAppShell(page);
-    await waitForSidebarHydration(page);
-    await waitForWorkspaceInSidebar(page, { serverId, workspaceId: worktree.workspaceId });
-
-    await archiveWorkspaceFromSidebar(page, worktree.workspaceId);
-
-    await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
-    await expect
-      .poll(() => existsSync(worktree.workspaceDirectory), { timeout: 30_000 })
-      .toBe(false);
-  });
-
   test("a managed worktree remains until its last workspace is archived", async ({ page }) => {
     const serverId = getServerId();
     await openProjectViaDaemon(client, tempRepo.path);

@@ -326,6 +326,21 @@
                       "type": "string"
                     }
                   },
+                  "paseoTools": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "disabledTools": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
                   "enabled": {
                     "type": "boolean"
                   },

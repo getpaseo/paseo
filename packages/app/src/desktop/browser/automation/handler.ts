@@ -1,3 +1,4 @@
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
 import {
@@ -69,13 +70,33 @@ export function mountBrowserAutomationHandler(
 }
 
 export function mountBrowserAutomationDaemonClientHandler(
-  client: unknown,
+  client: import("@getpaseo/client/internal/daemon-client").DaemonClient,
   options?: { serverId?: string },
 ): () => void {
-  return mountBrowserAutomationHandler({
-    client: client as BrowserAutomationClient,
+  const observation = client.registerBrowserHost({
+    hostKind: "desktop app",
+    supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+  });
+  const unmount = mountBrowserAutomationHandler({
+    client: {
+      on: (_type, handler) =>
+        observation.subscribe({
+          snapshot: () => {},
+          update: (message) => {
+            if (message.type === "browser.automation.execute.request") handler(message);
+          },
+        }),
+      sendBrowserAutomationExecuteResponse: (response) =>
+        client.sendBrowserAutomationExecuteResponse(response),
+    },
     ...(options?.serverId ? { serverId: options.serverId } : {}),
   });
+  return () => {
+    unmount();
+    void observation
+      .release()
+      .catch((error) => console.warn("Failed to release browser host", error));
+  };
 }
 
 async function handleBrowserAutomationRequest(params: {

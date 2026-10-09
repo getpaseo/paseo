@@ -81,6 +81,13 @@ describe("ACP provider catalog", () => {
     });
   });
 
+  it("registers Gajae Code with its ACP command and permission-prompt env", () => {
+    const patch = buildAcpProviderConfigPatch(findProvider("gjc"));
+
+    expect(patch.providers?.gjc?.command).toEqual(["gjc", "acp"]);
+    expect(patch.providers?.gjc?.env).toEqual({ GJC_ACP_PERMISSION_MODE: "prompt" });
+  });
+
   it("preserves provider params in the daemon config patch", () => {
     const droidPatch = buildAcpProviderConfigPatch(findProvider("factory-droid"));
 

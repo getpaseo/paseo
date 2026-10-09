@@ -11,6 +11,9 @@ The bar is four questions:
 
 Every pull request needs evidence for the questions its change touches. Pull requests without evidence get closed.
 
+For plugin changes, verify the [SDK import boundaries](plugins.md#sdk-import-boundaries) before
+exercising contributions. Include the boundary tests and both runtime loaders in the evidence.
+
 ## Evidence
 
 Evidence is something someone else can look at:

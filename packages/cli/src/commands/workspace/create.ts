@@ -134,8 +134,8 @@ export async function runCreateCommand(
   options: WorkspaceCreateOptions,
   _command: Command,
 ): Promise<SingleResult<WorkspaceRow>> {
-  const host = getDaemonHost({ host: options.host });
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
+  const host = getDaemonHost({ target: options.daemonTarget });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     throw {
       code: "DAEMON_NOT_RUNNING",
@@ -153,6 +153,7 @@ export async function runCreateCommand(
     }
     return { type: "single", data: toWorkspaceRow(payload.workspace), schema: workspaceSchema };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "WORKSPACE_CREATE_FAILED", message } satisfies CommandError;
   } finally {

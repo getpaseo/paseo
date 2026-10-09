@@ -180,6 +180,83 @@ describe("ClaudeTaskProtocolSource", () => {
     ]);
   });
 
+  it("declares a nested task beneath the sidechain agent that launched it", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(
+      taskStarted({
+        task_id: "direct-task",
+        tool_use_id: "toolu_direct",
+        spawn_depth: 1,
+      }),
+    );
+    source.observeSidechainFrame(
+      {
+        type: "assistant",
+        parent_tool_use_id: "toolu_direct",
+        message: {
+          model: "claude-sonnet-5",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_nested",
+              name: "Agent",
+              input: { name: "nested-owner" },
+            },
+          ],
+        },
+      } as unknown as SDKMessage,
+      "toolu_direct",
+    );
+
+    expect(
+      source.observe(
+        taskStarted({
+          task_id: "nested-task",
+          tool_use_id: "toolu_nested",
+          spawn_depth: 2,
+        }),
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "declared",
+        id: "toolu_nested",
+        parentSubagentId: "toolu_direct",
+      }),
+    );
+    expect(source.needsSyntheticParentToolCard("toolu_nested")).toBe(false);
+  });
+
+  it("resolves a background task to the sidechain agent that launched it", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(
+      taskStarted({ task_id: "direct-task", tool_use_id: "toolu_direct", spawn_depth: 1 }),
+    );
+    source.observeSidechainFrame(
+      {
+        type: "assistant",
+        parent_tool_use_id: "toolu_direct",
+        message: {
+          model: "claude-sonnet-5",
+          content: [
+            { type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "sleep 2" } },
+          ],
+        },
+      } as unknown as SDKMessage,
+      "toolu_direct",
+    );
+    source.observe(
+      taskStarted({
+        task_id: "bash-task",
+        tool_use_id: "toolu_bash",
+        task_type: "local_bash",
+        subagent_type: undefined,
+        owned_by_subagent: true,
+      }),
+    );
+
+    expect(source.resolveTaskOwner("bash-task", "toolu_bash")).toBe("toolu_direct");
+  });
+
   it("does not re-announce a status that already holds", () => {
     const source = new ClaudeTaskProtocolSource();
     source.observe(taskStarted());
@@ -432,6 +509,33 @@ describe("ClaudeTaskProtocolSource", () => {
     } as unknown as SDKMessage);
 
     expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("does not cancel a subagent announced as backgrounded at spawn", () => {
+    // Claude sets is_backgrounded on task_started for a child spawned in the background, and
+    // sends no task_updated patch for it.
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ is_backgrounded: true }));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("does not cancel a resumed subagent, which Claude always runs in the background", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ tool_use_id: "toolu_original", is_backgrounded: false }));
+    source.observe(taskUpdated("completed"));
+    source.observe(taskStarted({ tool_use_id: "toolu_resumed", is_backgrounded: true }));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("still cancels a subagent announced in the foreground", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ is_backgrounded: false }));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "canceled" },
+    ]);
   });
 
   it("still routes a backgrounded subagent that settles after the interrupt", () => {

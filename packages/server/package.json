@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.5.2",
+  "version": "0.11.1",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -27,6 +27,41 @@
       "types": "./dist/server/terminal/agent-hooks/provider-registry.d.ts",
       "source": "./src/terminal/agent-hooks/provider-registry.ts",
       "default": "./dist/server/terminal/agent-hooks/provider-registry.js"
+    },
+    "./daemon-control": {
+      "types": "./dist/server/server/daemon-instance.d.ts",
+      "source": "./src/server/daemon-instance.ts",
+      "default": "./dist/server/server/daemon-instance.js"
+    },
+    "./configuration": {
+      "types": "./dist/server/server/config.d.ts",
+      "source": "./src/server/config.ts",
+      "default": "./dist/server/server/config.js"
+    },
+    "./process": {
+      "types": "./dist/server/utils/spawn.d.ts",
+      "source": "./src/utils/spawn.ts",
+      "default": "./dist/server/utils/spawn.js"
+    },
+    "./auth": {
+      "types": "./dist/server/server/auth.d.ts",
+      "source": "./src/server/auth.ts",
+      "default": "./dist/server/server/auth.js"
+    },
+    "./pairing": {
+      "types": "./dist/server/server/pairing-offer.d.ts",
+      "source": "./src/server/pairing-offer.ts",
+      "default": "./dist/server/server/pairing-offer.js"
+    },
+    "./agent-activity": {
+      "types": "./dist/server/server/agent/activity-curator.d.ts",
+      "source": "./src/server/agent/activity-curator.ts",
+      "default": "./dist/server/server/agent/activity-curator.js"
+    },
+    "./agent-response": {
+      "types": "./dist/server/server/agent/agent-response-loop.d.ts",
+      "source": "./src/server/agent/agent-response-loop.ts",
+      "default": "./dist/server/server/agent/agent-response-loop.js"
     }
   },
   "publishConfig": {
@@ -38,7 +73,7 @@
     "clean": "node ../../scripts/clean-package-dist.mjs",
     "build": "npm run build:lib && npm run build:scripts",
     "build:clean": "npm run clean && npm run build",
-    "build:lib": "tsc -p tsconfig.server.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true});\"",
+    "build:lib": "tsc -p tsconfig.server.json --incremental false && node scripts/build-opencode-bridge-plugin.mjs && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true}); fs.rmSync('dist/server/builtin-plugins',{recursive:true,force:true}); fs.cpSync('../../plugins','dist/server/builtin-plugins',{recursive:true,filter:(source)=>!source.split(require('node:path').sep).some((segment)=>segment==='node_modules'||segment==='test')&&!/\\.(test|spec)\\.[cm]?[jt]sx?$/.test(source)&&!source.endsWith('.tsbuildinfo')});\"",
     "build:scripts": "tsc -p tsconfig.scripts.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');\"",
     "prepack": "npm run build:clean && npm --prefix ../.. run build:daemon-web-ui",
     "start": "node dist/scripts/supervisor-entrypoint.js",
@@ -47,13 +82,14 @@
     "measure:agent-tools": "tsx scripts/measure-agent-tools-context.ts",
     "measure:git-observation": "tsx scripts/measure-git-observation.ts",
     "measure:file-observer": "tsx scripts/measure-file-observer.ts",
+    "analyze:observer-metrics": "tsx scripts/analyze-observer-metrics.ts",
     "repro:file-observer-teardown": "tsx scripts/reproduce-file-observer-teardown.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",
     "speech:download": "tsx scripts/download-speech-models.ts",
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --fileParallelism --exclude \"**/*.e2e.test.ts\"",
-    "test:integration": "vitest run --maxWorkers=1 src/server/daemon-e2e/models.e2e.test.ts src/server/daemon-e2e/live-preferences.e2e.test.ts src/server/agent/model-catalog.e2e.test.ts && vitest run --maxWorkers=1 src/server/session.create-agent-worktree-autoarchive.e2e.test.ts -t \"creates a worktree and auto-archives both\"",
+    "test:integration": "vitest run --maxWorkers=1 src/server/creation/creation.e2e.test.ts src/server/daemon-e2e/terminal-workspace-sdk.e2e.test.ts src/server/daemon-e2e/models.e2e.test.ts src/server/daemon-e2e/live-preferences.e2e.test.ts src/server/agent/model-catalog.e2e.test.ts src/server/plugins/plugin-paseo-api.e2e.test.ts && vitest run --maxWorkers=1 src/server/session.create-agent-worktree-autoarchive.e2e.test.ts -t \"creates a worktree and auto-archives both\" && vitest run --maxWorkers=1 src/server/agent/providers/opencode-bridge.local.e2e.test.ts -t \"versioned runtime\"",
     "test:hub-cli-contract": "vitest run --maxWorkers=1 src/server/hub/hub-cli-contract.test.ts",
     "test:integration:all": "npm run test:e2e",
     "test:integration:real": "vitest run real.e2e.test.ts",
@@ -69,17 +105,17 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
-    "@anthropic-ai/claude-agent-sdk": "0.3.220",
+    "@anthropic-ai/claude-agent-sdk": "0.3.246",
     "@anthropic-ai/sdk": "^0.104.2",
-    "@babel/parser": "^7.29.8",
-    "@getpaseo/client": "0.5.2",
-    "@getpaseo/highlight": "0.5.2",
-    "@getpaseo/plugin": "0.5.2",
-    "@getpaseo/protocol": "0.5.2",
-    "@getpaseo/relay": "0.5.2",
+    "@getpaseo/client": "0.11.1",
+    "@getpaseo/highlight": "0.11.1",
+    "@getpaseo/plugin": "0.11.1",
+    "@getpaseo/protocol": "0.11.1",
+    "@getpaseo/relay": "0.11.1",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@opencode-ai/sdk": "1.14.46",
+    "@opencode/client": "2.0.10",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
     "ajv": "^8.20.0",
@@ -89,6 +125,7 @@
     "express": "^4.18.2",
     "fast-deep-equal": "^3.1.3",
     "lru-cache": "^11.5.1",
+    "markdown-it": "^10.0.0",
     "mnemonic-id": "^3.2.7",
     "node-pty": "1.2.0-beta.15",
     "openai": "^6.44.0",
@@ -99,17 +136,21 @@
     "pino-pretty": "^13.1.3",
     "qrcode": "^1.5.4",
     "rotating-file-stream": "^3.2.9",
+    "semver": "^7.8.5",
     "sherpa-onnx-node": "1.12.28",
     "strip-ansi": "^7.1.2",
     "tree-kill": "^1.2.2",
+    "typescript": "^5.9.3",
     "uuid": "^9.0.1",
     "which": "^5.0.0",
     "ws": "^8.14.2",
+    "yaml": "2.9.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@types/express": "^4.17.20",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^20.9.0",
     "@types/qrcode": "^1.5.6",
     "@types/uuid": "^9.0.7",
@@ -117,7 +158,6 @@
     "@vitest/ui": "^4.1.6",
     "cross-env": "^10.1.0",
     "tsx": "^4.6.0",
-    "typescript": "^5.2.2",
     "vitest": "^4.1.6"
   },
   "overrides": {

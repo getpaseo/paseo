@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locator } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
-import { openChangesPanel } from "../support/helpers/workspace-tabs";
+import { openChangesTreePanel } from "../support/helpers/workspace-tabs";
 
 const COMMIT_SUBJECT = "Show commit timestamps";
 
@@ -15,7 +15,7 @@ test("commit history explains when the workspace has no commits ahead of its bas
   execFileSync("git", ["checkout", "-b", "feature"], { cwd: workspace.repoPath, stdio: "ignore" });
   await workspace.navigateTo();
 
-  await openChangesPanel(page);
+  await openChangesTreePanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -35,7 +35,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
 
-  await openChangesPanel(page);
+  await openChangesTreePanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -60,8 +60,8 @@ test("commit history shows dates and shares diff layout preferences", async ({
     throw new Error("Commit-diff toolbar geometry could not be measured");
   }
   expect(commitToolbarBox.height).toBe(36);
-  expect(layoutToggleBox.width).toBe(24);
-  expect(layoutToggleBox.height).toBe(24);
+  expect(layoutToggleBox.width).toBe(20);
+  expect(layoutToggleBox.height).toBe(20);
   expect(layoutToggleGlyphBox.width).toBe(14);
   expect(layoutToggleGlyphBox.height).toBe(14);
   await expect(layoutToggle).toHaveAccessibleName("Switch to side-by-side diff");
@@ -87,7 +87,25 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await expect(panel.getByTestId("git-diff-canvas")).toBeVisible();
 });
 
-async function createFeatureCommit(repoPath: string): Promise<void> {
+test("a fresh commit says just now and its age advances", async ({ page, withWorkspace }) => {
+  const workspace = await withWorkspace({ prefix: "commit-relative-time-" });
+  const committedAt = new Date();
+  await createFeatureCommit(workspace.repoPath, committedAt.toISOString());
+  await page.clock.install({ time: committedAt });
+  await workspace.navigateTo();
+
+  await openChangesTreePanel(page);
+  await page.getByRole("button", { name: /Commits/i }).click();
+  const row = page.locator('[data-testid^="commit-row-"]').filter({ hasText: COMMIT_SUBJECT });
+  await expect(row).toContainText("just now", { timeout: 30_000 });
+  await page.clock.fastForward("03:00");
+  await expect(row).toContainText("3m ago");
+});
+
+async function createFeatureCommit(
+  repoPath: string,
+  authorDate = "2020-01-15T12:00:00Z",
+): Promise<void> {
   execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoPath, stdio: "ignore" });
   await writeFile(path.join(repoPath, "feature.txt"), "before\nafter\n");
   execFileSync("git", ["add", "feature.txt"], { cwd: repoPath, stdio: "ignore" });
@@ -96,30 +114,22 @@ async function createFeatureCommit(repoPath: string): Promise<void> {
     stdio: "ignore",
     env: {
       ...process.env,
-      GIT_AUTHOR_DATE: "2020-01-15T12:00:00Z",
-      GIT_COMMITTER_DATE: "2020-01-15T12:00:00Z",
+      GIT_AUTHOR_DATE: authorDate,
+      GIT_COMMITTER_DATE: authorDate,
     },
   });
 }
 
 async function expectCommitDiffHeaderGeometry(panel: Locator): Promise<void> {
-  const [header, content, name, stat] = await Promise.all([
+  const [header, canvas] = await Promise.all([
     panel.getByTestId("diff-file-0").boundingBox(),
-    panel.getByTestId("diff-file-0-header-content").boundingBox(),
-    panel.getByTestId("diff-file-0-name").boundingBox(),
-    panel.getByTestId("diff-file-0-stat").boundingBox(),
+    panel.getByTestId("git-diff-sticky-header-0").boundingBox(),
   ]);
   expect(header).not.toBeNull();
-  expect(content).not.toBeNull();
-  expect(name).not.toBeNull();
-  expect(stat).not.toBeNull();
+  expect(canvas).not.toBeNull();
   expect(header!.height).toBeCloseTo(30, 0);
-  expect(content!.x).toBeCloseTo(header!.x, 0);
-  expect(content!.width).toBeCloseTo(header!.width, 0);
-  expect(name!.x - header!.x).toBeCloseTo(12, 0);
-  expect(name!.x + name!.width).toBeLessThan(stat!.x);
-  expect(Math.abs(name!.y + name!.height / 2 - (stat!.y + stat!.height / 2))).toBeLessThanOrEqual(
-    1,
-  );
-  expect(stat!.x + stat!.width).toBeLessThan(header!.x + header!.width);
+  expect(header!.x).toBeCloseTo(canvas!.x, 0);
+  expect(header!.width).toBeCloseTo(canvas!.width, 0);
+  expect(header!.y).toBeCloseTo(canvas!.y, 0);
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("feature.txt, +2, -0");
 }

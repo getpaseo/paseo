@@ -1,7 +1,9 @@
 import { fork, spawn, type ChildProcess } from "child_process";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { createStream as createRotatingFileStream } from "rotating-file-stream";
+import {
+  createStream as createRotatingFileStream,
+  type RotatingFileStream,
+} from "rotating-file-stream";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -23,6 +25,7 @@ type WorkerLifecycleMessage =
   | {
       type: "paseo:ready";
       listen: string;
+      serverId: string;
     }
   | {
       type: "paseo:restart";
@@ -31,6 +34,11 @@ type WorkerLifecycleMessage =
 
 interface SupervisorHeartbeatMessage {
   type: "paseo:supervisor-heartbeat";
+}
+
+interface SupervisorGracefulShutdownMessage {
+  type: "paseo:graceful-shutdown";
+  reason: string;
 }
 
 interface SupervisorOptions {
@@ -45,7 +53,8 @@ interface SupervisorOptions {
     args: string[];
     env?: NodeJS.ProcessEnv;
   } | null;
-  onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
+  onWorkerReady?: (message: { listen: string; serverId: string }) => Promise<void> | void;
+  onWorkerExit?: () => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
   logFile?: SupervisorLogFileOptions;
@@ -72,11 +81,14 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     };
   }
   if (type === "paseo:ready") {
-    const listen = (msg as { listen?: unknown }).listen;
+    const { listen, serverId } = msg as { listen?: unknown; serverId?: unknown };
     if (typeof listen !== "string" || listen.trim().length === 0) {
       return null;
     }
-    return { type: "paseo:ready", listen };
+    if (typeof serverId !== "string" || serverId.trim().length === 0) {
+      return null;
+    }
+    return { type: "paseo:ready", listen, serverId };
   }
   if (type === "paseo:restart") {
     const reason = (msg as { reason?: unknown }).reason;
@@ -100,17 +112,67 @@ function toRotatingFileStreamSize(size: string): string {
   return `${value}${unit}`;
 }
 
-function createSupervisorLogStream(options: SupervisorLogFileOptions | undefined) {
-  if (!options) {
-    return null;
-  }
+// daemon.log is best effort: a full disk or a replaced log path must not take the
+// supervisor, and with it the worker, down. A failed stream is dropped and a new one
+// is opened on the next write, so logging resumes once the file is writable again.
+function createDurableLog(
+  options: SupervisorLogFileOptions | undefined,
+  reportFailure: (message: string) => void,
+) {
+  let stream: RotatingFileStream | null = null;
+  let failing = false;
 
-  mkdirSync(path.dirname(options.path), { recursive: true });
-  return createRotatingFileStream(path.basename(options.path), {
-    path: path.dirname(options.path),
-    size: toRotatingFileStreamSize(options.rotate.maxSize),
-    maxFiles: options.rotate.maxFiles,
-  });
+  const open = (logFile: SupervisorLogFileOptions): RotatingFileStream => {
+    const next = createRotatingFileStream(path.basename(logFile.path), {
+      path: path.dirname(logFile.path),
+      size: toRotatingFileStreamSize(logFile.rotate.maxSize),
+      maxFiles: logFile.rotate.maxFiles,
+    });
+    next.on("error", (error) => {
+      if (stream === next) {
+        stream = null;
+      }
+      if (!failing) {
+        failing = true;
+        reportFailure(
+          `Cannot write ${logFile.path}, will retry on the next log line: ${error.message}`,
+        );
+      }
+    });
+    return next;
+  };
+
+  return {
+    write(chunk: string | Buffer): void {
+      if (!options) {
+        return;
+      }
+      stream ??= open(options);
+      stream.write(chunk, (error) => {
+        if (!error) {
+          failing = false;
+        }
+      });
+    },
+    close(): Promise<void> {
+      return new Promise((resolve) => {
+        if (!stream) {
+          resolve();
+          return;
+        }
+        stream.end(() => resolve());
+      });
+    },
+  };
+}
+
+// The program that started the daemon can close its end of stdout or stderr, as
+// `paseo daemon run | head -1` does. Drop the output nobody reads and keep supervising
+// the worker; daemon.log still records it.
+function ignoreClosedOutput(error: NodeJS.ErrnoException): void {
+  if (error.code !== "EPIPE") {
+    throw error;
+  }
 }
 
 export function runSupervisor(options: SupervisorOptions): SupervisorController {
@@ -124,11 +186,15 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   let restarting = false;
   let shuttingDown = false;
   let exiting = false;
+  let lifecycleFailed = false;
+  let publication = Promise.resolve();
   let forceKillTimer: NodeJS.Timeout | null = null;
-  const logStream = createSupervisorLogStream(options.logFile);
+  const durableLog = createDurableLog(options.logFile, (message) => {
+    process.stderr.write(`[${options.name}] ${message}\n`);
+  });
 
   const writeDurableChunk = (chunk: string | Buffer): void => {
-    logStream?.write(chunk);
+    durableLog.write(chunk);
   };
 
   const writeLifecycleLog = (message: string, fields: Record<string, unknown> = {}): void => {
@@ -149,14 +215,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog(message);
   };
 
-  const closeLogStream = (): Promise<void> =>
-    new Promise((resolve) => {
-      if (!logStream) {
-        resolve();
-        return;
-      }
-      logStream.end(resolve);
-    });
+  const closeLogStream = (): Promise<void> => durableLog.close();
 
   const exitSupervisor = (code: number): void => {
     if (exiting) {
@@ -192,11 +251,14 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       if (child !== currentChild) {
         return;
       }
-      writeLifecycleLog("Worker did not exit after SIGTERM; forcing SIGKILL", {
-        reason,
-        supervisorPid: process.pid,
-        workerPid: currentChild.pid ?? null,
-      });
+      writeLifecycleLog(
+        "Worker did not exit after graceful shutdown request; forcing process tree kill",
+        {
+          reason,
+          supervisorPid: process.pid,
+          workerPid: currentChild.pid ?? null,
+        },
+      );
       void signalProcessTree(currentChild, "SIGKILL").catch((error) => {
         writeLifecycleLog("Failed to force-kill worker process tree", {
           error: error instanceof Error ? error.message : String(error),
@@ -236,6 +298,8 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }
 
     const currentChild = child;
+    let reachedReady = false;
+    // Serialize endpoint writes with exit/clear before allowing another worker to spawn.
     const heartbeat = setInterval(() => {
       const message: SupervisorHeartbeatMessage = { type: "paseo:supervisor-heartbeat" };
       if (currentChild.connected) {
@@ -268,18 +332,26 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     child.on("message", (msg: unknown) => {
       const lifecycleMessage = parseLifecycleMessage(msg);
-      if (!lifecycleMessage) {
+      if (!lifecycleMessage || child !== currentChild) {
         return;
       }
 
       if (lifecycleMessage.type === "paseo:ready") {
+        reachedReady = true;
         writeLifecycleLog("Worker ready", { listen: lifecycleMessage.listen });
-        Promise.resolve(options.onWorkerReady?.({ listen: lifecycleMessage.listen })).catch(
-          (error) => {
+        publication = publication
+          .then(() =>
+            options.onWorkerReady?.({
+              listen: lifecycleMessage.listen,
+              serverId: lifecycleMessage.serverId,
+            }),
+          )
+          .catch((error) => {
+            lifecycleFailed = true;
             const message = error instanceof Error ? error.message : String(error);
             log(`Worker ready callback failed: ${message}`);
-          },
-        );
+            requestShutdown("endpoint_publication_failed");
+          });
         return;
       }
 
@@ -295,49 +367,92 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       requestRestart(reason);
     });
 
+    child.on("error", (error) => {
+      lifecycleFailed = true;
+      log(`Worker spawn failed: ${error.message}`);
+      exitSupervisor(1);
+    });
+
     child.on("exit", (code, signal) => {
       clearInterval(heartbeat);
       clearForceKillTimer();
-      const exitDescriptor = describeExit(code, signal);
-      writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
+      child = null;
+      publication = publication
+        .then(() => options.onWorkerExit?.())
+        .catch((error) => {
+          lifecycleFailed = true;
+          log(`Worker exit callback failed: ${String(error)}`);
+        });
+      void publication.then(() => {
+        const exitDescriptor = describeExit(code, signal);
+        writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
 
-      if (shuttingDown) {
-        log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
-        exitSupervisor(0);
+        if (lifecycleFailed || (!reachedReady && !shuttingDown)) {
+          log(`Worker exited before successful readiness (${exitDescriptor}). Supervisor exiting.`);
+          exitSupervisor(1);
+          return;
+        }
+
+        if (shuttingDown) {
+          log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
+          exitSupervisor(0);
+          return;
+        }
+
+        const crashed =
+          restartOnCrash &&
+          ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
+
+        if (restarting || crashed) {
+          restarting = false;
+          log(
+            crashed
+              ? `Worker crashed (${exitDescriptor}). Restarting worker...`
+              : `Worker exited (${exitDescriptor}). Restarting worker...`,
+          );
+          spawnWorker();
+          return;
+        }
+
+        log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
+        exitSupervisor(typeof code === "number" ? code : 1);
         return;
-      }
-
-      const crashed =
-        restartOnCrash &&
-        ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
-
-      if (restarting || crashed) {
-        restarting = false;
-        log(
-          crashed
-            ? `Worker crashed (${exitDescriptor}). Restarting worker...`
-            : `Worker exited (${exitDescriptor}). Restarting worker...`,
-        );
-        spawnWorker();
-        return;
-      }
-
-      log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
-      exitSupervisor(typeof code === "number" ? code : 1);
+      });
     });
   };
 
-  const signalWorker = (signal: NodeJS.Signals, reason: string): void => {
+  const requestWorkerShutdown = (reason: string): void => {
     if (!child) {
       return;
     }
-    writeLifecycleLog("Supervisor sending signal to worker", {
+    const currentChild = child;
+    const message: SupervisorGracefulShutdownMessage = {
+      type: "paseo:graceful-shutdown",
       reason,
-      signal,
+    };
+    writeLifecycleLog("Supervisor requesting graceful worker shutdown", {
+      reason,
       supervisorPid: process.pid,
-      workerPid: child.pid ?? null,
+      workerPid: currentChild.pid ?? null,
     });
-    child.kill(signal);
+    if (!currentChild.connected) {
+      writeLifecycleLog("Graceful worker shutdown IPC unavailable", {
+        reason,
+        supervisorPid: process.pid,
+        workerPid: currentChild.pid ?? null,
+      });
+      return;
+    }
+    currentChild.send?.(message, (error) => {
+      if (error) {
+        writeLifecycleLog("Graceful worker shutdown IPC send failed", {
+          error: error instanceof Error ? error.message : String(error),
+          reason,
+          supervisorPid: process.pid,
+          workerPid: currentChild.pid ?? null,
+        });
+      }
+    });
   };
 
   const requestRestart = (reason: string) => {
@@ -347,7 +462,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     restarting = true;
     writeLifecycleLog("Restart requested", { reason });
     log(`${reason}. Stopping worker for restart...`);
-    signalWorker("SIGTERM", reason);
+    requestWorkerShutdown(reason);
     scheduleForceKill(reason);
   };
 
@@ -360,10 +475,13 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog("Supervisor shutdown requested", { reason });
     log(`${reason}. Stopping worker...`);
     if (!child) {
-      exitSupervisor(0);
+      void publication.then(() => {
+        exitSupervisor(lifecycleFailed ? 1 : 0);
+        return;
+      });
       return;
     }
-    signalWorker("SIGTERM", reason);
+    requestWorkerShutdown(reason);
     scheduleForceKill(reason);
   };
 
@@ -373,6 +491,8 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
   process.on("SIGINT", () => forwardSignal("SIGINT"));
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
+  process.stdout.on("error", ignoreClosedOutput);
+  process.stderr.on("error", ignoreClosedOutput);
 
   process.stdout.write(`[${options.name}] ${options.startupMessage}\n`);
   writeLifecycleLog(options.startupMessage);

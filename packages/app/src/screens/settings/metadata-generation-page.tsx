@@ -10,7 +10,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { buildSelectableProviderSelectorProviders } from "@/provider-selection/provider-selection";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 
 const METADATA_GENERATION_DOCS_URL = "https://paseo.sh/docs/metadata-generation";
@@ -110,10 +110,10 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   return (
     <SettingsSection
       title={t("settings.metadataGeneration.title")}
+      info={t("settings.metadataGeneration.description")}
       trailing={docsLink}
       testID="metadata-generation-settings"
     >
-      <Text style={styles.description}>{t("settings.metadataGeneration.description")}</Text>
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
@@ -164,12 +164,6 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  description: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
-    marginHorizontal: theme.spacing[1],
-  },
   loading: {
     alignItems: "center",
     justifyContent: "center",

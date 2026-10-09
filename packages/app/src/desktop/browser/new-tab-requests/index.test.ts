@@ -10,8 +10,8 @@ function createLayoutWithBrowser(browserId: string): WorkspaceLayout {
     target: { kind: "browser", browserId },
     now: 1,
     placement: FOCUSED_PANE_PLACEMENT,
-    sidePanelPaneId: null,
-  }).layout;
+    explorerSidebarPaneId: null,
+  })!.layout;
 }
 
 describe("browser new-tab requests", () => {

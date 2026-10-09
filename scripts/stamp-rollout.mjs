@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { dump, load } from "js-yaml";
+import { isMainModule } from "./is-main-module.mjs";
 
 export function stampRollout({ releaseDate, rolloutHours }, paths) {
   if (releaseDate === undefined && rolloutHours === undefined) {
@@ -35,7 +36,7 @@ function parseArgs(argv) {
   return { opts, paths };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const { opts, paths } = parseArgs(process.argv.slice(2));
   if (paths.length === 0 || (opts.releaseDate === undefined && opts.rolloutHours === undefined)) {
     throw new Error(

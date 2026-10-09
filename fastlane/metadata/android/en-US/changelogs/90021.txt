@@ -1,0 +1,12 @@
+Added
+- Added structured Claude Code launch arguments for session configuration and plugins
+
+Improved
+- Reduced background Git polling for repositories the watcher cannot observe
+- Reduced Add Project directory search time on large home directories
+
+Fixed
+- Fixed the daemon becoming unresponsive when ignored directories appear after a workspace opens
+- Fixed daemon memory growing after client connections close (9978988)
+
+Full notes: https://paseo.sh/changelog

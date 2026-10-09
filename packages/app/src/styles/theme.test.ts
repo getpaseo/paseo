@@ -68,13 +68,16 @@ describe("Pure black theme", () => {
 });
 
 describe("Sidebar interaction surfaces", () => {
-  it.each([lightTheme, darkTheme])(
-    "derives hover and selection from the surface scale",
-    (theme) => {
-      expect(theme.colors.surfaceSidebarHover).toBe(theme.colors.surface1);
-      expect(theme.colors.surfaceSidebarSelected).toBe(theme.colors.surface2);
-    },
-  );
+  it("keeps Light selection distinct from the sidebar surface", () => {
+    expect(lightTheme.colors.surfaceSidebarHover).toBe(lightTheme.colors.surface1);
+    expect(lightTheme.colors.surfaceSidebarSelected).toBe(lightTheme.colors.surface3);
+    expect(lightTheme.colors.surfaceSidebarSelected).not.toBe(lightTheme.colors.surfaceSidebar);
+  });
+
+  it("derives Dark hover and selection from the first two raised surfaces", () => {
+    expect(darkTheme.colors.surfaceSidebarHover).toBe(darkTheme.colors.surface1);
+    expect(darkTheme.colors.surfaceSidebarSelected).toBe(darkTheme.colors.surface2);
+  });
 });
 
 describe("Built-in light theme", () => {

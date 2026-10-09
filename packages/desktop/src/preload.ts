@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
+import type { DesktopWindowChromeMode } from "./window/chrome.js";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
 // NOT emit any runtime module load other than "electron" — a require() of a local or
@@ -11,6 +12,17 @@ const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
 
 type EventHandler = (payload: unknown) => void;
 
+function readWindowChromeMode(): DesktopWindowChromeMode {
+  const prefix = "--paseo-window-chrome-mode=";
+  const value = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+  if (value === "native-mac" || value === "custom-windows" || value === "custom-linux") {
+    return value;
+  }
+  // COMPAT(windowChromeMode): added in v0.5.3; remove after 2026-11-25.
+  if (process.platform === "darwin") return "native-mac";
+  return process.platform === "linux" ? "custom-linux" : "custom-windows";
+}
+
 interface AttachedBrowserRegistration {
   browserId: string;
   workspaceId: string;
@@ -19,6 +31,7 @@ interface AttachedBrowserRegistration {
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
+  windowChromeMode: readWindowChromeMode(),
   invoke: (command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke("paseo:invoke", command, args),
   getPendingOpenProject: () =>
@@ -45,16 +58,15 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     openNew: (options?: { pendingOpenProjectPath?: string | null }) =>
       ipcRenderer.invoke("paseo:window:openNew", options),
     getCurrentWindow: () => ({
+      minimize: () => ipcRenderer.invoke("paseo:window:minimize"),
+      close: () => ipcRenderer.invoke("paseo:window:close"),
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
+      isMaximized: () => ipcRenderer.invoke("paseo:window:isMaximized"),
       setFullscreen: (fullscreen: boolean) =>
         ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
-      updateWindowControls: (update: {
-        height?: number;
-        backgroundColor?: string;
-        foregroundColor?: string;
-        trafficLightOffsetY?: number;
-      }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
+      updateChrome: (update: { backgroundColor?: string; trafficLightOffsetY?: number }) =>
+        ipcRenderer.invoke("paseo:window:updateChrome", update),
       onResized: (handler: EventHandler): (() => void) => {
         const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
           handler(payload);

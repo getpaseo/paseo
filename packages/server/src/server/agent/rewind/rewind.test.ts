@@ -80,6 +80,39 @@ describe("AgentManager rewind", () => {
     ]);
   });
 
+  test("replaces the canonical epoch without replaying reconstructed parent rows", async () => {
+    const { manager, session, agentId } = await createRewindHarness();
+    const history = Array.from({ length: 250 }, (_, index) => ({
+      type: "assistant_message" as const,
+      text: `rewound ${index}`,
+    }));
+    session.history = history;
+    const epochBefore = manager.fetchTimeline(agentId, { limit: 0 }).epoch;
+    const events: string[] = [];
+    const unsubscribe = manager.subscribe((event) => events.push(event.type), {
+      replayState: false,
+    });
+
+    await manager.rewind(agentId, "message-1", "conversation");
+    unsubscribe();
+
+    const replacement = manager.fetchTimeline(agentId, { limit: 0 });
+    expect(replacement.epoch).not.toBe(epochBefore);
+    expect(replacement.rows).toEqual([
+      expect.objectContaining({
+        seq: 250,
+        seqStart: 1,
+        seqEnd: 250,
+        sourceSeqRanges: [{ startSeq: 1, endSeq: 250 }],
+        item: {
+          type: "assistant_message",
+          text: history.map((item) => item.text).join(""),
+        },
+      }),
+    ]);
+    expect(events.filter((type) => type === "agent_stream")).toEqual([]);
+  });
+
   test("rewinds files without rehydrating the conversation timeline", async () => {
     const { manager, session, agentId } = await createRewindHarness();
 

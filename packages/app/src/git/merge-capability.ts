@@ -31,11 +31,10 @@ function deriveForgeMergeCapability(facts: unknown): MergeCapability | null {
  * Per-forge derivation lives on client forge modules; this stays the single
  * neutral entry point the action policy reads.
  *
- * COMPAT(forgeSpecific): added in v0.1.106, remove after 2026-12-27. A daemon
- * predating forgeSpecific emits only the legacy `status.github` field. When
- * forgeSpecific is absent we synthesize the github arm from those legacy facts
- * so GitHub merge-method restrictions and auto-merge state are not lost against
- * an old daemon.
+ * COMPAT(forgeSpecific): forgeSpecific shipped in v0.2.0-beta.1. A daemon
+ * predating it emits only the legacy `status.github` field. When forgeSpecific
+ * is absent we synthesize the GitHub arm from those legacy facts. Remove after
+ * 2027-01-17 once the supported daemon floor is >= v0.2.0.
  */
 export function deriveMergeCapability(
   forgeSpecific: unknown,

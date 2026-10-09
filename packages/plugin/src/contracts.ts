@@ -1,32 +1,21 @@
-import type { ComponentType } from "react";
-import type { PaseoApi } from "@getpaseo/client";
-import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginRpcContract } from "./rpc.js";
 
 export interface PluginTheme {
   readonly colors: {
     readonly surface0: string;
+    readonly surface1: string;
+    readonly surface2: string;
+    readonly border: string;
     readonly foreground: string;
     readonly foregroundMuted: string;
     readonly accent: string;
     readonly accentForeground: string;
+    readonly statusSuccess: string;
+    readonly statusWarning: string;
     readonly statusDanger: string;
   };
 }
-
-export interface PluginHostProps {
-  theme: PluginTheme;
-  host: {
-    id: string;
-    label: string;
-  };
-  layout: {
-    compact: boolean;
-    platform: "ios" | "android" | "web";
-  };
-}
-
-export interface PluginSurfaceProps extends PluginHostProps {}
 
 export interface PluginWorkspaceSnapshot {
   readonly id: string;
@@ -63,45 +52,6 @@ export interface PluginAgentSnapshot {
   readonly labels: Readonly<Record<string, string>>;
 }
 
-interface PluginWorkspacePanelBase {
-  id: string;
-  title: string;
-  icon: string;
-}
-
-export interface PluginWorkspacePanelProps extends PluginHostProps {
-  context: "workspace";
-  workspaceId: string;
-}
-
-export interface PluginAgentPanelProps extends PluginHostProps {
-  context: "agent";
-  workspaceId: string;
-  agentId: string;
-}
-
-export type PluginWorkspacePanelContribution =
-  | (PluginWorkspacePanelBase & {
-      context: "workspace";
-      Component: ComponentType<PluginWorkspacePanelProps>;
-    })
-  | (PluginWorkspacePanelBase & {
-      context: "agent";
-      Component: ComponentType<PluginAgentPanelProps>;
-    });
-
-export interface PluginSurfaceContribution {
-  id: string;
-  Component: ComponentType<PluginSurfaceProps>;
-}
-
-export interface PluginSidebarContribution {
-  id: string;
-  title: string;
-  icon: string;
-  surface: string;
-}
-
 export interface PluginThemeColors {
   background: string;
   foreground: string;
@@ -129,73 +79,18 @@ export interface PluginAttachmentSourceContribution {
   search: PluginRpcContract;
 }
 
-export interface PluginCommandCapabilities {
-  paseo: PaseoApi;
-  rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
-    contract: PluginRpcContract<InputSchema, OutputSchema>,
-    input: ZodInput<InputSchema>,
-  ): Promise<ZodOutput<OutputSchema>>;
-  openSurface(id: string): void;
+export type PluginTimelineData = JsonValue;
+
+export interface PluginTimelineItem {
+  type: "plugin";
+  id?: string;
+  kind: string;
+  version: number;
+  data: PluginTimelineData;
 }
 
-export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
-  context: "global";
-}
-
-export interface PluginWorkspaceCommandContext extends PluginCommandCapabilities {
-  context: "workspace";
-  workspace: PluginWorkspaceSnapshot;
-  openPanel(id: string): void;
-}
-
-export interface PluginAgentCommandContext extends PluginCommandCapabilities {
-  context: "agent";
-  workspace: PluginWorkspaceSnapshot;
-  agent: PluginAgentSnapshot;
-  openPanel(id: string): void;
-}
-
-interface PluginCommandCenterItemBase {
-  id: string;
-  title: string;
-  icon: string;
-  keywords?: readonly string[];
-}
-
-export type PluginCommandCenterItemContribution =
-  | (PluginCommandCenterItemBase & {
-      context: "global";
-      onSelect(context: PluginGlobalCommandContext): void | Promise<void>;
-    })
-  | (PluginCommandCenterItemBase & {
-      context: "workspace";
-      onSelect(context: PluginWorkspaceCommandContext): void | Promise<void>;
-    })
-  | (PluginCommandCenterItemBase & {
-      context: "agent";
-      onSelect(context: PluginAgentCommandContext): void | Promise<void>;
-    });
-
-export interface PluginHandlerContext {
-  paseo: PaseoApi;
-}
-
-export interface PluginContext {
-  handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
-    contract: PluginRpcContract<InputSchema, OutputSchema>,
-    handler: (
-      input: ZodOutput<InputSchema>,
-      context: PluginHandlerContext,
-    ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
-  ): void;
-  addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
-  addSidebarItem(contribution: PluginSidebarContribution): void;
-  addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
-  addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
-  addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
-  addTheme(contribution: PluginThemeContribution): void;
+export interface PluginTimelineTransformResult {
+  items: PluginTimelineItem[];
 }
 
 export type PluginCleanup = () => void | Promise<void>;
-
-export type PluginContribution = (plugin: PluginContext) => PluginCleanup;

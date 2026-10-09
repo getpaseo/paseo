@@ -6,11 +6,12 @@ import {
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
-  createIdleAgent,
+  createMockIdleAgent,
   expectWorkspaceTabHidden,
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
 } from "../support/helpers/archive-tab";
+import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -132,13 +133,14 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("keeps one replacement draft after returning from settings and closing the last tab", async ({
+  test("shows the New launcher after returning from settings and closing the last agent draft tab", async ({
     page,
     withWorkspace,
   }) => {
     const workspace = await withWorkspace({ prefix: "workspace-settings-back-tab-" });
 
     await workspace.navigateTo();
+    await clickNewChat(page);
     await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
 
     await openSettings(page);
@@ -148,7 +150,12 @@ test.describe("Workspace navigation regression", () => {
 
     await closeFirstVisibleDraftTab(page);
 
-    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
+    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(0);
+    await expect(
+      page
+        .getByTestId("workspace-new-tab-panel")
+        .getByRole("button", { name: "Agent", exact: true }),
+    ).toBeVisible();
   });
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {
@@ -159,7 +166,7 @@ test.describe("Workspace navigation regression", () => {
     const workspace = await seedWorkspace({ repoPrefix: "workspace-reconnect-" });
 
     try {
-      const agent = await createIdleAgent(workspace.client, {
+      const agent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `workspace-reconnect-${Date.now()}`,
@@ -178,8 +185,12 @@ test.describe("Workspace navigation regression", () => {
       });
       await waitForWorkspaceTabsVisible(page);
       await expectWorkspaceTabVisible(page, agent.id);
+      // The reconnect toast belongs to the visible agent panel, which mounts
+      // after the tab strip. Drop the connection only after that panel is ready.
+      await expectComposerVisible(page);
 
       await daemonGate.drop();
+      await daemonGate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
@@ -217,12 +228,12 @@ test.describe("Workspace navigation regression", () => {
 
     try {
       await Promise.all([
-        createIdleAgent(primaryWorkspace.client, {
+        createMockIdleAgent(primaryWorkspace.client, {
           cwd: primaryWorkspace.repoPath,
           workspaceId: primaryWorkspace.workspaceId,
           title: "Active host agent",
         }),
-        createIdleAgent(secondaryWorkspace.client, {
+        createMockIdleAgent(secondaryWorkspace.client, {
           cwd: secondaryWorkspace.repoPath,
           workspaceId: secondaryWorkspace.workspaceId,
           title: "Inactive host agent",
@@ -319,12 +330,12 @@ test.describe("Workspace navigation regression", () => {
     const secondWorkspace = await seedWorkspace({ repoPrefix: "workspace-nav-reg-b-" });
 
     try {
-      const firstAgent = await createIdleAgent(firstWorkspace.client, {
+      const firstAgent = await createMockIdleAgent(firstWorkspace.client, {
         cwd: firstWorkspace.repoPath,
         workspaceId: firstWorkspace.workspaceId,
         title: `workspace-nav-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(secondWorkspace.client, {
+      const secondAgent = await createMockIdleAgent(secondWorkspace.client, {
         cwd: secondWorkspace.repoPath,
         workspaceId: secondWorkspace.workspaceId,
         title: `workspace-nav-b-${Date.now()}`,

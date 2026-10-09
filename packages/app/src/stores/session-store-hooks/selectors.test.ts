@@ -135,14 +135,11 @@ afterEach(() => {
 describe("workspace replica authority", () => {
   it("publishes a restored directory while keeping remote hydration false", () => {
     const cachedWorkspace = createWorkspace({ id: "cached-workspace" });
-    useSessionStore.getState().restoreSessionReplica(SERVER_ID, {
-      agents: new Map(),
-      workspaces: new Map([[cachedWorkspace.id, cachedWorkspace]]),
-      projects: new Map([
-        [cachedWorkspace.projectId, projectDescriptorFromTestWorkspace(cachedWorkspace)],
-      ]),
-      timeline: null,
-    });
+    const store = useSessionStore.getState();
+    store.initializeSession(SERVER_ID, null);
+    store.setWorkspaces(SERVER_ID, new Map([[cachedWorkspace.id, cachedWorkspace]]));
+    store.setProjects(SERVER_ID, [projectDescriptorFromTestWorkspace(cachedWorkspace)]);
+    store.setHasWorkspaceDirectorySnapshot(SERVER_ID, true);
     const cachedSession = useSessionStore.getState().sessions[SERVER_ID];
     if (!cachedSession) throw new Error("expected initialized session");
 

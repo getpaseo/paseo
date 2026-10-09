@@ -114,23 +114,22 @@ describe("ensureAgentIsInitialized", () => {
   it("requests a bounded projected tail after restoring painted replica items", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
-    useSessionStore.getState().restoreSessionReplica(serverId, {
-      agents: new Map(),
-      workspaces: new Map(),
-      projects: new Map(),
-      timeline: {
-        agentId,
-        items: [
-          {
-            kind: "assistant_message",
-            id: "painted-item",
-            text: "Painted before hydration",
-            timestamp: new Date("2026-07-27T10:00:00.000Z"),
-          },
-        ],
-        range: null,
-        hasOlder: false,
-      },
+    useSessionStore.getState().initializeSession(serverId, null);
+    useSessionStore.getState().applyAgentTimelineResponseState(serverId, agentId, {
+      items: [
+        {
+          kind: "assistant_message",
+          id: "painted-item",
+          text: "Painted before hydration",
+          timestamp: new Date("2026-07-27T10:00:00.000Z"),
+        },
+      ],
+      head: [],
+      range: null,
+      older: "none",
+      newer: false,
+      synchronized: false,
+      acknowledgedClientMessageIds: [],
     });
 
     void ensureAgentIsInitialized({
@@ -157,24 +156,23 @@ describe("ensureAgentIsInitialized", () => {
   it("catches up after the restored canonical replica range", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
-    useSessionStore.getState().restoreSessionReplica(serverId, {
-      agents: new Map(),
-      workspaces: new Map(),
-      projects: new Map(),
-      timeline: {
-        agentId,
-        items: [
-          {
-            kind: "assistant_message",
-            id: "canonical-item",
-            text: "Canonical before restart",
-            timelineCursor: { epoch: "epoch-1", seq: 12 },
-            timestamp: new Date("2026-07-27T10:00:00.000Z"),
-          },
-        ],
-        range: { epoch: "epoch-1", startSeq: 10, endSeq: 12 },
-        hasOlder: true,
-      },
+    useSessionStore.getState().initializeSession(serverId, null);
+    useSessionStore.getState().applyAgentTimelineResponseState(serverId, agentId, {
+      items: [
+        {
+          kind: "assistant_message",
+          id: "canonical-item",
+          text: "Canonical before restart",
+          timelineCursor: { epoch: "epoch-1", seq: 12 },
+          timestamp: new Date("2026-07-27T10:00:00.000Z"),
+        },
+      ],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 10, endSeq: 12 },
+      older: "available",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
     });
 
     void ensureAgentIsInitialized({

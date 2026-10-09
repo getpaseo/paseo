@@ -1,4 +1,11 @@
 import { z } from "zod";
+import type { PluginAttachmentSourceContribution } from "./contracts.js";
+
+export function defineAttachmentSource<Definition extends PluginAttachmentSourceContribution>(
+  definition: Definition,
+): Definition {
+  return definition;
+}
 
 export const PluginAttachmentItemSchema = z.object({
   id: z.string(),

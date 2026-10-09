@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PullRequestCommandStatus } from "./forge-service.js";
+import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
 import type { GitLabStatusFacts } from "./gitlab-facts.js";
 import {
   type CreateGitLabServiceOptions,
@@ -92,6 +93,17 @@ const OPEN_MR = {
   references: { full: "example-group/example-project!14", short: "!14" },
   head_pipeline: { status: "success" },
 };
+
+function mergeRequestWithPipeline(status = "success") {
+  return {
+    ...OPEN_MR,
+    head_pipeline: {
+      id: 306,
+      status,
+      web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
+    },
+  };
+}
 
 const OPEN_ISSUE = {
   iid: 7,
@@ -629,30 +641,145 @@ describe("createGitLabService", () => {
   });
 
   it("surfaces the head pipeline id and url on the gitlab status facts", async () => {
-    const pipelineMr = {
-      ...OPEN_MR,
-      head_pipeline: {
-        id: 306,
-        status: "running",
-        web_url: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
-      },
-    };
-    const { service } = makeService((args) =>
-      ok(JSON.stringify(args[1] === "list" ? [pipelineMr] : pipelineMr)),
-    );
+    const pipelineMr = mergeRequestWithPipeline("canceling");
+    const { service } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
+      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
+      if (args[0] === "ci" && args[1] === "get") return ok(JSON.stringify(PIPELINE_WITH_JOBS));
+      return ok("{}");
+    });
 
     const status = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
       headRef: "release/v0.4.0",
     });
 
-    expect(status?.checksStatus).toBe("pending");
+    // checksStatus follows the pipeline whose jobs are listed (the fetched
+    // one, status "failed"), while the facts keep head_pipeline's raw status.
+    expect(status?.checksStatus).toBe("failure");
     expect(status?.forgeSpecific).toMatchObject({
       forge: "gitlab",
-      pipelineStatus: "running",
+      pipelineStatus: "canceling",
       pipelineId: 306,
       pipelineUrl: "https://gitlab.example.com/example-group/example-project/-/pipelines/306",
     });
+  });
+
+  it("populates sidebar checks from the merge request head pipeline", async () => {
+    const pipelineMr = mergeRequestWithPipeline();
+    const pipeline = {
+      ...PIPELINE_WITH_JOBS,
+      status: "success",
+      jobs: [
+        PIPELINE_WITH_JOBS.jobs[0],
+        PIPELINE_WITH_JOBS.jobs[2],
+        {
+          id: 934,
+          name: "optional-deploy",
+          stage: "deploy",
+          status: "manual",
+          allow_failure: true,
+          web_url: "https://gitlab.example.com/example-group/example-project/-/jobs/934",
+        },
+        {
+          id: 935,
+          name: "release",
+          stage: "deploy",
+          status: "manual",
+          allow_failure: false,
+          web_url: "https://gitlab.example.com/example-group/example-project/-/jobs/935",
+        },
+      ],
+    };
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
+      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
+      if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
+      if (args[0] === "ci" && args[1] === "get") return ok(JSON.stringify(pipeline));
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "release/v0.4.0",
+    });
+
+    expect(calls[3]).toEqual([
+      "ci",
+      "get",
+      "--merge-request",
+      "14",
+      "--with-job-details",
+      "-F",
+      "json",
+    ]);
+    expect(status?.checksStatus).toBe("success");
+    expect(status?.checks).toEqual([
+      {
+        name: "lint",
+        status: "success",
+        url: "https://gitlab.example.com/example-group/example-project/-/jobs/929",
+        workflow: "test",
+        checkRunId: 929,
+      },
+      {
+        name: "flaky",
+        status: "success",
+        traits: ["warning"],
+        url: "https://gitlab.example.com/example-group/example-project/-/jobs/932",
+        workflow: "test",
+        checkRunId: 932,
+      },
+      {
+        name: "optional-deploy",
+        status: "skipped",
+        traits: ["manual"],
+        url: "https://gitlab.example.com/example-group/example-project/-/jobs/934",
+        workflow: "deploy",
+        checkRunId: 934,
+      },
+      {
+        name: "release",
+        status: "pending",
+        traits: ["manual", "action_required"],
+        url: "https://gitlab.example.com/example-group/example-project/-/jobs/935",
+        workflow: "deploy",
+        checkRunId: 935,
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      "unavailable",
+      () => {
+        throw { code: 1, stderr: "pipeline details unavailable" };
+      },
+    ],
+    ["malformed", () => ok(JSON.stringify({ jobs: "invalid" }))],
+  ] as const)(
+    "keeps the merge request status when pipeline job details are %s",
+    async (_, load) => {
+      const pipelineMr = mergeRequestWithPipeline();
+      const { service } = makeService((args) => {
+        if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
+        if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
+        if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
+        if (args[0] === "ci" && args[1] === "get") return load();
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      });
+
+      const status = await service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "release/v0.4.0",
+      });
+
+      expect(status).toMatchObject({ number: 14, checks: [], checksStatus: "success" });
+    },
+  );
+
+  it("keeps cancellation transitions active", () => {
+    expect(GITLAB_ACTIVE_PIPELINE_STATUS_SET.has("canceling")).toBe(true);
   });
 
   it("fetches a pipeline's stages and jobs as neutral check details", async () => {
@@ -729,35 +856,60 @@ describe("createGitLabService", () => {
     ]);
   });
 
-  it("does not fail a stage when only allow_failure jobs failed", async () => {
-    const { service } = makeService(() =>
-      ok(
-        JSON.stringify({
-          ...PIPELINE_WITH_JOBS,
-          status: "success",
-          jobs: [
-            {
-              id: 940,
-              name: "lint",
-              stage: "test",
-              status: "success",
-              allow_failure: false,
-            },
-            {
-              id: 941,
-              name: "optional",
-              stage: "test",
-              status: "failed",
-              allow_failure: true,
-            },
-          ],
-        }),
-      ),
-    );
+  it.each([
+    ["allowed failure", "success", "failed", true, "success", "success", "failed"],
+    ["optional manual", "success", "manual", true, "success", "success", "manual"],
+    ["blocking manual", "manual", "manual", false, "manual", "manual", "manual"],
+    ["cancellation transition", "canceling", "canceling", false, "pending", "pending", "pending"],
+  ] as const)(
+    "maps %s without distorting the pipeline result",
+    async (
+      _case,
+      pipelineStatus,
+      jobStatus,
+      allowFailure,
+      expectedPipeline,
+      expectedStage,
+      expectedJob,
+    ) => {
+      const { service } = makeService(() =>
+        ok(
+          JSON.stringify({
+            ...PIPELINE_WITH_JOBS,
+            status: pipelineStatus,
+            jobs: [
+              {
+                id: 940,
+                name: "build",
+                stage: "test",
+                status: "success",
+                allow_failure: false,
+              },
+              {
+                id: 941,
+                name: "subject",
+                stage: "test",
+                status: jobStatus,
+                allow_failure: allowFailure,
+              },
+            ],
+          }),
+        ),
+      );
 
-    const details = await service.getCheckDetails({ cwd: "/repo", checkRunId: 306 });
-    expect(details.pipeline?.stages[0]?.status).toBe("success");
-  });
+      const details = await service.getCheckDetails({ cwd: "/repo", checkRunId: 306 });
+      expect(details.pipeline).toMatchObject({
+        status: expectedPipeline,
+        rawStatus: pipelineStatus,
+        stages: [{ status: expectedStage }],
+      });
+      expect(details.pipeline?.stages[0]?.jobs[1]).toMatchObject({
+        status: expectedJob,
+        rawStatus: jobStatus,
+        allowFailure,
+      });
+    },
+  );
 
   it("populates approval counts from the approvals endpoint", async () => {
     const { service, calls } = makeService((args) => {

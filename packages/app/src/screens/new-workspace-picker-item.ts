@@ -199,8 +199,9 @@ export function pickerItemToCheckoutRequest(
         },
         ...(forge === "github"
           ? {
-              // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-              // daemon floor parses checkoutSource.
+              // COMPAT(githubPrNumber): send the legacy GitHub checkout input
+              // to daemons predating checkoutSource. Remove after 2027-01-17
+              // once the supported daemon floor is >= v0.2.0.
               githubPrNumber: item.item.number,
             }
           : {}),

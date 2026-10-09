@@ -142,6 +142,8 @@ export interface ClaudeReplaySubagentInput {
   agentId: string;
   meta: ClaudeSubagentMeta | null;
   entries: ClaudeReplayEntry[];
+  /** Task declarations made by this subagent, used to attach its direct children. */
+  parentFacts?: ClaudeReplayParentFacts;
 }
 
 export interface ClaudeReplayParentFacts {
@@ -229,6 +231,7 @@ function declareSubagent(
   subagent: ClaudeReplaySubagentInput,
   link: ParentLink,
   toolCall: { title?: string; description?: string } | undefined,
+  parentSubagentId?: string,
 ): SubagentObservation {
   const title = toolCall?.title ?? subagent.meta?.agentType;
   const description = toolCall?.description ?? subagent.meta?.description;
@@ -239,6 +242,7 @@ function declareSubagent(
     ...(title ? { title } : {}),
     ...(description ? { description } : {}),
     ...(link.toolCallId ? { toolCallId: link.toolCallId } : {}),
+    ...(parentSubagentId ? { parentSubagentId } : {}),
     ...(firstTimestamp ? { timestamp: firstTimestamp } : {}),
   };
 }
@@ -274,12 +278,15 @@ function observeSubagent(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[],
+  parentSubagentId?: string,
 ): SubagentObservation[] {
   const link = resolveParentLink(subagent, parent);
   if (!link) return [];
   const toolCall = parent.toolCalls.get(link.toolCallId);
 
-  const observations: SubagentObservation[] = [declareSubagent(subagent, link, toolCall)];
+  const observations: SubagentObservation[] = [
+    declareSubagent(subagent, link, toolCall, parentSubagentId),
+  ];
   const subtitle = observeSubtitle(subagent, link, toolCall?.title ?? subagent.meta?.agentType);
   if (subtitle) observations.push(subtitle);
 
@@ -311,34 +318,72 @@ function observeSubagent(
   return observations;
 }
 
-/**
- * Whether this transcript belongs to a child of the session being replayed.
- *
- * Claude Code writes every descendant into the same `subagents/` directory, not just the session's
- * own children, and `spawnDepth` is what separates them: 1 is a direct child, 2+ was spawned by
- * another subagent. A grandchild's `toolUseId` names a Task call made inside its parent's session,
- * so nothing in this transcript can resolve it — surveyed across recorded sessions, every depth-1
- * id matched a Task tool_use block in the parent transcript and no deeper id did. Replaying them
- * anyway adds rows the live stream never showed, each with no Task card and no recoverable outcome.
- * One session recorded 10 subagents live and would replay 22.
- *
- * Absent depth means a session recorded before the field existed: keep the subagent rather than
- * lose it, matching how every other missing field here is treated.
- */
-function isDirectChild(subagent: ClaudeReplaySubagentInput): boolean {
-  const depth = subagent.meta?.spawnDepth;
-  return depth === undefined || depth <= 1;
+function recordReplayToolOwners(
+  owners: Map<string, string>,
+  entries: readonly ClaudeReplayEntry[],
+  subagentId: string,
+): void {
+  for (const entry of entries) {
+    if (entry.type !== "assistant" || !Array.isArray(entry.message?.content)) continue;
+    for (const block of entry.message.content) {
+      if (block?.type === "tool_use" && typeof block.id === "string") {
+        owners.set(block.id, subagentId);
+      }
+    }
+  }
 }
 
 export function observeReplaySubagents(input: {
   subagents: readonly ClaudeReplaySubagentInput[];
   parent: ClaudeReplayParentFacts;
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
-}): SubagentObservation[] {
+}): { observations: SubagentObservation[]; toolOwners: ReadonlyMap<string, string> } {
   const observations: SubagentObservation[] = [];
-  for (const subagent of input.subagents) {
-    if (!isDirectChild(subagent)) continue;
-    observations.push(...observeSubagent(subagent, input.parent, input.convertEntry));
+  const toolOwners = new Map<string, string>();
+  const unresolved = [...input.subagents].sort(
+    (left, right) => (left.meta?.spawnDepth ?? 1) - (right.meta?.spawnDepth ?? 1),
+  );
+  const resolvedParents = new Map<string, ClaudeReplayParentFacts>();
+
+  // Claude stores every descendant beside the root transcript. Resolve one generation at a
+  // time: a child is admitted only when its tool id is declared by a transcript whose own parent
+  // has already been proven. This preserves the old boundary against unrelated ambient sidecars.
+  let madeProgress = true;
+  while (unresolved.length > 0 && madeProgress) {
+    madeProgress = false;
+    for (let index = unresolved.length - 1; index >= 0; index--) {
+      const subagent = unresolved[index];
+      if (!subagent) continue;
+      const resolved = resolveReplayOwner(subagent, input.parent, resolvedParents);
+      if (!resolved) continue;
+      const { ownerId, parent, link } = resolved;
+
+      // Only proven descendants may own notifications; ambient sidecars cannot claim them.
+      recordReplayToolOwners(toolOwners, subagent.entries, link.id);
+      observations.push(...observeSubagent(subagent, parent, input.convertEntry, ownerId));
+      if (subagent.parentFacts) resolvedParents.set(link.id, subagent.parentFacts);
+      unresolved.splice(index, 1);
+      madeProgress = true;
+    }
   }
-  return observations;
+  return { observations, toolOwners };
+}
+
+function resolveReplayOwner(
+  subagent: ClaudeReplaySubagentInput,
+  rootParent: ClaudeReplayParentFacts,
+  resolvedParents: ReadonlyMap<string, ClaudeReplayParentFacts>,
+): {
+  ownerId?: string;
+  parent: ClaudeReplayParentFacts;
+  link: NonNullable<ReturnType<typeof resolveParentLink>>;
+} | null {
+  const rootLink = resolveParentLink(subagent, rootParent);
+  if (rootLink) return { parent: rootParent, link: rootLink };
+
+  for (const [ownerId, parent] of resolvedParents) {
+    const link = resolveParentLink(subagent, parent);
+    if (link) return { ownerId, parent, link };
+  }
+  return null;
 }

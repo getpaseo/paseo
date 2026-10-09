@@ -18,6 +18,33 @@ test("shows Pure black in the appearance picker", async ({ page }, testInfo) => 
   });
 });
 
+test("keeps the selected workspace visible in Light", async ({ page }, testInfo) => {
+  const workspace = await seedWorkspace({
+    repoPrefix: "light-selected-workspace-",
+    title: "Selected workspace",
+  });
+
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "light" }));
+    });
+    await gotoAppShell(page);
+
+    const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+
+    await expect(row).toHaveAttribute("aria-selected", "true");
+    await expect(row).toHaveCSS("background-color", "rgb(228, 228, 231)");
+    await page.screenshot({
+      path: testInfo.outputPath("light-selected-workspace.png"),
+      fullPage: true,
+    });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("keeps the selected workspace visible in Pure black", async ({ page }, testInfo) => {
   const workspace = await seedWorkspace({
     repoPrefix: "pure-black-selected-workspace-",

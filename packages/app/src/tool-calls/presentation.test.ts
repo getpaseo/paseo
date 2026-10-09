@@ -66,7 +66,7 @@ describe("tool-call presentation", () => {
     });
 
     expect(presentation).toMatchObject({
-      displayName: "Exec Command",
+      displayName: "Exec command",
       icon: fakeIcons.wrench,
       isLoadingDetails: true,
       hasDetails: false,
@@ -91,4 +91,43 @@ describe("tool-call presentation", () => {
     expect(presentation.isPlan).toBe(true);
     expect(presentation.icon).toBe(fakeIcons.brain);
   });
+});
+
+it.each([
+  ["message", "Message from QA messenger"],
+  ["finished", "QA messenger finished"],
+  ["errored", "QA messenger errored"],
+  ["permission-required", "QA messenger needs permission"],
+  ["closed", "QA messenger closed"],
+] as const)("presents %s from structured provenance without a second label", (event, heading) => {
+  const presentation = buildToolCallPresentation({
+    toolName: "internal_name_should_not_be_visible",
+    status: "completed",
+    error: null,
+    detail: { type: "plain_text", label: "legacy summary", text: "legacy body" },
+    agentMessage: {
+      event,
+      sender: { id: "server::sender", title: "QA messenger" },
+      text: "The delivered message.",
+    },
+    resolveIcon: fakeResolveIcon,
+  });
+  expect(presentation.displayName).toBe(heading);
+  expect(presentation.summary).toBeUndefined();
+  expect(presentation.detail).toEqual({
+    type: "plain_text",
+    icon: "bot",
+    text: "From agent: server::sender\n\nThe delivered message.",
+  });
+});
+
+it("uses an opaque sender ID when no title is available", () => {
+  const presentation = buildToolCallPresentation({
+    toolName: "agent_message",
+    status: "completed",
+    error: null,
+    agentMessage: { event: "message", sender: { id: "remote::worker" }, text: "Hello" },
+    resolveIcon: fakeResolveIcon,
+  });
+  expect(presentation.displayName).toBe("Message from remote::worker");
 });

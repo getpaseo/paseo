@@ -17,6 +17,7 @@ const gatedCiJobs = new Map([
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
+  ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -159,7 +160,7 @@ test("PR routing declares stable behavior ownership", () => {
     ],
     quality: ["**/*.{cjs,js,json,jsx,mjs,ts,tsx}", "packages/expo-two-way-audio/**"],
     hub: ["packages/cli/src/commands/hub/**", "packages/server/src/server/hub/**"],
-    server: ["packages/server/**", "packages/app/e2e/support/fixtures/recording.*"],
+    server: ["plugins/**", "packages/server/**", "packages/app/e2e/support/fixtures/recording.*"],
     desktop: [
       "packages/desktop/**",
       "packages/app/src/desktop/**",
@@ -169,8 +170,27 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/app/package.json",
     ],
     app: ["packages/app/**", "packages/expo-two-way-audio/**"],
-    sdk: ["packages/client/**", "packages/highlight/**", "packages/protocol/**"],
+    sdk: [
+      "packages/plugin/**",
+      "plugin-examples/**",
+      "public-docs/plugins/**",
+      "packages/client/**",
+      "packages/highlight/**",
+      "packages/protocol/**",
+    ],
     browser: [
+      "packages/server/src/server/agent/provider-snapshot-manager.ts",
+      "packages/server/src/server/session/provider/provider-catalog-session.ts",
+      "packages/client/src/compat/normalize-provider-models.ts",
+      "packages/protocol/src/client-capabilities.ts",
+      "packages/server/src/server/agent/provider-registry.ts",
+      "packages/server/src/server/agent/agent-sdk-types.ts",
+      "packages/server/src/server/agent/providers/codex-app-server-agent.ts",
+      "packages/server/src/server/agent/providers/claude/agent.ts",
+      "packages/server/src/server/agent/plugin-provider.ts",
+      "packages/server/src/server/plugins/{index,plugin-process,plugin-process-protocol,runtime}.ts",
+      "packages/server/src/executable-resolution/**",
+      "packages/plugin/src/server/provider.ts",
       "packages/app/src/!(desktop)/**",
       "packages/app/e2e/browser/**",
       "packages/app/e2e/support/**",
@@ -239,6 +259,18 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
     "packages/app/package.json",
   ]);
   assert.deepEqual(filters.browser, [
+    "packages/server/src/server/agent/provider-snapshot-manager.ts",
+    "packages/server/src/server/session/provider/provider-catalog-session.ts",
+    "packages/client/src/compat/normalize-provider-models.ts",
+    "packages/protocol/src/client-capabilities.ts",
+    "packages/server/src/server/agent/provider-registry.ts",
+    "packages/server/src/server/agent/agent-sdk-types.ts",
+    "packages/server/src/server/agent/providers/codex-app-server-agent.ts",
+    "packages/server/src/server/agent/providers/claude/agent.ts",
+    "packages/server/src/server/agent/plugin-provider.ts",
+    "packages/server/src/server/plugins/{index,plugin-process,plugin-process-protocol,runtime}.ts",
+    "packages/server/src/executable-resolution/**",
+    "packages/plugin/src/server/provider.ts",
     "packages/app/src/!(desktop)/**",
     "packages/app/e2e/browser/**",
     "packages/app/e2e/support/**",
@@ -250,11 +282,24 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   ]);
 });
 
-test("non-required Docker and Nix workflows avoid runners with workflow path filters", () => {
+test("packaging runs on main without allocating pull-request runners", () => {
   for (const workflowPath of [dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     const trigger = source.split("jobs:", 1)[0];
-    assert.match(trigger, /^\s+paths:\s*$/m);
+    assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+    assert.doesNotMatch(trigger, /pull_request/);
     assert.doesNotMatch(source, /dorny\/paths-filter/);
+  }
+});
+
+test("desktop packaging smokes main pushes and only the pull requests that touch packaging", () => {
+  const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
+  const trigger = source.split("jobs:", 1)[0];
+  assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
+  assert.match(trigger, /- "packages\/desktop\/\*\*"/);
+  assert.doesNotMatch(source, /dorny\/paths-filter/);
+  for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
+    assert.match(source, new RegExp(`${action}@[0-9a-f]{40} # v\\d+\\.\\d+\\.\\d+`));
   }
 });

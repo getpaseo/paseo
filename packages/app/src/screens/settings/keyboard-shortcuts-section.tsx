@@ -6,7 +6,7 @@ import { MoreHorizontal, Pencil, Undo2, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { settingsStyles } from "@/styles/settings";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -377,8 +377,7 @@ export function KeyboardShortcutsSection() {
       event.preventDefault();
       event.stopPropagation();
 
-      const key = event.key ?? "";
-      if (key === "Backspace") {
+      if (event.code === "Backspace" && heldModifiersFromEvent(event) === null) {
         setCapturedCombos((current) => (current.length > 0 ? current.slice(0, -1) : current));
         return;
       }

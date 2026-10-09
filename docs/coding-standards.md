@@ -92,11 +92,19 @@ For testing rules, see [testing.md](testing.md).
 - Subscribe narrowly: select primitives from stores, pass `status` not `agent`, use `useShallow` / deep-equal when returning derived arrays/objects.
 - Collection rows do not independently subscribe to a high-frequency global store. The collection owner selects structurally shared indexes once, derives a keyed row model with `useMemo`, and passes entries to rows. This keeps retained hidden collections current without running one selector per row on every store update.
 - Equality functions prevent React renders; they do not prevent selector callbacks from running. A selector attached to a hot store must be O(1) when its relevant source references have not changed.
-- Retained native panels use `RetainedPanel`. If an existing gesture/layout wrapper must own visibility, wrap its contents in `RetainedPanelActivity` instead. Keep keyed panel roots in a stable sibling order, include the newly active panel in the same render, centralize subscriptions, and gate genuine effects through `useRetainedPanelActive`. Do not use `Suspense` or render freezing for this on native: those techniques change native tree ownership instead of merely stopping work.
+- Retained native panels use `RetainedPanel`. If an existing gesture/layout wrapper must own visibility, wrap its contents in `RetainedPanelActivity` instead. Keep keyed panel roots in a stable sibling order, include the newly active panel in the same render, centralize subscriptions, and gate genuine effects through `useRetainedPanelActive`. Follow the [native ownership constraints and chat suspension boundary](mobile-panels.md) when stopping hidden rendering.
 - Infinite animations are subscriptions. Start them only while their retained panel is active, and cancel a shared clock when its final active consumer leaves. Synchronized animations use one clock per animation family and feed active instances through local shared values; retained hidden instances stay mounted but unsubscribed. Match state updates to the actual visual cadence; do not run every style worklet at 60 fps when the rendered value changes only a few times per second.
 - Stable references for props that cross `memo` boundaries or feed dependency arrays. Static literals at module scope `as const`; derived with `useMemo`; handlers with `useCallback` only when there's a memoized beneficiary.
 - Use stable ids for `key`, never array index for reorderable/filterable lists.
 - Context for stable values (theme, auth). Store with selectors for state that changes.
+
+### Retained panel measurements
+
+Inactive retained panels use `display: none`, so DOM and layout APIs report zero width and height. A non-positive measurement means the surface is not rendered; it is never a valid compact layout.
+
+- Suspend geometry-derived updates while either measured dimension is non-positive. Preserve the last valid state until the surface reports positive geometry again.
+- Enforce the rule at the measurement boundary shared by every trigger. Guarding only an `onLayout` or `ResizeObserver` callback still lets effects, content changes, and imperative remeasurement publish hidden geometry.
+- Test the hide-and-reveal path through a real retained surface. Settled assertions do not catch stale geometry painted during the first returned frames.
 
 ## Naming
 

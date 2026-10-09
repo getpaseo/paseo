@@ -1,5 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, type RefObject } from "react";
 import { View, Text, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -9,6 +9,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
+import type { EditingTextInputHandle } from "@/components/ui/text-input/types";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
@@ -80,8 +81,11 @@ function QuestionOptionRow({
   );
 
   const optionLabelStyle = useMemo(
-    () => [styles.optionLabel, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
+    () => [
+      styles.optionLabel,
+      { color: isSelected ? theme.colors.foreground : theme.colors.foregroundMuted },
+    ],
+    [isSelected, theme.colors.foreground, theme.colors.foregroundMuted],
   );
   const optionDescriptionStyle = useMemo(
     () => [styles.optionDescription, { color: theme.colors.foregroundMuted }],
@@ -96,11 +100,11 @@ function QuestionOptionRow({
       styles.selectionControl,
       multiSelect ? styles.selectionControlCheckbox : styles.selectionControlRadio,
       {
-        borderColor: isSelected ? theme.colors.accent : theme.colors.foregroundMuted,
+        borderColor: isSelected ? theme.colors.accent : theme.colors.foregroundExtraMuted,
         backgroundColor: isSelected && multiSelect ? theme.colors.accent : "transparent",
       },
     ],
-    [isSelected, multiSelect, theme.colors.accent, theme.colors.foregroundMuted],
+    [isSelected, multiSelect, theme.colors.accent, theme.colors.foregroundExtraMuted],
   );
   const radioDotStyle = useMemo(
     () => [styles.selectionRadioDot, { backgroundColor: theme.colors.accent }],
@@ -255,6 +259,7 @@ function QuestionNav({
 
 interface QuestionOtherInputProps {
   qIndex: number;
+  inputRef: RefObject<EditingTextInputHandle | null>;
   accessibilityLabel: string;
   value: string;
   placeholder: string;
@@ -265,6 +270,7 @@ interface QuestionOtherInputProps {
 
 function QuestionOtherInput({
   qIndex,
+  inputRef,
   accessibilityLabel,
   value,
   placeholder,
@@ -300,6 +306,7 @@ function QuestionOtherInput({
   );
   return (
     <TextInput
+      ref={inputRef}
       // @ts-expect-error - outlineStyle is web-only
       style={otherInputStyle}
       accessibilityLabel={accessibilityLabel}
@@ -325,6 +332,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
+  const otherInputRef = useRef<EditingTextInputHandle | null>(null);
   const [respondingAction, setRespondingAction] = useState<"submit" | "dismiss" | null>(null);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
 
@@ -346,29 +354,40 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
       }
 
       setSelections((prev) => ({ ...prev, [qIndex]: next }));
-      setOtherTexts((prev) => {
-        if (!prev[qIndex]) return prev;
-        const nextTexts = { ...prev };
-        delete nextTexts[qIndex];
-        return nextTexts;
-      });
+
+      // Single-select: an option and a custom answer replace each other, as in Claude Code.
+      // Multi-select keeps both. The editing surface owns its text and never replays state
+      // (docs/forms.md), so clearing state alone would leave stale text on screen that
+      // submit ignores; clear the surface explicitly.
+      if (!multiSelect && otherTexts[qIndex]) {
+        setOtherTexts((prev) => {
+          const nextTexts = { ...prev };
+          delete nextTexts[qIndex];
+          return nextTexts;
+        });
+        otherInputRef.current?.replaceText("");
+      }
 
       if (!multiSelect && next.size > 0 && qIndex === activeQuestionIndex && questions) {
         setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
       }
     },
-    [activeQuestionIndex, questions, selections],
+    [activeQuestionIndex, otherTexts, questions, selections],
   );
 
-  const setOtherText = useCallback((qIndex: number, text: string) => {
-    setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
-    if (text.length > 0) {
-      setSelections((prev) => {
-        if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
-        return { ...prev, [qIndex]: new Set<number>() };
-      });
-    }
-  }, []);
+  const setOtherText = useCallback(
+    (qIndex: number, text: string) => {
+      setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
+      const multiSelect = questions?.[qIndex]?.multiSelect ?? false;
+      if (!multiSelect && text.length > 0) {
+        setSelections((prev) => {
+          if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
+          return { ...prev, [qIndex]: new Set<number>() };
+        });
+      }
+    },
+    [questions],
+  );
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
   const resolvedActiveQuestionIndex = questions
@@ -551,6 +570,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
           {showTextInput ? (
             <QuestionOtherInput
               qIndex={resolvedActiveQuestionIndex}
+              inputRef={otherInputRef}
               accessibilityLabel={activeQuestion.question}
               value={otherText}
               placeholder={getQuestionInputPlaceholder({
@@ -628,7 +648,7 @@ const styles = StyleSheet.create((theme) => ({
   questionText: {
     flex: 1,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
     lineHeight: 22,
   },
   optionsWrap: {
@@ -653,7 +673,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   questionNavText: {
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   optionItem: {
     flexDirection: "row",
@@ -677,7 +697,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   optionLabel: {
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     lineHeight: 22,
   },
   optionDescription: {

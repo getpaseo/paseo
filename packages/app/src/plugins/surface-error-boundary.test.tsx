@@ -7,6 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Text } from "react-native";
 import { SurfaceErrorBoundary } from "./surface-error-boundary";
 
+vi.mock("react-native-unistyles", () => ({
+  StyleSheet: {
+    create: (factory: (theme: object) => object) =>
+      factory({ colors: { statusDanger: "red" }, spacing: [0, 4, 8, 12, 16] }),
+  },
+}));
+
 let oldSurfaceCleanups = 0;
 function FailingSurface() {
   const [failed, setFailed] = useState(false);

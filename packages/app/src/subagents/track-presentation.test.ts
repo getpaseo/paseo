@@ -19,6 +19,11 @@ function row(
     description: null,
     subtitle: null,
     status: overrides.status ?? "idle",
+    turn:
+      overrides.turn ??
+      (overrides.status === "running"
+        ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
+        : { phase: "idle", cancellationRequestId: null }),
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };

@@ -4,6 +4,7 @@ import {
   canBeginMobilePanelGesture,
   createMobilePanelMotionState,
   getMobilePanelFrame,
+  isMobilePanelActive,
   isMobilePanelGestureCurrent,
   transitionMobilePanel,
   type MobilePanelCommit,
@@ -53,8 +54,8 @@ class MobilePanelsScenario {
     return this;
   }
 
-  finishAnimation(target: MobilePanelView, revision = this.state.revision) {
-    this.dispatch({ type: "animation.finished", revision, target });
+  settleAt(position: number) {
+    this.dispatch({ type: "position.changed", position });
     return this;
   }
 
@@ -77,10 +78,107 @@ class MobilePanelsScenario {
 }
 
 describe("mobile panel ownership", () => {
+  it("publishes activity only after motion settles", () => {
+    const initial = createMobilePanelMotionState({ target: "agent", revision: 0 });
+    const dragging = transitionMobilePanel(initial, {
+      type: "gesture.begin",
+      origin: "agent",
+    }).state;
+    const released = transitionMobilePanel(dragging, {
+      type: "gesture.finish",
+      startedRevision: 0,
+      success: true,
+      target: "agent-list",
+    }).state;
+    const commandTransition = transitionMobilePanel(released, {
+      type: "command",
+      selection: { target: "agent-list", revision: 1 },
+    });
+    const commanded = commandTransition.state;
+
+    expect(isMobilePanelActive(dragging, "agent-list")).toBe(false);
+    expect(isMobilePanelActive(released, "agent-list")).toBe(false);
+    expect(isMobilePanelActive(commanded, "agent-list")).toBe(false);
+    expect(commandTransition.animationTarget).toBeUndefined();
+
+    const settled = transitionMobilePanel(commanded, {
+      type: "position.changed",
+      position: -1,
+    }).state;
+    expect(isMobilePanelActive(settled, "agent-list")).toBe(true);
+  });
+
+  it("activates immediately when the command arrives after position settles", () => {
+    const initial = createMobilePanelMotionState({ target: "agent", revision: 0 });
+    const dragging = transitionMobilePanel(initial, {
+      type: "gesture.begin",
+      origin: "agent",
+    }).state;
+    const released = transitionMobilePanel(dragging, {
+      type: "gesture.finish",
+      startedRevision: 0,
+      success: true,
+      target: "agent-list",
+    }).state;
+    const reachedAnchor = transitionMobilePanel(released, {
+      type: "position.changed",
+      position: -1,
+    }).state;
+
+    expect(isMobilePanelActive(reachedAnchor, "agent-list")).toBe(false);
+
+    const commanded = transitionMobilePanel(reachedAnchor, {
+      type: "command",
+      selection: { target: "agent-list", revision: 1 },
+    });
+    expect(commanded.animationTarget).toBeUndefined();
+
+    const settled = transitionMobilePanel(commanded.state, {
+      type: "position.changed",
+      position: -1,
+    }).state;
+    expect(isMobilePanelActive(settled, "agent-list")).toBe(true);
+  });
+
+  it("does not change activity for a cancelled preview", () => {
+    const initial = createMobilePanelMotionState({ target: "agent", revision: 0 });
+    const dragging = transitionMobilePanel(initial, {
+      type: "gesture.begin",
+      origin: "agent",
+    }).state;
+    const cancelled = transitionMobilePanel(dragging, {
+      type: "gesture.finish",
+      startedRevision: 0,
+      success: false,
+      target: "agent-list",
+    }).state;
+
+    expect(isMobilePanelActive(dragging, "agent")).toBe(true);
+    expect(isMobilePanelActive(cancelled, "agent")).toBe(true);
+    expect(isMobilePanelActive(cancelled, "agent-list")).toBe(false);
+  });
+
+  it("keeps the visible panel active until its closing motion settles", () => {
+    const initial = createMobilePanelMotionState({ target: "agent-list", revision: 0 });
+    const closing = transitionMobilePanel(initial, {
+      type: "command",
+      selection: { target: "agent", revision: 1 },
+    }).state;
+
+    expect(isMobilePanelActive(closing, "agent-list")).toBe(true);
+
+    const settled = transitionMobilePanel(closing, {
+      type: "position.changed",
+      position: 0,
+    }).state;
+    expect(isMobilePanelActive(settled, "agent-list")).toBe(false);
+    expect(isMobilePanelActive(settled, "agent")).toBe(true);
+  });
+
   it("follows programmatic commands through left, center, and right", () => {
     const panels = new MobilePanelsScenario();
 
-    panels.command("agent-list").finishAnimation("agent-list");
+    panels.command("agent-list").settleAt(-1);
     expect(panels.snapshot()).toEqual({
       target: "agent-list",
       motionTarget: "agent-list",
@@ -88,7 +186,7 @@ describe("mobile panel ownership", () => {
       revision: 1,
     });
 
-    panels.command("agent").command("file-explorer").finishAnimation("file-explorer");
+    panels.command("agent").command("file-explorer").settleAt(1);
     expect(panels.snapshot()).toEqual({
       target: "file-explorer",
       motionTarget: "file-explorer",
@@ -139,13 +237,12 @@ describe("mobile panel ownership", () => {
     expect(panels.commits).toEqual([]);
   });
 
-  it("keeps the latest rapid command and rejects stale animation completion", () => {
+  it("keeps the latest rapid command when position reaches a stale anchor", () => {
     const panels = new MobilePanelsScenario();
 
     panels.command("agent-list");
-    const staleRevision = panels.snapshot().revision;
     panels.command("agent").command("file-explorer");
-    panels.finishAnimation("agent-list", staleRevision);
+    panels.settleAt(-1);
 
     expect(panels.snapshot()).toEqual({
       target: "file-explorer",

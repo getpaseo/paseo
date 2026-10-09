@@ -1,5 +1,6 @@
 import type pino from "pino";
 import type {
+  ScriptStatusUpdateMessage,
   SessionOutboundMessage,
   StartWorkspaceScriptRequest,
   WorkspaceDescriptorPayload,
@@ -31,7 +32,7 @@ type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
 /**
  * The service-proxy-backed scripts a workspace exposes: build the scripts payload
- * snapshot, emit a script_status_update to clients, and start a script.
+ * snapshot, publish a script_status_update to every client, and start a script.
  *
  * The workspace descriptor builder, the script-status emission path, and the
  * start-script RPC all funnel through one assembly of buildWorkspaceScriptPayloads'
@@ -66,7 +67,10 @@ export function createWorkspaceScriptsService(deps: {
   globalServicePorts?: PaseoServicePortAllocation;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
+  // Script status is daemon state, so it reaches every client, not only the requester.
+  publishStatusUpdate: (message: ScriptStatusUpdateMessage) => void;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
+  assertAutomationAllowed: (workspaceId: string) => Promise<void>;
 }): WorkspaceScriptsService {
   const {
     serviceProxy,
@@ -82,7 +86,9 @@ export function createWorkspaceScriptsService(deps: {
     globalServicePorts,
     logger,
     emit,
+    publishStatusUpdate,
     spawnWorkspaceScript,
+    assertAutomationAllowed,
   } = deps;
 
   function resolveGitMetadata(
@@ -131,7 +137,7 @@ export function createWorkspaceScriptsService(deps: {
       const workspace = await workspaceRegistry.get(workspaceId);
       if (!workspace) return;
       const project = await projectRegistry.get(workspace.projectId);
-      emit({
+      publishStatusUpdate({
         type: "script_status_update",
         payload: { workspaceId, scripts: buildSnapshot(workspace, project) },
       });
@@ -169,6 +175,7 @@ export function createWorkspaceScriptsService(deps: {
   async function launchProcess(input: { workspaceId: string; scriptName: string }) {
     const available = requireAvailable();
     const workspace = await getWorkspace(input.workspaceId);
+    await assertAutomationAllowed(workspace.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
     const gitMetadata = resolveGitMetadata(workspace, project);
     const result = await spawnWorkspaceScript({

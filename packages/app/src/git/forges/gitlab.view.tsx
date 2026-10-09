@@ -12,24 +12,23 @@ import {
 } from "@/git/client-forge-module";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { formatDuration } from "@/utils/time";
+import { COUNTED_CHECK_PRESENTATIONS } from "@/git/check-presentation";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import {
-  CheckStatusIcon,
+  CheckPresentationSummaryPill,
   Section,
-  SUMMARY_DANGER_ICON,
-  SUMMARY_SUCCESS_ICON,
-  SUMMARY_WARNING_ICON,
-  SummaryPill,
   foregroundMutedColorMapping,
   sectionKitStyles,
   successColorMapping,
 } from "@/git/pull-request-panel/section-kit";
 import { useGitLabPipeline } from "@/git/pull-request-panel/use-pipeline";
 import {
+  classifyGitlabPipelineJob,
   deriveGitlabApprovals,
   deriveGitlabPipelineSummary,
+  countGitlabPipelineJobs,
   GitlabMergeFactsSchema,
   isPipelineActiveStatus,
-  mapPipelineStatus,
   type GitlabApprovals,
   type GitlabMergeFacts,
   type GitlabPipelineSummary,
@@ -99,23 +98,6 @@ function formatPipelineDuration(seconds: number | null): string {
   return formatDuration(seconds * 1000);
 }
 
-interface PipelineJobCounts {
-  passed: number;
-  failed: number;
-  pending: number;
-}
-
-function countPipelineJobs(jobs: CheckoutPipelineJob[]): PipelineJobCounts {
-  const counts: PipelineJobCounts = { passed: 0, failed: 0, pending: 0 };
-  for (const job of jobs) {
-    const status = mapPipelineStatus(job.status);
-    if (status === "success") counts.passed += 1;
-    else if (status === "failure") counts.failed += 1;
-    else if (status === "pending") counts.pending += 1;
-  }
-  return counts;
-}
-
 function GitLabPipelineSection({
   serverId,
   cwd,
@@ -144,13 +126,13 @@ function GitLabPipelineSection({
   });
 
   const counts = useMemo(
-    () => countPipelineJobs((pipeline?.stages ?? []).flatMap((stage) => stage.jobs)),
+    () => countGitlabPipelineJobs((pipeline?.stages ?? []).flatMap((stage) => stage.jobs)),
     [pipeline],
   );
 
-  const totalCounted = counts.passed + counts.failed + counts.pending;
+  const totalCounted = Object.values(counts).reduce((total, count) => total + count, 0);
   const showBreakdown = !isPlaceholderData && totalCounted > 0;
-  const displayCounts = showBreakdown ? counts : { passed: 0, failed: 0, pending: 0 };
+  const displayCounts = showBreakdown ? counts : countGitlabPipelineJobs([]);
 
   const handleOpenPipeline = useCallback(() => {
     if (summary.url) {
@@ -160,25 +142,15 @@ function GitLabPipelineSection({
 
   const sectionSummary = (
     <>
-      <SummaryPill
-        count={displayCounts.passed}
-        icon={SUMMARY_SUCCESS_ICON}
-        variant="success"
-        testID="pr-pane-pipeline-passed"
-      />
-      <SummaryPill
-        count={displayCounts.failed}
-        icon={SUMMARY_DANGER_ICON}
-        variant="danger"
-        testID="pr-pane-pipeline-failed"
-      />
-      <SummaryPill
-        count={displayCounts.pending}
-        icon={SUMMARY_WARNING_ICON}
-        variant="warning"
-        testID="pr-pane-pipeline-pending"
-      />
-      {showBreakdown ? null : <CheckStatusIcon status={summary.status} />}
+      {COUNTED_CHECK_PRESENTATIONS.map((presentation) => (
+        <CheckPresentationSummaryPill
+          key={presentation}
+          count={displayCounts[presentation]}
+          presentation={presentation}
+          testID={`pr-pane-pipeline-${presentation}`}
+        />
+      ))}
+      {showBreakdown ? null : <GitLabPipelineStatusIcon status={summary.rawStatus} />}
     </>
   );
 
@@ -195,7 +167,7 @@ function GitLabPipelineSection({
         disabled={!summary.url}
         testID="pr-pane-pipeline-link"
       >
-        <CheckStatusIcon status={summary.status} />
+        <GitLabPipelineStatusIcon status={summary.rawStatus} />
         <Text style={sectionKitStyles.checkName} numberOfLines={1}>
           {`Pipeline #${summary.id}`}
         </Text>
@@ -234,7 +206,7 @@ function PipelineStageGroup({ stage }: { stage: CheckoutPipelineStage }) {
   return (
     <View>
       <View style={styles.pipelineStageHeader}>
-        <CheckStatusIcon status={mapPipelineStatus(stage.status)} />
+        <GitLabPipelineStatusIcon status={stage.status} />
         <Text style={styles.pipelineStageName} numberOfLines={1}>
           {stage.name}
         </Text>
@@ -256,7 +228,7 @@ function PipelineJobRow({ job }: { job: CheckoutPipelineJob }) {
   const duration = formatPipelineDuration(job.durationSeconds);
   return (
     <Pressable onPress={handlePress} style={jobRowPressableStyle} disabled={!job.url}>
-      <CheckStatusIcon status={mapPipelineStatus(job.status)} />
+      <GitLabPipelineStatusIcon status={job.status} allowFailure={job.allowFailure} />
       <Text style={sectionKitStyles.checkName} numberOfLines={1}>
         {job.name}
       </Text>
@@ -270,6 +242,17 @@ function PipelineJobRow({ job }: { job: CheckoutPipelineJob }) {
       </View>
     </Pressable>
   );
+}
+
+function GitLabPipelineStatusIcon({
+  status,
+  allowFailure = false,
+}: {
+  status: string;
+  allowFailure?: boolean;
+}) {
+  const presentation = classifyGitlabPipelineJob({ status, allowFailure });
+  return <CheckPresentationIcon presentation={presentation} size={14} />;
 }
 
 export const gitlabForgeView = {

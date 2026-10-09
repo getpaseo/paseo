@@ -2,9 +2,8 @@ import type { StreamItem } from "@/types/stream";
 import { startsNewTurn } from "@/agent-stream/turn-membership";
 
 export interface TurnTiming {
-  startedAt: Date;
   completedAt: Date;
-  durationMs: number;
+  durationMs: number | null;
 }
 
 export interface StreamTurnTiming {
@@ -25,13 +24,14 @@ export function deriveStreamTurnTiming(params: {
   let previousItem: StreamItem | null = null;
 
   const flushCompletedTurn = () => {
-    if (!currentUserAt || !currentLastItemAt || currentAssistantIds.length === 0) {
+    if (!currentLastItemAt || currentAssistantIds.length === 0) {
       return;
     }
     const timing: TurnTiming = {
-      startedAt: currentUserAt,
       completedAt: currentLastItemAt,
-      durationMs: Math.max(0, currentLastItemAt.getTime() - currentUserAt.getTime()),
+      durationMs: currentUserAt
+        ? Math.max(0, currentLastItemAt.getTime() - currentUserAt.getTime())
+        : null,
     };
     for (const id of currentAssistantIds) {
       byAssistantId.set(id, timing);
@@ -44,10 +44,6 @@ export function deriveStreamTurnTiming(params: {
       currentUserAt = item.kind === "user_message" ? item.timestamp : null;
       currentLastItemAt = null;
       currentAssistantIds = [];
-    }
-    if (!currentUserAt) {
-      previousItem = item;
-      return;
     }
     currentLastItemAt = item.timestamp;
     if (item.kind === "assistant_message") {

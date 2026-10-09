@@ -40,7 +40,7 @@ test("daemon resolves human and managed CLI workspace ownership", async () => {
 
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
+    await client.fetchAgents({ subscribe: {} });
 
     // A bare run mints a fresh local workspace for the cwd, then the agent is
     // stamped with that workspace's id.

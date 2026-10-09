@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { resolveSplitContainerRoot } from "@/components/split-container-focus";
+import {
+  hasMultipleVisiblePanes,
+  resolveSplitContainerRoot,
+  splitNodeContainsPane,
+} from "@/components/split-container-focus";
 import type { SplitNode } from "@/stores/workspace-layout-store";
 
 const pane = (id: string): SplitNode => ({
   kind: "pane",
   pane: { id, tabIds: [], focusedTabId: null },
+});
+const hiddenPane = (id: string): SplitNode => ({
+  kind: "pane",
+  pane: { id, tabIds: [], focusedTabId: null, hidden: true },
 });
 const root: SplitNode = {
   kind: "group",
@@ -35,25 +43,22 @@ describe("split focus root", () => {
     ).toEqual({ root, usesFallbackStrip: false });
   });
 
-  it("renders only a maximized pane without entering focus mode", () => {
+  it("finds the maximized pane without replacing the rendered split tree", () => {
+    expect(splitNodeContainsPane(root, "right")).toBe(true);
+    expect(splitNodeContainsPane(root, "missing")).toBe(false);
     expect(
-      resolveSplitContainerRoot({
-        root,
-        focusedPaneId: "left",
-        focusModeEnabled: false,
-        maximizedPaneId: "right",
-      }),
-    ).toEqual({ root: pane("right"), usesFallbackStrip: false });
+      resolveSplitContainerRoot({ root, focusedPaneId: "left", focusModeEnabled: false }),
+    ).toEqual({ root, usesFallbackStrip: false });
   });
 
-  it("keeps normal splits when the maximized pane is unavailable", () => {
+  it("offers pane maximize only when another pane is visible", () => {
+    expect(hasMultipleVisiblePanes(root)).toBe(true);
+    expect(hasMultipleVisiblePanes(pane("left"))).toBe(false);
     expect(
-      resolveSplitContainerRoot({
-        root,
-        focusedPaneId: "left",
-        focusModeEnabled: false,
-        maximizedPaneId: "missing",
+      hasMultipleVisiblePanes({
+        ...root,
+        group: { ...root.group, children: [pane("left"), hiddenPane("right")] },
       }),
-    ).toEqual({ root, usesFallbackStrip: false });
+    ).toBe(false);
   });
 });

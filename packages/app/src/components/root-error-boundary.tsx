@@ -1,4 +1,4 @@
-import React, { Component, Fragment, type ErrorInfo, type ReactNode } from "react";
+import React, { Component, type ErrorInfo, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,17 +10,16 @@ import { formatCaughtValue } from "./root-error-details";
 
 interface RootErrorBoundaryProps {
   children: ReactNode;
+  onReload: () => void;
 }
 
 interface RootErrorBoundaryState {
   error: string | null;
-  resetKey: number;
 }
 
 export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErrorBoundaryState> {
   state: RootErrorBoundaryState = {
     error: null,
-    resetKey: 0,
   };
 
   static getDerivedStateFromError(error: unknown): Partial<RootErrorBoundaryState> {
@@ -34,40 +33,33 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
     });
   }
 
-  retry = () => {
-    this.setState(({ resetKey }) => ({
-      error: null,
-      resetKey: resetKey + 1,
-    }));
-  };
-
   render() {
-    const { error, resetKey } = this.state;
+    const { error } = this.state;
     if (error !== null) {
-      return <RootErrorFallback error={error} onRetry={this.retry} />;
+      return <RootErrorFallback error={error} onReload={this.props.onReload} />;
     }
 
-    return <Fragment key={resetKey}>{this.props.children}</Fragment>;
+    return this.props.children;
   }
 }
 
 // A stack trace is reference material, not the screen. Cap it so the message and
-// the retry action stay the shape of the page; the rest scrolls.
+// the reload action stay the shape of the page; the rest scrolls.
 const DETAILS_MAX_HEIGHT = 300;
 
 interface RootErrorFallbackProps {
   error: string;
-  onRetry: () => void;
+  onReload: () => void;
 }
 
-export function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
+export function RootErrorFallback({ error, onReload }: RootErrorFallbackProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
 
-  const retry = (
-    <Button variant="default" onPress={onRetry} testID="root-error-boundary-retry">
-      {t("common.actions.retry")}
+  const reload = (
+    <Button variant="default" onPress={onReload} testID="root-error-boundary-reload">
+      {t("common.actions.reload")}
     </Button>
   );
 
@@ -100,9 +92,9 @@ export function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
             {error}
           </ScrollableCodeSurface>
         </View>
-        {isCompact ? null : retry}
+        {isCompact ? null : reload}
       </View>
-      {isCompact ? <View style={styles.footer}>{retry}</View> : null}
+      {isCompact ? <View style={styles.footer}>{reload}</View> : null}
     </View>
   );
 }

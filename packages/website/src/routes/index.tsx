@@ -6,7 +6,7 @@ export const Route = createFileRoute("/")({
   head: () =>
     pageMeta(
       "Paseo – Run Claude Code, Codex, Copilot, OpenCode from anywhere",
-      "Self-hosted daemon for Claude Code, Codex, Copilot, OpenCode, and Pi. Agents run on your machine with your full dev environment. Connect from phone, desktop, or web.",
+      "Open source app for Claude Code, Codex, OpenCode, Pi, and 30+ more coding agents. Run many agents in parallel on your machines. Editor, terminals, diffs, pull requests, and a browser in one window. One download on desktop. The full app on iOS and Android.",
       "/",
     ),
   component: Home,
@@ -17,12 +17,21 @@ function Home() {
     <LandingPage
       title={
         <>
-          Orchestrate coding agents
+          The agentic development
           <br />
-          from your desk and your phone
+          environment
         </>
       }
-      subtitle="Run any coding agent from your phone, desktop, or terminal. Self-hosted, multi-provider, open source."
+      subtitle={
+        <>
+          Run many coding agents at once,
+          <br className="sm:hidden" />
+          <span className="hidden sm:inline"> </span>
+          on any machine.
+          <br />
+          From your desk and from your phone.
+        </>
+      }
     />
   );
 }

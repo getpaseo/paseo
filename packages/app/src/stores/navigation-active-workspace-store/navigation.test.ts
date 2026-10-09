@@ -14,6 +14,7 @@ import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 interface RecordedTab {
   workspaceKey: string;
   target: WorkspaceTabTarget;
+  pin: boolean;
 }
 
 function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
@@ -23,11 +24,11 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
-    openTab: ({ workspaceKey, target }) => {
-      openedTabs.push({ workspaceKey, target });
+    isWorkspaceLayoutHydrated: () => true,
+    openTab: ({ workspaceKey, target, pin = false }) => {
+      openedTabs.push({ workspaceKey, target, pin });
       return target.kind === "agent" ? target.agentId : null;
     },
-    pinAgent: () => undefined,
     rememberLastWorkspace: (selection) => remembered.push(selection),
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
@@ -97,6 +98,7 @@ describe("workspace navigation", () => {
       {
         workspaceKey: "server-1:workspace-a",
         target: { kind: "agent", agentId: "agent-1" },
+        pin: false,
       },
     ]);
   });
@@ -131,6 +133,7 @@ describe("workspace navigation", () => {
       {
         workspaceKey: "server-1:workspace-a",
         target: { kind: "draft", draftId: "draft-1" },
+        pin: false,
       },
     ]);
   });
@@ -145,6 +148,30 @@ describe("workspace navigation", () => {
         serverId: "server-1",
         workspaceId: "workspace-a",
         target: { kind: "agent", agentId: "agent-1" },
+      },
+      deps,
+    );
+
+    expect(openedTabs).toEqual([]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+  });
+
+  it("defers an agent tab until persisted workspace layout has hydrated", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const { deps, navigations, openedTabs } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+        pin: true,
       },
       deps,
     );

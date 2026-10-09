@@ -157,6 +157,17 @@ export function getDoc(slug: string): Doc | undefined {
   return getDocs().find((d) => d.slug === slug);
 }
 
+export function getLegacyDocsRedirect(pathname: string): string | undefined {
+  const match =
+    /^\/docs\/plugins\/v0\.[78](?:(\.md)|\/(index|reference|providers|migration)(\.md)?)?\/?$/.exec(
+      pathname,
+    );
+  if (!match) return undefined;
+  const page = match[2] && match[2] !== "index" ? `/${match[2]}` : "";
+  const extension = match[1] || match[3] ? ".md" : "";
+  return `/docs/plugins${page}${extension}`;
+}
+
 function formatLabel(segment: string): string {
   return segment.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

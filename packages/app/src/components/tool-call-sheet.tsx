@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { BottomSheetScrollView, BottomSheetBackdrop } from "@gorhom/bottom-sheet";
+import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { X } from "lucide-react-native";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
@@ -17,6 +17,7 @@ import { ToolCallDetailsContent } from "./tool-call-details";
 // ----- Types -----
 
 export interface ToolCallSheetData {
+  toolName: string;
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
@@ -114,13 +115,6 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
     setSheetData(null);
   }, [handleSheetDismiss]);
 
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.5} />
-    ),
-    [],
-  );
-
   const contextValue = useMemo(
     () => ({ openToolCall, closeToolCall }),
     [openToolCall, closeToolCall],
@@ -137,7 +131,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
         enableDynamicSizing={false}
         onChange={handleSheetChange}
         onDismiss={handleToolCallSheetDismiss}
-        backdropComponent={renderBackdrop}
+        backdropOpacity={0.5}
         enablePanDownToClose
       >
         {sheetData && <ToolCallSheetContent data={sheetData} onClose={closeToolCall} />}
@@ -155,7 +149,14 @@ interface ToolCallSheetContentProps {
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const { t } = useTranslation();
-  const { displayName, detail, errorText, icon: IconComponent, showLoadingSkeleton } = data;
+  const {
+    toolName,
+    displayName,
+    detail,
+    errorText,
+    icon: IconComponent,
+    showLoadingSkeleton,
+  } = data;
 
   return (
     <View style={styles.container}>
@@ -181,6 +182,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
       {/* Content */}
       <BottomSheetScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <ToolCallDetailsContent
+          toolName={toolName}
           detail={detail}
           errorText={errorText}
           fillAvailableHeight

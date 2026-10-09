@@ -1,0 +1,22 @@
+# FORM_URL is paseo://new?serverId=<connected-serverId>.
+# Gesture coordinates target a 1080x1920 Android emulator at density 420.
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}" "${FORM_URL}"
+wait "id=\"combined-model-selector\"" 20000
+press "id=\"combined-model-selector\""
+wait "id=\"agent-controls-model\"" 10000
+gesture pan 540 790 0 960 500
+wait "id=\"combined-model-selector\"" 3000
+
+# Reopen, dismiss the nested model browser, then dismiss its restored parent.
+press "id=\"combined-model-selector\""
+wait "id=\"agent-controls-model\"" 10000
+press "id=\"agent-controls-model\""
+wait stable 300 5000
+gesture pan 540 790 0 960 500
+wait "id=\"agent-controls-model\"" 3000
+gesture pan 540 790 0 960 500
+wait "id=\"combined-model-selector\"" 3000
+close

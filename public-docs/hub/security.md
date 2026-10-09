@@ -16,6 +16,17 @@ external event → Hub → daemon → provider process → cwd, filesystem, netw
 
 The host, provider credentials, filesystem, network, and resulting actions remain under your control. See [Paseo security](/docs/security) for daemon authentication, pairing, and relay boundaries.
 
+## Choose daemon authority
+
+Connecting a daemon does not grant Hub permission to run agents. Grant `hub.execute` when you want
+Hub automations to use it. This permission allows Hub to create and continue agents, inspect their
+state and timelines, configure their model, thinking, and provider permission mode, and archive or
+restore workspaces on that daemon. Provider modes can include bypassing approval prompts. It also applies to existing
+agents and workspaces; it is not an isolation boundary around Hub-created work.
+
+Daemon administration, terminal control, and daemon credential permission management require separate permissions.
+You can revoke `hub.execute` without granting Hub the ability to change its own permissions.
+
 ## Treat requests as untrusted
 
 Start with narrow provider filters:

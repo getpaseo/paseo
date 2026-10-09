@@ -205,8 +205,8 @@ test("archiving a workspace removes it from every subscribed client", async () =
   const removals = collectWorkspaceRemovals(observer);
 
   try {
-    await ctx.client.fetchWorkspaces({ subscribe: { subscriptionId: "workspace-initiator" } });
-    await observer.fetchWorkspaces({ subscribe: { subscriptionId: "workspace-observer" } });
+    await ctx.client.fetchWorkspaces({ subscribe: {} });
+    await observer.fetchWorkspaces({ subscribe: {} });
 
     const archive = await ctx.client.archiveWorkspace(workspaceId);
     await observer.ping({ requestId: "archive-observer-barrier" });
@@ -233,7 +233,7 @@ test("renaming a workspace updates every subscribed client", async () => {
   const titles = collectWorkspaceTitles(observer);
 
   try {
-    await observer.fetchWorkspaces({ subscribe: { subscriptionId: "workspace-observer" } });
+    await observer.fetchWorkspaces({ subscribe: {} });
 
     const renamed = await ctx.client.setWorkspaceTitle(workspaceId, "Renamed workspace");
     await observer.ping({ requestId: "rename-observer-barrier" });

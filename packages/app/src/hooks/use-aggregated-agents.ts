@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useRef, useSyncExternalStore } from "react";
+import { useMemo, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import equal from "fast-deep-equal";
 import { useShallow } from "zustand/shallow";
 import { useSessionStore } from "@/stores/session-store";
@@ -21,10 +21,18 @@ export interface AggregatedAgentsResult {
 
 export function useAggregatedAgents(options?: {
   includeArchived?: boolean;
+  demand?: boolean;
 }): AggregatedAgentsResult {
   const daemons = useHosts();
   const runtime = getHostRuntimeStore();
   const includeArchived = options?.includeArchived ?? false;
+  const demand = options?.demand ?? true;
+  const serverIds = useMemo(() => daemons.map((daemon) => daemon.serverId), [daemons]);
+  useEffect(() => {
+    if (!demand) return;
+    const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
+    return () => releases.forEach((release) => release());
+  }, [demand, runtime, serverIds]);
   const runtimeVersion = useSyncExternalStore(
     (onStoreChange) => runtime.subscribeAll(onStoreChange),
     () => runtime.getVersion(),
@@ -42,8 +50,9 @@ export function useAggregatedAgents(options?: {
   );
 
   const refreshAll = useCallback(() => {
-    runtime.refreshAllAgentDirectories();
-  }, [runtime]);
+    if (!demand) return;
+    for (const serverId of serverIds) void runtime.refreshDirectories(serverId);
+  }, [demand, runtime, serverIds]);
 
   // Keyed by "serverId:agentId" — reuse the previous AggregatedAgent object when
   // none of its fields changed, so downstream memo/shallow comparisons can bail early.
@@ -76,6 +85,7 @@ export function useAggregatedAgents(options?: {
           serverLabel,
           title: agent.title ?? null,
           status: agent.status,
+          turn: agent.turn,
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
           workspaceId: agent.workspaceId,
@@ -99,8 +109,8 @@ export function useAggregatedAgents(options?: {
 
     // Sort by: running agents first, then by most recent activity
     allAgents.sort((left, right) => {
-      const leftRunning = left.status === "running";
-      const rightRunning = right.status === "running";
+      const leftRunning = left.turn.phase === "open";
+      const rightRunning = right.turn.phase === "open";
       if (leftRunning && !rightRunning) {
         return -1;
       }

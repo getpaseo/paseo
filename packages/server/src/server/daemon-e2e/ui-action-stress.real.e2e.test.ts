@@ -466,7 +466,7 @@ describe.each(realProviders)("daemon E2E (real %s) - UI action stress", (provide
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: `ui-stress-normal-${provider}` },
+        subscribe: {},
       });
       const agent = await client.createAgent({
         cwd,
@@ -504,7 +504,7 @@ describe.each(realProviders)("daemon E2E (real %s) - UI action stress", (provide
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: `ui-stress-overlap-${provider}` },
+        subscribe: {},
       });
 
       for (const scenario of scenarios) {

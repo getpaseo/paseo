@@ -16,11 +16,9 @@ export interface TerminalCaptureOptions extends TerminalCommandOptions {
 
 export async function runCaptureCommand(
   terminalId: string,
-  _options: TerminalCaptureOptions,
-  command: Command,
+  options: TerminalCaptureOptions,
+  _command: Command,
 ): Promise<void> {
-  const options = command.optsWithGlobals() as TerminalCaptureOptions;
-
   try {
     const payload = await executeCaptureCommand(terminalId, options);
     if (options.json) {
@@ -55,7 +53,7 @@ async function executeCaptureCommand(
   terminalId: string,
   options: TerminalCaptureOptions,
 ): Promise<{ terminalId: string; lines: string[]; totalLines: number }> {
-  const { client } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.daemonTarget);
 
   try {
     const resolvedId = await resolveTerminalId(client, terminalId);
@@ -70,7 +68,7 @@ async function executeCaptureCommand(
     const start = options.scrollback ? 0 : parseLineNumber("--start", options.start);
     const end = parseLineNumber("--end", options.end);
 
-    return await client.captureTerminal(resolvedId, {
+    return await client.terminals.ref(resolvedId).capture({
       ...(start === undefined ? {} : { start }),
       ...(end === undefined ? {} : { end }),
       stripAnsi: !options.ansi,
@@ -78,7 +76,7 @@ async function executeCaptureCommand(
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_CAPTURE_FAILED", "capture terminal output", err);
   } finally {
-    await client.close().catch(() => {});
+    await close().catch(() => {});
   }
 }
 

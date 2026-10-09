@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { DesktopPermissionRow } from "@/desktop/components/desktop-permission-row";
 import { useDesktopPermissions } from "@/desktop/permissions/use-desktop-permissions";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 
 const ThemedRotateCw = withUnistyles(RotateCw, (theme) => ({
@@ -131,6 +131,7 @@ export function DesktopNotificationsSection() {
       </View>
       {testNotificationState.status === "success" ? (
         <Alert
+          size="sm"
           variant="success"
           title={t("settings.notifications.sentTitle")}
           description={t("settings.notifications.sentDescription")}
@@ -139,6 +140,7 @@ export function DesktopNotificationsSection() {
       ) : null}
       {testNotificationState.status === "error" ? (
         <Alert
+          size="sm"
           variant="error"
           title={t("settings.notifications.sendFailedTitle")}
           description={testNotificationState.message}

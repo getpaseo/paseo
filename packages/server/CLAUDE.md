@@ -84,7 +84,7 @@ npm run cli -- daemon status                 # Check daemon status
 
 ### Imports
 
-- Use path alias `@server/*` in server package (maps to `./src/`)
+- Use relative `.js` paths for imports within shipped server code, including type imports. TypeScript preserves `@server/*` aliases in JavaScript and declarations, and production Node has no alias resolver. Vitest tests support the alias.
 - No barrel `index.ts` re-exports — they create unnecessary indirection
 
 ### Naming

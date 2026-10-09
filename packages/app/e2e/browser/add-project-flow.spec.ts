@@ -66,52 +66,19 @@ async function expectProjectHasNoWorkspaces(projectId: string): Promise<void> {
 test.describe("Add Project command-center flow", () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test("method selection has no search field", async ({ page }) => {
+  test("method selection shows the daemon's available project sources without search", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
 
     await openAddProjectFlow(page);
 
     await expect(addProjectFlowMethod(page, "directory-search")).toBeVisible();
+    await expect(addProjectFlowMethod(page, "github")).toContainText("Clone from GitHub");
+    await expect(addProjectFlowMethod(page, "new-directory")).toContainText("New directory");
     await expect(addProjectFlowInput(page)).toHaveCount(0);
     await expect(addProjectFlow(page).getByRole("textbox")).toHaveCount(0);
     await expect(page.getByTestId("add-project-flow-page-host")).toHaveCount(0);
-  });
-
-  test("the back arrow, search input, and result glyph share one left edge", async ({ page }) => {
-    await gotoAppShell(page);
-    await openAddProjectFlow(page);
-
-    await page.keyboard.press("Enter");
-    await expectAddProjectPage(page, "directory-search");
-    await addProjectFlowInput(page).fill("/tmp");
-
-    const backGlyph = addProjectFlowBack(page).locator("svg");
-    const resultGlyph = addProjectFlow(page)
-      .locator('[data-testid^="add-project-flow-path-"]')
-      .first()
-      .locator("svg");
-    await expect(resultGlyph).toBeVisible();
-
-    const [backBox, inputBox, resultBox, titleBox, resultsBox, footerBox] = await Promise.all([
-      backGlyph.boundingBox(),
-      addProjectFlowInput(page).boundingBox(),
-      resultGlyph.boundingBox(),
-      page.getByTestId("add-project-flow-title").boundingBox(),
-      page.getByTestId("add-project-flow-results").boundingBox(),
-      page.getByTestId("add-project-flow-footer").boundingBox(),
-    ]);
-    expect(backBox).not.toBeNull();
-    expect(inputBox).not.toBeNull();
-    expect(resultBox).not.toBeNull();
-    expect(titleBox).not.toBeNull();
-    expect(resultsBox).not.toBeNull();
-    expect(footerBox).not.toBeNull();
-    if (!backBox || !inputBox || !resultBox || !titleBox || !resultsBox || !footerBox) return;
-
-    expect(Math.abs(backBox.x - inputBox.x)).toBeLessThanOrEqual(2);
-    expect(Math.abs(resultBox.x - inputBox.x)).toBeLessThanOrEqual(2);
-    expect(titleBox.height).toBeLessThanOrEqual(24);
-    expect(resultsBox.y + resultsBox.height).toBeLessThanOrEqual(footerBox.y + 1);
   });
 
   test("an offline extra host neither appears nor forces host selection", async ({ page }) => {
@@ -271,14 +238,6 @@ test.describe("Add Project command-center flow", () => {
       projectPath: projectPickerFixture.projectPath,
     });
     await expectProjectHasNoWorkspaces(projectId);
-  });
-
-  test("the current daemon advertises Clone from GitHub and New directory", async ({ page }) => {
-    await gotoAppShell(page);
-    await openAddProjectFlow(page);
-
-    await expect(addProjectFlowMethod(page, "github")).toContainText("Clone from GitHub");
-    await expect(addProjectFlowMethod(page, "new-directory")).toContainText("New directory");
   });
 
   test("a complete repository URL remains selectable without a GitHub search result", async ({

@@ -1,248 +1,34 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PluginIdSchema } from "@getpaseo/protocol/messages";
+import { resolveCliVersion } from "../../version.js";
 
-const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
-  import type { PaseoApi } from "@getpaseo/client";
-  import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
+const OVERVIEW = `<!--
+OVERVIEW.md is required to list your plugin in the registry. Keep it beside
+paseo-plugin.json in your repository at the pinned commit and in your npm package.
+Replace this comment with useful facts before publishing.
 
-  export interface PluginRpcContract<
-    InputSchema extends ZodType = ZodType,
-    OutputSchema extends ZodType = ZodType,
-  > {
-    name: string;
-    input: InputSchema;
-    output: OutputSchema;
-  }
+This overview is for people choosing a plugin in Paseo, on the plugin page under
+its install command. README assumes a GitHub audience and includes technical
+details, installation instructions, and badges. Long, AI-generated READMEs leave
+people reading past that material to understand what the plugin does.
 
-  export interface PluginAttachmentItem {
-    id: string;
-    identifier: string;
-    title: string;
-    subtitle?: string;
-    url: string;
-    text: string;
-    resourceType: string;
-  }
+Write these parts in order, including only what helps someone decide to install:
 
-  export interface PluginAttachmentSearchPayload {
-    items: PluginAttachmentItem[];
-  }
+1. Describe what your plugin is and does in plain terms first.
+2. Explain how it works only when it is not obvious.
+3. Explain setup when needed: settings, accounts, tokens, providers, tools, or
+   other plugins. Include applicable daemon version and operating system
+   requirements. Setup guidance is allowed; installation instructions are not.
+4. Explain capabilities and settings worth understanding, what each option does,
+   what the plugin reads or sends and where, permissions, and known limits.
 
-  export interface PluginAttachmentSourceContribution {
-    id: string;
-    title: string;
-    icon: string;
-    pickerTitle: string;
-    searchPlaceholder: string;
-    search: PluginRpcContract;
-  }
-
-  export interface PluginHandlerContext {
-    paseo: PaseoApi;
-  }
-
-  export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(definition: {
-    name: string;
-    input: InputSchema;
-    output: OutputSchema;
-  }): PluginRpcContract<InputSchema, OutputSchema>;
-
-  export function defineAttachmentSource<Definition extends PluginAttachmentSourceContribution>(
-    definition: Definition,
-  ): Definition;
-
-  export const PluginAttachmentItemSchema: import("zod").ZodType<PluginAttachmentItem>;
-  export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
-}
-
-declare module "@getpaseo/plugin" {
-  import type { ComponentType } from "react";
-  import type { PaseoApi } from "@getpaseo/client";
-  import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
-  import type {
-    PluginAttachmentSourceContribution,
-    PluginHandlerContext,
-    PluginRpcContract,
-  } from "@getpaseo/plugin/server";
-
-  export {
-    PluginAttachmentItemSchema,
-    PluginAttachmentSearchPayloadSchema,
-    defineAttachmentSource,
-    defineRpc,
-    type PluginAttachmentItem,
-    type PluginAttachmentSearchPayload,
-    type PluginAttachmentSourceContribution,
-    type PluginHandlerContext,
-    type PluginRpcContract,
-  } from "@getpaseo/plugin/server";
-
-  export interface PluginTheme {
-    readonly colors: {
-      readonly surface0: string;
-      readonly foreground: string;
-      readonly foregroundMuted: string;
-      readonly accent: string;
-      readonly accentForeground: string;
-      readonly statusDanger: string;
-    };
-  }
-
-  export interface PluginHostProps {
-    theme: PluginTheme;
-    host: { id: string; label: string };
-    layout: { compact: boolean; platform: "ios" | "android" | "web" };
-  }
-
-  export interface PluginSurfaceProps extends PluginHostProps {}
-
-  export interface PluginWorkspaceSnapshot {
-    readonly id: string;
-    readonly projectId: string;
-    readonly projectDisplayName: string;
-    readonly projectRootPath: string;
-    readonly directory: string;
-    readonly projectKind: "git" | "non_git" | "directory";
-    readonly kind: "directory" | "local_checkout" | "checkout" | "worktree";
-    readonly name: string;
-    readonly title: string | null;
-    readonly status: "needs_input" | "failed" | "running" | "attention" | "done";
-    readonly statusEnteredAt: string | null;
-    readonly archivingAt: string | null;
-    readonly diffStat: { readonly additions: number; readonly deletions: number } | null;
-  }
-
-  export interface PluginAgentSnapshot {
-    readonly id: string;
-    readonly workspaceId: string;
-    readonly provider: string;
-    readonly status: "initializing" | "idle" | "running" | "error" | "closed";
-    readonly createdAt: string;
-    readonly updatedAt: string;
-    readonly lastActivityAt: string;
-    readonly title: string | null;
-    readonly cwd: string;
-    readonly model: string | null;
-    readonly currentModeId: string | null;
-    readonly thinkingOptionId: string | null;
-    readonly requiresAttention: boolean;
-    readonly attentionReason: "finished" | "error" | "permission" | null;
-    readonly parentAgentId: string | null;
-    readonly labels: Readonly<Record<string, string>>;
-  }
-
-  export interface PluginWorkspacePanelProps extends PluginHostProps {
-    context: "workspace";
-    workspaceId: string;
-  }
-
-  export interface PluginAgentPanelProps extends PluginHostProps {
-    context: "agent";
-    workspaceId: string;
-    agentId: string;
-  }
-
-  export type PluginWorkspacePanelContribution =
-    | { id: string; title: string; icon: string; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
-    | { id: string; title: string; icon: string; context: "agent"; Component: ComponentType<PluginAgentPanelProps> };
-
-  export interface PluginSidebarContribution {
-    id: string;
-    title: string;
-    icon: string;
-    surface: string;
-  }
-
-  export interface PluginThemeColors {
-    background: string;
-    foreground: string;
-    raised: string;
-    control: string;
-    border: string;
-    accent?: string;
-    mutedForeground: string;
-    ring: string;
-  }
-
-  export interface PluginThemeContribution {
-    id: string;
-    name: string;
-    appearance: "light" | "dark";
-    colors: PluginThemeColors;
-  }
-
-  export interface PluginSurfaceContribution {
-    id: string;
-    Component: ComponentType<PluginSurfaceProps>;
-  }
-
-  export interface PluginCommandCapabilities {
-    paseo: PaseoApi;
-    rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
-      contract: PluginRpcContract<InputSchema, OutputSchema>,
-      input: ZodInput<InputSchema>,
-    ): Promise<ZodOutput<OutputSchema>>;
-    openSurface(id: string): void;
-  }
-
-  export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
-    context: "global";
-  }
-
-  export interface PluginWorkspaceCommandContext extends PluginCommandCapabilities {
-    context: "workspace";
-    workspace: PluginWorkspaceSnapshot;
-    openPanel(id: string): void;
-  }
-
-  export interface PluginAgentCommandContext extends PluginCommandCapabilities {
-    context: "agent";
-    workspace: PluginWorkspaceSnapshot;
-    agent: PluginAgentSnapshot;
-    openPanel(id: string): void;
-  }
-
-  export type PluginCommandCenterItemContribution =
-    | { id: string; title: string; icon: string; keywords?: readonly string[]; context: "global"; onSelect(context: PluginGlobalCommandContext): void | Promise<void> }
-    | { id: string; title: string; icon: string; keywords?: readonly string[]; context: "workspace"; onSelect(context: PluginWorkspaceCommandContext): void | Promise<void> }
-    | { id: string; title: string; icon: string; keywords?: readonly string[]; context: "agent"; onSelect(context: PluginAgentCommandContext): void | Promise<void> };
-
-  export interface PluginContext {
-    handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
-      contract: PluginRpcContract<InputSchema, OutputSchema>,
-      handler: (
-        input: ZodOutput<InputSchema>,
-        context: PluginHandlerContext,
-      ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
-    ): void;
-    addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
-    addSidebarItem(contribution: PluginSidebarContribution): void;
-    addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
-    addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
-    addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
-    addTheme(contribution: PluginThemeContribution): void;
-  }
-
-  export type PluginCleanup = () => void | Promise<void>;
-  export type PluginContribution = (plugin: PluginContext) => PluginCleanup;
-
-  export function useRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
-    contract: PluginRpcContract<InputSchema, OutputSchema>,
-  ): (input: ZodInput<InputSchema>) => Promise<ZodOutput<OutputSchema>>;
-
-  export function usePaseo(): PaseoApi;
-
-  export function useWorkspace<Selection>(
-    workspaceId: string,
-    selector: (workspace: PluginWorkspaceSnapshot) => Selection,
-  ): Selection | null;
-
-  export function useAgent<Selection>(
-    agentId: string,
-    selector: (agent: PluginAgentSnapshot) => Selection,
-  ): Selection | null;
-}
+Length follows complexity; a theme needs one paragraph. Choose headings only
+when they help. Use sentence case and plain factual language, with no em dashes.
+Omit installation commands, badges, changelog, contributing or license sections,
+marketing, and unsupported claims. Avoid implementation filler such as empty
+cleanup functions, theme-token field lists, or lists of absent features.
+-->
 `;
 
 const TSCONFIG = {
@@ -250,7 +36,8 @@ const TSCONFIG = {
     target: "ES2020",
     module: "ESNext",
     moduleResolution: "Bundler",
-    lib: ["ES2023", "DOM"],
+    lib: ["ES2023"],
+    types: ["react"],
     jsx: "react-jsx",
     strict: true,
     skipLibCheck: true,
@@ -261,20 +48,66 @@ const TSCONFIG = {
   include: ["**/*.ts", "**/*.tsx"],
 };
 
-const ENTRY = `import type { PluginContext } from "@getpaseo/plugin";
-import { MainSurface } from "./main.client";
+const CLIENT_ENTRY = `import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import { GreetingScreen } from "./client/greeting";
 
-export default function contribute(plugin: PluginContext) {
-  plugin.addSurface("main", MainSurface);
+function GreetingItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  return (
+    <SidebarRow
+      icon="MessageCircle"
+      active={currentScreen?.screenId === "greeting"}
+      onPress={() => openScreen({ screenId: "greeting" })}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addScreen({ id: "greeting", title: "Greeting", Component: GreetingScreen });
+  client.addSidebarHeaderItem({ id: "greeting", title: "Greeting", Component: GreetingItem });
   return () => {};
 }
 `;
 
-const CLIENT_SURFACE = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
-import React, { useMemo } from "react";
-import { Text, View } from "react-native";
+const SERVER_ENTRY = `import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { createGreeting } from "./server/greeting";
+import { greetingRpc } from "./shared/greeting";
 
-export function MainSurface({ theme, layout }: PluginSurfaceProps) {
+export default function contribute(server: PluginServerContext) {
+  server.handle(greetingRpc, createGreeting);
+  return () => {};
+}
+`;
+
+const SHARED_GREETING = `import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const greetingRpc = defineRpc({
+  name: "greeting.create",
+  input: z.object({ name: z.string() }),
+  output: z.object({ message: z.string() }),
+});
+`;
+
+const SERVER_GREETING = `import type { RpcInput } from "@getpaseo/plugin";
+import { greetingRpc } from "../shared/greeting";
+
+export function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
+  return { message: "Hello, " + name + "!" };
+}
+`;
+
+const CLIENT_GREETING = `import type { PluginScreenProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { useMutation } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { Pressable, Text, View } from "react-native";
+import { greetingRpc } from "../shared/greeting";
+import { openExternal } from "./web";
+
+export function GreetingScreen({ theme, layout }: PluginScreenProps) {
+  const createGreeting = useRpc(greetingRpc);
+  const greeting = useMutation({ mutationFn: createGreeting });
   const styles = useMemo(
     () => ({
       screen: {
@@ -283,14 +116,46 @@ export function MainSurface({ theme, layout }: PluginSurfaceProps) {
         backgroundColor: theme.colors.surface0,
       },
       text: { color: theme.colors.foreground },
+      button: { padding: 12, backgroundColor: theme.colors.accent },
+      buttonText: { color: theme.colors.accentForeground },
     }),
     [theme, layout.compact],
   );
   return (
     <View style={styles.screen}>
-      <Text style={styles.text}>Hello from my plugin</Text>
+      <Text style={styles.text}>{greeting.data?.message ?? "Ask the daemon for a greeting."}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Create greeting"
+        style={styles.button}
+        onPress={() => greeting.mutate({ name: "Paseo" })}
+      >
+        <Text style={styles.buttonText}>Create greeting</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="Open the Paseo website"
+        style={styles.button}
+        onPress={() => openExternal("https://paseo.sh")}
+      >
+        <Text style={styles.buttonText}>Open paseo.sh</Text>
+      </Pressable>
     </View>
   );
+}
+`;
+
+const CLIENT_WEB = `import { Linking, Platform } from "react-native";
+
+// This plugin typechecks without the DOM library. Declare only what this module uses.
+declare const window: { open(url: string, target: string, features: string): unknown };
+
+export async function openExternal(url: string): Promise<void> {
+  if (Platform.OS === "web") {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  await Linking.openURL(url);
 }
 `;
 
@@ -311,13 +176,25 @@ export async function scaffoldPluginDirectory(
     throw new Error(`Plugin directory must be empty: ${directory}`);
   }
 
+  const version = resolveCliVersion();
   const packageJson = {
     name: id,
     private: true,
     version: "0.0.0",
+    files: [
+      "paseo-plugin.json",
+      "OVERVIEW.md",
+      "index.client.ts",
+      "index.client.tsx",
+      "index.server.ts",
+      "index.server.tsx",
+      "client/",
+      "server/",
+      "shared/",
+    ],
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
-      "@getpaseo/client": "^0.4.0",
+      "@getpaseo/plugin": version,
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",
@@ -327,13 +204,33 @@ export async function scaffoldPluginDirectory(
     },
   };
   const files = new Map<string, string>([
-    ["paseo-plugin.json", `${JSON.stringify({ id }, null, 2)}\n`],
+    [
+      "paseo-plugin.json",
+      `${JSON.stringify(
+        {
+          id,
+          $comment:
+            'Add "name": "My plugin" to set a display name. Add "icon": "assets/icon.png" for a PNG inside the package. Add image or video paths (relative to this manifest) or HTTPS URLs to media. Include local assets in package.json files.',
+          media: [],
+          requirements: { paseo: `>=${version}` },
+        },
+        null,
+        2,
+      )}\n`,
+    ],
+    ["OVERVIEW.md", OVERVIEW],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["tsconfig.json", `${JSON.stringify(TSCONFIG, null, 2)}\n`],
-    ["paseo-plugin.d.ts", SDK_DECLARATIONS],
-    ["index.ts", ENTRY],
-    ["main.client.tsx", CLIENT_SURFACE],
+    ["index.client.tsx", CLIENT_ENTRY],
+    ["index.server.ts", SERVER_ENTRY],
+    ["shared/greeting.ts", SHARED_GREETING],
+    ["server/greeting.ts", SERVER_GREETING],
+    ["client/greeting.tsx", CLIENT_GREETING],
+    ["client/web.ts", CLIENT_WEB],
   ]);
+  await Promise.all(
+    ["shared", "server", "client"].map((name) => mkdir(path.join(directory, name))),
+  );
   await Promise.all(
     [...files].map(([filename, contents]) =>
       writeFile(path.join(directory, filename), contents, { flag: "wx" }),

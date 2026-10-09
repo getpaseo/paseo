@@ -6,26 +6,30 @@ import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 
-const OMP_SESSION_DIR = "~/.omp/agent/sessions";
 const DEFAULT_OMP_MODE_ID = "full";
+const DEFAULT_OMP_READY_TIMEOUT_MS = 20_000;
+const DEFAULT_OMP_RPC_TIMEOUT_MS = 60_000;
 
 export const MIN_SUPPORTED_OMP_VERSION = "16.3.9";
 export { OMP_MODES };
 
-export const OmpProviderParamsSchema = z
+export const OmpProviderOptionsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
+    rpcTimeoutMs: z.number().int().positive().optional(),
     smolModel: z.string().min(1).optional(),
     slowModel: z.string().min(1).optional(),
     planModel: z.string().min(1).optional(),
   })
   .strict();
 
-export interface OmpRuntimeProviderParams {
-  sessionDir: string;
+export interface OmpRuntimeOptions {
+  sessionDir?: string;
+  readyTimeoutMs: number;
+  rpcTimeoutMs: number;
 }
 
-export interface OmpModelRoleParams {
+export interface OmpModelRoles {
   smolModel?: string;
   slowModel?: string;
   planModel?: string;
@@ -33,9 +37,9 @@ export interface OmpModelRoleParams {
 
 export function resolveOmpLaunchMode(
   modeId: string | undefined,
-  modelRoleParams: OmpModelRoleParams = {},
+  modelRoles: OmpModelRoles = {},
 ): { modeId: string; extraArgs: string[] } {
-  const modelRoleArgs = resolveOmpModelRoleArgs(modelRoleParams);
+  const modelRoleArgs = resolveOmpModelRoleArgs(modelRoles);
   switch (modeId ?? DEFAULT_OMP_MODE_ID) {
     case "full":
       return { modeId: "full", extraArgs: ["--approval-mode", "yolo", ...modelRoleArgs] };
@@ -54,11 +58,11 @@ export function resolveOmpLaunchMode(
   }
 }
 
-function resolveOmpModelRoleArgs(modelRoleParams: OmpModelRoleParams): string[] {
+function resolveOmpModelRoleArgs(modelRoles: OmpModelRoles): string[] {
   const args: string[] = [];
-  if (modelRoleParams.smolModel) args.push("--smol", modelRoleParams.smolModel);
-  if (modelRoleParams.slowModel) args.push("--slow", modelRoleParams.slowModel);
-  if (modelRoleParams.planModel) args.push("--plan", modelRoleParams.planModel);
+  if (modelRoles.smolModel) args.push("--smol", modelRoles.smolModel);
+  if (modelRoles.slowModel) args.push("--slow", modelRoles.slowModel);
+  if (modelRoles.planModel) args.push("--plan", modelRoles.planModel);
   return args;
 }
 
@@ -124,17 +128,22 @@ export function formatOmpVersionSupport(versionOutput: string): string {
   return `${match[1]}.${match[2]}.${match[3]} (${supported ? "supported" : "unsupported"}; minimum ${MIN_SUPPORTED_OMP_VERSION})`;
 }
 
-export function resolveOmpProviderParams(providerParams: unknown): {
-  runtimeProviderParams: OmpRuntimeProviderParams;
-  modelRoleParams: OmpModelRoleParams;
+export function resolveOmpProviderOptions(providerOptions: unknown): {
+  runtimeOptions: OmpRuntimeOptions;
+  modelRoles: OmpModelRoles;
 } {
-  const params = OmpProviderParamsSchema.parse(providerParams ?? {});
+  const options = OmpProviderOptionsSchema.parse(providerOptions ?? {});
+  const configuredRpcTimeoutMs = options.rpcTimeoutMs;
   return {
-    runtimeProviderParams: { sessionDir: params.sessionDir ?? OMP_SESSION_DIR },
-    modelRoleParams: {
-      ...(params.smolModel ? { smolModel: params.smolModel } : {}),
-      ...(params.slowModel ? { slowModel: params.slowModel } : {}),
-      ...(params.planModel ? { planModel: params.planModel } : {}),
+    runtimeOptions: {
+      sessionDir: options.sessionDir,
+      readyTimeoutMs: configuredRpcTimeoutMs ?? DEFAULT_OMP_READY_TIMEOUT_MS,
+      rpcTimeoutMs: configuredRpcTimeoutMs ?? DEFAULT_OMP_RPC_TIMEOUT_MS,
+    },
+    modelRoles: {
+      ...(options.smolModel ? { smolModel: options.smolModel } : {}),
+      ...(options.slowModel ? { slowModel: options.slowModel } : {}),
+      ...(options.planModel ? { planModel: options.planModel } : {}),
     },
   };
 }

@@ -54,6 +54,24 @@ describe("scoreMatch", () => {
     expect(scoreMatch("art", "party")).toEqual({ tier: 4, offset: 1 });
   });
 
+  it("does not assemble one query word across whitespace-separated words", () => {
+    for (const separator of [" ", "\t", "\n", "\u00a0"]) {
+      expect(scoreMatch("terminal", `term${separator}inal`)).toBeNull();
+    }
+    expect(
+      scoreMatch("terminal", "Let me diagnose this problem in a diagnose this problem and", {
+        fuzzy: fuzzyPolicyForToken("terminal"),
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps subsequences within a word, including names and later words", () => {
+    expect(scoreMatch("trmnl", "Fix terminal resizing")).toEqual({ tier: 5, offset: 4, spread: 8 });
+    expect(scoreMatch("abc", "AgentBrowserConfig")?.tier).toBe(5);
+    expect(scoreMatch("pasbab", "paseo-babysit")?.tier).toBe(5);
+    expect(scoreMatch("confg", "check configuration")?.offset).toBe(6);
+  });
+
   it("returns null when query is not found", () => {
     expect(scoreMatch("xyz", "feat/pi-direct-sdk")).toBeNull();
   });
@@ -111,6 +129,15 @@ describe("scoreMatch typo tolerance", () => {
     expect(scoreMatch("confg", "revamp configuration editor")?.tier).toBe(5);
     expect(scoreMatch("confug", "revamp configuration editor")).toBeNull();
     expect(scoreMatch("confug", "revamp configuration editor", typoTolerant)?.tier).toBe(6);
+  });
+
+  it("drops the subsequence tier when the caller opts out", () => {
+    // Callers that preselect a row need a near miss to read as no match, so they turn this off.
+    // Only the subsequence tier goes; every contiguous tier still scores the same.
+    expect(scoreMatch("confg", "revamp configuration editor", { subsequence: false })).toBeNull();
+    expect(scoreMatch("config", "revamp configuration editor", { subsequence: false })?.tier).toBe(
+      3,
+    );
   });
 
   it("reports the offset and edit distance of the word it matched", () => {
@@ -210,6 +237,15 @@ describe("scoreTextFields", () => {
     ).not.toBeNull();
     expect(scoreTextFields("stipe bulling", ["add stripe billing"])).toBeNull();
   });
+
+  it("carries the subsequence opt-out down to each token", () => {
+    const fields = ["Label as Design"];
+    // Splitting on whitespace is what the opt-out keeps; only the run-together form goes.
+    expect(scoreTextFields("lab des", fields, { subsequence: false })).not.toBeNull();
+    expect(scoreTextFields("labdes", fields, { subsequence: false })).toBeNull();
+    expect(scoreTextFields("labdes", fields)).toBeNull();
+    expect(scoreTextFields("lbl dsgn", fields)).not.toBeNull();
+  });
 });
 
 describe("compareMatchScores", () => {
@@ -239,6 +275,10 @@ describe("matchRanges", () => {
 
   it("marks the scattered characters a subsequence walked", () => {
     expect(markUp("confg", "configuration")).toBe("[conf]i[g]uration");
+  });
+
+  it("highlights only the word selected after an earlier partial subsequence", () => {
+    expect(markUp("confg", "check configuration")).toBe("check [conf]i[g]uration");
   });
 
   it("marks the whole word a typo resolved to", () => {

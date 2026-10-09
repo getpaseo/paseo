@@ -4,6 +4,7 @@ import {
   clickChatOutlineRowEdge,
   disableChatOutlineFromAppearance,
   expectActiveChatOutlinePrompt,
+  expectActiveChatOutlinePromptMovedFrom,
   expectChatOutlinePreview,
   expectChatOutlinePrompts,
   expectChatOutlinePromptToRemainBare,
@@ -16,10 +17,14 @@ import {
   hoverChatOutlinePrompt,
   chatOutlineRail,
   movePointerOffChatOutline,
+  observePromptIndexRequests,
   pointAtChatOutlineRowEdge,
   pressEnterOnFocusedPrompt,
   splitCurrentPanelRight,
+  withStreamingMarkdownOutline,
+  expectReadingStreamedMarkdown,
 } from "../support/helpers/chat-outline";
+import { createCreationScenario } from "../support/helpers/creation";
 import {
   expectTimelineAtMaximumScrollWithPromptVisible,
   expectTimelinePromptNotMounted,
@@ -29,7 +34,6 @@ import {
   openAgentTimeline,
   scrollThroughOlderHistoryPages,
   scrollTimelineToNewestLoadedEdge,
-  scrollTimelineToOldestLoadedEdge,
   seedLongMockAgentTimeline,
   type LongTimelineAgent,
 } from "../support/helpers/timeline-pagination";
@@ -41,6 +45,31 @@ const WIDE_VIEWPORT = { width: 1440, height: 900 };
 const LOADED_TURNS = 16;
 
 test.describe("desktop chat outline", () => {
+  test("keeps the prompt marked while reading split Markdown blocks and after completion", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const prompt = "Explain in several paragraphs.";
+    await withStreamingMarkdownOutline(async (agent) => {
+      await agent.client.sendAgentMessage(agent.agentId, "Earlier prompt.");
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await page.setViewportSize(WIDE_VIEWPORT);
+      await openAgentTimeline(page, agent);
+      await agent.client.sendAgentMessage(agent.agentId, prompt);
+      await expectChatOutlinePrompts(page, 2);
+
+      await expectReadingStreamedMarkdown(page, prompt);
+      await expectActiveChatOutlinePrompt(page, 2);
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await expectActiveChatOutlinePrompt(page, 2);
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expectActiveChatOutlinePrompt(page, 2);
+      await clickChatOutlineRowEdge(page, 2);
+      await expectTimelinePromptLandedBelowTop(page, prompt);
+    });
+  });
+
   test("indexes unloaded prompts and jumps with one bounded merged page", async ({ page }) => {
     test.setTimeout(120_000);
     const agent = await seedLongMockAgentTimeline({ turns: 80 });
@@ -130,11 +159,12 @@ test.describe("desktop chat outline", () => {
       await expectOneActiveChatOutlinePrompt(page);
 
       await clickChatOutlineRowEdge(page, 4);
-      await expectTimelinePromptVisible(page, agent.prompts[3]);
+      await expectTimelinePromptLandedBelowTop(page, agent.prompts[3]);
       await expectActiveChatOutlinePrompt(page, 4);
 
-      await scrollTimelineToOldestLoadedEdge(page);
-      await expectActiveChatOutlinePrompt(page, 1);
+      await scrollTimelineToNewestLoadedEdge(page);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      await expectActiveChatOutlinePromptMovedFrom(page, 4);
     });
 
     test("keeps a clicked prompt free of persistent selection chrome", async ({ page }) => {
@@ -237,4 +267,22 @@ test.describe("desktop chat outline", () => {
       await agent.cleanup();
     }
   });
+});
+
+test("indexes a new agent's prompts only once the agent exists", async ({ page }) => {
+  const promptIndex = await observePromptIndexRequests(page);
+  const creation = await createCreationScenario(page);
+  try {
+    await page.setViewportSize(WIDE_VIEWPORT);
+    await creation.openAgentDraft();
+    await creation.submitPrompt("Start an agent with an outline.");
+    await creation.expectPromptVisible();
+
+    const agentIds = await creation.agentIds();
+    expect(agentIds).toHaveLength(1);
+    await promptIndex.waitForRequestFor(agentIds[0]!);
+    expect(promptIndex.requestedAgentIds()).toEqual(agentIds);
+  } finally {
+    await creation.cleanup();
+  }
 });

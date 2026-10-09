@@ -50,7 +50,8 @@ export function render<T>(
 /** Convert an unknown error to a CommandError */
 export function toCommandError(error: unknown): CommandError {
   if (isCommandError(error)) {
-    return error;
+    // Error.message and class getters are not enumerable; materialize the output contract.
+    return { ...error, code: error.code, message: error.message, details: error.details };
   }
 
   if (error instanceof Error) {

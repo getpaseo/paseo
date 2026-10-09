@@ -6,11 +6,12 @@ import {
   resolveStartupRoute,
   shouldRunStartupGiveUpTimer,
   startHostRuntimeBootstrap,
+  bindHostRuntimeAppState,
 } from "./host-runtime-bootstrap";
 import type { DaemonStartResult, StartDaemonIfEnabledInput } from "@/runtime/daemon-start-service";
 
 describe("startHostRuntimeBootstrap", () => {
-  it("boots the host registry and starts the managed-daemon decision as one operation", async () => {
+  it("boots the host registry and starts the managed-daemon decision independently", async () => {
     const events: string[] = [];
     const shouldStartDaemon = async () => true;
     const store = {
@@ -39,9 +40,10 @@ describe("startHostRuntimeBootstrap", () => {
 
     expect(events).toEqual(["boot", "daemon-start-decision"]);
     expect(await receivedDecisions[0]).toBe(true);
+    expect(events).toEqual(["boot", "daemon-start-decision"]);
   });
 
-  it("waits for the host registry to load before evaluating managed-daemon startup", async () => {
+  it("loads the registry before evaluating managed-daemon startup", async () => {
     const events: string[] = [];
     let resolveBoot!: () => void;
     const booted = new Promise<void>((resolve) => {
@@ -392,4 +394,37 @@ describe("resolveHostIndexRoute", () => {
       }),
     ).toEqual("/open-project");
   });
+});
+
+describe("host runtime app lifecycle", () => {
+  it.each(["inactive", "background"] as const)(
+    "applies initial visibility and forwards lifecycle changes when mounted %s",
+    (currentState) => {
+      const visibility: boolean[] = [];
+      let listener: ((state: "active" | "inactive" | "background") => void) | undefined;
+      let subscribed = true;
+      const dispose = bindHostRuntimeAppState(
+        { setAppVisible: (visible) => visibility.push(visible) },
+        {
+          currentState,
+          addEventListener: (_event, handler) => {
+            listener = handler;
+            return {
+              remove: () => {
+                subscribed = false;
+              },
+            };
+          },
+        },
+      );
+      expect(visibility).toEqual([false]);
+      listener?.("active");
+      listener?.("inactive");
+      listener?.("background");
+      listener?.("active");
+      expect(visibility).toEqual([false, true, false, false, true]);
+      dispose();
+      expect(subscribed).toBe(false);
+    },
+  );
 });

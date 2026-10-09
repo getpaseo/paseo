@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as VtcodeRouteImport } from "./routes/vtcode";
+import { Route as TermsRouteImport } from "./routes/terms";
 import { Route as StakpakRouteImport } from "./routes/stakpak";
 import { Route as SponsorRouteImport } from "./routes/sponsor";
 import { Route as SigitRouteImport } from "./routes/sigit";
@@ -21,6 +22,7 @@ import { Route as PiRouteImport } from "./routes/pi";
 import { Route as OpencodeRouteImport } from "./routes/opencode";
 import { Route as OmpRouteImport } from "./routes/omp";
 import { Route as NovaRouteImport } from "./routes/nova";
+import { Route as MuseCodeRouteImport } from "./routes/muse-code";
 import { Route as MistralVibeRouteImport } from "./routes/mistral-vibe";
 import { Route as MinionCodeRouteImport } from "./routes/minion-code";
 import { Route as KimiRouteImport } from "./routes/kimi";
@@ -53,25 +55,38 @@ import { Route as ChangelogRouteImport } from "./routes/changelog";
 import { Route as BlogRouteImport } from "./routes/blog";
 import { Route as AutohandRouteImport } from "./routes/autohand";
 import { Route as AuggieRouteImport } from "./routes/auggie";
+import { Route as AntigravityRouteImport } from "./routes/antigravity";
 import { Route as AmpRouteImport } from "./routes/amp";
 import { Route as AgoragenticRouteImport } from "./routes/agoragentic";
 import { Route as AgentsRouteImport } from "./routes/agents";
 import { Route as IndexRouteImport } from "./routes/index";
+import { Route as PluginsIndexRouteImport } from "./routes/plugins/index";
 import { Route as DocsIndexRouteImport } from "./routes/docs/index";
 import { Route as BlogIndexRouteImport } from "./routes/blog/index";
+import { Route as PluginsAllRouteImport } from "./routes/plugins/all";
+import { Route as PluginsOwnerRouteImport } from "./routes/plugins/$owner";
+import { Route as DownloadThanksRouteImport } from "./routes/download_.thanks";
 import { Route as DocsSplatRouteImport } from "./routes/docs/$";
 import { Route as BlogSplatRouteImport } from "./routes/blog/$";
 import { Route as AlternativesSupersetRouteImport } from "./routes/alternatives/superset";
+import { Route as AlternativesOrcaRouteImport } from "./routes/alternatives/orca";
 import { Route as AlternativesOpencodeDesktopRouteImport } from "./routes/alternatives/opencode-desktop";
 import { Route as AlternativesOpenchamberRouteImport } from "./routes/alternatives/openchamber";
 import { Route as AlternativesHappyCoderRouteImport } from "./routes/alternatives/happy-coder";
 import { Route as AlternativesConductorRouteImport } from "./routes/alternatives/conductor";
 import { Route as AlternativesCodexAppRouteImport } from "./routes/alternatives/codex-app";
 import { Route as AlternativesClaudeDesktopRouteImport } from "./routes/alternatives/claude-desktop";
+import { Route as PluginsCategorySlugRouteImport } from "./routes/plugins/category/$slug";
+import { Route as PluginsOwnerSlugRouteImport } from "./routes/plugins/$owner_.$slug";
 
 const VtcodeRoute = VtcodeRouteImport.update({
   id: "/vtcode",
   path: "/vtcode",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const TermsRoute = TermsRouteImport.update({
+  id: "/terms",
+  path: "/terms",
   getParentRoute: () => rootRouteImport,
 } as any);
 const StakpakRoute = StakpakRouteImport.update({
@@ -127,6 +142,11 @@ const OmpRoute = OmpRouteImport.update({
 const NovaRoute = NovaRouteImport.update({
   id: "/nova",
   path: "/nova",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const MuseCodeRoute = MuseCodeRouteImport.update({
+  id: "/muse-code",
+  path: "/muse-code",
   getParentRoute: () => rootRouteImport,
 } as any);
 const MistralVibeRoute = MistralVibeRouteImport.update({
@@ -289,6 +309,11 @@ const AuggieRoute = AuggieRouteImport.update({
   path: "/auggie",
   getParentRoute: () => rootRouteImport,
 } as any);
+const AntigravityRoute = AntigravityRouteImport.update({
+  id: "/antigravity",
+  path: "/antigravity",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const AmpRoute = AmpRouteImport.update({
   id: "/amp",
   path: "/amp",
@@ -309,6 +334,11 @@ const IndexRoute = IndexRouteImport.update({
   path: "/",
   getParentRoute: () => rootRouteImport,
 } as any);
+const PluginsIndexRoute = PluginsIndexRouteImport.update({
+  id: "/plugins/",
+  path: "/plugins/",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DocsIndexRoute = DocsIndexRouteImport.update({
   id: "/",
   path: "/",
@@ -318,6 +348,21 @@ const BlogIndexRoute = BlogIndexRouteImport.update({
   id: "/",
   path: "/",
   getParentRoute: () => BlogRoute,
+} as any);
+const PluginsAllRoute = PluginsAllRouteImport.update({
+  id: "/plugins/all",
+  path: "/plugins/all",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PluginsOwnerRoute = PluginsOwnerRouteImport.update({
+  id: "/plugins/$owner",
+  path: "/plugins/$owner",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const DownloadThanksRoute = DownloadThanksRouteImport.update({
+  id: "/download_/thanks",
+  path: "/download/thanks",
+  getParentRoute: () => rootRouteImport,
 } as any);
 const DocsSplatRoute = DocsSplatRouteImport.update({
   id: "/$",
@@ -332,6 +377,11 @@ const BlogSplatRoute = BlogSplatRouteImport.update({
 const AlternativesSupersetRoute = AlternativesSupersetRouteImport.update({
   id: "/alternatives/superset",
   path: "/alternatives/superset",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const AlternativesOrcaRoute = AlternativesOrcaRouteImport.update({
+  id: "/alternatives/orca",
+  path: "/alternatives/orca",
   getParentRoute: () => rootRouteImport,
 } as any);
 const AlternativesOpencodeDesktopRoute =
@@ -366,12 +416,23 @@ const AlternativesClaudeDesktopRoute =
     path: "/alternatives/claude-desktop",
     getParentRoute: () => rootRouteImport,
   } as any);
+const PluginsCategorySlugRoute = PluginsCategorySlugRouteImport.update({
+  id: "/plugins/category/$slug",
+  path: "/plugins/category/$slug",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PluginsOwnerSlugRoute = PluginsOwnerSlugRouteImport.update({
+  id: "/plugins/$owner_/$slug",
+  path: "/plugins/$owner/$slug",
+  getParentRoute: () => rootRouteImport,
+} as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/blog": typeof BlogRouteWithChildren;
@@ -404,6 +465,7 @@ export interface FileRoutesByFullPath {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/muse-code": typeof MuseCodeRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -415,6 +477,7 @@ export interface FileRoutesByFullPath {
   "/sigit": typeof SigitRoute;
   "/sponsor": typeof SponsorRoute;
   "/stakpak": typeof StakpakRoute;
+  "/terms": typeof TermsRoute;
   "/vtcode": typeof VtcodeRoute;
   "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
   "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
@@ -422,17 +485,25 @@ export interface FileRoutesByFullPath {
   "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
   "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
   "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
+  "/alternatives/orca": typeof AlternativesOrcaRoute;
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
+  "/download/thanks": typeof DownloadThanksRoute;
+  "/plugins/$owner": typeof PluginsOwnerRoute;
+  "/plugins/all": typeof PluginsAllRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
+  "/plugins/": typeof PluginsIndexRoute;
+  "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/changelog": typeof ChangelogRoute;
@@ -463,6 +534,7 @@ export interface FileRoutesByTo {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/muse-code": typeof MuseCodeRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -474,6 +546,7 @@ export interface FileRoutesByTo {
   "/sigit": typeof SigitRoute;
   "/sponsor": typeof SponsorRoute;
   "/stakpak": typeof StakpakRoute;
+  "/terms": typeof TermsRoute;
   "/vtcode": typeof VtcodeRoute;
   "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
   "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
@@ -481,11 +554,18 @@ export interface FileRoutesByTo {
   "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
   "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
   "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
+  "/alternatives/orca": typeof AlternativesOrcaRoute;
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
+  "/download/thanks": typeof DownloadThanksRoute;
+  "/plugins/$owner": typeof PluginsOwnerRoute;
+  "/plugins/all": typeof PluginsAllRoute;
   "/blog": typeof BlogIndexRoute;
   "/docs": typeof DocsIndexRoute;
+  "/plugins": typeof PluginsIndexRoute;
+  "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
@@ -493,6 +573,7 @@ export interface FileRoutesById {
   "/agents": typeof AgentsRoute;
   "/agoragentic": typeof AgoragenticRoute;
   "/amp": typeof AmpRoute;
+  "/antigravity": typeof AntigravityRoute;
   "/auggie": typeof AuggieRoute;
   "/autohand": typeof AutohandRoute;
   "/blog": typeof BlogRouteWithChildren;
@@ -525,6 +606,7 @@ export interface FileRoutesById {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/muse-code": typeof MuseCodeRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -536,6 +618,7 @@ export interface FileRoutesById {
   "/sigit": typeof SigitRoute;
   "/sponsor": typeof SponsorRoute;
   "/stakpak": typeof StakpakRoute;
+  "/terms": typeof TermsRoute;
   "/vtcode": typeof VtcodeRoute;
   "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
   "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
@@ -543,11 +626,18 @@ export interface FileRoutesById {
   "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
   "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
   "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
+  "/alternatives/orca": typeof AlternativesOrcaRoute;
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
+  "/download_/thanks": typeof DownloadThanksRoute;
+  "/plugins/$owner": typeof PluginsOwnerRoute;
+  "/plugins/all": typeof PluginsAllRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
+  "/plugins/": typeof PluginsIndexRoute;
+  "/plugins/$owner_/$slug": typeof PluginsOwnerSlugRoute;
+  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
@@ -556,6 +646,7 @@ export interface FileRouteTypes {
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/blog"
@@ -588,6 +679,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/muse-code"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -599,6 +691,7 @@ export interface FileRouteTypes {
     | "/sigit"
     | "/sponsor"
     | "/stakpak"
+    | "/terms"
     | "/vtcode"
     | "/alternatives/claude-desktop"
     | "/alternatives/codex-app"
@@ -606,17 +699,25 @@ export interface FileRouteTypes {
     | "/alternatives/happy-coder"
     | "/alternatives/openchamber"
     | "/alternatives/opencode-desktop"
+    | "/alternatives/orca"
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
+    | "/download/thanks"
+    | "/plugins/$owner"
+    | "/plugins/all"
     | "/blog/"
-    | "/docs/";
+    | "/docs/"
+    | "/plugins/"
+    | "/plugins/$owner/$slug"
+    | "/plugins/category/$slug";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/changelog"
@@ -647,6 +748,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/muse-code"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -658,6 +760,7 @@ export interface FileRouteTypes {
     | "/sigit"
     | "/sponsor"
     | "/stakpak"
+    | "/terms"
     | "/vtcode"
     | "/alternatives/claude-desktop"
     | "/alternatives/codex-app"
@@ -665,17 +768,25 @@ export interface FileRouteTypes {
     | "/alternatives/happy-coder"
     | "/alternatives/openchamber"
     | "/alternatives/opencode-desktop"
+    | "/alternatives/orca"
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
+    | "/download/thanks"
+    | "/plugins/$owner"
+    | "/plugins/all"
     | "/blog"
-    | "/docs";
+    | "/docs"
+    | "/plugins"
+    | "/plugins/$owner/$slug"
+    | "/plugins/category/$slug";
   id:
     | "__root__"
     | "/"
     | "/agents"
     | "/agoragentic"
     | "/amp"
+    | "/antigravity"
     | "/auggie"
     | "/autohand"
     | "/blog"
@@ -708,6 +819,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/muse-code"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -719,6 +831,7 @@ export interface FileRouteTypes {
     | "/sigit"
     | "/sponsor"
     | "/stakpak"
+    | "/terms"
     | "/vtcode"
     | "/alternatives/claude-desktop"
     | "/alternatives/codex-app"
@@ -726,11 +839,18 @@ export interface FileRouteTypes {
     | "/alternatives/happy-coder"
     | "/alternatives/openchamber"
     | "/alternatives/opencode-desktop"
+    | "/alternatives/orca"
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
+    | "/download_/thanks"
+    | "/plugins/$owner"
+    | "/plugins/all"
     | "/blog/"
-    | "/docs/";
+    | "/docs/"
+    | "/plugins/"
+    | "/plugins/$owner_/$slug"
+    | "/plugins/category/$slug";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
@@ -738,6 +858,7 @@ export interface RootRouteChildren {
   AgentsRoute: typeof AgentsRoute;
   AgoragenticRoute: typeof AgoragenticRoute;
   AmpRoute: typeof AmpRoute;
+  AntigravityRoute: typeof AntigravityRoute;
   AuggieRoute: typeof AuggieRoute;
   AutohandRoute: typeof AutohandRoute;
   BlogRoute: typeof BlogRouteWithChildren;
@@ -770,6 +891,7 @@ export interface RootRouteChildren {
   KimiRoute: typeof KimiRoute;
   MinionCodeRoute: typeof MinionCodeRoute;
   MistralVibeRoute: typeof MistralVibeRoute;
+  MuseCodeRoute: typeof MuseCodeRoute;
   NovaRoute: typeof NovaRoute;
   OmpRoute: typeof OmpRoute;
   OpencodeRoute: typeof OpencodeRoute;
@@ -781,6 +903,7 @@ export interface RootRouteChildren {
   SigitRoute: typeof SigitRoute;
   SponsorRoute: typeof SponsorRoute;
   StakpakRoute: typeof StakpakRoute;
+  TermsRoute: typeof TermsRoute;
   VtcodeRoute: typeof VtcodeRoute;
   AlternativesClaudeDesktopRoute: typeof AlternativesClaudeDesktopRoute;
   AlternativesCodexAppRoute: typeof AlternativesCodexAppRoute;
@@ -788,7 +911,14 @@ export interface RootRouteChildren {
   AlternativesHappyCoderRoute: typeof AlternativesHappyCoderRoute;
   AlternativesOpenchamberRoute: typeof AlternativesOpenchamberRoute;
   AlternativesOpencodeDesktopRoute: typeof AlternativesOpencodeDesktopRoute;
+  AlternativesOrcaRoute: typeof AlternativesOrcaRoute;
   AlternativesSupersetRoute: typeof AlternativesSupersetRoute;
+  DownloadThanksRoute: typeof DownloadThanksRoute;
+  PluginsOwnerRoute: typeof PluginsOwnerRoute;
+  PluginsAllRoute: typeof PluginsAllRoute;
+  PluginsIndexRoute: typeof PluginsIndexRoute;
+  PluginsOwnerSlugRoute: typeof PluginsOwnerSlugRoute;
+  PluginsCategorySlugRoute: typeof PluginsCategorySlugRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -798,6 +928,13 @@ declare module "@tanstack/react-router" {
       path: "/vtcode";
       fullPath: "/vtcode";
       preLoaderRoute: typeof VtcodeRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/terms": {
+      id: "/terms";
+      path: "/terms";
+      fullPath: "/terms";
+      preLoaderRoute: typeof TermsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/stakpak": {
@@ -875,6 +1012,13 @@ declare module "@tanstack/react-router" {
       path: "/nova";
       fullPath: "/nova";
       preLoaderRoute: typeof NovaRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/muse-code": {
+      id: "/muse-code";
+      path: "/muse-code";
+      fullPath: "/muse-code";
+      preLoaderRoute: typeof MuseCodeRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/mistral-vibe": {
@@ -1101,6 +1245,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AuggieRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/antigravity": {
+      id: "/antigravity";
+      path: "/antigravity";
+      fullPath: "/antigravity";
+      preLoaderRoute: typeof AntigravityRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/amp": {
       id: "/amp";
       path: "/amp";
@@ -1129,6 +1280,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof IndexRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/plugins/": {
+      id: "/plugins/";
+      path: "/plugins";
+      fullPath: "/plugins/";
+      preLoaderRoute: typeof PluginsIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/docs/": {
       id: "/docs/";
       path: "/";
@@ -1142,6 +1300,27 @@ declare module "@tanstack/react-router" {
       fullPath: "/blog/";
       preLoaderRoute: typeof BlogIndexRouteImport;
       parentRoute: typeof BlogRoute;
+    };
+    "/plugins/all": {
+      id: "/plugins/all";
+      path: "/plugins/all";
+      fullPath: "/plugins/all";
+      preLoaderRoute: typeof PluginsAllRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins/$owner": {
+      id: "/plugins/$owner";
+      path: "/plugins/$owner";
+      fullPath: "/plugins/$owner";
+      preLoaderRoute: typeof PluginsOwnerRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/download_/thanks": {
+      id: "/download_/thanks";
+      path: "/download/thanks";
+      fullPath: "/download/thanks";
+      preLoaderRoute: typeof DownloadThanksRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
     "/docs/$": {
       id: "/docs/$";
@@ -1162,6 +1341,13 @@ declare module "@tanstack/react-router" {
       path: "/alternatives/superset";
       fullPath: "/alternatives/superset";
       preLoaderRoute: typeof AlternativesSupersetRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/alternatives/orca": {
+      id: "/alternatives/orca";
+      path: "/alternatives/orca";
+      fullPath: "/alternatives/orca";
+      preLoaderRoute: typeof AlternativesOrcaRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/alternatives/opencode-desktop": {
@@ -1206,6 +1392,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AlternativesClaudeDesktopRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/plugins/category/$slug": {
+      id: "/plugins/category/$slug";
+      path: "/plugins/category/$slug";
+      fullPath: "/plugins/category/$slug";
+      preLoaderRoute: typeof PluginsCategorySlugRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/plugins/$owner_/$slug": {
+      id: "/plugins/$owner_/$slug";
+      path: "/plugins/$owner/$slug";
+      fullPath: "/plugins/$owner/$slug";
+      preLoaderRoute: typeof PluginsOwnerSlugRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
   }
 }
 
@@ -1238,6 +1438,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsRoute: AgentsRoute,
   AgoragenticRoute: AgoragenticRoute,
   AmpRoute: AmpRoute,
+  AntigravityRoute: AntigravityRoute,
   AuggieRoute: AuggieRoute,
   AutohandRoute: AutohandRoute,
   BlogRoute: BlogRouteWithChildren,
@@ -1270,6 +1471,7 @@ const rootRouteChildren: RootRouteChildren = {
   KimiRoute: KimiRoute,
   MinionCodeRoute: MinionCodeRoute,
   MistralVibeRoute: MistralVibeRoute,
+  MuseCodeRoute: MuseCodeRoute,
   NovaRoute: NovaRoute,
   OmpRoute: OmpRoute,
   OpencodeRoute: OpencodeRoute,
@@ -1281,6 +1483,7 @@ const rootRouteChildren: RootRouteChildren = {
   SigitRoute: SigitRoute,
   SponsorRoute: SponsorRoute,
   StakpakRoute: StakpakRoute,
+  TermsRoute: TermsRoute,
   VtcodeRoute: VtcodeRoute,
   AlternativesClaudeDesktopRoute: AlternativesClaudeDesktopRoute,
   AlternativesCodexAppRoute: AlternativesCodexAppRoute,
@@ -1288,7 +1491,14 @@ const rootRouteChildren: RootRouteChildren = {
   AlternativesHappyCoderRoute: AlternativesHappyCoderRoute,
   AlternativesOpenchamberRoute: AlternativesOpenchamberRoute,
   AlternativesOpencodeDesktopRoute: AlternativesOpencodeDesktopRoute,
+  AlternativesOrcaRoute: AlternativesOrcaRoute,
   AlternativesSupersetRoute: AlternativesSupersetRoute,
+  DownloadThanksRoute: DownloadThanksRoute,
+  PluginsOwnerRoute: PluginsOwnerRoute,
+  PluginsAllRoute: PluginsAllRoute,
+  PluginsIndexRoute: PluginsIndexRoute,
+  PluginsOwnerSlugRoute: PluginsOwnerSlugRoute,
+  PluginsCategorySlugRoute: PluginsCategorySlugRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

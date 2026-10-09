@@ -2,8 +2,6 @@ export interface CompactSheetSafeAreaPaddingInput {
   isCompact: boolean;
   isKeyboardVisible: boolean;
   hasFooter: boolean;
-  baseContentPadding: number;
-  baseFooterPadding: number;
   safeAreaBottom: number;
 }
 
@@ -38,8 +36,6 @@ export function getCompactSheetSafeAreaPadding({
   isCompact,
   isKeyboardVisible,
   hasFooter,
-  baseContentPadding,
-  baseFooterPadding,
   safeAreaBottom,
 }: CompactSheetSafeAreaPaddingInput): CompactSheetSafeAreaPadding {
   if (!isCompact || isKeyboardVisible || safeAreaBottom <= 0) {
@@ -47,8 +43,8 @@ export function getCompactSheetSafeAreaPadding({
   }
 
   if (hasFooter) {
-    return { footerPaddingBottom: baseFooterPadding + safeAreaBottom };
+    return { footerPaddingBottom: safeAreaBottom };
   }
 
-  return { contentPaddingBottom: baseContentPadding + safeAreaBottom };
+  return { contentPaddingBottom: safeAreaBottom };
 }

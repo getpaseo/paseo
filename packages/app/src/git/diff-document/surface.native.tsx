@@ -20,9 +20,14 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { InlineReviewThread } from "@/review";
-import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { useKeyboardShift } from "@/keyboard/shift";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DocumentFileHeader } from "./document-file-header";
+import {
+  diffInteractionWindowTop,
+  diffMaterializationWindow,
+  resolveVisibleFileSections,
+} from "./header-layout";
 import { hitTestDiffBodyPoint } from "./native-hit-testing";
 import { retainDiffViewport } from "./viewport";
 import { HorizontalScroll } from "./horizontal-scroll.native";
@@ -42,16 +47,22 @@ import {
   nativeCanvasSlabsForViewport,
   nativeCanvasWindowBucket,
   nativeCanvasWindowTop,
-  nativeStickyHeaderIndices,
   type NativeCanvasSlab,
 } from "./native-slabs";
-import { createNativePaints, recordNativeSlabPictures, type NativePaints } from "./paint.native";
+import {
+  createNativePaints,
+  recordNativeHeaderPicture,
+  recordNativeSlabPictures,
+  type NativePaints,
+} from "./paint.native";
 import {
   createNativeTextLayoutStore,
+  createNativeHeaderTextLayout,
   createNativeTextMeasurer,
   disposeNativeTextLayout,
   prepareNativeTextLayout,
   type NativeTextLayout,
+  type NativeHeaderTextLayout,
 } from "./text.native";
 import type {
   DiffDocumentModel,
@@ -68,6 +79,7 @@ const CODE_LEFT_PADDING = 8;
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [fileWindowTop, setFileWindowTop] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const previousModelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
   const reusableModelRef = useRef<{
@@ -98,7 +110,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const reviewActions = props.mode.kind === "working" ? props.mode.reviewActions : undefined;
   const model = useMemo(() => {
     const dependencies = [
-      props.files,
       props.displayPreferences.layout,
       props.displayPreferences.wrapLines,
       viewport.width,
@@ -126,6 +137,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         binary: t("workspace.git.diff.binaryFile"),
         tooLarge: t("workspace.git.diff.tooLarge"),
       },
+      materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
       reuseFrom,
     });
     reusableModelRef.current = {
@@ -135,6 +147,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     return next;
   }, [
     measurement,
+    fileWindowTop,
     props.collapsedFilePaths,
     props.displayPreferences.layout,
     props.displayPreferences.wrapLines,
@@ -144,6 +157,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     t,
     typography,
     viewport.width,
+    viewport.height,
   ]);
   const paints = useMemo(() => createNativePaints(props.palette), [props.palette]);
   const textLayoutStore = useMemo(
@@ -157,10 +171,47 @@ export function DiffSurface(props: DiffSurfaceProps) {
     [family, props.palette, typography.lineHeight, typography.size],
   );
   const textLayout = useMemo(
-    () => prepareNativeTextLayout(textLayoutStore, model),
-    [model, textLayoutStore],
+    () =>
+      prepareNativeTextLayout(
+        textLayoutStore,
+        model,
+        diffMaterializationWindow(fileWindowTop, viewport.height),
+      ),
+    [model, textLayoutStore, fileWindowTop, viewport.height],
   );
   useEffect(() => () => disposeNativeTextLayout(textLayoutStore), [textLayoutStore]);
+  const headerTextLayout = useMemo(
+    () =>
+      createNativeHeaderTextLayout({
+        configuredFamily: props.headerTypography.family,
+        fontSize: props.headerTypography.size,
+        statFontSize: props.headerTypography.statSize,
+        palette: props.palette,
+      }),
+    [props.headerTypography, props.palette],
+  );
+  const updateFileWindow = useCallback((nextTop: number) => {
+    setFileWindowTop((current) => (current === nextTop ? current : nextTop));
+  }, []);
+  useAnimatedReaction(
+    () => diffInteractionWindowTop(scrollTop.value, viewport.height),
+    (windowTop, previous) => {
+      if (windowTop !== previous) {
+        scheduleOnRN(updateFileWindow, windowTop);
+      }
+    },
+    [updateFileWindow, viewport.height],
+  );
+  const interactionFiles = useMemo(
+    () =>
+      resolveVisibleFileSections({
+        files: model.files,
+        scrollTop: fileWindowTop,
+        viewportHeight: viewport.height,
+        overscan: viewport.height * 2,
+      }).files,
+    [fileWindowTop, model.files, viewport.height],
+  );
 
   const scrollHandler = useAnimatedScrollHandler((event) => {
     scrollTop.value = event.contentOffset.y;
@@ -205,13 +256,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
       consumedFocusRef.current = requestKey;
     }
   }, [collapsedFilePaths, mode, model.files, onToggleFile, scrollTop]);
+  const contentInsetBottom = props.contentInsetBottom ?? 0;
   const contentStyle = useMemo(
-    () => ({ minHeight: viewport.height, backgroundColor: "transparent" }),
-    [viewport.height],
-  );
-  const stickyHeaderIndices = useMemo(
-    () => nativeStickyHeaderIndices(model.files.length),
-    [model.files.length],
+    () => ({
+      minHeight: Math.max(model.height, viewport.height) + contentInsetBottom,
+      backgroundColor: "transparent",
+    }),
+    [contentInsetBottom, model.height, viewport.height],
   );
   return (
     <View style={[styles.root, { backgroundColor: props.palette.surface }]} onLayout={layout}>
@@ -222,7 +273,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
         onScroll={scrollHandler}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator
-        stickyHeaderIndices={stickyHeaderIndices}
         testID="git-diff-scroll"
       >
         <NativeCanvasSlabLayer
@@ -233,23 +283,31 @@ export function DiffSurface(props: DiffSurfaceProps) {
           paints={paints}
           horizontalOffsets={horizontalOffsets}
         />
-        {model.files.flatMap((file) => [
-          <NativeStickyFileHeader
+        {interactionFiles.map((file) => (
+          <NativeCanvasFileHeader
             key={`${file.path}:header`}
             file={file}
+            viewportWidth={model.viewportWidth}
+            scrollTop={scrollTop}
+            textLayout={headerTextLayout}
+            paints={paints}
+            headerSurface={props.palette.headerSurface}
+            headerActiveSurface={props.palette.headerActiveSurface}
             selectedPath={props.selectedPath}
             mode={props.mode}
             onToggleFile={props.onToggleFile}
             onSelectPath={props.onSelectPath}
-          />,
+          />
+        ))}
+        {interactionFiles.map((file) => (
           <NativeFileBody
             key={`${file.path}:body`}
             file={file}
             model={model}
             mode={props.mode}
             horizontalOffsets={horizontalOffsets}
-          />,
-        ])}
+          />
+        ))}
         <NativeReviewOverlays model={model} mode={props.mode} />
         <Animated.View pointerEvents="none" style={keyboardSpacerStyle} />
       </AnimatedScrollView>
@@ -306,29 +364,70 @@ function NativeCanvasSlabLayer({
   ));
 }
 
-function NativeStickyFileHeader({
+function NativeCanvasFileHeader({
   file,
+  viewportWidth,
+  scrollTop,
+  textLayout,
+  paints,
+  headerSurface,
+  headerActiveSurface,
   selectedPath,
   mode,
   onToggleFile,
   onSelectPath,
 }: {
   file: DiffFileSection;
+  viewportWidth: number;
+  scrollTop: SharedValue<number>;
+  textLayout: NativeHeaderTextLayout;
+  paints: NativePaints;
+  headerSurface: string;
+  headerActiveSurface: string;
   selectedPath: DiffSurfaceProps["selectedPath"];
   mode: DiffSurfaceProps["mode"];
   onToggleFile: DiffSurfaceProps["onToggleFile"];
   onSelectPath: DiffSurfaceProps["onSelectPath"];
 }) {
+  const [active, setActive] = useState(false);
+  const picture = useMemo(
+    () => recordNativeHeaderPicture({ file, viewportWidth, textLayout, paints }),
+    [file, paints, textLayout, viewportWidth],
+  );
+  const { top, bottom, headerHeight } = file;
+  const stickyStyle = useAnimatedStyle(() => {
+    const pinOffset = Math.max(0, scrollTop.value - top);
+    const maximumPinOffset = Math.max(0, bottom - headerHeight - top);
+    return { transform: [{ translateY: Math.min(pinOffset, maximumPinOffset) }] };
+  }, [bottom, headerHeight, top, scrollTop]);
+  const style = useMemo<ViewStyle>(
+    () => ({
+      position: "absolute",
+      top: file.top,
+      left: 0,
+      width: viewportWidth,
+      height: file.headerHeight,
+      backgroundColor: active ? headerActiveSurface : headerSurface,
+      zIndex: 5,
+      elevation: 2,
+    }),
+    [active, file.headerHeight, file.top, headerActiveSurface, headerSurface, viewportWidth],
+  );
   return (
-    <View style={styles.header}>
+    <Animated.View style={[style, stickyStyle]}>
+      <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <Picture picture={picture} />
+      </Canvas>
       <DocumentFileHeader
         file={file}
         selectedPath={selectedPath}
         mode={mode}
         onToggleFile={onToggleFile}
         onSelectPath={onSelectPath}
+        canvasRendered
+        onActiveChange={setActive}
       />
-    </View>
+    </Animated.View>
   );
 }
 
@@ -382,7 +481,10 @@ function NativeFileBody({
     <View
       testID={`diff-file-${file.fileIndex}-body`}
       style={inlineUnistylesStyle<ViewStyle>({
-        position: "relative",
+        position: "absolute",
+        top: file.bodyTop,
+        left: 0,
+        right: 0,
         height: file.bodyHeight,
         zIndex: 2,
       })}
@@ -579,5 +681,4 @@ function NativeSlabCode({
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, position: "relative", overflow: "hidden" },
   scroll: { backgroundColor: "transparent" },
-  header: { zIndex: 5 },
 });

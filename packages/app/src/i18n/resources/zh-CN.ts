@@ -2,7 +2,31 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  paneFind: {
+    connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
+    historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
+    revealFailure: "无法显示此匹配项。请重试。",
+    searching: "搜索中…",
+    loading: "加载中…",
+    failed: "失败",
+    retry: "重试",
+
+    title: "查找",
+    placeholder: "在窗格中查找",
+    close: "关闭查找",
+    matches: "查找结果",
+    previous: "上一个匹配项",
+    next: "下一个匹配项",
+    toggleReplace: "切换替换",
+    replaceWith: "替换为",
+    replace: "替换",
+    replaceAll: "全部替换",
+    noMatches: "无匹配项",
+    position: "{{current}} / {{total}}",
+    total: "{{total}} 个匹配项",
+  },
   common: {
+    bottomSheetBackdrop: "底部面板背景",
     back: "返回",
     loading: "加载中...",
     actions: {
@@ -10,10 +34,13 @@ export const zhCN: TranslationResources = {
       cancel: "取消",
       close: "关闭",
       copy: "复制",
+      copyLine: "复制行",
       dismiss: "关闭",
+      reload: "重新加载",
       retry: "重试",
       search: "搜索",
       select: "选择",
+      selectAll: "全选",
     },
     placeholders: {
       search: "搜索...",
@@ -33,6 +60,7 @@ export const zhCN: TranslationResources = {
     errors: {
       error: "错误",
       unableToSave: "无法保存",
+      unableToCopy: "无法复制",
       nameRequired: "名称必填",
       daemonUnavailable: "Daemon 不可用",
       daemonClientUnavailable: "Daemon client 不可用",
@@ -65,7 +93,7 @@ export const zhCN: TranslationResources = {
       agents: "Agents",
       newAgent: "新建 Agent",
       open: "打开{{name}}",
-      openInSidePanel: "在侧边面板中打开{{name}}",
+      openInSidePane: "在侧边面板中打开{{name}}",
       openInFocusedPane: "在当前窗格中打开{{name}}",
       addProject: "添加 project",
       home: "首页",
@@ -150,7 +178,7 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "剪贴板中没有图片",
+      noClipboardImage: "当前剪贴板中没有图片。请尝试通过键盘粘贴。",
       pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -203,7 +231,12 @@ export const zhCN: TranslationResources = {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
+    messageCapped: "此消息已被截断（{{bytes}} 字节）。",
     permission: {
+      rejectedPlan: "已拒绝的计划",
+      approvedPlan: "已批准的计划",
+      canceledPlan: "已取消的计划",
+
       plan: "Plan",
       required: "需要权限",
       deny: "拒绝",
@@ -217,7 +250,8 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重连",
+      reconnecting: "正在重新连接主机",
+      updating: "正在更新消息",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
       archivingTitle: "正在归档 Agent...",
@@ -285,6 +319,7 @@ export const zhCN: TranslationResources = {
       zoomIn: "放大",
       zoomOut: "缩小",
       resetZoom: "重置视图",
+      fullscreen: "全屏",
       viewSource: "查看源码",
       viewDiagram: "查看图表",
     },
@@ -345,8 +380,10 @@ export const zhCN: TranslationResources = {
         added: "已添加",
         started: "已开始",
         completed: "已完成",
-        reopened: "已重新打开",
       },
+    },
+    turnFooter: {
+      workedFor: "工作了 {{duration}}",
     },
     compaction: {
       loading: "正在压缩...",
@@ -357,7 +394,13 @@ export const zhCN: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "导入会话",
+    searchPlaceholder: "搜索会话...",
+    scope: {
+      host: "{{host}} 上的会话",
+      workspace: "此 workspace",
+    },
     filters: {
       all: "全部",
     },
@@ -366,12 +409,13 @@ export const zhCN: TranslationResources = {
       updateHost: "更新 Host 以导入会话。",
       noProviders: "没有已启用的可导入 Provider。",
       loading: "正在加载最近会话...",
-      failedAll: "无法加载最近会话。",
-      failedProviders: "无法加载 {{providers}} 的会话。",
+      failedProvider: "无法加载 {{provider}} 的会话",
       failedImport: "无法导入所选会话。",
     },
     actions: {
       refresh: "刷新会话",
+      showAll: "显示全部",
+      loadMore: "加载更多",
     },
     preview: {
       untitledSession: "未命名会话",
@@ -379,6 +423,7 @@ export const zhCN: TranslationResources = {
     },
     empty: {
       noRecent: "没有可导入的最近会话。",
+      noMatches: "没有与搜索匹配的会话。",
       alreadyImported: "所有最近会话都已导入。",
       noProviderSessions: "没有找到 {{provider}} 会话。",
     },
@@ -398,7 +443,9 @@ export const zhCN: TranslationResources = {
       recovery: {
         archivedTitle: "Workspace 已归档",
         restoreDescription:
-          "{{workspaceName}} 已归档，其 worktree 已移除。恢复分支 {{branch}} 以重新打开。",
+          "恢复 {{workspaceName}} 以返回其中的代理。worktree 将使用分支 {{branch}}。",
+        restoreWithoutBranchDescription:
+          "恢复 {{workspaceName}} 以返回其中的代理。新分支将从保存的基准分支或仓库默认分支创建。",
         unarchiveDescription: "{{workspaceName}} 已归档。取消归档以重新打开。",
         restoreAction: "恢复",
         unarchiveAction: "取消归档",
@@ -416,6 +463,8 @@ export const zhCN: TranslationResources = {
     },
     fileActions: {
       openFile: "打开文件",
+      openIn: "在 {{target}} 中打开",
+      openToSide: "在侧边打开",
       copyPath: "复制路径",
       copyRelativePath: "复制相对路径",
       revealIn: "在 {{target}} 中显示",
@@ -489,14 +538,23 @@ export const zhCN: TranslationResources = {
         completed: "Setup 已完成",
         failed: "Setup 失败",
         workspace: "Workspace setup",
+        blocked: "设置已阻止",
       },
       status: {
         running: "正在运行",
         completed: "已完成",
         failed: "失败",
         waiting: "正在等待 setup 输出",
+        blocked: "已阻止",
       },
       waiting: "正在 setup workspace...",
+      blocked: {
+        title: "未运行设置",
+        description:
+          "此 PR 来自另一个仓库 {{repository}}。其设置和脚本可能会运行你尚未审查的代码。",
+        run: "运行设置",
+        runFailed: "运行工作区设置失败",
+      },
       empty: {
         noCommands: "此 workspace 没有运行 setup 命令。",
       },
@@ -582,6 +640,7 @@ export const zhCN: TranslationResources = {
         closeLeft: "关闭左侧标签",
         closeRight: "关闭右侧标签",
         closeOthers: "关闭其他标签",
+        moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
         close: "关闭",
@@ -607,7 +666,7 @@ export const zhCN: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "打开侧边面板",
         close: "关闭侧边面板",
         toggle: "切换侧边面板",
@@ -845,7 +904,11 @@ export const zhCN: TranslationResources = {
       },
       diff: {
         openChangesTab: "打开“更改”标签页",
+        openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
+        jumpToFile: {
+          title: "跳转到文件",
+        },
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         previewTooLargeTitle: "此 diff 过大，无法预览",
@@ -855,6 +918,7 @@ export const zhCN: TranslationResources = {
         switchToUnified: "切换到统一差异视图",
         switchToSplit: "切换到并排差异视图",
         options: "Diff 选项",
+        inlineDiff: "内联 Diff",
         hideWhitespace: "隐藏空白差异",
         showWhitespace: "显示空白差异",
         scrollLongLines: "滚动长行",
@@ -867,11 +931,8 @@ export const zhCN: TranslationResources = {
         refresh: "刷新",
         refreshState: "刷新 git 和 {{brand}} 状态",
         failedRefresh: "刷新 git 状态失败。",
-        emptyHiddenWhitespace: "隐藏空白差异后没有可见变更",
-        emptyUncommitted: "没有未 commit 的变更",
         seeUncommittedChanges: "查看未 commit 的变更",
         seeCommittedChanges: "查看已 commit 的变更",
-        emptyAgainstBase: "相对于 {{baseRef}} 没有变更",
         checkingRepository: "正在检查 repository...",
         notRepository: "不是 git repository",
         diffMode: "Diff 模式",
@@ -904,6 +965,47 @@ export const zhCN: TranslationResources = {
         actions: {
           viewPullRequest: "查看",
           openOn: "在 {{brand}} 上打开",
+          addToChat: "添加到聊天",
+          addAllToChat: "全部添加到聊天",
+          addingToChat: "正在添加...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "部分检查需要你处理",
+            failure: "部分检查未通过",
+            pending: "部分检查尚未完成",
+            success: "所有检查均已通过",
+            none: "没有检查",
+          },
+          count: {
+            actionRequired: "{{count}} 个需处理",
+            warning: "{{count}} 个警告",
+            failure: "{{count}} 个失败",
+            pending: "{{count}} 个进行中",
+            manual: "{{count}} 个手动",
+            success: "{{count}} 个成功",
+            ignored: "{{count}} 个已跳过",
+          },
+          detailOne: "检查：{{parts}}",
+          detailMany: "检查：{{parts}}",
+          groupOne: {
+            actionRequired: "{{count}} 个需处理的检查",
+            warning: "{{count}} 个有警告的检查",
+            failure: "{{count}} 个失败的检查",
+            pending: "{{count}} 个进行中的检查",
+            manual: "{{count}} 个手动检查",
+            success: "{{count}} 个成功的检查",
+            ignored: "{{count}} 个已跳过的检查",
+          },
+          groupMany: {
+            actionRequired: "{{count}} 个需处理的检查",
+            warning: "{{count}} 个有警告的检查",
+            failure: "{{count}} 个失败的检查",
+            pending: "{{count}} 个进行中的检查",
+            manual: "{{count}} 个手动检查",
+            success: "{{count}} 个成功的检查",
+            ignored: "{{count}} 个已跳过的检查",
+          },
         },
         checksSummary: {
           passedLabel: "通过",
@@ -917,35 +1019,51 @@ export const zhCN: TranslationResources = {
           checks: "Checks",
           pipeline: "流水线",
           reviews: "Reviews",
+          activity: "动态",
         },
         empty: {
           noJobs: "无作业",
           loadingPipeline: "正在加载流水线...",
           pipelineJobsLoadFailed: "无法加载流水线作业",
           allowedToFail: "允许失败",
+          noActivity: "暂无动态",
         },
         approvals: "{{given}} / {{required}} 批准",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "合并请求 !{{number}}",
+          commentActions: "评论操作",
+          threadActions: "讨论串操作",
+          checkStatus: {
+            passed: "成功",
+            failed: "失败",
+            warning: "警告",
+            actionRequired: "需要操作",
+            manual: "手动",
+            pending: "等待中",
+            skipped: "已跳过",
+            cancelled: "已取消",
+          },
         },
         states: {
-          draft: "Draft",
-          merged: "已 merge",
+          draft: "草稿",
+          merged: "已合并",
           closed: "已关闭",
-          open: "Open",
+          open: "开放",
         },
         activity: {
           commented: "已评论",
           approved: "已批准",
           requestedChanges: "请求修改",
-          reviewed: "已 review",
+          reviewed: "已审查",
         },
         time: {
           justNow: "刚刚",
         },
         thread: {
           discussion: "讨论主题",
+          resolved: "已解决",
+          outdated: "已过时",
         },
         errors: {
           statusLoadFailed: "无法加载 Pull Request 状态",
@@ -1001,7 +1119,25 @@ export const zhCN: TranslationResources = {
       updateHost: "请更新此主机以管理标签。",
     },
   },
+  changelog: {
+    title: "新功能",
+    installed: "已安装",
+    showMore: "显示更多",
+    openWebsite: "完整更新日志",
+    error: {
+      title: "无法加载更新日志",
+      description: "请检查网络连接后重试。",
+    },
+  },
   sidebar: {
+    statusGroupAccessibility: "{{label}} 分组",
+    statusBucket: {
+      needsInput: "需要输入",
+      failed: "失败",
+      readyToReview: "待查看",
+      working: "运行中",
+      done: "已完成",
+    },
     display: {
       trigger: "显示偏好",
       heading: "显示",
@@ -1059,9 +1195,11 @@ export const zhCN: TranslationResources = {
       addProject: "添加 project",
       newWorkspace: "新建工作区",
       hosts: "Hosts",
-      home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+    },
+    footer: {
+      usage: "使用情况",
     },
     help: {
       trigger: "帮助与支持",
@@ -1076,6 +1214,7 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "历史",
+      search: "搜索",
       schedules: "计划",
     },
     worktreeSetup: {
@@ -1115,6 +1254,14 @@ export const zhCN: TranslationResources = {
         serviceRunning: "服务 {{name}} 运行中",
         serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
+      },
+      checks: {
+        passed: "成功: {{count}}",
+        failed: "失败: {{count}}",
+        warning: "警告: {{count}}",
+        actionRequired: "需要操作: {{count}}",
+        manual: "手动: {{count}}",
+        pending: "等待中: {{count}}",
       },
       actions: {
         menu: "Workspace 操作",
@@ -1200,11 +1347,18 @@ export const zhCN: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "最小化窗口",
+      maximize: "最大化窗口",
+      restore: "还原窗口",
+      close: "关闭窗口",
+    },
     quitting: {
       title: "正在退出 Paseo...",
       detail: "正在停止本地 daemon。",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "状态",
@@ -1415,6 +1569,8 @@ export const zhCN: TranslationResources = {
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
     failedToLoad: "加载失败",
+    chooseProjectForCommands: "选择项目以查看命令",
+    chooseModelForCommands: "选择模型以查看命令",
   },
   loadOlderHistory: {
     failed: "无法加载更早历史",
@@ -1506,11 +1662,29 @@ export const zhCN: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}} 的密码",
+      label: "主机密码",
+    },
+    hostConfirmation: {
+      title: "连接到此主机？",
+      description: "此主机将能在此应用中运行代码，并访问你其他已连接的主机。仅在你认识它时才连接。",
+      descriptionChanged:
+        "此链接会改变你连接此主机的方式。该主机将能在此应用中运行代码，并访问你其他已连接的主机。仅在你认识它时才连接。",
+      hostLabel: "主机",
+      fingerprintLabel: "密钥指纹",
+      relayLabel: "中继",
+      connect: "连接",
+    },
     connectionMethods: {
       title: "添加连接",
       direct: {
         title: "直接连接",
         description: "本地网络或 VPN。",
+      },
+      remoteSsh: {
+        title: "远程 SSH",
+        description: "通过桌面 SSH 客户端连接。",
       },
       scanQr: {
         title: "扫描二维码",
@@ -1560,6 +1734,29 @@ export const zhCN: TranslationResources = {
         tlsError: "TLS 错误。只有 daemon 前方有 TLS terminator 时，直接连接才使用 SSL。",
         unableToConnect: "无法连接。请检查 host/port，并确认 daemon 可达。",
         details: "详情：{{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "远程 SSH",
+      helper: "连接到远程主机上运行的 Paseo 守护进程。",
+      fields: {
+        target: "SSH 主机",
+        password: "守护进程密码",
+        optional: "可选",
+      },
+      passwordVisibility: {
+        show: "显示密码",
+        hide: "隐藏密码",
+      },
+      actions: {
+        cancel: "取消",
+        connect: "连接",
+        connecting: "正在连接...",
+      },
+      errors: {
+        targetRequired: "SSH 主机为必填项",
+        invalidTarget: "请输入有效的 ssh:// 主机",
+        failedToConnect: "无法通过 SSH 连接。{{detail}}",
       },
     },
     link: {
@@ -1723,6 +1920,7 @@ export const zhCN: TranslationResources = {
     },
     diff: {
       changesLabel: "更改",
+      diffLabel: "Diff",
       changesSubtitle: "工作区差异",
       commitSubtitle: "提交差异",
       uncommittedSubtitle: "未提交的更改",
@@ -1775,6 +1973,8 @@ export const zhCN: TranslationResources = {
     dismiss: "关闭",
   },
   contextWindow: {
+    noData: "暂无上下文数据",
+    accessibilityNoData: "上下文窗口：暂无上下文数据",
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
     tokens: "{{used}} / {{max}} tokens",
@@ -1816,7 +2016,11 @@ export const zhCN: TranslationResources = {
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
+      chat: "聊天",
       appearance: "外观",
+      sidebar: "侧边栏",
+      terminal: "终端",
+      browser: "浏览器",
       editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
@@ -1825,6 +2029,7 @@ export const zhCN: TranslationResources = {
       diagnostics: "诊断",
       about: "关于",
     },
+    layout: en.settings.layout,
     editor: {
       title: "编辑器",
       vimKeybindings: "Vim 键位",
@@ -1873,6 +2078,7 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      sending: "发送",
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
@@ -1898,8 +2104,6 @@ export const zhCN: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "服务 URL",
-        description: "运行脚本中的 URL 打开位置",
         options: {
           ask: "询问",
           inApp: "在 Paseo 中",
@@ -1911,10 +2115,6 @@ export const zhCN: TranslationResources = {
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
       },
-      sidePanelRouting: {
-        label: "在侧边面板中打开辅助标签页",
-        description: "文件链接、拉取请求和设置进度会在你的工作旁边打开，而不是在聚焦的窗格中",
-      },
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
@@ -1922,7 +2122,6 @@ export const zhCN: TranslationResources = {
       toolCallDetail: {
         label: "工具调用显示",
         description: "工具调用在时间线中的显示方式",
-        accessibilityLabel: "选择工具调用显示方式（{{value}}）",
         options: {
           overview: "摘要",
           detailed: "完整详情",
@@ -1976,6 +2175,7 @@ export const zhCN: TranslationResources = {
     about: {
       title: "关于",
       appVersion: "应用版本",
+      whatsNewHint: "每个版本的发布说明",
       thisDevice: "此设备",
       connectedHosts: "已连接的 Host",
       offline: "离线",
@@ -2023,6 +2223,18 @@ export const zhCN: TranslationResources = {
         title: "聊天大纲",
         description: "显示用于在提示词之间跳转的大纲",
       },
+      sidebar: {
+        header: {
+          title: "顶部",
+          description: "选择侧边栏顶部显示的项目及其顺序",
+        },
+        footer: {
+          title: "底部",
+          description: "选择侧边栏底部显示的行及其顺序。添加项目和图标行始终显示",
+        },
+        moveUp: "上移",
+        moveDown: "下移",
+      },
       fonts: {
         title: "字体",
         systemDefault: "系统默认",
@@ -2041,6 +2253,14 @@ export const zhCN: TranslationResources = {
         codeSize: "代码字号",
         codeSizeHint: "用于代码、差异和终端输出",
         codeSizeAccessibility: "代码字号",
+      },
+      layout: {
+        title: "布局",
+        contentWidth: "内容宽度",
+        contentWidthHint: "宽屏上聊天和 Markdown 文件的最大宽度",
+        contentWidthAccessibility: "内容宽度（像素）",
+        reset: "重置",
+        resetAccessibility: "将内容宽度重置为默认值",
       },
       syntax: {
         title: "语法",
@@ -2107,7 +2327,6 @@ export const zhCN: TranslationResources = {
         toggleBothSidebars: "切换两侧边栏",
         toggleSettings: "切换设置",
         toggleFocusMode: "切换专注模式",
-        toggleExplorerPaneMaximization: "切换侧边面板最大化",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
         cycleAgentMode: "循环切换代理模式",
@@ -2152,6 +2371,9 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "移除此主机，然后使用此守护进程要求的密码重新添加。",
+      },
       appearance: {
         title: "外观",
         name: {
@@ -2191,6 +2413,7 @@ export const zhCN: TranslationResources = {
       badges: {
         relay: "Relay",
         local: "本地",
+        remoteSsh: "远程 SSH",
       },
       connections: {
         title: "连接",

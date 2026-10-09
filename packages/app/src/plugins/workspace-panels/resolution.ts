@@ -1,4 +1,4 @@
-import type { PluginWorkspacePanelContribution } from "@getpaseo/plugin";
+import type { PluginWorkspacePanelContribution } from "@getpaseo/plugin/client";
 import type { InstalledPlugin } from "../types";
 import type { PluginWorkspaceTabTarget } from "@/workspace-tabs/model";
 

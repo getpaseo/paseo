@@ -8,7 +8,7 @@ import {
 } from "@/utils/diff-layout";
 import { compactHighlightTokens } from "@/utils/diff-rendering";
 import { getInlineReviewThreadState, getSplitInlineReviewThreadState } from "@/review/geometry";
-import { advancesFor } from "./text-measurement";
+import { advancesFor, requiresShaping } from "./text-measurement";
 import type {
   BuildDiffDocumentModelInput,
   DiffCell,
@@ -37,9 +37,33 @@ interface CellSource {
   sourceIdentity: DiffSourceIdentity;
 }
 
+interface GeometryLine {
+  cells: DiffLineRow["cells"];
+  reviewHeight: number;
+  height: number;
+}
+
+interface ReusableModelIndex {
+  model: DiffDocumentModel;
+  filesBySource: Map<BuildDiffDocumentModelInput["files"][number], DiffFileSection>;
+  measuredFiles: Set<DiffFileSection>;
+}
+
+interface ReusableFileRows {
+  model: DiffDocumentModel;
+  file: DiffFileSection;
+}
+
+interface FileRowsResult {
+  bottom: number;
+  maximumHorizontalOverflow: number;
+}
+
 export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): DiffDocumentModel {
   const rows: DiffRow[] = [];
   const files: DiffFileSection[] = [];
+  const reusableModels = indexReusableModels(input.reuseFrom);
+  const currentReviewGeometryKey = reviewGeometryKey(input.reviewActions);
   let documentTop = 0;
 
   for (const [fileIndex, file] of input.files.entries()) {
@@ -51,96 +75,40 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
     const gutterWidth = lineNumberGutterWidth(maximumLineNumber(file), input.typography.size);
     let maximumHorizontalOverflow = 0;
 
-    const reusableModel = input.reuseFrom?.find((candidate) =>
-      candidate.files.some((entry) => entry.file === file && !entry.isCollapsed),
-    );
-    const reusableFile = reusableModel?.files.find(
-      (candidate) => candidate.file === file && !candidate.isCollapsed,
-    );
+    const reusable = findReusableFileRows({
+      indexes: reusableModels,
+      buildInput: input,
+      sourceFile: file,
+      fileTop,
+      bodyTop,
+    });
+    const reusableModel = reusable?.model;
+    const reusableFile = reusable?.file;
 
-    if (!isCollapsed && reusableFile) {
-      const reusedRows = reusableModel!.rows.slice(reusableFile.rowStart, reusableFile.rowEnd);
-      for (const reusedRow of reusedRows) {
-        if (reusedRow.kind === "line") {
-          const reviewHeight = reviewHeightForCells(reusedRow.cells, input);
-          const textHeight = reusedRow.height - reusedRow.reviewHeight;
-          const height = textHeight + reviewHeight;
-          rows.push({
-            ...reusedRow,
-            index: rows.length,
-            fileIndex,
-            top: documentTop,
-            height,
-            reviewHeight,
-          });
-          documentTop += height;
-          continue;
-        }
-        rows.push({
-          ...reusedRow,
-          index: rows.length,
-          fileIndex,
-          top: documentTop,
-        });
-        documentTop += reusedRow.height;
-      }
-      maximumHorizontalOverflow = Math.max(0, reusableFile.contentWidth - input.viewportWidth);
-      documentTop += DIFF_BODY_BORDER_HEIGHT;
-    } else if (!isCollapsed) {
-      if (file.status === "binary" || file.status === "too_large") {
-        const height = input.typography.lineHeight + 24;
-        rows.push({
-          kind: "status",
-          index: rows.length,
-          fileIndex,
-          path: file.path,
-          top: documentTop,
-          height,
-          label: file.status === "binary" ? input.labels.binary : input.labels.tooLarge,
-        });
-        documentTop += height;
-      } else {
-        const sources = lineSources(file, input.layout);
-        for (const sourceCells of sources) {
-          const columnCount = sourceCells.length;
-          const columnWidth = input.viewportWidth / columnCount;
-          const availableWidth = Math.max(
-            input.measureText.measure("M"),
-            columnWidth - gutterWidth - CODE_HORIZONTAL_PADDING,
-          );
-          const cells = sourceCells.map((source) => {
-            if (!source) return null;
-            const cell = measureCell({
-              source,
-              availableWidth,
+    if (!isCollapsed) {
+      const result =
+        reusableModel && reusableFile
+          ? appendReusableFileRows({
+              rows,
               input,
+              model: reusableModel,
+              file: reusableFile,
+              fileIndex,
+              fileTop,
+              bodyTop,
+              reviewGeometryKey: currentReviewGeometryKey,
+            })
+          : appendNewFileRows({
+              rows,
+              input,
+              file,
+              fileIndex,
+              fileTop,
+              bodyTop,
+              gutterWidth,
             });
-            maximumHorizontalOverflow = Math.max(
-              maximumHorizontalOverflow,
-              gutterWidth + CODE_HORIZONTAL_PADDING + measureCellWidth(cell) - columnWidth,
-            );
-            return cell;
-          }) as DiffLineRow["cells"];
-          const textHeight = Math.max(
-            input.typography.lineHeight,
-            ...cells.map((cell) => (cell?.fragments.length ?? 1) * input.typography.lineHeight),
-          );
-          const reviewHeight = reviewHeightForCells(cells, input);
-          const height = textHeight + reviewHeight;
-          rows.push({
-            kind: "line",
-            index: rows.length,
-            fileIndex,
-            path: file.path,
-            top: documentTop,
-            height,
-            cells,
-            reviewHeight,
-          });
-          documentTop += height;
-        }
-      }
-      documentTop += DIFF_BODY_BORDER_HEIGHT;
+      documentTop = result.bottom;
+      maximumHorizontalOverflow = result.maximumHorizontalOverflow;
     }
 
     files.push({
@@ -170,7 +138,203 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
     layout: input.layout,
     wrapLines: input.wrapLines,
     viewportWidth: input.viewportWidth,
+    reviewGeometryKey: currentReviewGeometryKey,
   };
+}
+
+function appendReusableFileRows(candidate: {
+  rows: DiffRow[];
+  input: BuildDiffDocumentModelInput;
+  model: DiffDocumentModel;
+  file: DiffFileSection;
+  fileIndex: number;
+  fileTop: number;
+  bodyTop: number;
+  reviewGeometryKey: string;
+}): FileRowsResult {
+  const reusedRows = candidate.model.rows.slice(candidate.file.rowStart, candidate.file.rowEnd);
+  const retainsRowGeometry =
+    !candidate.input.wrapLines &&
+    candidate.model.reviewGeometryKey === candidate.reviewGeometryKey &&
+    candidate.file.top === candidate.fileTop &&
+    candidate.file.fileIndex === candidate.fileIndex &&
+    candidate.file.rowStart === candidate.rows.length;
+  let top = candidate.bodyTop;
+  for (const reusedRow of reusedRows) {
+    let nextRow = retainsRowGeometry ? reusedRow : repositionReusedRow(reusedRow, candidate, top);
+    if (
+      nextRow.kind === "line" &&
+      intersectsMaterializationWindow(candidate.input, top, top + nextRow.height) &&
+      nextRow.cells.some((cell) => cell && cell.fragments.length === 0)
+    ) {
+      nextRow = {
+        ...nextRow,
+        cells: materializeCells(
+          nextRow.cells,
+          candidate.file.file,
+          candidate.file.gutterWidth,
+          candidate.input,
+        ),
+      };
+    }
+    candidate.rows.push(nextRow);
+    top += nextRow.height;
+  }
+  return {
+    bottom: top + DIFF_BODY_BORDER_HEIGHT,
+    maximumHorizontalOverflow: Math.max(
+      0,
+      candidate.file.contentWidth - candidate.input.viewportWidth,
+    ),
+  };
+}
+
+function repositionReusedRow(
+  row: DiffRow,
+  candidate: Pick<Parameters<typeof appendReusableFileRows>[0], "rows" | "input" | "fileIndex">,
+  top: number,
+): DiffRow {
+  if (row.kind !== "line") {
+    return { ...row, index: candidate.rows.length, fileIndex: candidate.fileIndex, top };
+  }
+  const reviewHeight = reviewHeightForCells(row.cells, candidate.input);
+  return {
+    ...row,
+    index: candidate.rows.length,
+    fileIndex: candidate.fileIndex,
+    top,
+    height: row.height - row.reviewHeight + reviewHeight,
+    reviewHeight,
+  };
+}
+
+function appendNewFileRows(candidate: {
+  rows: DiffRow[];
+  input: BuildDiffDocumentModelInput;
+  file: BuildDiffDocumentModelInput["files"][number];
+  fileIndex: number;
+  fileTop: number;
+  bodyTop: number;
+  gutterWidth: number;
+}): FileRowsResult {
+  if (candidate.file.status === "binary" || candidate.file.status === "too_large") {
+    const height = candidate.input.typography.lineHeight + 24;
+    candidate.rows.push({
+      kind: "status",
+      index: candidate.rows.length,
+      fileIndex: candidate.fileIndex,
+      path: candidate.file.path,
+      top: candidate.bodyTop,
+      height,
+      label:
+        candidate.file.status === "binary"
+          ? candidate.input.labels.binary
+          : candidate.input.labels.tooLarge,
+    });
+    return {
+      bottom: candidate.bodyTop + height + DIFF_BODY_BORDER_HEIGHT,
+      maximumHorizontalOverflow: 0,
+    };
+  }
+
+  const lines = geometryLines(
+    lineSources(candidate.file, candidate.input.layout, false),
+    candidate.input,
+  );
+  const fileBottom =
+    candidate.bodyTop +
+    lines.reduce((height, line) => height + line.height, 0) +
+    DIFF_BODY_BORDER_HEIGHT;
+  const measureWidth =
+    !candidate.input.wrapLines &&
+    intersectsMaterializationWindow(candidate.input, candidate.fileTop, fileBottom);
+  let top = candidate.bodyTop;
+  let maximumHorizontalOverflow = 0;
+  for (const line of lines) {
+    const shouldMaterialize =
+      candidate.input.wrapLines ||
+      intersectsMaterializationWindow(candidate.input, top, top + line.height);
+    const cells = shouldMaterialize
+      ? materializeCells(line.cells, candidate.file, candidate.gutterWidth, candidate.input)
+      : line.cells;
+    const columnWidth = candidate.input.viewportWidth / cells.length;
+    if (measureWidth) {
+      for (const cell of cells) {
+        if (!cell) continue;
+        const width =
+          cell.fragments.length > 0
+            ? measureCellWidth(cell)
+            : candidate.input.measureText.measure(displayLineText(cell.content));
+        maximumHorizontalOverflow = Math.max(
+          maximumHorizontalOverflow,
+          candidate.gutterWidth + CODE_HORIZONTAL_PADDING + width - columnWidth,
+        );
+      }
+    }
+    const textHeight = Math.max(
+      candidate.input.typography.lineHeight,
+      ...cells.map((cell) => (cell?.fragments.length ?? 1) * candidate.input.typography.lineHeight),
+    );
+    const height = textHeight + line.reviewHeight;
+    candidate.rows.push({
+      kind: "line",
+      index: candidate.rows.length,
+      fileIndex: candidate.fileIndex,
+      path: candidate.file.path,
+      top,
+      height,
+      cells,
+      reviewHeight: line.reviewHeight,
+    });
+    top += height;
+  }
+  return { bottom: top + DIFF_BODY_BORDER_HEIGHT, maximumHorizontalOverflow };
+}
+
+function materializeCells(
+  cells: DiffLineRow["cells"],
+  file: BuildDiffDocumentModelInput["files"][number],
+  gutterWidth: number,
+  input: BuildDiffDocumentModelInput,
+): DiffLineRow["cells"] {
+  const availableWidth = Math.max(
+    input.measureText.measure("M"),
+    input.viewportWidth / cells.length - gutterWidth - CODE_HORIZONTAL_PADDING,
+  );
+  return cells.map((cell) => {
+    if (!cell || cell.fragments.length > 0) return cell;
+    const sourceLine =
+      file.hunks[cell.sourceIdentity.hunkIndex]!.lines[cell.sourceIdentity.lineIndex]!;
+    return measureCell({
+      source: {
+        ...cell,
+        tokenText: cell.type === "header" ? [] : compactHighlightTokens(sourceLine.tokens ?? []),
+      },
+      availableWidth,
+      input,
+    });
+  }) as DiffLineRow["cells"];
+}
+
+function displayLineText(text: string): string {
+  return text.includes("\t")
+    ? segmentGraphemes(text)
+        .map((segment) => segment.text)
+        .join("")
+    : text;
+}
+
+export function reviewGeometryKey(
+  reviewActions: BuildDiffDocumentModelInput["reviewActions"],
+): string {
+  if (!reviewActions) return "";
+  const comments = [...reviewActions.commentsByTarget.entries()]
+    .map(([target, targetComments]) => [target, targetComments.map((comment) => comment.id).sort()])
+    .sort(([left], [right]) => String(left).localeCompare(String(right)));
+  const editor = reviewActions.editor
+    ? [reviewActions.editor.target.key, reviewActions.editor.commentId]
+    : null;
+  return JSON.stringify([comments, editor]);
 }
 
 export function expandedBodyBorderTop(file: DiffFileSection): number | null {
@@ -182,8 +346,12 @@ export function retainReusableModels(
   previous: readonly DiffDocumentModel[] | undefined,
   next: DiffDocumentModel,
 ): DiffDocumentModel[] {
-  const fullest = [...(previous ?? []), next].reduce((best, candidate) =>
-    candidate.rows.length > best.rows.length ? candidate : best,
+  const sources = new Set(next.files.map((file) => file.file));
+  const compatible = previous?.filter((model) =>
+    model.files.every((file) => sources.has(file.file)),
+  );
+  const fullest = [...(compatible ?? []), next].reduce((best, candidate) =>
+    measuredFileCount(candidate) > measuredFileCount(best) ? candidate : best,
   );
   return fullest === next ? [next] : [fullest, next];
 }
@@ -191,13 +359,14 @@ export function retainReusableModels(
 function lineSources(
   file: BuildDiffDocumentModelInput["files"][number],
   layout: "unified" | "split",
+  includeTokens: boolean,
 ): Array<[CellSource] | [CellSource | null, CellSource | null]> {
   if (layout === "split") {
     return buildSplitDiffRows(file).map((row) => {
       if (row.kind === "header") {
         return [headerSource(row.content, row.hunkIndex, row.lineIndex)];
       }
-      return [cellSource(row.left), cellSource(row.right)];
+      return [cellSource(row.left, includeTokens), cellSource(row.right, includeTokens)];
     });
   }
   return buildUnifiedDiffLines(file).map((entry) => [
@@ -206,7 +375,7 @@ function lineSources(
       content: entry.line.content,
       lineNumber: entry.lineNumber,
       reviewTarget: entry.reviewTarget,
-      tokenText: compactHighlightTokens(entry.line.tokens ?? []),
+      tokenText: includeTokens ? compactHighlightTokens(entry.line.tokens ?? []) : [],
       sourceIdentity: {
         hunkIndex: entry.hunkIndex,
         lineIndex: entry.lineIndex,
@@ -227,20 +396,127 @@ function headerSource(content: string, hunkIndex: number, lineIndex: number): Ce
   };
 }
 
-function cellSource(line: SplitDiffDisplayLine | null): CellSource | null {
+function cellSource(line: SplitDiffDisplayLine | null, includeTokens: boolean): CellSource | null {
   if (!line) return null;
   return {
     type: line.type,
     content: line.content,
     lineNumber: line.lineNumber,
     reviewTarget: line.reviewTarget,
-    tokenText: compactHighlightTokens(line.tokens ?? []),
+    tokenText: includeTokens ? compactHighlightTokens(line.tokens ?? []) : [],
     sourceIdentity: {
       hunkIndex: line.hunkIndex,
       lineIndex: line.lineIndex,
       side: line.side,
     },
   };
+}
+
+function geometryCell(source: CellSource): DiffCell {
+  return {
+    type: source.type,
+    content: source.content,
+    lineNumber: source.lineNumber,
+    tokens: [],
+    fragments: [],
+    reviewTarget: source.reviewTarget,
+    sourceIdentity: source.sourceIdentity,
+  };
+}
+
+function geometryLines(
+  sources: Array<[CellSource] | [CellSource | null, CellSource | null]>,
+  input: BuildDiffDocumentModelInput,
+): GeometryLine[] {
+  return sources.map((sourceCells) => {
+    const cells = sourceCells.map((source) =>
+      source ? geometryCell(source) : null,
+    ) as DiffLineRow["cells"];
+    const reviewHeight = reviewHeightForCells(cells, input);
+    return {
+      cells,
+      reviewHeight,
+      height: input.typography.lineHeight + reviewHeight,
+    };
+  });
+}
+
+function intersectsMaterializationWindow(
+  input: BuildDiffDocumentModelInput,
+  fileTop: number,
+  fileBottom: number,
+): boolean {
+  const window = input.materializationWindow;
+  if (!window) return true;
+  return fileTop < window.top + window.height && fileBottom > window.top;
+}
+
+function hasMeasuredFileRows(model: DiffDocumentModel, file: DiffFileSection): boolean {
+  if (file.isCollapsed) return false;
+  return model.rows.slice(file.rowStart, file.rowEnd).some((row) => {
+    if (row.kind !== "line") return true;
+    return row.cells.some((cell) => cell && cell.fragments.length > 0);
+  });
+}
+
+function indexReusableModels(
+  models: readonly DiffDocumentModel[] | undefined,
+): ReusableModelIndex[] {
+  // The latest model includes text prepared by later scroll windows.
+  return (models ?? []).toReversed().map((model) => {
+    const filesBySource = new Map<BuildDiffDocumentModelInput["files"][number], DiffFileSection>();
+    const measuredFiles = new Set<DiffFileSection>();
+    for (const file of model.files) {
+      filesBySource.set(file.file, file);
+      if (hasMeasuredFileRows(model, file)) measuredFiles.add(file);
+    }
+    return { model, filesBySource, measuredFiles };
+  });
+}
+
+function findReusableFileRows(candidate: {
+  indexes: readonly ReusableModelIndex[];
+  buildInput: BuildDiffDocumentModelInput;
+  sourceFile: BuildDiffDocumentModelInput["files"][number];
+  fileTop: number;
+  bodyTop: number;
+}): ReusableFileRows | null {
+  for (const index of candidate.indexes) {
+    const file = index.filesBySource.get(candidate.sourceFile);
+    if (
+      file &&
+      canReuseFileRows({
+        buildInput: candidate.buildInput,
+        file,
+        isMeasured: index.measuredFiles.has(file),
+        fileTop: candidate.fileTop,
+        bodyTop: candidate.bodyTop,
+      })
+    ) {
+      return { model: index.model, file };
+    }
+  }
+  return null;
+}
+
+function canReuseFileRows(candidate: {
+  buildInput: BuildDiffDocumentModelInput;
+  file: DiffFileSection;
+  isMeasured: boolean;
+  fileTop: number;
+  bodyTop: number;
+}): boolean {
+  if (candidate.file.isCollapsed) return false;
+  if (candidate.isMeasured) return true;
+  return !intersectsMaterializationWindow(
+    candidate.buildInput,
+    candidate.fileTop,
+    candidate.bodyTop + candidate.file.bodyHeight,
+  );
+}
+
+function measuredFileCount(model: DiffDocumentModel): number {
+  return model.files.filter((file) => hasMeasuredFileRows(model, file)).length;
 }
 
 function measureCell(input: {
@@ -295,14 +571,31 @@ export function measureFragments(input: {
     return [createFragment(graphemes, 0, graphemes.length, 0, input.lineHeight, input.measureText)];
   }
   const fragments: DiffFragment[] = [];
+  const displayGraphemes = graphemes.map((grapheme) => grapheme.text);
+  const measureWidth =
+    input.measureText.measureWidth?.bind(input.measureText) ??
+    ((slice: readonly string[]) => advancesFor(input.measureText)(slice).at(-1) ?? 0);
+  // Joining/ligatures can make a longer prefix narrower. Preserve the existing
+  // search order for those runs; changing the probes can change their breaks.
+  const canBoundSearch = !requiresShaping(input.text);
   let graphemeIndex = 0;
   while (graphemeIndex < graphemes.length) {
     let low = graphemeIndex + 1;
-    let high = graphemes.length;
+    // A small first probe finishes short lines in one query. Grow it only when
+    // it fits, so narrow wrapping never repeatedly measures a huge line's tail.
+    let high = canBoundSearch ? Math.min(graphemes.length, graphemeIndex + 64) : graphemes.length;
     let fitting = low;
+    if (canBoundSearch) {
+      while (measureWidth(displayGraphemes.slice(graphemeIndex, high)) <= input.availableWidth) {
+        fitting = high;
+        low = high + 1;
+        if (high === graphemes.length) break;
+        high = Math.min(graphemes.length, graphemeIndex + (high - graphemeIndex) * 2);
+      }
+    }
     while (low <= high) {
       const middle = (low + high) >>> 1;
-      const width = measureGraphemeSlice(graphemes, graphemeIndex, middle, input.measureText).width;
+      const width = measureWidth(displayGraphemes.slice(graphemeIndex, middle));
       if (width <= input.availableWidth || middle === graphemeIndex + 1) {
         fitting = middle;
         low = middle + 1;

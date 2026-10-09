@@ -5,17 +5,18 @@ export function addAttachOptions(cmd: Command): Command {
     .description("Attach to a running agent's output stream")
     .argument("<id>", "Agent ID (or prefix)");
 }
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
+import { waitForStop } from "../../utils/wait-for-stop.js";
 import {
   fetchProjectedTimelineItems,
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
 } from "../../utils/timeline.js";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentStreamEventPayload, AgentStreamMessage } from "@getpaseo/protocol/messages";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 
 export interface AgentAttachOptions {
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   [key: string]: unknown;
 }
 
@@ -105,23 +106,13 @@ export async function runAttachCommand(
   options: AgentAttachOptions,
   _command: Command,
 ): Promise<void> {
-  const host = getDaemonHost({ host: options.host });
-
   if (!id) {
     console.error("Error: Agent ID required");
     console.error("Usage: paseo attach <id>");
     process.exit(1);
   }
 
-  let client: DaemonClient;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Error: Cannot connect to daemon at ${host}: ${message}`);
-    console.error("Start the daemon with: paseo daemon start");
-    process.exit(1);
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const fetchResult = await client.fetchAgent({ agentId: id });
@@ -134,7 +125,7 @@ export async function runAttachCommand(
     const resolvedId = fetchResult.agent.id;
 
     // Print header
-    console.log(`Attaching to agent ${resolvedId.substring(0, 7)}...`);
+    console.log(`Fetching history for agent ${resolvedId.substring(0, 7)}...`);
     console.log(`(Press Ctrl+C to detach)\n`);
 
     // Print existing output from timeline fetch.
@@ -152,39 +143,25 @@ export async function runAttachCommand(
     }
 
     // Subscribe to new events
-    const unsubscribe = client.on("agent_stream", (msg: unknown) => {
-      const message = msg as AgentStreamMessage;
-      if (message.type !== "agent_stream") return;
-      if (message.payload.agentId !== resolvedId) return;
-
-      printStreamEvent(message.payload.event);
+    const unsubscribe = client.subscribeAgentTimeline(resolvedId, (message) => {
+      if (message.type === "agent.timeline.replacement") {
+        console.log("\n[Timeline replaced; earlier output is no longer current]");
+      } else if (message.type === "agent.timeline.subscription_restored") {
+        console.log("\n[Reconnected; live output resumed. Events may have been missed.]");
+      } else if (message.type === "agent.timeline.error") {
+        console.error(`Timeline observation stopped: ${message.payload.error}`);
+      } else {
+        printStreamEvent(message.payload.event);
+      }
     });
 
-    // Handle Ctrl+C to detach gracefully
-    let detached = false;
-    const detach = () => {
-      if (detached) return;
-      detached = true;
+    await unsubscribe.ready;
+    console.log(`Attached to agent ${resolvedId.substring(0, 7)}.`);
 
-      console.log("\n\nDetaching from agent...");
-      unsubscribe();
-      client
-        .close()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch(() => {
-          process.exit(1);
-        });
-    };
-
-    process.on("SIGINT", detach);
-    process.on("SIGTERM", detach);
-
-    // Keep the process alive
-    await new Promise(() => {
-      // Wait indefinitely until interrupted
-    });
+    await waitForStop();
+    console.log("\n\nDetaching from agent...");
+    unsubscribe();
+    await client.close();
   } catch (err) {
     await client.close().catch(() => {});
     const message = err instanceof Error ? err.message : String(err);

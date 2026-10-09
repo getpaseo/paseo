@@ -118,6 +118,123 @@ describe("highlightCode", () => {
     expect(result[10].find((t) => t.text === "color")?.style).toBe("property");
   });
 
+  it("highlights Astro components across frontmatter, markup, and style", () => {
+    const code = `---
+const title = "Hello";
+---
+<main class="page">
+  <h1>{title}</h1>
+</main>
+<style>
+  .page { color: red; }
+</style>`;
+
+    const tokens = highlightCode(code, "Page.astro").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "const", style: "keyword" },
+        { text: '"Hello"', style: "string" },
+        { text: "main", style: "tag" },
+        { text: "class", style: "attribute" },
+        { text: "title", style: "variable" },
+        { text: "page", style: "class" },
+        { text: "color", style: "property" },
+      ]),
+    );
+  });
+
+  it("keeps an Astro expression open through nested template strings", () => {
+    const code = "<p>{`a ${`}`} b`}</p>";
+
+    const tokens = highlightCode(code, "Nested.astro").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "`}`", style: "string" },
+        { text: " b`", style: "string" },
+      ]),
+    );
+  });
+
+  it("highlights Vue SFCs across script, template, and style", () => {
+    const code = [
+      '<script lang="ts">',
+      "  let count: number = 1;",
+      "</script>",
+      "",
+      "<template>",
+      '  <p v-if="count > 0" :class="badge">{{ { count: 1 } }}</p>',
+      "  <span>{{ 'a}}b' }} {{ { inner: 2 }}}</span>",
+      "</template>",
+      "",
+      "<style>",
+      "  .badge {",
+      "    color: red;",
+      "  }",
+      "</style>",
+    ].join("\n");
+
+    const tokens = highlightCode(code, "Counter.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "let", style: "keyword" },
+        { text: "number", style: "type" },
+        { text: "template", style: "tag" },
+        { text: "v-if", style: "attribute" },
+        { text: "count", style: "definition" },
+        { text: "1", style: "number" },
+        { text: "'a}}b'", style: "string" },
+        { text: "inner", style: "definition" },
+        { text: "2", style: "number" },
+        { text: "badge", style: "class" },
+        { text: "color", style: "property" },
+      ]),
+    );
+  });
+
+  it("highlights a Vue SFC that contains an empty interpolation", () => {
+    const code = ["<template>", "  <p>{{}} {{ count }}</p>", "</template>"].join("\n");
+
+    const tokens = highlightCode(code, "Empty.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "template", style: "tag" },
+        { text: "count", style: "variable" },
+      ]),
+    );
+  });
+
+  it("highlights quoted Vue directive values as code", () => {
+    const code = "<template><p v-if=\"count > 0\" :class='badge'>x</p></template>";
+
+    const tokens = highlightCode(code, "Directive.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "count", style: "variable" },
+        { text: "0", style: "number" },
+        { text: "badge", style: "variable" },
+      ]),
+    );
+    expect(tokens).not.toContainEqual({ text: '"count > 0"', style: "string" });
+  });
+
+  it("keeps a Vue interpolation open through nested template strings", () => {
+    const code = "<template><p>{{ `a ${`}}`} b` }}</p></template>";
+
+    const tokens = highlightCode(code, "Nested.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "`}}`", style: "string" },
+        { text: " b`", style: "string" },
+      ]),
+    );
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");

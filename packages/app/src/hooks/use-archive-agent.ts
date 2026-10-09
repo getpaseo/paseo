@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useMemo } from "react";
 import {
   useMutation,
@@ -247,27 +248,7 @@ function getStoredAgentSnapshot(input: ArchiveAgentInput) {
 function restoreAgentSnapshot(
   input: ArchiveAgentInput & { agent: ReturnType<typeof getStoredAgentSnapshot> },
 ): void {
-  const setAgents = useSessionStore.getState().setAgents;
-  setAgents(input.serverId, (prev) => {
-    const hasAgent = prev.has(input.agentId);
-    if (!input.agent) {
-      if (!hasAgent) {
-        return prev;
-      }
-      const next = new Map(prev);
-      next.delete(input.agentId);
-      return next;
-    }
-
-    const current = prev.get(input.agentId);
-    if (current === input.agent) {
-      return prev;
-    }
-
-    const next = new Map(prev);
-    next.set(input.agentId, input.agent);
-    return next;
-  });
+  getHostRuntimeStore().restoreAgentSnapshot(input.serverId, input.agentId, input.agent);
 }
 
 function getArchivedAgentListCacheSnapshot(
@@ -324,22 +305,11 @@ function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: strin
     return;
   }
 
-  const setAgents = useSessionStore.getState().setAgents;
-  setAgents(input.serverId, (prev) => {
-    const existing = prev.get(input.agentId);
-    if (!existing) {
-      return prev;
-    }
-    if (existing.archivedAt && existing.archivedAt.getTime() === archivedAt.getTime()) {
-      return prev;
-    }
-    const next = new Map(prev);
-    next.set(input.agentId, {
-      ...existing,
-      archivedAt,
-    });
-    return next;
-  });
+  getHostRuntimeStore().archiveAgentSnapshot(
+    input.serverId,
+    input.agentId,
+    archivedAt.toISOString(),
+  );
 }
 
 interface ApplyArchivedAgentCloseResultsInput {

@@ -13,6 +13,7 @@ declare global {
   var __PASEO_RENDER_PROFILE__: RenderProfileSample[] | undefined;
   var __PASEO_RENDER_PROFILE_REASONS__: Record<string, Record<string, number>> | undefined;
   var __PASEO_RESET_RENDER_PROFILE__: (() => void) | undefined;
+  var __PASEO_RENDER_PROFILE_ENABLED__: boolean | undefined;
 }
 
 function getSearchParam(name: string): string | null {
@@ -27,8 +28,10 @@ function getSearchParam(name: string): string | null {
   return new URLSearchParams(search).get(name);
 }
 
-function isRenderProfileEnabled(): boolean {
-  return getSearchParam("renderProfile") === "1";
+export function isRenderProfileEnabled(): boolean {
+  return (
+    globalThis.__PASEO_RENDER_PROFILE_ENABLED__ === true || getSearchParam("renderProfile") === "1"
+  );
 }
 
 const onRender: ProfilerOnRenderCallback = (

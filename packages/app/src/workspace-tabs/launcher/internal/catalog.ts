@@ -2,6 +2,7 @@ export const PRIMARY_LAUNCH_ORDER = [
   "agent",
   "terminal",
   "changes",
+  "diff",
   "files",
   "browser",
   "pullRequest",
@@ -9,8 +10,9 @@ export const PRIMARY_LAUNCH_ORDER = [
 
 export const SUPPORTING_LAUNCH_ORDER = [
   "changes",
-  "files",
   "terminal",
+  "diff",
+  "files",
   "agent",
   "browser",
   "pullRequest",

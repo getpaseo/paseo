@@ -1,6 +1,7 @@
+import { seedSessionHosts } from "@/test/seed-session";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
@@ -41,13 +42,15 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     labels: {},
     archivedAt: null,
     ...overrides,
-    activeTurn: overrides.activeTurn ?? null,
+    turn: overrides.turn ?? { phase: "idle", cancellationRequestId: null },
   };
 }
 
 describe("useArchiveAgent", () => {
+  afterEach(() => seedSessionHosts([]));
   beforeEach(() => {
     useSessionStore.setState((state) => ({ ...state, sessions: {} }));
+    seedSessionHosts(["server-a"]);
   });
 
   it("tracks pending archive state in shared react-query cache", () => {

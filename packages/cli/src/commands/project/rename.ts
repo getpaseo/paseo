@@ -44,8 +44,8 @@ export async function runRenameCommand(
   _command: Command,
 ): Promise<SingleResult<ProjectRenameResult>> {
   const name = resolveProjectName({ name: nameArg, reset: options.reset });
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
-    throw buildDaemonConnectionCommandError({ host: options.host, error });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
+    throw buildDaemonConnectionCommandError({ target: options.daemonTarget, error });
   });
 
   try {
@@ -56,6 +56,7 @@ export async function runRenameCommand(
       schema: projectRenameSchema,
     };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "PROJECT_RENAME_FAILED", message } satisfies CommandError;
   } finally {

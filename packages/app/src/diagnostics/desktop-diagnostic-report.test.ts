@@ -6,6 +6,7 @@ import {
 
 function makeSources(): DesktopDiagnosticSources {
   return {
+    getSandboxDiagnostics: async () => ({ enabled: true, reason: "user namespaces available" }),
     getStatus: async () => ({
       serverId: "server-1",
       status: "running",
@@ -15,6 +16,8 @@ function makeSources(): DesktopDiagnosticSources {
       home: "/paseo/home",
       version: "1.2.3",
       desktopManaged: true,
+      ownedByDesktop: true,
+      startedAt: "2026-01-01T00:00:00.000Z",
       error: null,
     }),
     getDaemonLogs: async () => ({
@@ -24,6 +27,34 @@ function makeSources(): DesktopDiagnosticSources {
     getAppLogs: async () => ({
       logPath: "/logs/Paseo/main.log",
       contents: "[login-shell-env] start\n[login-shell-env] failed",
+    }),
+    getUpdaterDiagnostics: async () => ({
+      platform: "darwin",
+      currentVersion: "0.7.0",
+      targetVersion: "0.7.2",
+      targetVersionError: null,
+      shipItDirectory: "/cache/sh.paseo.desktop.ShipIt",
+      state: {
+        path: "/cache/sh.paseo.desktop.ShipIt/ShipItState.plist",
+        exists: true,
+        modifiedAt: "2026-09-04T11:22:19.000Z",
+        contents: '{"launchAfterInstallation":true}',
+        error: null,
+      },
+      stdout: {
+        path: "/cache/sh.paseo.desktop.ShipIt/ShipIt_stdout.log",
+        exists: false,
+        modifiedAt: null,
+        contents: "",
+        error: null,
+      },
+      stderr: {
+        path: "/cache/sh.paseo.desktop.ShipIt/ShipIt_stderr.log",
+        exists: true,
+        modifiedAt: "2026-09-01T08:39:20.000Z",
+        contents: "Installation completed successfully",
+        error: null,
+      },
     }),
   };
 }
@@ -50,13 +81,31 @@ describe("desktop diagnostic report", () => {
         await appLogGate;
         return makeSources().getAppLogs();
       },
+      getUpdaterDiagnostics: async () => {
+        calls.push("updater");
+        return makeSources().getUpdaterDiagnostics();
+      },
     };
 
     const resultPromise = collectDesktopDiagnosticSections(sources);
 
-    expect(calls).toEqual(["status", "daemonLogs", "appLogs"]);
+    expect(calls).toEqual(["status", "daemonLogs", "appLogs", "updater"]);
     releaseAppLogs();
     await expect(resultPromise).resolves.toMatchObject({ status: "done" });
+  });
+
+  test("includes target version lookup errors", async () => {
+    const sources: DesktopDiagnosticSources = {
+      ...makeSources(),
+      getUpdaterDiagnostics: async () => ({
+        ...(await makeSources().getUpdaterDiagnostics()),
+        targetVersion: null,
+        targetVersionError: "plutil failed",
+      }),
+    };
+
+    const result = await collectDesktopDiagnosticSections(sources);
+    expect(result.sections.join("\n\n")).toContain("Target version error: plutil failed");
   });
 
   test("includes the Electron main-process log after the daemon log", async () => {
@@ -73,6 +122,14 @@ describe("desktop diagnostic report", () => {
     expect(report.indexOf("Desktop app log tail")).toBeGreaterThan(
       report.indexOf("Desktop daemon log tail"),
     );
+    expect(report).toContain("Desktop updater\n  Platform: darwin");
+    expect(report).toContain("  Current version: 0.7.0");
+    expect(report).toContain("  Target version: 0.7.2");
+    expect(report).toContain("ShipItState.plist");
+    expect(report).toContain('{"launchAfterInstallation":true}');
+    expect(report).toContain("ShipIt stdout log tail");
+    expect(report).toContain("  File not found");
+    expect(report).toContain("Installation completed successfully");
   });
 
   test("keeps daemon diagnostics when the Electron app log fails", async () => {
@@ -90,4 +147,21 @@ describe("desktop diagnostic report", () => {
     expect(report).toContain("Desktop daemon log tail\n  daemon line one\n  daemon line two");
     expect(report).toContain("Desktop app log tail\n  Error: app log unavailable");
   });
+});
+
+test("reports sandbox degradation and its reason even if daemon diagnostics fail", async () => {
+  const result = await collectDesktopDiagnosticSections({
+    ...makeSources(),
+    getStatus: async () => {
+      throw new Error("daemon unavailable");
+    },
+    getSandboxDiagnostics: async () => ({
+      enabled: false,
+      reason: "user namespaces unavailable; no usable SUID helper",
+    }),
+  });
+  expect(result.sections.join("\n")).toContain(
+    "Chromium sandbox\n  State: Disabled\n  Reason: user namespaces unavailable; no usable SUID helper",
+  );
+  expect(result.status).toBe("failed");
 });

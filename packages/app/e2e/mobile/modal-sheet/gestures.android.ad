@@ -1,0 +1,52 @@
+# Install plugin-examples/modal-ui on the connected host and set EXAMPLES_URL to
+# paseo://h/<serverId>/plugin/modal-ui-example/surface/main.
+# Gesture coordinates target a 1080x1920 Android emulator at density 420.
+context platform=android timeout=120000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}" "${EXAMPLES_URL}"
+wait "label=\"Open ScrollView\"" 20000
+press "label=\"Open ScrollView\""
+wait "label=\"Row 1\"" 10000
+gesture pan 540 980 0 820 500
+wait "label=\"Open ScrollView\"" 3000
+
+# The caller-owned ScrollView expands with a body drag and reaches its final row.
+press "label=\"Open ScrollView\""
+wait "label=\"Row 1\"" 10000
+gesture pan 540 980 0 -600 500
+wait "label=\"Row 10\"" 3000
+scroll bottom
+wait "label=\"Row 100\"" 3000
+press "role=\"button\" label=\"Row 100\""
+press "label=\"Close\""
+wait "text=\"Selected: Row 100\"" 3000
+
+# FlatList has the same body dismissal, then supports refs after expansion.
+press "label=\"Open FlatList\""
+wait "label=\"Row 1\"" 10000
+gesture pan 540 1100 0 700 500
+wait "label=\"Open FlatList\"" 3000
+press "label=\"Open FlatList\""
+wait "label=\"Row 1\"" 10000
+gesture pan 540 1140 0 -750 500
+wait "label=\"Row 9\"" 3000
+press "label=\"Jump to last row\""
+wait "label=\"Row 100\"" 3000
+# Dragging down while scrolled moves the list, leaving the sheet open.
+gesture pan 540 650 0 900 500
+wait "label=\"Row 88\"" 3000
+is visible "label=\"Close\""
+press "label=\"Close\""
+wait "label=\"Open Horizontal\"" 3000
+
+# Horizontal tabs still receive gestures inside the host-owned vertical body.
+press "label=\"Open Horizontal\""
+wait "label=\"Overview\"" 10000
+gesture pan 960 980 -880 0 500
+wait stable 300 5000
+press "role=\"button\" label=\"System logs\""
+wait stable 300 5000
+press "label=\"Close\""
+wait "text=\"Selected: System logs\"" 3000
+close
