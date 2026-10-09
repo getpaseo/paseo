@@ -214,19 +214,26 @@ describe("EditingTextInputNative", () => {
     });
   }
 
-  it("keeps the iOS native text untouched while the user types", () => {
+  it("does not send typed text back to the iOS input while the user types", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
     const onChangeText = vi.fn();
     act(() => {
       root?.render(
-        <EditingTextInput initialValue="あいう" onChangeText={onChangeText} onPasteImages={noop} />,
+        <EditingTextInput
+          ref={handleRef}
+          initialValue="あいう"
+          onChangeText={onChangeText}
+          onPasteImages={noop}
+        />,
       );
     });
-    const rendersBeforeTyping = pasteInputRender.mock.calls.length;
 
     typeIntoPasteInput("あかいう");
 
     expect(onChangeText).toHaveBeenCalledWith("あかいう");
-    expect(pasteInputRender).toHaveBeenCalledTimes(rendersBeforeTyping);
+    expect(handleRef.current?.getText()).toBe("あかいう");
+    // A new `text` prop makes iOS reassign the native string, cancelling IME composition.
+    expect(pasteInputRender.mock.calls.at(-1)?.[0]).toMatchObject({ defaultValue: "あいう" });
   });
 
   it("re-renders the Android input with the typed text so Fabric re-measures it", () => {
