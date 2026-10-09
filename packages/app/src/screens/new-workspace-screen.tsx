@@ -1018,70 +1018,77 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     images: images?.length ? images : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
+  let allocatedChatWorkspace: WorkspaceDescriptor | null = null;
   const execute = async (
     requestedAgent?: NonNullable<CreateWorkspaceRequestOptions["agent"]>,
   ): Promise<AgentSnapshotPayload> => {
     if (isChat) {
-      const { workspace: createdWorkspace } = await ensureWorkspace({
-        cwd: "",
-        prompt: text,
-        attachments: workspaceNamingAttachments,
-        withInitialAgent: false,
-        onEvent: (snapshot) => {
-          if (!snapshot.workspace || navigated) return;
-          navigated = true;
-          if (!input.isStillOnCreateScreen()) return;
-          const workspace = normalizeWorkspaceDescriptor(snapshot.workspace);
-          getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [
-            { ...workspace, status: "running" },
-          ]);
-          const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
-            forkDraftSetup: input.forkDraftSetup,
-            workspaceDirectory: workspace.workspaceDirectory,
-            provider,
-            composerState,
-          });
-          outcome = submitWorkspaceDraft({
-            clearConsumedDraft,
-            draftKey: input.draftKey,
-            draftContextScopeKey: input.draftContextScopeKey,
-            resolveClient: input.resolveClient,
-            isStillOnCreateScreen: input.isStillOnCreateScreen,
-            serverId,
-            clearDraft,
-            draftId: input.draftId,
-            initialSetup,
-            workspaceId: workspace.id,
-            workspaceDirectory: workspace.workspaceDirectory,
-            text,
-            attachments,
-            provider,
-            composerState,
-            supportsForgeSearch: input.supportsForgeSearch,
-            agentCreation,
-          });
-        },
-      });
+      if (!allocatedChatWorkspace) {
+        const { workspace: createdWorkspace } = await ensureWorkspace({
+          cwd: "",
+          prompt: text,
+          attachments: workspaceNamingAttachments,
+          withInitialAgent: false,
+          onEvent: (snapshot) => {
+            if (!snapshot.workspace || navigated) return;
+            navigated = true;
+            if (!input.isStillOnCreateScreen()) return;
+            const workspace = normalizeWorkspaceDescriptor(snapshot.workspace);
+            getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [
+              { ...workspace, status: "running" },
+            ]);
+            const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
+              forkDraftSetup: input.forkDraftSetup,
+              workspaceDirectory: workspace.workspaceDirectory,
+              provider,
+              composerState,
+            });
+            outcome = submitWorkspaceDraft({
+              clearConsumedDraft,
+              draftKey: input.draftKey,
+              draftContextScopeKey: input.draftContextScopeKey,
+              resolveClient: input.resolveClient,
+              isStillOnCreateScreen: input.isStillOnCreateScreen,
+              serverId,
+              clearDraft,
+              draftId: input.draftId,
+              initialSetup,
+              workspaceId: workspace.id,
+              workspaceDirectory: workspace.workspaceDirectory,
+              text,
+              attachments,
+              provider,
+              composerState,
+              supportsForgeSearch: input.supportsForgeSearch,
+              agentCreation,
+            });
+          },
+        });
 
-      if (!createdWorkspace?.workspaceDirectory) {
-        throw new Error("Created workspace has no directory");
+        if (!createdWorkspace?.workspaceDirectory) {
+          throw new Error("Created workspace has no directory");
+        }
+        allocatedChatWorkspace = createdWorkspace;
       }
 
       const client = input.resolveClient();
+      const agentConfig = {
+        ...initialAgent.config,
+        ...requestedAgent?.config,
+      };
       const createdAgent = await client.createAgent({
-        workspaceId: createdWorkspace.id,
+        workspaceId: allocatedChatWorkspace.id,
         config: {
-          provider,
-          cwd: createdWorkspace.workspaceDirectory,
-          modeId: composerState.selectedMode || undefined,
-          model: composerState.effectiveModelId || undefined,
-          thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
-          featureValues: composerState.featureValues,
+          ...agentConfig,
+          provider: agentConfig.provider || provider,
+          cwd: allocatedChatWorkspace.workspaceDirectory,
         },
-        initialPrompt: text,
+        initialPrompt: requestedAgent?.initialPrompt ?? text,
         clientMessageId: `${input.draftId}:initial-message`,
-        images: images?.length ? images : undefined,
-        attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
+        images: requestedAgent?.images ?? (images?.length ? images : undefined),
+        attachments:
+          requestedAgent?.attachments ??
+          (wirePayload.attachments?.length ? wirePayload.attachments : undefined),
       });
       return createdAgent;
     }

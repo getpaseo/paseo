@@ -4592,11 +4592,15 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
     const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
-    if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
+    if (input.background !== undefined) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
+    const callerAgentId = this.lastServerInfoMessage?.features?.backgroundWorkspaces
+      ? input.callerAgentId
+      : undefined;
     const result = await this.creations.createWorkspace({
       ...input,
+      callerAgentId,
       requestId: resolvedRequestId,
       ...(input.agent
         ? {
