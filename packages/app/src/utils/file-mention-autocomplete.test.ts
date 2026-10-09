@@ -59,7 +59,7 @@ describe("findActiveFileMention", () => {
   });
 
   it("returns null for email addresses (word char before @)", () => {
-    const text = "send to alice@example.com please";
+    const text = "alice@example.com";
     const mention = findActiveFileMention({
       text,
       cursorIndex: text.length,
@@ -69,7 +69,7 @@ describe("findActiveFileMention", () => {
 
   it("returns null for email addresses (+ immediately before @)", () => {
     // Local part ends with + so the character at index-1 is '+', not a word char.
-    const text = "send to noreply+@example.com please";
+    const text = "noreply+@example.com";
     const mention = findActiveFileMention({
       text,
       cursorIndex: text.length,
