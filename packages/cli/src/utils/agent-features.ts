@@ -8,21 +8,29 @@ export const FEATURE_OPTION_DESCRIPTION =
 
 /** Parses repeated `--feature id=value` flags; the last value of an id wins. */
 export function parseFeatureFlags(flags: string[] | undefined): Record<string, string> {
-  const requested: Record<string, string> = {};
+  // No prototype, so an id such as __proto__ is kept and reported as unknown.
+  const requested: Record<string, string> = Object.create(null);
   for (const flag of flags ?? []) {
     const eqIndex = flag.indexOf("=");
-    const id = eqIndex === -1 ? "" : flag.slice(0, eqIndex).trim();
-    const value = eqIndex === -1 ? "" : flag.slice(eqIndex + 1).trim();
+    if (eqIndex === -1) {
+      throw invalidFormat(flag);
+    }
+    const id = flag.slice(0, eqIndex).trim();
+    const value = flag.slice(eqIndex + 1).trim();
     if (!id || !value) {
-      throw {
-        code: "INVALID_FEATURE",
-        message: `Invalid feature format: ${flag}`,
-        details: "Features must be in id=value format",
-      } satisfies CommandError;
+      throw invalidFormat(flag);
     }
     requested[id] = value;
   }
   return requested;
+}
+
+function invalidFormat(flag: string): CommandError {
+  return {
+    code: "INVALID_FEATURE",
+    message: `Invalid feature format: ${flag}`,
+    details: "Features must be in id=value format",
+  };
 }
 
 /**
@@ -38,14 +46,7 @@ export function resolveFeatureValues(
   for (const [id, raw] of Object.entries(requested)) {
     const feature = features.find((candidate) => candidate.id === id);
     if (!feature) {
-      throw {
-        code: "INVALID_FEATURE",
-        message: `Unknown feature: ${id}`,
-        details:
-          features.length > 0
-            ? `Available features: ${features.map(describeFeature).join("; ")}`
-            : "This provider and model expose no features",
-      } satisfies CommandError;
+      throw unknownFeature(id, features);
     }
     if (feature.type === "toggle") {
       if (raw !== "true" && raw !== "false") {
@@ -71,9 +72,18 @@ export function formatFeatureValues(features: readonly AgentFeature[] | undefine
 }
 
 function allowedValues(feature: AgentFeature): string {
-  return feature.type === "toggle"
-    ? "true|false"
-    : feature.options.map((option) => option.id).join("|");
+  if (feature.type === "toggle") {
+    return "true|false";
+  }
+  return feature.options.map((option) => option.id).join("|");
+}
+
+function unknownFeature(id: string, features: readonly AgentFeature[]): CommandError {
+  let details = "This provider and model expose no features";
+  if (features.length > 0) {
+    details = `Available features: ${features.map(describeFeature).join("; ")}`;
+  }
+  return { code: "INVALID_FEATURE", message: `Unknown feature: ${id}`, details };
 }
 
 function describeFeature(feature: AgentFeature): string {

@@ -23,6 +23,14 @@ describe("parseFeatureFlags", () => {
     ).toEqual({ service_tier: "priority", plan_mode: "true" });
   });
 
+  it("keeps an id that names an Object prototype property, so it is reported", () => {
+    const requested = parseFeatureFlags(["__proto__=true"]);
+    expect(Object.keys(requested)).toEqual(["__proto__"]);
+    expect(() => resolveFeatureValues(requested, codexFeatures)).toThrow(
+      expect.objectContaining({ message: "Unknown feature: __proto__" }),
+    );
+  });
+
   it("returns no features without flags", () => {
     expect(parseFeatureFlags(undefined)).toEqual({});
   });

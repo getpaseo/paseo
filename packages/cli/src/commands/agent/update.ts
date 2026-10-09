@@ -269,14 +269,14 @@ export async function runUpdateCommand(
     }
     const agentId = fetchResult.agent.id;
 
-    // Every value is checked before any is applied, so a bad flag changes nothing.
-    const resolvedChanges: AgentChanges =
-      changes.type === "features"
-        ? {
-            type: "features",
-            values: resolveFeatureValues(changes.requested, fetchResult.agent.features ?? []),
-          }
-        : changes;
+    let resolvedChanges: AgentChanges;
+    if (changes.type === "features") {
+      // Every value is checked before any is applied, so a bad flag changes nothing.
+      const values = resolveFeatureValues(changes.requested, fetchResult.agent.features ?? []);
+      resolvedChanges = { type: "features", values };
+    } else {
+      resolvedChanges = changes;
+    }
     const appliedChanges = await applyAgentChanges(client, agentId, resolvedChanges);
 
     const updatedResult = await client.fetchAgent({ agentId });

@@ -467,6 +467,10 @@ function loadRunImages(
 }
 
 export interface RunFeatureLookupClient {
+  listProviderModels(
+    provider: string,
+    options: { cwd: string },
+  ): Promise<{ models?: Array<{ id: string; isDefault?: boolean }>; error?: string | null }>;
   listProviderFeatures(draftConfig: {
     provider: string;
     cwd: string;
@@ -478,6 +482,9 @@ export interface RunFeatureLookupClient {
 
 // Feature values are checked against what the provider reports for this exact draft (provider,
 // model, mode, thinking), since a feature such as a service tier exists only for some models.
+// Agent creation fills in the provider's default model; feature discovery does not, so a run
+// without --model is checked against that same default (the model marked default, else the
+// first), the rule the daemon applies when it creates the agent.
 export async function resolveRunFeatureValues(
   client: RunFeatureLookupClient,
   requested: Record<string, string>,
@@ -486,7 +493,8 @@ export async function resolveRunFeatureValues(
   if (Object.keys(requested).length === 0) {
     return undefined;
   }
-  const result = await client.listProviderFeatures(draftConfig);
+  const model = draftConfig.model ?? (await resolveDefaultModel(client, draftConfig));
+  const result = await client.listProviderFeatures({ ...draftConfig, model });
   if (result.error) {
     throw {
       code: "FEATURES_UNAVAILABLE",
@@ -494,6 +502,16 @@ export async function resolveRunFeatureValues(
     } satisfies CommandError;
   }
   return resolveFeatureValues(requested, result.features ?? []);
+}
+
+async function resolveDefaultModel(
+  client: RunFeatureLookupClient,
+  draftConfig: { provider: string; cwd: string },
+): Promise<string | undefined> {
+  const { models } = await client.listProviderModels(draftConfig.provider, {
+    cwd: draftConfig.cwd,
+  });
+  return (models?.find((model) => model.isDefault) ?? models?.[0])?.id;
 }
 
 function parseRunLabels(labelFlags: string[] | undefined): Record<string, string> {
@@ -580,12 +598,14 @@ export async function resolveExistingRunWorkspace(
 //   3. $PASEO_WORKSPACE_ID         -> exported by workspace terminals
 //   4. --new-workspace <kind>      -> mint a new workspace explicitly
 //   5. bare run                    -> mint a new local-backed workspace for cwd
-async function resolveRunWorkspace(
-  client: ConnectedDaemonClient,
+// The placement a run already has: an explicit or ambient workspace, or the caller agent's
+// directory. Resolving it creates nothing; undefined means the run needs a new workspace.
+export async function resolveExistingRunPlacement(
+  client: RunWorkspaceLookupClient,
   options: AgentRunOptions,
   cwd: string,
   callerAgentId: string | undefined,
-): Promise<RunWorkspace> {
+): Promise<RunWorkspace | undefined> {
   const newWorkspace = resolveNewWorkspaceKind(options);
   const explicit = newWorkspace ? undefined : options.workspace?.trim();
   if (explicit) {
@@ -602,7 +622,41 @@ async function resolveRunWorkspace(
     console.error(`Using workspace ${ambientWorkspaceId}`);
     return resolveExistingRunWorkspace(client, ambientWorkspaceId);
   }
+  return undefined;
+}
 
+// Features are checked before a new workspace is created, in the directory the agent runs in
+// when its placement already exists (on a remote host that may differ from this shell's).
+async function placeRun(
+  client: ConnectedDaemonClient,
+  options: AgentRunOptions,
+  cwd: string,
+  callerAgentId: string | undefined,
+  features: {
+    requested: Record<string, string>;
+    provider: string;
+    model?: string;
+    thinkingOptionId?: string;
+  },
+): Promise<{ workspace: RunWorkspace; featureValues?: AgentFeatureValues }> {
+  const existing = await resolveExistingRunPlacement(client, options, cwd, callerAgentId);
+  const featureValues = await resolveRunFeatureValues(client, features.requested, {
+    provider: features.provider,
+    cwd: existing?.cwd ?? cwd,
+    model: features.model,
+    modeId: options.mode,
+    thinkingOptionId: features.thinkingOptionId,
+  });
+  const workspace = existing ?? (await createRunWorkspace(client, options, cwd, callerAgentId));
+  return { workspace, featureValues };
+}
+
+async function createRunWorkspace(
+  client: ConnectedDaemonClient,
+  options: AgentRunOptions,
+  cwd: string,
+  callerAgentId: string | undefined,
+): Promise<RunWorkspace> {
   // TODO: thread the run `prompt` as firstAgentContext so workspace-level
   // title/branch generation picks up the task description (U8/U6 deferred).
   const source = buildRunWorkspaceSource(options, cwd);
@@ -664,17 +718,13 @@ export async function runRunCommand(
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
-    // Checked before the workspace is resolved, which may create one.
-    const featureValues = await resolveRunFeatureValues(client, requestedFeatures, {
+    const callerAgentId = await resolveCallerAgentId(client);
+    const { workspace, featureValues } = await placeRun(client, options, cwd, callerAgentId, {
+      requested: requestedFeatures,
       provider: resolvedProviderModel.provider,
-      cwd,
       model: resolvedProviderModel.model,
-      modeId: options.mode,
       thinkingOptionId,
     });
-
-    const callerAgentId = await resolveCallerAgentId(client);
-    const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId);
     const workspaceId = workspace.id;
     const runCwd = workspace.cwd;
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
 import {
+  resolveExistingRunPlacement,
   resolveExistingRunWorkspace,
   resolveRunFeatureValues,
   runRunCommand,
@@ -173,9 +174,39 @@ describe("runRunCommand option validation", () => {
 
 describe("run feature values", () => {
   const draft = { provider: "codex", cwd: "/repo", model: "gpt-5.5", thinkingOptionId: "high" };
+  const serviceTier = {
+    type: "select" as const,
+    id: "service_tier",
+    label: "Speed",
+    value: "default",
+    options: [
+      { id: "default", label: "Normal" },
+      { id: "priority", label: "Fast" },
+    ],
+  };
+
+  function featureDaemon(models: Array<{ id: string; isDefault?: boolean }> = []) {
+    const featureDrafts: unknown[] = [];
+    const modelLookups: unknown[] = [];
+    return {
+      featureDrafts,
+      modelLookups,
+      async listProviderModels(provider: string, options: { cwd: string }) {
+        modelLookups.push({ provider, ...options });
+        return { models };
+      },
+      async listProviderFeatures(draftConfig: unknown) {
+        featureDrafts.push(draftConfig);
+        return { features: [serviceTier] };
+      },
+    };
+  }
 
   it("does not ask the daemon when no --feature is given", async () => {
     const client = {
+      async listProviderModels(): Promise<never> {
+        throw new Error("unexpected model lookup");
+      },
       async listProviderFeatures(): Promise<never> {
         throw new Error("unexpected feature lookup");
       },
@@ -185,35 +216,39 @@ describe("run feature values", () => {
   });
 
   it("checks values against the features of the run's provider and model", async () => {
-    const drafts: unknown[] = [];
-    const client = {
-      async listProviderFeatures(draftConfig: unknown) {
-        drafts.push(draftConfig);
-        return {
-          features: [
-            {
-              type: "select" as const,
-              id: "service_tier",
-              label: "Speed",
-              value: "default",
-              options: [
-                { id: "default", label: "Normal" },
-                { id: "priority", label: "Fast" },
-              ],
-            },
-          ],
-        };
-      },
-    };
+    const client = featureDaemon();
 
     await expect(
       resolveRunFeatureValues(client, { service_tier: "priority" }, draft),
     ).resolves.toEqual({ service_tier: "priority" });
-    expect(drafts).toEqual([draft]);
+    expect(client.featureDrafts).toEqual([draft]);
+    expect(client.modelLookups).toEqual([]);
+  });
+
+  it("checks a run without --model against the model the daemon will default to", async () => {
+    const client = featureDaemon([{ id: "gpt-5.4" }, { id: "gpt-5.5", isDefault: true }]);
+    const { model: _model, ...withoutModel } = draft;
+
+    await expect(
+      resolveRunFeatureValues(client, { service_tier: "priority" }, withoutModel),
+    ).resolves.toEqual({ service_tier: "priority" });
+    expect(client.modelLookups).toEqual([{ provider: "codex", cwd: "/repo" }]);
+    expect(client.featureDrafts).toEqual([{ ...withoutModel, model: "gpt-5.5" }]);
+  });
+
+  it("falls back to the first listed model when none is marked default", async () => {
+    const client = featureDaemon([{ id: "gpt-5.4" }, { id: "gpt-5.5" }]);
+    const { model: _model, ...withoutModel } = draft;
+
+    await resolveRunFeatureValues(client, { service_tier: "priority" }, withoutModel);
+    expect(client.featureDrafts).toEqual([{ ...withoutModel, model: "gpt-5.4" }]);
   });
 
   it("reports a provider that cannot list its features", async () => {
     const client = {
+      async listProviderModels() {
+        return { models: [] };
+      },
       async listProviderFeatures() {
         return { error: "provider unavailable" };
       },
@@ -225,5 +260,39 @@ describe("run feature values", () => {
       code: "FEATURES_UNAVAILABLE",
       message: "Could not list features for codex: provider unavailable",
     });
+  });
+});
+
+describe("existing run placement", () => {
+  const originalWorkspaceId = process.env.PASEO_WORKSPACE_ID;
+  afterEach(() => {
+    if (originalWorkspaceId === undefined) delete process.env.PASEO_WORKSPACE_ID;
+    else process.env.PASEO_WORKSPACE_ID = originalWorkspaceId;
+  });
+
+  it("uses an explicit workspace's directory, not the shell's", async () => {
+    const fetchWorkspaces = vi.fn().mockResolvedValue({
+      entries: [{ id: "workspace-2", workspaceDirectory: "/remote/repo" }],
+      pageInfo: { nextCursor: null },
+    });
+
+    await expect(
+      resolveExistingRunPlacement(
+        { fetchWorkspaces },
+        { workspace: "workspace-2" },
+        "/local/shell",
+        undefined,
+      ),
+    ).resolves.toEqual({ id: "workspace-2", cwd: "/remote/repo" });
+  });
+
+  it("leaves a run that needs a new workspace unplaced", async () => {
+    delete process.env.PASEO_WORKSPACE_ID;
+    const fetchWorkspaces = vi.fn();
+
+    await expect(
+      resolveExistingRunPlacement({ fetchWorkspaces }, {}, "/local/shell", undefined),
+    ).resolves.toBeUndefined();
+    expect(fetchWorkspaces).not.toHaveBeenCalled();
   });
 });
