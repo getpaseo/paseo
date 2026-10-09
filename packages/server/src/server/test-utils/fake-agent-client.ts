@@ -59,12 +59,14 @@ interface FakeAgentSessionOptions {
   memoryMarker?: string | null;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
+  beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
 }
 
 export interface TestAgentClientOptions {
   beforeCreateSession?: (config: AgentSessionConfig) => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
+  beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
   supportsMcpServers?: boolean;
 }
 
@@ -338,6 +340,7 @@ class FakeAgentSession implements AgentSession {
 
   private readonly closeSession: (() => Promise<void>) | undefined;
   private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
+  private readonly beforeTurnComplete: ((prompt: AgentPromptInput) => Promise<void>) | undefined;
 
   constructor(options: FakeAgentSessionOptions) {
     this.capabilities = {
@@ -350,6 +353,7 @@ class FakeAgentSession implements AgentSession {
     this.memoryMarker = options.memoryMarker ?? null;
     this.closeSession = options.closeSession;
     this.onStartTurn = options.onStartTurn;
+    this.beforeTurnComplete = options.beforeTurnComplete;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -799,6 +803,7 @@ class FakeAgentSession implements AgentSession {
         this.notifySubscribers(assistantChunkB);
       }
 
+      await this.beforeTurnComplete?.(prompt);
       const completed: AgentStreamEvent = {
         type: "turn_completed",
         provider: this.providerName,
@@ -1220,6 +1225,7 @@ class FakeAgentClient implements AgentClient {
       supportsMcpServers: this.options.supportsMcpServers,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
+      beforeTurnComplete: this.options.beforeTurnComplete,
     });
   }
 
@@ -1245,6 +1251,7 @@ class FakeAgentClient implements AgentClient {
       memoryMarker: typeof marker === "string" ? marker : null,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
+      beforeTurnComplete: this.options.beforeTurnComplete,
     });
   }
 
