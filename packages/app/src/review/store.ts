@@ -338,3 +338,25 @@ export function clearSentReviewDraftComments(input: {
     return { drafts: { ...state.drafts, [input.key]: remaining } };
   });
 }
+
+/** Acknowledgement can remove the original while the user still has an edit open. */
+export function saveReviewDraftComment(input: {
+  key: string;
+  id: string | null;
+  comment: Pick<ReviewDraftComment, "filePath" | "side" | "lineNumber" | "body">;
+}): void {
+  const store = useReviewDraftStore.getState();
+  if (input.id && store.drafts[input.key]?.some((comment) => comment.id === input.id)) {
+    store.updateComment({ key: input.key, id: input.id, updates: { body: input.comment.body } });
+  } else {
+    store.addComment({
+      key: input.key,
+      comment: {
+        filePath: input.comment.filePath,
+        side: input.comment.side,
+        lineNumber: input.comment.lineNumber,
+        body: input.comment.body,
+      },
+    });
+  }
+}

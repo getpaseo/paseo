@@ -1,3 +1,5 @@
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { floatingActionsClearance } from "@/components/ui/floating-action-button";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -1551,6 +1553,7 @@ export function ChangesSurface({
     reviewAttachment,
     reviewFeedback,
   } = useWorkingDiff({
+    presentation,
     serverId,
     workspaceId: workspaceId ?? undefined,
     cwd,
@@ -1731,6 +1734,7 @@ export function ChangesSurface({
     ],
   );
 
+  const { bottom: bottomInset } = useSafeAreaInsets();
   const hasChanges = files.length > 0;
   const jumpToFileInset = jumpToFileClearance({
     isCompact: isMobile,
@@ -1795,7 +1799,10 @@ export function ChangesSurface({
     >
       <DiffDocument
         files={files}
-        contentInsetBottom={jumpToFileInset + reviewFeedback.clearance}
+        contentInsetBottom={floatingActionsClearance(
+          [jumpToFileInset, reviewFeedback.clearance],
+          bottomInset,
+        )}
         collapseState={collapseState}
         displayPreferences={sharedDisplayPreferences}
         mode={workingMode}

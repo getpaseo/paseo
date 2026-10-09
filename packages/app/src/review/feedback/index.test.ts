@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   createReviewFeedback,
+  createReviewFeedbackScope,
+  type ReviewFeedbackPorts,
   type ReviewFeedbackSnapshot,
   type FeedbackAttachment,
   type FeedbackRecipient,
@@ -57,7 +59,7 @@ function makeAttachment(comments: readonly ReviewDraftComment[]): FeedbackAttach
     },
   };
 }
-function setup(agentIds: string[], unavailableIds: string[] = []) {
+function setup(agentIds: string[], unavailableIds: string[] = [], create = createReviewFeedback) {
   let comments = [makeComment("first")];
   let recipients = agentIds.map(makeRecipient);
   let connected = true;
@@ -70,7 +72,7 @@ function setup(agentIds: string[], unavailableIds: string[] = []) {
     connected,
     attachment: makeAttachment(comments.filter((comment) => !unavailableIds.includes(comment.id))),
   });
-  const model = createReviewFeedback({
+  const ports: ReviewFeedbackPorts = {
     read,
     send: (recipient, attachment) => {
       sends.push({ recipient, attachment });
@@ -91,9 +93,11 @@ function setup(agentIds: string[], unavailableIds: string[] = []) {
       );
     },
     failedMessage: () => "Failed to send",
-  });
+  };
+  const model = create(ports);
   return {
     model,
+    ports,
     sends,
     comments: () => comments,
     setComments: (next: ReviewDraftComment[]) => {
@@ -225,5 +229,44 @@ describe("review feedback", () => {
     expect(first.comments()).toEqual([makeComment("first")]);
     expect(first.sends).toEqual([]);
     expect(second.comments()).toEqual([]);
+  });
+});
+
+describe("shared review submission ownership", () => {
+  it("blocks another surface and reconnects to the pending draft while other drafts remain usable", async () => {
+    const scope = createReviewFeedbackScope();
+    const first = setup(["one"], [], (ports) => scope.connect("workspace-one", ports));
+    const second = scope.connect("workspace-one", first.ports);
+    const other = setup(["other"], [], (ports) => scope.connect("workspace-other", ports));
+    const unsubscribe = first.model.subscribe(() => {});
+    const pending = first.model.press();
+    unsubscribe();
+    await Promise.resolve();
+    const reconnected = scope.connect("workspace-one", first.ports);
+    expect(second.getState()).toMatchObject({ canSend: false, phase: { kind: "sending" } });
+    await second.press();
+    await reconnected.send("one");
+    expect(first.sends).toHaveLength(1);
+    const otherPending = other.model.press();
+    expect(other.sends).toHaveLength(1);
+    first.fail();
+    await pending;
+    expect(second.getState().phase).toEqual({ kind: "failed", message: "Host rejected feedback" });
+    const retry = second.press();
+    first.succeed();
+    await retry;
+    expect(first.sends).toHaveLength(2);
+    other.succeed();
+    await otherPending;
+  });
+  it("opens only the active surface's recipient chooser", async () => {
+    const scope = createReviewFeedbackScope();
+    const first = setup(["one", "two"], [], (ports) => scope.connect("same", ports));
+    const second = scope.connect("same", first.ports);
+    await first.model.press();
+    expect(first.model.getState().phase).toEqual({ kind: "choosing" });
+    expect(second.getState().phase).toEqual({ kind: "idle" });
+    first.model.closeMenu();
+    expect(first.model.getState().phase).toEqual({ kind: "idle" });
   });
 });

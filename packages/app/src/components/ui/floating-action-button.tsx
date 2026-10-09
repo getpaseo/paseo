@@ -3,14 +3,16 @@ import { Text, type View } from "react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { PressHighlight } from "@/components/ui/press-highlight";
-import { ICON_SIZE, SPACING } from "@/styles/theme";
+import { ICON_SIZE } from "@/styles/theme";
 
-const FLOATING_ACTION_BUTTON_SIZE = 56;
-const FLOATING_ACTION_BUTTON_INSET = SPACING[4];
-
-/** Space a scrolling surface keeps below its content so the button traps nothing. */
-export const FLOATING_ACTION_BUTTON_CLEARANCE =
-  FLOATING_ACTION_BUTTON_SIZE + FLOATING_ACTION_BUTTON_INSET;
+import {
+  FLOATING_ACTION_BUTTON_SIZE,
+  FLOATING_ACTION_BUTTON_INSET,
+} from "./floating-action-layout";
+export {
+  FLOATING_ACTION_BUTTON_CLEARANCE,
+  floatingActionsClearance,
+} from "./floating-action-layout";
 
 export interface FloatingActionButtonProps {
   icon: LucideIcon;

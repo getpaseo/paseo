@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createReviewEditor, type ReviewCommentWriter } from "./index";
+import { createReviewEditor, createReviewEditorScope, type ReviewCommentWriter } from "./index";
 import type { ReviewDraftComment } from "../state";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 
@@ -21,23 +21,22 @@ function memoryWriter() {
   const drafts = new Map<string, ReviewDraftComment[]>();
   let sequence = 0;
   const writer: ReviewCommentWriter = {
-    addComment: ({ key, comment }) => {
-      const saved = {
-        ...comment,
-        id: String(++sequence),
-        createdAt: "2026-10-09T00:00:00Z",
-        updatedAt: "2026-10-09T00:00:00Z",
-      };
-      drafts.set(key, [...(drafts.get(key) ?? []), saved]);
-      return saved;
-    },
-    updateComment: ({ key, id, updates }) => {
-      drafts.set(
-        key,
-        (drafts.get(key) ?? []).map((comment) =>
-          comment.id === id ? Object.assign({}, comment, updates) : comment,
-        ),
-      );
+    saveComment: ({ key, id, comment }) => {
+      const current = drafts.get(key) ?? [];
+      if (id && current.some((saved) => saved.id === id)) {
+        drafts.set(
+          key,
+          current.map((saved) => (saved.id === id ? { ...saved, ...comment } : saved)),
+        );
+      } else {
+        const saved = {
+          ...comment,
+          id: String(++sequence),
+          createdAt: "2026-10-09T00:00:00Z",
+          updatedAt: "2026-10-09T00:00:00Z",
+        };
+        drafts.set(key, [...current, saved]);
+      }
     },
     deleteComment: ({ key, id }) => {
       drafts.set(
@@ -77,6 +76,26 @@ describe("review editor", () => {
     expect(storage.comments("first")).toHaveLength(1);
   });
 
+  it("keeps an open edit saveable after its submitted record is acknowledged", () => {
+    const storage = memoryWriter();
+    const editor = createReviewEditor("first", storage.writer);
+    editor.start(target);
+    editor.save("Submitted body");
+    const saved = storage.comments("first")[0]!;
+    editor.edit(target, saved);
+    editor.setBody("Typed before acknowledgement");
+    storage.writer.deleteComment({ key: "first", id: saved.id });
+    expect(editor.getState()!.body).toBe("Typed before acknowledgement");
+    editor.save(editor.getState()!.body);
+    expect(storage.comments("first")).toMatchObject([
+      {
+        body: "Typed before acknowledgement",
+        filePath: target.filePath,
+        lineNumber: target.lineNumber,
+      },
+    ]);
+  });
+
   it("rejects empty saves and repeated saves after the editor closes", () => {
     const storage = memoryWriter();
     const editor = createReviewEditor("first", storage.writer);
@@ -105,4 +124,22 @@ describe("review editor", () => {
     expect(storage.comments("first")).toEqual([]);
     expect(storage.comments("second").map((comment) => comment.body)).toEqual(["Second workspace"]);
   });
+});
+
+it("retains an open editor through remounts without exposing it on another surface or draft", async () => {
+  const storage = memoryWriter();
+  const scope = createReviewEditorScope(storage.writer);
+  const editor = scope.forDraft("first", "diff");
+  const unsubscribe = editor.subscribe(() => {});
+  editor.start(target);
+  editor.setBody("Unsaved wide body");
+  unsubscribe();
+  await Promise.resolve();
+  const compact = scope.forDraft("first", "diff");
+  expect(compact.getState()!.body).toBe("Unsaved wide body");
+  expect(scope.forDraft("first", "combined").getState()).toBeNull();
+  expect(scope.forDraft("second", "diff").getState()).toBeNull();
+  compact.save(compact.getState()!.body);
+  expect(storage.comments("first")[0]!.body).toBe("Unsaved wide body");
+  expect(scope.forDraft("first", "diff").getState()).toBeNull();
 });

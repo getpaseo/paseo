@@ -25,11 +25,16 @@ import {
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { createReviewEditor } from "./editor";
+import { createReviewEditorScope } from "./editor";
 import { isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
-import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
+import {
+  useReviewDraftComments,
+  useReviewDraftStore,
+  saveReviewDraftComment,
+  type ReviewDraftComment,
+} from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 import {
   INLINE_REVIEW_EDITOR_HEIGHT,
@@ -107,8 +112,14 @@ export function groupInlineReviewCommentsByTarget(
   return grouped;
 }
 
+const reviewEditors = createReviewEditorScope({
+  saveComment: saveReviewDraftComment,
+  deleteComment: (input) => useReviewDraftStore.getState().deleteComment(input),
+});
+
 export function useInlineReviewController(input: {
   reviewDraftKey: string;
+  presentation?: string;
 }): InlineReviewActions & {
   sheetEditor: InlineReviewEditorState | null;
   onChangeEditorBody: (body: string) => void;
@@ -120,8 +131,8 @@ export function useInlineReviewController(input: {
     [reviewComments],
   );
   const model = useMemo(
-    () => createReviewEditor(input.reviewDraftKey, useReviewDraftStore.getState()),
-    [input.reviewDraftKey],
+    () => reviewEditors.forDraft(input.reviewDraftKey, input.presentation ?? "diff"),
+    [input.reviewDraftKey, input.presentation],
   );
   const editor = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   return useMemo(
@@ -274,7 +285,8 @@ export function InlineReviewThread({
   const editorElement = editor ? (
     <InlineReviewEditor
       key={editingCommentId ?? "new"}
-      initialBody={editor.body}
+      body={editor.body}
+      onChangeBody={reviewActions.onChangeEditorBody}
       onCancel={reviewActions.onCancelEditor}
       onSave={reviewActions.onSaveEditor}
       testID="inline-review-editor"
@@ -381,19 +393,20 @@ export function getInlineReviewThreadViewportStyle({
 }
 
 export function InlineReviewEditor({
-  initialBody,
+  body,
+  onChangeBody,
   onCancel,
   onSave,
   testID,
 }: {
-  initialBody: string;
+  body: string;
+  onChangeBody: (body: string) => void;
   onCancel: () => void;
   onSave: (body: string) => void;
   testID?: string;
 }) {
   const { t } = useTranslation();
   const inputRef = useRef<EditingTextInputHandle | null>(null);
-  const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
   const canSave = trimmedBody.length > 0;
@@ -459,7 +472,7 @@ export function InlineReviewEditor({
         placeholderTextColor={styles.placeholderColor.color}
         multiline
         initialValue={body}
-        onChangeText={setBody}
+        onChangeText={onChangeBody}
         onFocus={handleFocus}
         onBlur={handleBlur}
         style={inputStyle}

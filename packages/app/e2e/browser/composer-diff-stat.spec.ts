@@ -352,6 +352,74 @@ test.describe("send review feedback", () => {
       await workspace.cleanup();
     }
   });
+  test("feedback pending ownership follows the draft across Diff and compact Changes", async ({
+    page,
+  }) => {
+    const workspace = await seedChangedAgent("review-shared-pending-");
+    const gate = await gateNextAgentMessage(page);
+    try {
+      await test.step("Send feedback from the Diff tab and hold its real request", async () => {
+        await openReviewDiff(page, workspace);
+        await showCompactLayout(page);
+        await addSavedReview(page, "One draft across surfaces");
+        await sendFeedback(page, 1);
+        await gate.waitForRequest();
+      });
+      await test.step("The compact Changes surface observes the same pending operation", async () => {
+        await revealCompactChanges(page);
+        await expect(
+          compactReviewSurface(page).getByRole("button", {
+            name: "Sending feedback (1)",
+            exact: true,
+          }),
+        ).toBeDisabled();
+        expect(gate.requestCount()).toBe(1);
+        gate.accept();
+        await expect(
+          compactReviewSurface(page).getByText("Feedback sent to Composer diff stat", {
+            exact: true,
+          }),
+        ).toBeVisible();
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("an unsaved review survives presentation changes and acknowledgement before Save", async ({
+    page,
+  }) => {
+    const workspace = await seedChangedAgent("review-editor-ownership-");
+    const gate = await gateNextAgentMessage(page);
+    try {
+      await test.step("Carry unsaved inline text into the compact sheet and back", async () => {
+        await openReviewDiff(page, workspace);
+        await tapFirstAddedDiffLine(page);
+        await fillReviewComment(page, "Body across presentations");
+        await showCompactLayout(page);
+        await expectReviewEditorBody(page, "Body across presentations");
+        await showWideLayout(page);
+        await expectReviewEditorBody(page, "Body across presentations");
+        await saveReviewComment(page, "Body across presentations");
+      });
+      await test.step("Keep an open edit saveable after acknowledgement removes its original", async () => {
+        await sendFeedback(page, 1);
+        await gate.waitForRequest();
+        await editSavedReview(page, "Body across presentations");
+        await fillReviewComment(page, "Keep this unsaved edit");
+        gate.accept();
+        await expectFeedbackSent(page, "Composer diff stat");
+        await expectReviewEditorBody(page, "Keep this unsaved edit");
+        await showCompactLayout(page);
+        await expectReviewEditorBody(page, "Keep this unsaved edit");
+        await saveReviewComment(page, "Keep this unsaved edit");
+        await expectSavedReview(page, "Keep this unsaved edit");
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("saved feedback preserves navigation across multiple diff files", async ({ page }) => {
     const workspace = await seedMultiFileReview();
     try {
@@ -738,4 +806,15 @@ async function scrollReviewToLastLine(page: Page) {
       return body.y + body.height <= feedback.y;
     })
     .toBe(true);
+}
+
+async function revealCompactChanges(page: Page) {
+  await page.getByTestId("workspace-explorer-toggle").first().click();
+  await page.getByTestId("explorer-header").getByText("Changes", { exact: true }).click();
+  await expect(compactReviewSurface(page).getByTestId("diff-file-0-body")).toBeVisible();
+}
+async function expectReviewEditorBody(page: Page, body: string) {
+  await expect(page.getByRole("textbox", { name: "Review comment", exact: true })).toHaveValue(
+    body,
+  );
 }
