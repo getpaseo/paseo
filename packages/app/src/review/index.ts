@@ -33,3 +33,6 @@ export {
 } from "./surface";
 
 export { ReviewCommentSheet } from "./comment-sheet";
+
+export { useReviewFeedback } from "./feedback/use-feedback";
+export { ReviewFeedbackAction } from "./feedback/surface";
