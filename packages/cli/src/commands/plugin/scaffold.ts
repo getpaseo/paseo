@@ -206,7 +206,17 @@ export async function scaffoldPluginDirectory(
   const files = new Map<string, string>([
     [
       "paseo-plugin.json",
-      `${JSON.stringify({ id, requirements: { paseo: `>=${version}` } }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          id,
+          $comment:
+            'Add "name": "My plugin" to set a display name. Add "icon": "assets/icon.png" for a PNG inside the package. Add image or video paths (relative to this manifest) or HTTPS URLs to media. Include local assets in package.json files.',
+          media: [],
+          requirements: { paseo: `>=${version}` },
+        },
+        null,
+        2,
+      )}\n`,
     ],
     ["OVERVIEW.md", OVERVIEW],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],

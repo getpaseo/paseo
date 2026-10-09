@@ -8,6 +8,48 @@ async function openPlugins(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: /^Plugins/ })).toBeVisible();
 }
 
+function pluginCards(page: Page, section: string): Locator {
+  return page
+    .getByRole("region", { name: section })
+    .getByRole("link")
+    .filter({ hasNotText: /^See all$/ });
+}
+
+test("scrolls mobile plugin carousels without widening the page", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openPlugins(page);
+  await expectPageWithinViewport(page);
+  await scrollPluginCarousel(page, "Featured");
+  await scrollPluginCarousel(page, "What’s new");
+  await expectPageWithinViewport(page);
+});
+
+async function expectPageWithinViewport(page: Page) {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    await page.evaluate(() => document.documentElement.clientWidth),
+  );
+  await page.evaluate(() => window.scrollTo({ left: 1000, behavior: "instant" }));
+  expect(await page.evaluate(() => window.scrollX)).toBe(0);
+}
+
+async function scrollPluginCarousel(page: Page, section: string) {
+  const cards = pluginCards(page, section);
+  // The cards share a non-semantic scrolling container.
+  const strip = cards.first().locator("..");
+  await strip.evaluate((element) =>
+    element.scrollIntoView({ block: "center", behavior: "instant" }),
+  );
+  expect(await strip.evaluate((element) => element.scrollWidth)).toBeGreaterThan(
+    await strip.evaluate((element) => element.clientWidth),
+  );
+  await expect(cards.last()).not.toBeInViewport();
+  await strip.evaluate((element) =>
+    element.scrollTo({ left: element.scrollWidth, behavior: "instant" }),
+  );
+  await expect(cards.last()).toBeInViewport({ ratio: 1 });
+  await expect(cards.first()).not.toBeInViewport();
+}
+
 test("browses from the directory into a category, a plugin, and its author", async ({
   page,
   context,
@@ -34,14 +76,14 @@ test("browses from the directory into a category, a plugin, and its author", asy
   await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
   await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
   await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
-  await expect(page.getByText("paseo plugin install omercnet/fresh-worktrees")).toHaveCount(1);
+  await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
   await expect(
     page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Copy to clipboard" }).click();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied))
-    .toBe("paseo plugin install omercnet/fresh-worktrees");
+    .toBe("paseo plugin add omercnet/fresh-worktrees");
   await expect(page.getByRole("link", { name: "Git", exact: true })).toHaveAttribute(
     "href",
     "/plugins/category/git",
@@ -104,6 +146,35 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
     "aria-current",
     "true",
   );
+});
+
+test("searches for a term typed before the page finished loading", async ({ page }) => {
+  const loadScripts = await holdScripts(page);
+  await page.goto("/plugins?window=month", { waitUntil: "domcontentloaded" });
+  await searchPlugins(page, "graphite");
+  await loadScripts();
+  await expect(page.getByRole("button", { name: "Clear search" })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite&window=month$/);
+});
+
+test("filters browse results for a term typed before the page finished loading", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const loadScripts = await holdScripts(page);
+  await page.goto("/plugins/all", { waitUntil: "domcontentloaded" });
+  const entries = await historyLength(page);
+  await searchPlugins(page, "gra");
+  await loadScripts();
+  await expect(page).toHaveURL(/\/plugins\/all\?q=gra$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^Results for “gra”/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
+  expect(await historyLength(page)).toBe(entries + 1);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/plugins\/all$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
 });
 
 test("clears the search with the clear button", async ({ page }) => {
@@ -206,7 +277,7 @@ test.describe("search engine visits without JavaScript", () => {
     expect(response?.status()).toBe(200);
     expect(response?.headers()["cache-control"]).toBe("private, no-store");
     expect(response?.headers()["x-robots-tag"]).toBeUndefined();
-    await expect(page.getByText("paseo plugin install omercnet/fresh-worktrees")).toBeVisible();
+    await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toBeVisible();
     await expect(
       page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
     ).toBeVisible();
@@ -297,6 +368,20 @@ test.describe("search engine visits without JavaScript", () => {
   });
 });
 
+/** Holds the page's scripts so typing lands before hydration; the returned function loads them. */
+async function holdScripts(page: Page): Promise<() => Promise<void>> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\.js($|\?)/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  return async () => {
+    release();
+    await page.waitForLoadState("load");
+  };
+}
+
 async function searchPlugins(page: Page, term: string) {
   await page.getByRole("searchbox", { name: "Search plugins" }).fill(term);
 }
@@ -338,19 +423,18 @@ async function expectPageMetadata(page: Page, title: string, path: string) {
   );
 }
 
-test("keeps the directory unlinked until the coordinated announcement", async ({ page }) => {
+test("links the directory from the site navigation", async ({ page }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("banner").getByRole("link", { name: "Plugins", exact: true }),
-  ).toHaveCount(0);
+    page.getByRole("navigation").getByRole("link", { name: "Plugins", exact: true }),
+  ).toHaveAttribute("href", "/plugins");
   await expect(
     page.getByRole("contentinfo").getByRole("link", { name: "Plugins", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Community plugins" })).toHaveAttribute(
+  ).toHaveAttribute("href", "/plugins");
+  await expect(page.getByRole("link", { name: "Browse plugins" })).toHaveAttribute(
     "href",
-    "https://paseo.cafe",
+    "/plugins",
   );
-  await expect(page.locator('a[href="/plugins"]')).toHaveCount(0);
   const response = await page.goto("/plugins");
   expect(response?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: /^Plugins/ })).toBeVisible();
@@ -508,11 +592,7 @@ test.describe("registry fixture layout", () => {
     await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("Featured");
     const featured = page.getByRole("region", { name: "Featured" });
     await expect(featured).toContainText("A selection of hand picked plugins");
-    await expect(featured.getByRole("link", { name: /Added/ })).toHaveText([
-      /Dracula/,
-      /Herald/,
-      /launchd Jobs/,
-    ]);
+    await expect(pluginCards(page, "Featured")).toHaveText([/Dracula/, /Herald/, /launchd Jobs/]);
   });
 
   test("lists the nine categories in order with counts, and the newest plugins first", async ({
@@ -524,9 +604,12 @@ test.describe("registry fixture layout", () => {
       CATEGORIES.map((category) => new RegExp(`^${category.label}\\s*\\d+$`)),
     );
     await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
-    await expect(
-      page.getByRole("region", { name: "What’s new" }).getByRole("link", { name: /Added/ }),
-    ).toHaveText([/Base2Tone/, /Sayr/, /PromptKit/, /Defer/]);
+    await expect(pluginCards(page, "What’s new")).toHaveText([
+      /Base2Tone/,
+      /Sayr/,
+      /PromptKit/,
+      /Defer/,
+    ]);
   });
 });
 

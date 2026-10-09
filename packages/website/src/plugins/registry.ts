@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { pluginMediaKind, type PublishedPluginSchema } from "@getpaseo/protocol/plugin-registry";
+import { scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { CATEGORIES, type Category, type CategorySlug } from "./categories";
 import type { InstallCounts, InstallWindow } from "./installs";
 export { CATEGORIES, type Category, type CategorySlug };
@@ -40,7 +41,7 @@ export function getPluginsByAuthor(plugins: Plugin[], owner: string): Plugin[] {
   return plugins.filter((plugin) => pluginOwner(plugin) === owner);
 }
 export function installCommand(plugin: Plugin): string {
-  return `paseo plugin install ${plugin.id}`;
+  return `paseo plugin add ${plugin.id}`;
 }
 export function pluginVersion(plugin: Plugin): string {
   return plugin.artifact.kind === "npm"
@@ -66,16 +67,39 @@ export function formatInstalls(count: number): string {
   const k = count / 1000;
   return `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
 }
-/** Plugins whose name, description, ID, or author contains the term, case-insensitively. */
+/** Fields a search term can hit, best first: a name match outranks an author match, which outranks a description match. */
+function searchFieldGroups(plugin: Plugin): string[][] {
+  const author = getAuthor(plugin);
+  const name = [plugin.name, plugin.id.split("/")[1]];
+  const owner = [author.name, author.github, plugin.id];
+  return [name, owner, [plugin.description], [...name, ...owner, plugin.description]];
+}
+interface SearchRank {
+  field: number;
+  tier: number;
+}
+function searchRank(plugin: Plugin, term: string): SearchRank | null {
+  const groups = searchFieldGroups(plugin);
+  for (let field = 0; field < groups.length; field += 1) {
+    const score = scoreTextFields(term, groups[field], { subsequence: false });
+    if (score) return { field, tier: score.tier };
+  }
+  return null;
+}
+/**
+ * Plugins whose name, author, ID, or description contains every word of the term, ignoring case.
+ * Name matches come first, then author, then description; within each, exact words beat partial
+ * ones, and equal matches keep the given order.
+ */
 export function searchPlugins(plugins: Plugin[], term: string): Plugin[] {
-  const needle = term.trim().toLowerCase();
-  if (!needle) return plugins;
-  return plugins.filter((plugin) =>
-    [plugin.name, plugin.description, plugin.id, getAuthor(plugin).name]
-      .join(" ")
-      .toLowerCase()
-      .includes(needle),
-  );
+  if (!term.trim()) return plugins;
+  return plugins
+    .flatMap((plugin) => {
+      const rank = searchRank(plugin, term);
+      return rank ? [{ plugin, rank }] : [];
+    })
+    .sort((a, b) => a.rank.field - b.rank.field || a.rank.tier - b.rank.tier)
+    .map(({ plugin }) => plugin);
 }
 /** The featured IDs that name a listed plugin, in the registry's order, each once. */
 export function featuredPlugins(plugins: Plugin[], featured: string[]): Plugin[] {

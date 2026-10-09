@@ -691,6 +691,61 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
   await client.close();
 });
 
+test("agents.create forwards internal on the request, outside the agent config", async () => {
+  const { client, ws } = await connectClient({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+  });
+
+  const createPromise = client.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    cwd: "/repo/sdk",
+    title: "Summary helper",
+    background: true,
+    autoArchive: true,
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "create_agent_request",
+    config: { provider: "codex", model: "gpt-5.4", cwd: "/repo/sdk", title: "Summary helper" },
+    background: true,
+    autoArchive: true,
+  });
+  expect(request.config).not.toHaveProperty("internal");
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_helper",
+        agent: createAgent({ id: "agent_helper" }),
+      },
+    }),
+  );
+
+  const agent = await createPromise;
+  expect(agent.id).toBe("agent_helper");
+  await client.close();
+});
+
+test("agents.create with internal fails before sending on a host without internal agents", async () => {
+  const { client, ws } = await connectClient();
+  const sentBefore = ws.sent.length;
+
+  await expect(
+    client.agents.create({
+      config: { provider: "codex/gpt-5.4" },
+      cwd: "/repo/sdk",
+      background: true,
+    }),
+  ).rejects.toThrow("Update the host to use background workspaces.");
+  expect(ws.sent).toHaveLength(sentBefore);
+  await client.close();
+});
+
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
   const { client, ws } = await connectClient();
   const createdAgent = createAgent();

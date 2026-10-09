@@ -52,12 +52,24 @@ The required root manifest is `paseo-plugin.json`:
 }
 ```
 
-| Field          | Required | Behavior                                                               |
-| -------------- | -------- | ---------------------------------------------------------------------- |
-| `id`           | Yes      | Default installation ID.                                               |
-| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**. |
-| `requirements` | No       | Supported Paseo versions, described below.                             |
-| `build`        | No       | Preparation commands, described in the CLI reference.                  |
+| Field          | Required | Behavior                                                                                  |
+| -------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `id`           | Yes      | Default installation ID.                                                                  |
+| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.  |
+| `icon`         | No       | Relative path to a PNG inside the plugin package.                                         |
+| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid. |
+| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                    |
+| `requirements` | No       | Supported Paseo versions, described below.                                                |
+| `build`        | No       | Preparation commands, described in the CLI reference.                                     |
+
+Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
+segments. See [icons and screenshots](/docs/plugins/publishing#icons-and-screenshots) for an example.
+Paseo validates the references without opening local assets or fetching URLs.
+
+Unknown top-level fields are ignored. Known fields still validate, and unknown keys inside
+`requirements` are rejected so a misspelled constraint cannot silently skip a compatibility check.
+Manifests using `name`, `icon`, or `media` require Paseo 0.11.0 or later; older daemons reject
+these fields during installation.
 
 ### Requirements
 
@@ -718,10 +730,9 @@ plans, and mode changes; requesting permission does not end the turn.
 | `workspace.created`          | `workspace`                              | Record created; directory available                |
 | `workspace.archived`         | `workspace`                              | Archive state is saved                             |
 
-Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
-closing an agent that is already closed does not emit another `agent.closed` event.
-During daemon shutdown, pending event hooks have up to five seconds to finish before plugins stop.
-`workspace.created` is not a setup barrier before agent startup.
+Agent events exclude the daemon's private disposable helpers. Public background workspaces and
+their ordinary agents run the same lifecycle hooks as other workspaces. Archive events can precede
+runtime/worktree cleanup; observe lifecycle completion separately when cleanup matters.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
 
@@ -775,7 +786,6 @@ type PluginTurnOutcome =
 | `providerOptions`                             | Opaque provider-specific options                                           |
 | `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
 | `cwd`                                         | Cannot change                                                              |
-| `internal`                                    | Daemon-owned; cannot change through this hook                              |
 
 **`agent.session_open` request example:**
 

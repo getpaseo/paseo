@@ -47,10 +47,11 @@ export function BrowsePage({
   query: BrowseQuery;
 }) {
   const category = query.category ? getCategory(query.category) : null;
-  const matches = query.q ? searchPlugins(plugins, query.q) : plugins;
-  const scoped = category ? getPluginsInCategory(matches, category.slug) : matches;
-  const results =
-    query.sort === "new" ? newestFirst(scoped) : mostInstalled(scoped, installs, query.window);
+  const ordered =
+    query.sort === "new" ? newestFirst(plugins) : mostInstalled(plugins, installs, query.window);
+  // Search ranks by relevance; the tab's order breaks ties.
+  const matches = query.q ? searchPlugins(ordered, query.q) : ordered;
+  const results = category ? getPluginsInCategory(matches, category.slug) : matches;
   const title = category?.label ?? "All plugins";
   const clearHref = browseHref({ ...query, q: undefined });
   return (
@@ -65,7 +66,7 @@ export function BrowsePage({
             <h1 className="text-3xl font-medium tracking-tight">
               {query.q ? `Results for “${query.q}”${category ? ` in ${title}` : ""}` : title}
               <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
-                {scoped.length}
+                {results.length}
               </span>
             </h1>
             {query.q && (

@@ -419,7 +419,7 @@ describe("PluginService", () => {
     await service.stopAllPlugins();
   }, 20_000);
 
-  it("lists manifest descriptions for running and disabled plugins without hiding malformed entries", async () => {
+  it("lists manifest metadata for running and disabled plugins without hiding malformed entries", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
     const running = await createPlugin("running", "export default () => () => {};");
@@ -427,7 +427,13 @@ describe("PluginService", () => {
     const malformed = await createPlugin("malformed", "export default () => () => {};");
     await writeFile(
       path.join(running, "paseo-plugin.json"),
-      JSON.stringify({ id: "running", description: "Runs checks" }),
+      JSON.stringify({
+        id: "running",
+        description: "Runs checks",
+        name: "Checks",
+        icon: "icon.png",
+        media: ["screenshot.png", "https://example.com/demo.mp4"],
+      }),
     );
     await writeFile(
       path.join(disabled, "paseo-plugin.json"),
@@ -443,11 +449,23 @@ describe("PluginService", () => {
     await service.start();
 
     expect(
-      (await service.listPlugins()).map(({ id, description }) => ({ id, description })),
+      (await service.listPlugins()).map(({ id, description, name, icon, media }) => ({
+        id,
+        description,
+        name,
+        icon,
+        media,
+      })),
     ).toEqual([
       { id: "disabled", description: "Waits until enabled" },
       { id: "malformed", description: undefined },
-      { id: "running", description: "Runs checks" },
+      {
+        id: "running",
+        description: "Runs checks",
+        name: "Checks",
+        icon: "icon.png",
+        media: ["screenshot.png", "https://example.com/demo.mp4"],
+      },
     ]);
     await service.stopAllPlugins();
   });
