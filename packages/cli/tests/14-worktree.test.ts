@@ -21,7 +21,10 @@
 import assert from "node:assert";
 import { getAvailablePort } from "./helpers/network.ts";
 import { $ } from "zx";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, mkdir } from "fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { runPaseoCli, startTestDaemon } from "./helpers/test-daemon.ts";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -168,3 +171,50 @@ try {
 }
 
 console.log("=== All worktree tests passed ===");
+
+// Exercise repository selection through the real CLI and daemon. An empty
+// request used to fail before Git could inspect even a valid repository.
+const daemon = await startTestDaemon();
+const git = promisify(execFile);
+try {
+  const repo = join(daemon.workDir, "repository");
+  await mkdir(repo);
+  await git("git", ["init", repo]);
+  await git("git", [
+    "-C",
+    repo,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "Initial commit",
+  ]);
+
+  for (const args of [
+    ["worktree", "ls", "--json"],
+    ["worktree", "ls", "--cwd", repo, "--json"],
+  ]) {
+    const explicit = args.includes("--cwd");
+    const result = await runPaseoCli(daemon, args, {
+      cwd: explicit ? daemon.workDir : repo,
+    });
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+    assert.deepStrictEqual(JSON.parse(result.stdout), []);
+  }
+
+  for (const args of [
+    ["worktree", "archive", "missing", "--json"],
+    ["worktree", "archive", "missing", "--cwd", repo, "--json"],
+  ]) {
+    const result = await runPaseoCli(daemon, args, {
+      cwd: args.includes("--cwd") ? daemon.workDir : repo,
+    });
+    assert.notStrictEqual(result.exitCode, 0);
+    assert.strictEqual(JSON.parse(result.stderr).error.code, "WORKTREE_NOT_FOUND", result.stderr);
+  }
+} finally {
+  await daemon.stop();
+}
