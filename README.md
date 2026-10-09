@@ -29,7 +29,7 @@
   </a>
 </p>
 
-<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code agents.</p>
+<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, Muse Code, and Hoplite agents.</p>
 
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
@@ -45,7 +45,7 @@ Paseo is an open source agentic development environment for desktop, mobile, web
 - **Built-in orchestration:** Agents in Paseo can create worktrees, launch other agents, and talk to them, across providers.
 - **Complete development workflow:** Edit files, review diffs, open pull requests, and run terminals, in split panes you arrange how you want.
 - **Self-hosted:** Agents run on your machine with your full dev environment. Use your tools, your configs, and your skills.
-- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code through the same interface. Pick the right model for each job.
+- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, Muse Code, and Hoplite through the same interface. Pick the right model for each job. Hoplite is the exception to self-hosting: its agent runs in a Hoplite cloud workspace.
 - **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
@@ -81,6 +81,7 @@ You need at least one agent CLI installed and configured with your credentials:
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
 - [Antigravity](https://paseo.sh/docs/supported-providers#antigravity)
+- [Hoplite](https://paseo.sh/docs/supported-providers#hoplite)
 - [Muse Code](https://paseo.sh/docs/muse-code)
 
 ### Desktop app (recommended)

@@ -239,6 +239,15 @@ const CATALOG_DATA = [
     command: ["hermes", "acp"],
   },
   {
+    id: "hoplite",
+    title: "Hoplite",
+    description: "Hoplite's coding agent through the local hoplite acp bridge",
+    version: "manual",
+    iconId: "hoplite",
+    installLink: "https://hoplite.sh/docs/cli/acp",
+    command: ["hoplite", "acp"],
+  },
+  {
     id: "junie",
     title: "Junie",
     description: "AI Coding Agent by JetBrains",
