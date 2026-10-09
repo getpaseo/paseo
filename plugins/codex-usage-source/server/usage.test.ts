@@ -491,18 +491,17 @@ test("Business spend-control budget is reported as a spend balance", async () =>
       },
     },
   });
-  expect(report.status).toBe("available");
-  if (report.status !== "available") return;
-  expect(report.balances).toEqual([
-    expect.objectContaining({ id: "spend", limit: 32500, used: 4938.24, unit: "credits" }),
-  ]);
+  expect(report).toMatchObject({
+    status: "available",
+    balances: [
+      expect.objectContaining({ id: "spend", limit: 32500, used: 4938.24, unit: "credits" }),
+    ],
+  });
 });
 
 test("a null credits balance is not shown as zero credits", async () => {
   const report = await codexReport({ plan_type: "business", credits: { balance: null } });
-  expect(report.status).toBe("available");
-  if (report.status !== "available") return;
-  expect(report.balances).toEqual([]);
+  expect(report).toMatchObject({ status: "available", balances: [] });
 });
 
 test("malformed spend control does not drop valid windows", async () => {
@@ -511,7 +510,5 @@ test("malformed spend control does not drop valid windows", async () => {
     rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000 } },
     spend_control: "garbage",
   });
-  expect(report.status).toBe("available");
-  if (report.status !== "available") return;
-  expect(report.windows).toHaveLength(1);
+  expect(report).toMatchObject({ status: "available", windows: [expect.any(Object)] });
 });
