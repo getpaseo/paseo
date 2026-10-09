@@ -2,10 +2,17 @@ import lldb
 
 
 def __lldb_init_module(debugger, _internal_dict):
+    process = debugger.GetSelectedTarget().GetProcess()
+    main_threads = [thread for thread in process if thread.GetQueueName() == "com.apple.main-thread"]
+    if len(main_threads) != 1 or not process.SetSelectedThread(main_threads[0]):
+        raise RuntimeError("Could not select the UIKit main thread")
     debugger.HandleCommand("expression -l objc++ -- @import UIKit")
-    frame = debugger.GetSelectedTarget().GetProcess().GetSelectedThread().GetSelectedFrame()
+    frame = process.GetSelectedThread().GetSelectedFrame()
     options = lldb.SBExpressionOptions()
     options.SetLanguage(lldb.eLanguageTypeObjC_plus_plus)
+    is_main_thread = frame.EvaluateExpression("(BOOL)[NSThread isMainThread]", options)
+    if is_main_thread.GetError().Fail() or is_main_thread.GetValueAsUnsigned() != 1:
+        raise RuntimeError("Refusing to run UIKit probe outside the main thread")
     result = frame.EvaluateExpression(
         r'''({
             UIView *host = (UIView *)[[NSClassFromString(@"RNUITextView") alloc] init];
