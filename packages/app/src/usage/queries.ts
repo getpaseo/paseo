@@ -18,7 +18,6 @@ import {
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { usageCopy } from "./copy";
 import {
-  replaceReport,
   resolveAgentUsageView,
   resolveUsageRefresh,
   resolveUsageView,
@@ -29,24 +28,12 @@ import {
   type UsageRefresh,
   upsertReport,
 } from "./model";
+import { agentUsageQueryKey, refreshReport, usageReportsQueryKey } from "./reports";
 import type { UsageReportEntry, UsageView } from "./types";
 
 // The daemon caches each report for five minutes, so re-reading it is cheap. Only
 // an explicit refresh passes `forceRefresh` and reaches the source's API.
 const REPORTS_STALE_TIME_MS = 60_000;
-
-/** Every report list of a host: its own and each agent's. */
-function hostUsageQueryKey(serverId: string) {
-  return ["usage", serverId] as const;
-}
-
-function usageReportsQueryKey(serverId: string) {
-  return [...hostUsageQueryKey(serverId), "reports"] as const;
-}
-
-function agentUsageQueryKey(serverId: string, agentId: string) {
-  return [...hostUsageQueryKey(serverId), "agent", agentId] as const;
-}
 
 function requireClient(serverId: string) {
   const client = getHostRuntimeStore().getClient(serverId);
@@ -223,29 +210,13 @@ export function useReportRefresh(
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () =>
-      requireClient(serverId).listUsageReports(
-        agentId === undefined
-          ? { reportIds: [reportId], forceRefresh: true }
-          : { agentId, forceRefresh: true },
-      ),
-    onSuccess: ({ reports: refreshed }) => {
-      queryClient.setQueryData<UsageReportEntry[]>(
-        agentId === undefined
-          ? usageReportsQueryKey(serverId)
-          : agentUsageQueryKey(serverId, agentId),
-        (reports) => {
-          if (agentId !== undefined) return settleReports(reports, refreshed);
-          const report = refreshed.find((entry) => entry.id === reportId) ?? null;
-          return reports ? replaceReport(reports, reportId, report) : reports;
-        },
-      );
-      if (!refreshed.some((entry) => entry.id === reportId)) {
-        void queryClient.invalidateQueries({
-          queryKey: usageReportsQueryKey(serverId),
-          exact: true,
-        });
-      }
-    },
+      refreshReport({
+        client: requireClient(serverId),
+        queryClient,
+        serverId,
+        reportId,
+        agentId,
+      }),
   });
   const { mutate } = mutation;
   const refresh = useCallback(() => mutate(), [mutate]);
