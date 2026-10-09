@@ -201,9 +201,55 @@ export function createWorkspaceProvisioningService(deps: {
   async function findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
     const rootPath = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(rootPath);
+    return allocateProjectForDirectory({ rootPath, checkout });
+  }
+
+  async function findOrCreateProjectForWorkspace(
+    cwd: string,
+    checkout: ProjectCheckoutLitePayload,
+  ): Promise<PersistedProjectRecord> {
+    const rootPath = resolve(cwd);
+    const isLinkedRoot =
+      checkout.isGit &&
+      checkout.mainRepoRoot !== null &&
+      checkout.worktreeRoot !== null &&
+      areEquivalentPaths(rootPath, checkout.worktreeRoot);
+    if (!isLinkedRoot || !checkout.mainRepoRoot)
+      return allocateProjectForDirectory({ rootPath, checkout });
+
+    const mainRootPath = resolve(checkout.mainRepoRoot);
+    const mainCheckout = await workspaceGitService.getCheckout(mainRootPath);
+    const isMainRoot =
+      mainCheckout.isGit &&
+      mainCheckout.worktreeRoot !== null &&
+      areEquivalentPaths(mainRootPath, mainCheckout.worktreeRoot);
+    const hasRemote = checkout.remoteUrl !== null || mainCheckout.remoteUrl !== null;
+    const sameRemote =
+      deriveProjectKey({ rootPath, ...checkout, serverId }) ===
+      deriveProjectKey({ rootPath: mainRootPath, ...mainCheckout, serverId });
+    if (!isMainRoot || (hasRemote && !sameRemote))
+      return allocateProjectForDirectory({ rootPath, checkout });
+
+    return allocateProjectForDirectory({
+      rootPath: mainRootPath,
+      checkout: mainCheckout,
+      preferredExistingRootPath: rootPath,
+    });
+  }
+
+  async function allocateProjectForDirectory({
+    rootPath,
+    checkout,
+    preferredExistingRootPath,
+  }: {
+    rootPath: string;
+    checkout: ProjectCheckoutLitePayload;
+    preferredExistingRootPath?: string;
+  }): Promise<PersistedProjectRecord> {
     const timestamp = new Date().toISOString();
     return projectRegistry.getOrCreateActiveByRoot({
       rootPath,
+      preferredExistingRootPath,
       kind: checkout.isGit ? "git" : "non_git",
       displayName: basename(rootPath) || rootPath,
       projectKey: deriveProjectKey({
@@ -251,7 +297,7 @@ export function createWorkspaceProvisioningService(deps: {
     const project = projectId
       ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
-        await findOrCreateProjectForDirectory(normalizedCwd);
+        await findOrCreateProjectForWorkspace(normalizedCwd, checkout);
     const timestamp = new Date().toISOString();
     const workspace = createPersistedWorkspaceRecord({
       workspaceId: context?.workspaceId ?? generateWorkspaceId(),
@@ -335,19 +381,7 @@ export function createWorkspaceProvisioningService(deps: {
     }
 
     const checkout = await workspaceGitService.getCheckout(input.repoRoot);
-    const project = await projectRegistry.getOrCreateActiveByRoot({
-      rootPath: input.repoRoot,
-      kind: "git",
-      displayName: basename(input.repoRoot) || input.repoRoot,
-      projectKey: deriveProjectKey({
-        rootPath: input.repoRoot,
-        remoteUrl: checkout.remoteUrl,
-        worktreeRoot: checkout.worktreeRoot,
-        mainRepoRoot: checkout.mainRepoRoot,
-        serverId,
-      }),
-      timestamp: new Date().toISOString(),
-    });
+    const project = await findOrCreateProjectForWorkspace(input.repoRoot, checkout);
     return refreshProjectKind(project);
   }
 

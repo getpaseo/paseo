@@ -1,4 +1,6 @@
 import { resolveDaemonVersion } from "../daemon-version.js";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -62,6 +64,95 @@ test("SDK and workspace handles preserve ownership and actual process directorie
   expect((await sdk.terminals.list({ workspaceId: second })).entries).toEqual([c.current()]);
   expect((await sdk.terminals.list({ workspaceId: first })).entries).toEqual([a.current()]);
 });
+
+test("linked-worktree allocation preserves sessions and separate configuration through the daemon API", async () => {
+  const root = realpathSync(cwd);
+  const repo = path.join(root, "repo");
+  const linked = path.join(root, "linked");
+  await mkdir(repo);
+  execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: repo },
+  );
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/example/shared.git"], {
+    cwd: repo,
+  });
+  execFileSync("git", ["worktree", "add", "-b", "feature", linked], { cwd: repo });
+  const mainConfig = { scripts: { main: { type: "script", command: "echo main" } } };
+  const linkedConfig = { scripts: { linked: { type: "script", command: "echo linked" } } };
+  await writeFile(path.join(repo, "paseo.json"), JSON.stringify(mainConfig));
+  await writeFile(path.join(linked, "paseo.json"), JSON.stringify(linkedConfig));
+  await client.fetchAgents({ subscribe: {} });
+
+  const created = await client.createWorkspace({
+    source: { kind: "directory", path: linked },
+    title: "Original workspace",
+  });
+  expect(created.error).toBeNull();
+  const workspace = created.workspace!;
+  const added = await client.addProject(repo);
+  expect(added.error).toBeNull();
+  expect(added.project?.projectId).toBe(workspace.projectId);
+  const agent = await client.createAgent({
+    provider: "claude",
+    cwd: linked,
+    workspaceId: workspace.id,
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "assistant_message",
+    text: "Preserved conversation",
+  });
+  await daemon.daemon.agentManager.flush();
+  const stored = structuredClone(await daemon.daemon.agentStorage.get(agent.id));
+  expect(stored).toMatchObject({
+    id: agent.id,
+    workspaceId: workspace.id,
+    persistence: { provider: "claude", sessionId: expect.any(String) },
+  });
+  const timeline = await daemon.daemon.agentManager.getTimelineRows(agent.id);
+
+  const repeated = await client.openProject(linked);
+  expect(repeated.error).toBeNull();
+  expect(repeated.workspace?.id).toBe(workspace.id);
+  const explicit = await client.createWorkspace({
+    source: { kind: "directory", path: linked, projectId: workspace.projectId },
+    title: "Additional workspace",
+  });
+  expect(explicit.error).toBeNull();
+  expect(explicit.workspace?.projectId).toBe(workspace.projectId);
+  expect(explicit.workspace?.id).not.toBe(workspace.id);
+  const unplacedAgent = await client.createAgent({ provider: "codex", cwd: linked });
+  expect(unplacedAgent.workspaceId).not.toBe(workspace.id);
+  const directories = await client.fetchWorkspaces();
+  expect(directories.entries).toHaveLength(3);
+  expect(new Set(directories.entries.map((entry) => entry.projectId))).toEqual(
+    new Set([workspace.projectId]),
+  );
+  expect((await client.readProjectConfig(repo)).config).toEqual(mainConfig);
+  expect((await client.listWorkspaceScripts(workspace.id)).scripts).toEqual([
+    expect.objectContaining({ scriptName: "linked" }),
+  ]);
+  await daemon.daemon.agentManager.flush();
+  expect(await daemon.daemon.agentStorage.get(agent.id)).toEqual(stored);
+  expect(await daemon.daemon.agentManager.getTimelineRows(agent.id)).toEqual(timeline);
+
+  const independent = await client.addProject(linked);
+  expect(independent.error).toBeNull();
+  expect(independent.project?.projectId).not.toBe(workspace.projectId);
+  expect((await client.readProjectConfig(linked)).config).toEqual(linkedConfig);
+  expect((await client.openProject(linked)).workspace?.id).toBe(workspace.id);
+}, 30_000);
 
 test("SDK creates a command terminal and sends literal input and key tokens", async () => {
   const workspaceId = await createWorkspace("Input");

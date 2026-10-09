@@ -1,6 +1,16 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import { afterEach, beforeEach, expect, test } from "vitest";
 
@@ -134,6 +144,259 @@ test("fresh git repo creates a workspace at the canonical worktree root", async 
 
   expect(workspace.cwd).toBe(repo);
   expect(await workspaceRegistry.list()).toHaveLength(1);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+function createLinkedRepository() {
+  const repo = path.join(realpathSync(tmpDir), "repo");
+  const linked = path.join(realpathSync(tmpDir), "linked");
+  mkdirSync(repo);
+  execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: repo },
+  );
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/example/shared.git"], {
+    cwd: repo,
+  });
+  execFileSync("git", ["worktree", "add", "-b", "feature", linked], { cwd: repo });
+  const mainCommonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd: repo,
+    encoding: "utf8",
+  }).trim();
+  const linkedCommonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd: linked,
+    encoding: "utf8",
+  }).trim();
+  expect(realpathSync(path.resolve(linked, linkedCommonDir))).toBe(
+    realpathSync(path.resolve(repo, mainCommonDir)),
+  );
+  const service = createWorkspaceProvisioningService({
+    serverId: "test-host",
+    workspaceRegistry,
+    projectRegistry,
+    logger,
+    isDirectory,
+    workspaceGitService: createNoopWorkspaceGitService({
+      getCheckout: async (cwd) => {
+        const status = await getCheckoutStatus(cwd, { logger });
+        if (!status.isGit) throw new Error("Expected a real Git checkout");
+        return checkoutLiteFromGitSnapshot(cwd, status);
+      },
+    }),
+  });
+  return { repo, linked, service };
+}
+
+test.each(["main-first", "worktree-first", "concurrent"] as const)(
+  "implicit linked-worktree allocation reuses one project when %s",
+  async (order) => {
+    const { repo, linked, service } = createLinkedRepository();
+    const roots = order === "main-first" ? [repo, linked] : [linked, repo];
+    const workspaces =
+      order === "concurrent"
+        ? await Promise.all(roots.map((cwd) => service.createWorkspaceForDirectory(cwd)))
+        : [
+            await service.createWorkspaceForDirectory(roots[0]),
+            await service.createWorkspaceForDirectory(roots[1]),
+          ];
+
+    expect(workspaces[0].projectId).toBe(workspaces[1].projectId);
+    expect(workspaces[0].workspaceId).not.toBe(workspaces[1].workspaceId);
+    expect(await projectRegistry.list()).toEqual([
+      expect.objectContaining({
+        rootPath: repo,
+        projectKey: "remote:github.com/example/shared",
+        archivedAt: null,
+      }),
+    ]);
+    expect((await workspaceRegistry.list()).sort((a, b) => a.cwd.localeCompare(b.cwd))).toEqual(
+      [...workspaces].sort((a, b) => a.cwd.localeCompare(b.cwd)),
+    );
+    const reopened = await service.findOrCreateWorkspaceForDirectory(linked);
+    expect(reopened.workspaceId).toBe(workspaces[roots.indexOf(linked)].workspaceId);
+    expect(await workspaceRegistry.list()).toHaveLength(2);
+  },
+);
+
+test("explicit linked-root projects retain their settings and override implicit placement", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  const main = await service.findOrCreateProjectForDirectory(repo);
+  const independent = await service.findOrCreateProjectForDirectory(linked);
+  const customized = {
+    ...independent,
+    customName: "Independent work",
+    customIconRevision: "icon-v1",
+  };
+  await projectRegistry.upsert(customized);
+  const mainConfig = '{"scripts":{"dev":"echo main"}}\n';
+  const linkedConfig = '{"scripts":{"dev":"echo linked"}}\n';
+  writeFileSync(path.join(repo, "paseo.json"), mainConfig);
+  writeFileSync(path.join(linked, "paseo.json"), linkedConfig);
+
+  const implicit = await service.createWorkspaceForDirectory(linked);
+  const explicit = await service.createWorkspaceForDirectory(linked, null, main.projectId);
+
+  expect(implicit.projectId).toBe(independent.projectId);
+  expect(explicit.projectId).toBe(main.projectId);
+  expect(await projectRegistry.get(independent.projectId)).toEqual(customized);
+  expect(await projectRegistry.list()).toHaveLength(2);
+  expect(readFileSync(path.join(repo, "paseo.json"), "utf8")).toBe(mainConfig);
+  expect(readFileSync(path.join(linked, "paseo.json"), "utf8")).toBe(linkedConfig);
+});
+
+test("implicit grouping preserves different workspace configs without copying or merging them", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  const mainConfig = '{"scripts":{"dev":"echo main"}}\n';
+  const linkedConfig = '{"scripts":{"dev":"echo linked"}}\n';
+  writeFileSync(path.join(repo, "paseo.json"), mainConfig);
+  writeFileSync(path.join(linked, "paseo.json"), linkedConfig);
+
+  const workspace = await service.createWorkspaceForDirectory(linked);
+  expect((await projectRegistry.get(workspace.projectId))?.rootPath).toBe(repo);
+  expect(workspace.cwd).toBe(linked);
+  expect(readFileSync(path.join(repo, "paseo.json"), "utf8")).toBe(mainConfig);
+  expect(readFileSync(path.join(linked, "paseo.json"), "utf8")).toBe(linkedConfig);
+});
+
+test("independent clones of the same remote remain independent projects", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  const clone = path.join(realpathSync(tmpDir), "clone");
+  execFileSync("git", ["clone", repo, clone]);
+  execFileSync("git", ["remote", "set-url", "origin", "git@github.com:example/shared.git"], {
+    cwd: clone,
+  });
+  const first = await service.createWorkspaceForDirectory(linked);
+  const second = await service.createWorkspaceForDirectory(clone);
+
+  expect(second.projectId).not.toBe(first.projectId);
+  expect(await projectRegistry.list()).toEqual([
+    expect.objectContaining({ rootPath: repo, projectKey: "remote:github.com/example/shared" }),
+    expect.objectContaining({ rootPath: clone, projectKey: "remote:github.com/example/shared" }),
+  ]);
+});
+
+test("nested folders in linked worktrees retain exact project roots", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  const nested = path.join(linked, "package");
+  mkdirSync(nested);
+  const first = await service.createWorkspaceForDirectory(repo);
+  const second = await service.createWorkspaceForDirectory(nested);
+
+  expect(second.projectId).not.toBe(first.projectId);
+  expect((await projectRegistry.get(second.projectId))?.rootPath).toBe(nested);
+  expect(second.cwd).toBe(nested);
+});
+
+test("remote-free linked roots share one host-local project without losing host identity", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  execFileSync("git", ["remote", "remove", "origin"], { cwd: repo });
+  const first = await service.createWorkspaceForDirectory(linked);
+  const second = await service.createWorkspaceForDirectory(repo);
+  const otherProjects = new FileBackedProjectRegistry(
+    path.join(tmpDir, "other-host", "projects.json"),
+    logger,
+  );
+  const otherWorkspaces = new FileBackedWorkspaceRegistry(
+    path.join(tmpDir, "other-host", "workspaces.json"),
+    logger,
+  );
+  await otherProjects.initialize();
+  await otherWorkspaces.initialize();
+  const other = createWorkspaceProvisioningService({
+    serverId: "other-host",
+    projectRegistry: otherProjects,
+    workspaceRegistry: otherWorkspaces,
+    workspaceGitService: createNoopWorkspaceGitService({
+      getCheckout: async (cwd) => {
+        const status = await getCheckoutStatus(cwd, { logger });
+        if (!status.isGit) throw new Error("Expected a real Git checkout");
+        return checkoutLiteFromGitSnapshot(cwd, status);
+      },
+    }),
+    isDirectory,
+    logger,
+  });
+  const anotherHost = await other.createWorkspaceForDirectory(linked);
+
+  expect(second.projectId).toBe(first.projectId);
+  expect(anotherHost.projectId).not.toBe(first.projectId);
+  expect(await projectRegistry.get(first.projectId)).toMatchObject({
+    rootPath: repo,
+    projectKey: expect.stringMatching(/^host:test-host:/),
+  });
+  expect(await otherProjects.get(anotherHost.projectId)).toMatchObject({
+    rootPath: repo,
+    projectKey: expect.stringMatching(/^host:other-host:/),
+  });
+});
+
+test("linked roots with a distinct worktree-local remote keep separate placement", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  execFileSync("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo });
+  execFileSync(
+    "git",
+    ["config", "--worktree", "remote.origin.url", "https://github.com/example/other.git"],
+    { cwd: linked },
+  );
+  const first = await service.createWorkspaceForDirectory(repo);
+  const second = await service.createWorkspaceForDirectory(linked);
+
+  expect(second.projectId).not.toBe(first.projectId);
+  expect((await projectRegistry.get(second.projectId))?.rootPath).toBe(linked);
+});
+
+test("agent placement and provider import reuse canonical projects and retain workspace IDs", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  const main = await service.findOrCreateProjectForDirectory(repo);
+  const imported = await service.runInImportWorkspace(
+    { cwd: linked },
+    async (workspace) => workspace.workspaceId,
+  );
+  const before = await workspaceRegistry.get(imported.value);
+  const repeated = await service.runInImportWorkspace(
+    { cwd: linked },
+    async (workspace) => workspace.workspaceId,
+  );
+  const agentWorkspaceId = await service.resolveOrCreateWorkspaceIdForCreateAgent({
+    createdWorktree: null,
+    cwd: linked,
+    initialTitle: "Another agent",
+  });
+  const placed = await workspaceRegistry.get(agentWorkspaceId);
+
+  expect(repeated).toEqual({ value: imported.value, createdWorkspace: null });
+  expect(await workspaceRegistry.get(imported.value)).toEqual(before);
+  expect(placed).toMatchObject({ projectId: main.projectId, cwd: linked, title: "Another agent" });
+  expect(agentWorkspaceId).not.toBe(imported.value);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("worktree creation without a source workspace shares the canonical allocation", async () => {
+  const { repo, linked, service } = createLinkedRepository();
+  const main = await service.findOrCreateProjectForDirectory(repo);
+  const workspace = await service.createWorkspaceForWorktree({
+    sourceCwd: linked,
+    repoRoot: linked,
+    cwd: linked,
+    worktreeRoot: linked,
+    branch: "feature",
+    baseBranch: "main",
+    title: "Worktree",
+  });
+
+  expect(workspace.projectId).toBe(main.projectId);
+  expect(workspace.cwd).toBe(linked);
   expect(await projectRegistry.list()).toHaveLength(1);
 });
 

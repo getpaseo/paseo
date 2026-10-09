@@ -2,7 +2,11 @@
 
 ## Project identity
 
-Projects are allocated for the exact root selected by the caller, normalized lexically with `path.resolve` (never `realpath`). New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. An active exact root is idempotent; archived-only matches do not resurrect an old project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
+Adding, cloning, or creating a project registers the exact selected root, normalized lexically with `path.resolve` (never `realpath`). Explicit workspace `projectId` selection takes precedence over directory placement. New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. An active exact root is idempotent; archived-only matches do not resurrect an old project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
+
+When a workspace needs an implicit project at a linked-worktree root, allocation uses the main checkout discovered from Git's common directory. Main-first, linked-first, and concurrent requests therefore share one host-local project. An existing active project at the exact linked root takes precedence and retains its own metadata. Selection and allocation run in the project registry's allocation queue. This does not merge existing records, independent clones, nested selected folders, or non-Git directories. A worktree-local remote that differs from the main checkout keeps exact-root placement; remote equality alone never joins repositories.
+
+Configuration is not combined during allocation. Project settings and icon ownership belong to the selected project root and ID. Each workspace still reads its scripts from its exact `cwd`, so differing branch copies of `paseo.json` stay independent. Add the linked folder as an explicit project and select its `projectId` when it needs separate project settings. Existing workspace membership, agent IDs, provider session handles, and history remain unchanged.
 
 `projectKey` is a persisted, opaque equivalence key used only to group the same logical project
 across hosts. It is separate from the host-local `projectId`; today's producer prefers a normalized
