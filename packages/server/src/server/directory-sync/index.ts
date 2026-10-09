@@ -85,6 +85,12 @@ export class DirectorySyncService {
     cursor: DirectorySyncCursor,
   ): Pick<FetchAgentsResponse, "entries" | "pageInfo" | "sync"> {
     this.agents.replaceAll(snapshot);
+    return this.readAgents(cursor);
+  }
+
+  readAgents(
+    cursor: DirectorySyncCursor,
+  ): Pick<FetchAgentsResponse, "entries" | "pageInfo" | "sync"> {
     const read = this.read(this.agents, cursor);
     return {
       entries: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
