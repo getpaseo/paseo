@@ -265,6 +265,38 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
     });
 
+    it.each([false, true])(
+      "shows committed changes for an existing branch (already checked out: %s)",
+      async (alreadyCheckedOut) => {
+        execFileSync("git", ["checkout", "-b", "feature/existing"], { cwd: repoDir });
+        writeFileSync(join(repoDir, "file.txt"), "feature change\n");
+        execFileSync("git", ["add", "file.txt"], { cwd: repoDir });
+        execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature change"], {
+          cwd: repoDir,
+        });
+        if (!alreadyCheckedOut) {
+          execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+        }
+
+        const result = await createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "existing-feature",
+          source: { kind: "checkout-branch", branchName: "feature/existing" },
+          runSetup: false,
+          paseoHome,
+        });
+        const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
+        const diff = await getCheckoutDiff(result.worktreePath, { mode: "base" }, { paseoHome });
+        expect(diff.diff).toContain("+feature change");
+        expect(status).toMatchObject({
+          isGit: true,
+          baseRef: "main",
+          aheadBehind: { ahead: 1, behind: 0 },
+        });
+        expect(result.comparisonBaseRef).toBe("main");
+      },
+    );
+
     it("checks out an existing local branch that is not checked out elsewhere", async () => {
       execFileSync("git", ["branch", "dev"], { cwd: repoDir });
 

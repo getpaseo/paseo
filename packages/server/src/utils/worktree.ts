@@ -1280,10 +1280,7 @@ export const createWorktree = async ({
   return {
     branchName: sourcePlan.branchName,
     worktreePath,
-    comparisonBaseRef:
-      source.kind === "checkout-branch"
-        ? null
-        : (sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName),
+    comparisonBaseRef: sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName,
   };
 };
 
@@ -1400,11 +1397,12 @@ async function resolveWorktreeSourcePlan({
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);
+      const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
       if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
-          metadataBaseRefName: source.branchName,
+          metadataBaseRefName: baseRef,
           changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
             headRef: branchName,
             localBranchName: branchName,
@@ -1415,7 +1413,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: source.branchName,
-        metadataBaseRefName: await resolveCheckoutBranchBaseRef(cwd, source.branchName),
+        metadataBaseRefName: baseRef,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.branchName,
           localBranchName: source.branchName,
