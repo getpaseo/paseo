@@ -2,16 +2,11 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { Pressable, Text } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import type { Theme } from "@/styles/theme";
-
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedChevronRight = withUnistyles(ChevronRight);
-const foregroundMutedColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
+import { density, densityFontSize } from "@/styles/density";
 
 export function PinnedSectionHeader({
   collapsed,
@@ -23,7 +18,6 @@ export function PinnedSectionHeader({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
-  const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
 
   return (
     <Pressable
@@ -37,7 +31,11 @@ export function PinnedSectionHeader({
         <>
           <Text style={styles.title}>{t("sidebar.pinned.title")}</Text>
           {hovered || isNative || isCompact ? (
-            <Chevron size={12} uniProps={foregroundMutedColorMapping} />
+            <DensityIcon
+              icon={collapsed ? ChevronRight : ChevronDown}
+              size="xs"
+              color="foregroundMuted"
+            />
           ) : null}
         </>
       )}
@@ -47,7 +45,7 @@ export function PinnedSectionHeader({
 
 const styles = StyleSheet.create((theme) => ({
   header: {
-    minHeight: 36,
+    minHeight: density.rowHeight,
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
@@ -58,7 +56,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: densityFontSize(theme, "sm"),
     fontWeight: theme.fontWeight.normal,
   },
 }));
