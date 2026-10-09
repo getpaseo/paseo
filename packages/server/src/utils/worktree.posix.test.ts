@@ -328,6 +328,32 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
     });
 
+    it("shows committed changes when origin HEAD points to a deleted default branch", async () => {
+      execFileSync("git", ["branch", "-m", "main", "master"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+        { cwd: repoDir },
+      );
+      execFileSync("git", ["checkout", "-b", "feature/stale-default"], { cwd: repoDir });
+      writeFileSync(join(repoDir, "file.txt"), "feature change\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature change"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["checkout", "master"], { cwd: repoDir });
+      const created = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "stale-default",
+        source: { kind: "checkout-branch", branchName: "feature/stale-default" },
+        runSetup: false,
+        paseoHome,
+      });
+      const diff = await getCheckoutDiff(created.worktreePath, { mode: "base" }, { paseoHome });
+      expect(diff.diff).toContain("+feature change");
+      expect(created.comparisonBaseRef).toBe("master");
+    });
+
     it("falls back to the currently checked out branch when no default branch can be resolved", async () => {
       // No origin remote and no local main/master — resolveRepositoryDefaultBranch
       // can't find a default branch, so the fix must fall back to whatever is
