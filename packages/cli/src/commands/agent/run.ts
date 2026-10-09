@@ -617,10 +617,14 @@ export async function resolveExistingRunWorkspace(
 // The placement a run already has: an explicit workspace, the caller agent's placement (the
 // daemon runs a subagent in its caller's directory, whatever cwd the CLI sends), or an ambient
 // workspace. Resolving it creates nothing; undefined means the run needs a new workspace.
+interface RunPlacementContext {
+  options: AgentRunOptions;
+  caller: CallerAgent | undefined;
+}
+
 async function resolveExistingRunPlacement(
   client: RunWorkspaceLookupClient,
-  options: AgentRunOptions,
-  caller: CallerAgent | undefined,
+  { options, caller }: RunPlacementContext,
 ): Promise<RunWorkspace | undefined> {
   const newWorkspace = resolveNewWorkspaceKind(options);
   const explicit = newWorkspace ? undefined : options.workspace?.trim();
@@ -664,7 +668,7 @@ export async function prepareRun(
   client: RunPreparationClient,
   input: RunPreparationInput,
 ): Promise<PreparedRun> {
-  const placement = await resolveExistingRunPlacement(client, input.options, input.caller);
+  const placement = await resolveExistingRunPlacement(client, input);
   const featureValues = await resolveRunFeatureValues(client, input.requestedFeatures, {
     ...input.draft,
     cwd: placement?.cwd ?? input.cwd,

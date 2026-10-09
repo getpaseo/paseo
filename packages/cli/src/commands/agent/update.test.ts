@@ -137,16 +137,24 @@ describe("toAgentUpdateResult", () => {
   });
 });
 
-class RecordingFeatureClient implements AgentFeatureUpdateClient {
-  readonly updates: Array<{ agentId: string; featureId: string; value: unknown }> = [];
+interface RecordedFeatureUpdate {
+  agentId: string;
+  featureId: string;
+  value: unknown;
+}
 
-  constructor(private readonly rejectFeatureId?: string) {}
+// Records what reached the provider. A failing feature is recorded before the error, the way a
+// provider can apply a setting and then fail, or a response can be lost after the daemon applied it.
+class RecordingFeatureClient implements AgentFeatureUpdateClient {
+  readonly updates: RecordedFeatureUpdate[] = [];
+
+  constructor(private readonly failingFeatureId?: string) {}
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
-    if (featureId === this.rejectFeatureId) {
+    this.updates.push({ agentId, featureId, value });
+    if (featureId === this.failingFeatureId) {
       throw new Error("provider rejected the value");
     }
-    this.updates.push({ agentId, featureId, value });
   }
 }
 
@@ -171,7 +179,10 @@ describe("updateAgentFeatures", () => {
   it("sets each feature with its typed value", async () => {
     const client = new RecordingFeatureClient();
 
-    await updateAgentFeatures(client, agent, { service_tier: "priority", plan_mode: "true" });
+    await updateAgentFeatures(client, {
+      agent,
+      requested: { service_tier: "priority", plan_mode: "true" },
+    });
 
     expect(client.updates).toEqual([
       { agentId: "agent-1", featureId: "service_tier", value: "priority" },
@@ -183,20 +194,37 @@ describe("updateAgentFeatures", () => {
     const client = new RecordingFeatureClient();
 
     await expect(
-      updateAgentFeatures(client, agent, { service_tier: "priority", plan_mode: "maybe" }),
+      updateAgentFeatures(client, {
+        agent,
+        requested: { service_tier: "priority", plan_mode: "maybe" },
+      }),
     ).rejects.toMatchObject({ code: "INVALID_FEATURE" });
     expect(client.updates).toEqual([]);
   });
 
-  it("names the features already applied when the provider rejects a later one", async () => {
+  it("names the confirmed features and leaves the failed one unconfirmed", async () => {
     const client = new RecordingFeatureClient("plan_mode");
 
     await expect(
-      updateAgentFeatures(client, agent, { service_tier: "priority", plan_mode: "true" }),
+      updateAgentFeatures(client, {
+        agent,
+        requested: { service_tier: "priority", plan_mode: "true" },
+      }),
     ).rejects.toMatchObject({
       code: "FEATURE_UPDATE_FAILED",
       message: "Failed to set feature plan_mode: provider rejected the value",
-      details: "Already applied: service_tier=priority",
+      details:
+        "Confirmed before the failure: service_tier=priority. The state of plan_mode is unconfirmed.",
+    });
+  });
+
+  it("does not claim nothing changed when the first setter fails after reaching the provider", async () => {
+    const client = new RecordingFeatureClient("service_tier");
+
+    await expect(
+      updateAgentFeatures(client, { agent, requested: { service_tier: "priority" } }),
+    ).rejects.toMatchObject({
+      details: "No feature update was confirmed. The state of service_tier is unconfirmed.",
     });
     expect(client.updates).toEqual([
       { agentId: "agent-1", featureId: "service_tier", value: "priority" },

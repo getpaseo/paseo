@@ -214,6 +214,10 @@ class PreparationDaemon implements RunPreparationClient {
 
 describe("run preparation", () => {
   const originalWorkspaceId = process.env.PASEO_WORKSPACE_ID;
+  // Workspace terminals export PASEO_WORKSPACE_ID; each test sets the placement it needs.
+  beforeEach(() => {
+    delete process.env.PASEO_WORKSPACE_ID;
+  });
   afterEach(() => {
     if (originalWorkspaceId === undefined) delete process.env.PASEO_WORKSPACE_ID;
     else process.env.PASEO_WORKSPACE_ID = originalWorkspaceId;
@@ -263,7 +267,6 @@ describe("run preparation", () => {
   });
 
   it("checks a run that needs a new workspace in the shell's directory and leaves it unplaced", async () => {
-    delete process.env.PASEO_WORKSPACE_ID;
     const daemon = new PreparationDaemon();
 
     const prepared = await prepareRun(daemon, {

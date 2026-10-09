@@ -119,38 +119,48 @@ export async function applyAgentChanges(
   return { notice: null };
 }
 
+export interface AgentFeatureUpdate {
+  agent: Pick<AgentSnapshotPayload, "id" | "features">;
+  requested: Record<string, string>;
+}
+
 /**
  * Rejects malformed ids and values absent from the agent's features before setting any, then sets
- * them one by one. The setters are not a transaction: if the provider rejects one, the ones before
- * it stay applied and the error names them.
+ * them one by one. The setters are not a transaction: when one fails, the ones the daemon
+ * confirmed stay applied, and the failed one may or may not have taken effect.
  */
 export async function updateAgentFeatures(
   client: AgentFeatureUpdateClient,
-  agent: Pick<AgentSnapshotPayload, "id" | "features">,
-  requested: Record<string, string>,
+  update: AgentFeatureUpdate,
 ): Promise<void> {
-  const values = resolveFeatureValues(requested, agent.features ?? []);
-  const applied: string[] = [];
+  const values = resolveFeatureValues(update.requested, update.agent.features ?? []);
+  const confirmed: string[] = [];
   for (const [featureId, value] of Object.entries(values)) {
     try {
-      await client.setAgentFeature(agent.id, featureId, value);
+      await client.setAgentFeature(update.agent.id, featureId, value);
     } catch (error) {
-      throw featureUpdateFailed(featureId, applied, error);
+      throw featureUpdateFailed({ featureId, confirmed, error });
     }
-    applied.push(`${featureId}=${String(value)}`);
+    confirmed.push(`${featureId}=${String(value)}`);
   }
 }
 
-function featureUpdateFailed(featureId: string, applied: string[], error: unknown): CommandError {
-  const reason = error instanceof Error ? error.message : String(error);
-  let details = "No feature was changed.";
-  if (applied.length > 0) {
-    details = `Already applied: ${applied.join(", ")}`;
+interface FeatureUpdateFailure {
+  featureId: string;
+  confirmed: string[];
+  error: unknown;
+}
+
+function featureUpdateFailed(failure: FeatureUpdateFailure): CommandError {
+  const reason = failure.error instanceof Error ? failure.error.message : String(failure.error);
+  let confirmed = "No feature update was confirmed.";
+  if (failure.confirmed.length > 0) {
+    confirmed = `Confirmed before the failure: ${failure.confirmed.join(", ")}.`;
   }
   return {
     code: "FEATURE_UPDATE_FAILED",
-    message: `Failed to set feature ${featureId}: ${reason}`,
-    details,
+    message: `Failed to set feature ${failure.featureId}: ${reason}`,
+    details: `${confirmed} The state of ${failure.featureId} is unconfirmed.`,
   };
 }
 
@@ -298,7 +308,10 @@ export async function runUpdateCommand(
 
     let appliedChanges: AppliedAgentChanges = { notice: null };
     if (changes.type === "features") {
-      await updateAgentFeatures(client, fetchResult.agent, changes.requested);
+      await updateAgentFeatures(client, {
+        agent: fetchResult.agent,
+        requested: changes.requested,
+      });
     } else {
       appliedChanges = await applyAgentChanges(client, agentId, changes);
     }
