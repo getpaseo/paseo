@@ -2833,6 +2833,7 @@ class ClaudeAgentSession implements AgentSession {
     await revertClaudeConversation({
       sdk: this.rewindSdk,
       sessionId: this.claudeSessionId,
+      cwd: this.config.cwd,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
       setSessionId: (sessionId) => {
