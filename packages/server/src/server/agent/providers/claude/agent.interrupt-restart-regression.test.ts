@@ -91,6 +91,17 @@ function buildUsage() {
   };
 }
 
+/** Claude opening a turn of its own. Every main-session turn starts with one. */
+function buildTurnInit(sessionId: string) {
+  return {
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    permissionMode: "default",
+    model: "opus",
+  };
+}
+
 function buildSuccessResult(sessionId: string) {
   return {
     type: "result",
@@ -153,13 +164,7 @@ function createScriptedQuery(params: {
     },
   } satisfies ScriptedQuery;
 
-  scriptedQuery.emit({
-    type: "system",
-    subtype: "init",
-    session_id: params.sessionId,
-    permissionMode: "default",
-    model: "opus",
-  });
+  scriptedQuery.emit(buildTurnInit(params.sessionId));
 
   void (async () => {
     for await (const prompt of params.prompt) {
@@ -252,6 +257,21 @@ async function waitFor(
   }
 }
 
+/**
+ * Paseo interrupts Claude only while a main-session turn is in flight, which it learns from the
+ * init. The pump asks for its next frame only after routing the last one, so a second next() call
+ * proves the init was read.
+ */
+async function waitForInitRouted(
+  query: () => { next: ReturnType<typeof vi.fn> } | null | undefined,
+) {
+  await waitFor(() => (query()?.next.mock.calls.length ?? 0) >= 2);
+}
+
+function buildCommandLifecycle(commandUuid: string | null | undefined, state: string) {
+  return { type: "command_lifecycle", command_uuid: commandUuid, state };
+}
+
 afterEach(() => {
   queryFactory.mockReset();
 });
@@ -282,6 +302,7 @@ test("interrupt only calls query.interrupt and leaves the query open", async () 
   const firstTurn = streamSession(session, "first prompt");
   await firstTurn.next();
   await waitFor(() => queries[0]?.prompts.length === 1);
+  await waitForInitRouted(() => queries[0]);
 
   await session.interrupt();
   await waitFor(() => queries[0]?.interrupt.mock.calls.length === 1);
@@ -322,6 +343,7 @@ async function startSteeredTurn(sessionId: string): Promise<{
     throw new Error("Expected the original Claude turn to start");
   }
   await waitFor(() => query?.prompts.length === 1);
+  await waitForInitRouted(() => query);
 
   const steered = await session.steerActiveTurn!("queued steer", {
     expectedTurnId: start.value.turnId,
@@ -371,14 +393,28 @@ test("interrupt still stops the turn when Claude has already dequeued the steer"
 test("a steer Claude has already read is no longer discardable on interrupt", async () => {
   const { session, query, turn } = await startSteeredTurn("queued-steer-completed-session");
 
-  query()?.emit({
-    type: "command_lifecycle",
-    command_uuid: query()?.prompts[1]?.uuid,
-    state: "completed",
-  });
+  query()?.emit(buildCommandLifecycle(query()?.prompts[0]?.uuid, "started"));
+  query()?.emit(buildCommandLifecycle(query()?.prompts[1]?.uuid, "completed"));
   // Frames are translated in order, so the marker landing proves the lifecycle frame was read.
   query()?.emit({ type: "assistant", message: { content: "STEER_READ" } });
   await consumeUntil(turn, (event) => collectAssistantText([event]).includes("STEER_READ"));
+
+  await session.interrupt();
+  await waitFor(() => query()?.interrupt.mock.calls.length === 1);
+
+  expect(query()?.cancelAsyncMessage).not.toHaveBeenCalled();
+  await collectUntilTerminal(turn);
+  await session.close();
+});
+
+test("a steer Claude cancelled is no longer withdrawn on interrupt", async () => {
+  const { session, query, turn } = await startSteeredTurn("queued-steer-cancelled-session");
+
+  query()?.emit(buildCommandLifecycle(query()?.prompts[0]?.uuid, "started"));
+  // "cancelled" is terminal: API errors, interrupts and "now" pre-emption all end a message.
+  query()?.emit(buildCommandLifecycle(query()?.prompts[1]?.uuid, "cancelled"));
+  query()?.emit({ type: "assistant", message: { content: "STEER_CANCELLED" } });
+  await consumeUntil(turn, (event) => collectAssistantText([event]).includes("STEER_CANCELLED"));
 
   await session.interrupt();
   await waitFor(() => query()?.interrupt.mock.calls.length === 1);
@@ -473,6 +509,7 @@ async function startInterruptedToolTurn(sessionId: string): Promise<{
   const turn = streamSession(session, "run the slow tool");
   await turn.next();
   await waitFor(() => query?.prompts.length === 1);
+  await waitForInitRouted(() => query);
 
   await session.interrupt();
   await collectUntilTerminal(turn);
@@ -523,6 +560,7 @@ test("Claude can still wake into an autonomous turn once the interrupted request
 
   query()?.emit(buildStoppedTaskNotification(sessionId));
   query()?.emit(buildAbortedResult(sessionId));
+  query()?.emit(buildTurnInit(sessionId));
   query()?.emit({
     type: "assistant",
     message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
@@ -579,6 +617,7 @@ test("reuses the existing query after interrupt before starting the next prompt"
   const firstTurn = streamSession(session, "first prompt");
   await firstTurn.next();
   await waitFor(() => queries[0]?.prompts.length === 1);
+  await waitForInitRouted(() => queries[0]);
 
   await session.interrupt();
   await collectUntilTerminal(firstTurn);
@@ -652,6 +691,7 @@ test("recovers when the query pump sees a single interrupt abort before the next
   const output = createAsyncQueue<Record<string, unknown>>();
   const prompts: PromptRecord[] = [];
   let throwAbortOnNext = false;
+  let queryRef: Pick<ScriptedQuery, "next"> | null = null;
 
   queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     const scriptedQuery = {
@@ -685,13 +725,8 @@ test("recovers when the query pump sees a single interrupt abort before the next
       },
     } satisfies ScriptedQuery;
 
-    scriptedQuery.emit({
-      type: "system",
-      subtype: "init",
-      session_id: "interrupt-abort-recovery-session",
-      permissionMode: "default",
-      model: "opus",
-    });
+    queryRef = scriptedQuery;
+    scriptedQuery.emit(buildTurnInit("interrupt-abort-recovery-session"));
 
     void (async () => {
       for await (const promptMessage of prompt) {
@@ -730,6 +765,7 @@ test("recovers when the query pump sees a single interrupt abort before the next
 
   const firstTurn = streamSession(session, "first prompt");
   await firstTurn.next();
+  await waitForInitRouted(() => queryRef);
   await session.interrupt();
   await collectUntilTerminal(firstTurn);
 
@@ -768,6 +804,7 @@ test("stale abort result after replacement start does not poison the new foregro
   const firstTurn = streamSession(session, "first prompt");
   const firstStarted = await firstTurn.next();
   await waitFor(() => queryRef?.prompts.length === 1);
+  await waitForInitRouted(() => queryRef);
 
   await session.interrupt();
   const firstTurnEvents = [firstStarted.value!, ...(await collectUntilTerminal(firstTurn))];
@@ -812,7 +849,7 @@ test("stale abort result after replacement start does not poison the new foregro
   await session.close();
 });
 
-test("creates an autonomous live turn when assistant output arrives without a foreground run", async () => {
+test("creates an autonomous live turn when Claude starts a turn without a foreground run", async () => {
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
 
@@ -848,6 +885,7 @@ test("creates an autonomous live turn when assistant output arrives without a fo
   await collectUntilTerminal(streamSession(session, "seed prompt"));
 
   const subscribedEvents = subscribeToEvents(session);
+  queryRef?.emit(buildTurnInit("autonomous-live-session"));
   queryRef?.emit({
     type: "assistant",
     message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
@@ -916,6 +954,7 @@ test("steers an autonomous turn through its existing query without restarting it
 
   await collectUntilTerminal(streamSession(session, "seed prompt"));
   const autonomousEvents = subscribeToEvents(session);
+  queryRef?.emit(buildTurnInit("autonomous-steer-session"));
   queryRef?.emit({
     type: "assistant",
     message: { content: "AUTONOMOUS_RESPONSE" },
@@ -999,6 +1038,7 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
   await collectUntilTerminal(streamSession(session, "seed prompt"));
 
   const subscribedEvents = subscribeToEvents(session);
+  queryRef?.emit(buildTurnInit("autonomous-handoff-session"));
   queryRef?.emit({
     type: "assistant",
     message: { content: "BACKGROUND_ONLY_RESPONSE" },

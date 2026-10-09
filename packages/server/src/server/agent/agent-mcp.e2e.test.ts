@@ -215,22 +215,19 @@ function createMcpRecordingAgentClients(recorder: LaunchRecorder) {
   };
 }
 
-async function assertAgentNotRunning(options: {
-  client: McpClient;
-  agentId: string;
-}): Promise<void> {
-  const statusResult = await options.client.callTool({
-    name: "get_agent_status",
-    args: { agentId: options.agentId },
-  });
-  const payload = getStructuredContent(statusResult);
-  if (!payload) {
-    throw new Error("get_agent_status returned no structured payload");
-  }
-  const status = payload.status;
-  if (status === "running" || status === "initializing") {
-    throw new Error(`Agent still running after blocking create_agent (status=${status})`);
-  }
+async function waitForAgentFinish(options: { client: McpClient; agentId: string }): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const result = await options.client.callTool({
+          name: "get_agent_status",
+          args: { agentId: options.agentId },
+        });
+        return getStructuredContent(result)?.status;
+      },
+      { timeout: 10000 },
+    )
+    .toBe("idle");
 }
 
 describe("agent MCP end-to-end (offline)", () => {
@@ -276,7 +273,6 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt,
-          background: false,
         },
       });
 
@@ -284,7 +280,7 @@ describe("agent MCP end-to-end (offline)", () => {
       agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
-      await assertAgentNotRunning({ client, agentId: agentId! });
+      await waitForAgentFinish({ client, agentId: agentId! });
 
       if (existsSync(filePath)) {
         const contents = await readFile(filePath, "utf8");
@@ -377,7 +373,6 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
-          background: true,
         },
       });
       const payload = getStructuredContent(result);
@@ -452,7 +447,6 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
-          background: true,
         },
       });
       const payload = getStructuredContent(result);
@@ -476,7 +470,6 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
-          background: true,
         },
       });
       const disabledPayload = getStructuredContent(disabledResult);
@@ -541,7 +534,6 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
-          background: true,
         },
       });
       const payload = getStructuredContent(result);
@@ -601,7 +593,6 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "codex/gpt-5.4-mini",
           mode: "full-access",
           initialPrompt: "Run exactly: sleep 30",
-          background: true,
         },
       });
 
@@ -772,7 +763,6 @@ describe("agent MCP end-to-end (offline)", () => {
 
     const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
-    let agentId: string | null = null;
     try {
       const result = await client.callTool({
         name: "create_agent",
@@ -782,29 +772,13 @@ describe("agent MCP end-to-end (offline)", () => {
           provider: "codex/gpt-5.4-mini",
           mode: "full-access",
           initialPrompt: "Run exactly: sleep 30",
-          background: true,
         },
       });
 
-      const payload = getStructuredContent(result);
-      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
-      expect(agentId).toBeTruthy();
-
-      await assertAgentNotRunning({ client, agentId: agentId! });
-      const statusResult = await client.callTool({
-        name: "get_agent_status",
-        args: { agentId },
-      });
-      const statusPayload = getStructuredContent(statusResult);
-      expect(statusPayload?.status).toBe("error");
-      const snapshot = statusPayload?.snapshot;
-      const lastError =
-        snapshot && typeof snapshot === "object" ? Reflect.get(snapshot, "lastError") : undefined;
-      expect(lastError).toContain("Initial turn failed to start");
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("Initial turn failed to start");
+      expect(getStructuredContent(result)?.agentId).toBeUndefined();
     } finally {
-      if (agentId) {
-        await client.callTool({ name: "kill_agent", args: { agentId } });
-      }
       await client.close();
       await daemon.stop();
       await rm(paseoHome, { recursive: true, force: true });
@@ -880,7 +854,6 @@ describe("agent MCP end-to-end (offline)", () => {
             initialPrompt: "say done and stop",
             worktreeName: "mcp-worktree-setup-test",
             baseBranch: "main",
-            background: true,
           },
         }),
         timeoutMs: 2500,

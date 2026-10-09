@@ -387,6 +387,9 @@ export const ja: TranslationResources = {
         completed: "完了",
       },
     },
+    turnFooter: {
+      workedFor: "作業時間 {{duration}}",
+    },
     compaction: {
       loading: "コンテキストを圧縮中...",
       auto: "コンテキストが自動的に圧縮されました",
@@ -983,6 +986,47 @@ export const ja: TranslationResources = {
         actions: {
           viewPullRequest: "表示",
           openOn: "{{brand}}で開く",
+          addToChat: "チャットに追加",
+          addAllToChat: "すべてチャットに追加",
+          addingToChat: "追加中...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "対応が必要なチェックがあります",
+            failure: "失敗したチェックがあります",
+            pending: "完了していないチェックがあります",
+            success: "すべてのチェックに合格しました",
+            none: "チェックなし",
+          },
+          count: {
+            actionRequired: "{{count}} 件要対応",
+            warning: "{{count}} 件警告",
+            failure: "{{count}} 件失敗",
+            pending: "{{count}} 件実行中",
+            manual: "{{count}} 件手動",
+            success: "{{count}} 件成功",
+            ignored: "{{count}} 件スキップ",
+          },
+          detailOne: "チェック: {{parts}}",
+          detailMany: "チェック: {{parts}}",
+          groupOne: {
+            actionRequired: "要対応のチェック {{count}} 件",
+            warning: "警告のチェック {{count}} 件",
+            failure: "失敗したチェック {{count}} 件",
+            pending: "実行中のチェック {{count}} 件",
+            manual: "手動のチェック {{count}} 件",
+            success: "成功したチェック {{count}} 件",
+            ignored: "スキップされたチェック {{count}} 件",
+          },
+          groupMany: {
+            actionRequired: "要対応のチェック {{count}} 件",
+            warning: "警告のチェック {{count}} 件",
+            failure: "失敗したチェック {{count}} 件",
+            pending: "実行中のチェック {{count}} 件",
+            manual: "手動のチェック {{count}} 件",
+            success: "成功したチェック {{count}} 件",
+            ignored: "スキップされたチェック {{count}} 件",
+          },
         },
         checksSummary: {
           passedLabel: "成功",
@@ -996,17 +1040,21 @@ export const ja: TranslationResources = {
           checks: "チェック",
           pipeline: "パイプライン",
           reviews: "レビュー",
+          activity: "アクティビティ",
         },
         empty: {
           noJobs: "ジョブなし",
           loadingPipeline: "パイプラインを読み込み中...",
           pipelineJobsLoadFailed: "パイプラインのジョブを読み込めませんでした",
           allowedToFail: "失敗を許可",
+          noActivity: "まだアクティビティはありません",
         },
         approvals: "{{given}} / {{required}} 承認",
         accessibility: {
           pullRequest: "プルリクエスト#{{number}}",
           pullRequest_mr: "マージリクエスト !{{number}}",
+          commentActions: "コメントの操作",
+          threadActions: "スレッドの操作",
           checkStatus: {
             passed: "成功",
             failed: "失敗",
@@ -1035,6 +1083,8 @@ export const ja: TranslationResources = {
         },
         thread: {
           discussion: "ディスカッションスレッド",
+          resolved: "解決済み",
+          outdated: "古い",
         },
         errors: {
           statusLoadFailed: "プルリクエストのステータスを読み込めません",
@@ -1101,7 +1151,16 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} グループ",
+    statusBucket: {
+      needsInput: "入力待ち",
+      failed: "失敗",
+      readyToReview: "レビュー待ち",
+      working: "実行中",
+      done: "完了",
+    },
     display: {
+      showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",
       grouping: {
@@ -1723,6 +1782,12 @@ export const ja: TranslationResources = {
       helper: "リモートホストで動作する Paseo デーモンに接続します。",
       fields: {
         target: "SSH ホスト",
+        password: "デーモンのパスワード",
+        optional: "任意",
+      },
+      passwordVisibility: {
+        show: "パスワードを表示",
+        hide: "パスワードを非表示",
       },
       actions: {
         cancel: "キャンセル",
@@ -1955,6 +2020,8 @@ export const ja: TranslationResources = {
     dismiss: "閉じる",
   },
   contextWindow: {
+    noData: "コンテキストデータがありません",
+    accessibilityNoData: "コンテキストウィンドウ：コンテキストデータがありません",
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",

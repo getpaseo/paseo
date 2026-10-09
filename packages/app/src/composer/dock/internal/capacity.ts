@@ -1,6 +1,8 @@
 interface ComposerGeometry {
   height: number;
   bottomInset: number;
+  /** The keyboard also covers this space below its shift. */
+  safeAreaBottom: number;
   keyboardShift: number;
   centered: boolean;
 }
@@ -12,11 +14,25 @@ export interface ComposerCapacity {
 
 export function resolveComposerCapacity(input: ComposerGeometry): number {
   "worklet";
-  // A centered form grows upward by half its height. Reserve both halves so
-  // translating it still leaves five layout points below the header.
-  const clearance = input.keyboardShift + 5;
-  const reservedSpace = input.centered ? clearance * 2 : clearance;
-  return Math.max(0, input.height - input.bottomInset - reservedSpace);
+  // A centered form only translates by the keyboard overlap, so once the keyboard
+  // reaches it the form sits on the keyboard and fits above it, not twice over.
+  // A bottom-anchored composer pads the safe area inside its own capacity.
+  const available = input.centered
+    ? Math.min(
+        input.height - input.bottomInset,
+        input.height - input.safeAreaBottom - input.keyboardShift,
+      )
+    : input.height - input.bottomInset - input.keyboardShift;
+  return Math.max(0, available - 5);
+}
+
+/** Space below a centered form that the keyboard fills before the form moves. */
+export function resolveCenteredClearance(input: {
+  viewportHeight: number;
+  safeAreaBottom: number;
+  formBottom: number;
+}): number {
+  return Math.max(0, input.viewportHeight - input.safeAreaBottom - input.formBottom);
 }
 
 export function updateComposerCapacity(

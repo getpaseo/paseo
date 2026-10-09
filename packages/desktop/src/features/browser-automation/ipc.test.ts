@@ -190,6 +190,8 @@ class FakeWebContents {
     this.inputEvents.push(event);
   }
 
+  public async insertText(_text: string): Promise<void> {}
+
   public on(event: "console-message", listener: ConsoleMessageListener): void {
     expect(event).toBe("console-message");
     this.consoleMessageListener = listener;

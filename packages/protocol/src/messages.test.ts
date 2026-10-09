@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  AgentTimelineItemPayloadSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -519,4 +520,31 @@ describe("viewed timeline subscription messages", () => {
       },
     });
   });
+});
+
+test("agent messages are an optional semantic payload on existing tool rows", () => {
+  const legacy = {
+    type: "tool_call",
+    callId: "delivery",
+    name: "agent_message",
+    status: "completed",
+    error: null,
+    detail: { type: "plain_text", text: "Done" },
+  };
+  const agentMessage = {
+    event: "finished",
+    sender: { id: "server::worker", title: "Reviewer" },
+    text: "Done",
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  expect(AgentTimelineItemPayloadSchema.parse({ ...legacy, agentMessage })).toEqual({
+    ...legacy,
+    agentMessage,
+  });
+  expect(
+    AgentTimelineItemPayloadSchema.safeParse({
+      ...legacy,
+      agentMessage: { ...agentMessage, sender: { id: 42 } },
+    }).success,
+  ).toBe(false);
 });

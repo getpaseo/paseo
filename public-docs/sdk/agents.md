@@ -105,6 +105,31 @@ const child = await workspace.agents.create({
 
 `parent` establishes parentage. Archiving a parent cascade-archives its children. Call `detach()` first when a child should continue independently.
 
+## Run work in a background workspace
+
+Create a background workspace and its first agent in one call. Put `background` on the
+workspace options and the agent's configuration under `agent`:
+
+```ts
+const cwd = "/Users/me/dev/storefront";
+const workspace = await client.workspaces.create({
+  source: { kind: "directory", path: cwd },
+  background: true,
+  agent: {
+    cwd,
+    config: { provider: "codex/gpt-5.5" },
+    prompt: "Review the checkout flow.",
+  },
+});
+```
+
+The call returns a workspace handle and starts its first agent with the supplied prompt.
+
+Background agents keep their history and survive daemon restarts. Default discovery hides them;
+use `client.agents.list({ filter: { includeBackground: true } })` to include them.
+Exact-ID handles work normally. See [workspace creation](./workspaces.md#create-a-fresh-workspace)
+for defaults and caller inheritance.
+
 ## Request structured output
 
 ```ts

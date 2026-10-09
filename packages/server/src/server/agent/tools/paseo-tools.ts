@@ -1,3 +1,4 @@
+import { AgentDirectory } from "../directory.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
@@ -59,9 +60,9 @@ import {
   sanitizePermissionRequest,
   serializeSnapshotWithMetadata,
   toScheduleSummary,
-  waitForAgentWithTimeout,
 } from "../mcp-shared.js";
 import {
+  type PromptDispatchDisposition,
   sendPromptToAgent,
   setupFinishNotification,
   waitForAgentRunStartWithTimeout,
@@ -123,6 +124,7 @@ export interface PaseoToolHostDependencies {
     cwd: string,
     title?: string | null,
     projectId?: string,
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ) => Promise<PersistedWorkspaceRecord>;
   workspaceScripts?: Pick<WorkspaceScriptsService, "list" | "launch" | "stop">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
@@ -132,6 +134,7 @@ export interface PaseoToolHostDependencies {
   ensureWorkspaceForCreate?: (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
+    context?: { callerWorkspaceId?: string },
   ) => Promise<string>;
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
@@ -189,6 +192,7 @@ const WorkspaceAutomationSummarySchema = z.object({
   isolation: z.enum(["local", "worktree"]),
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
+  background: z.boolean().optional(),
 });
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
@@ -199,6 +203,7 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
     isolation: workspace.kind === "worktree" ? ("worktree" as const) : ("local" as const),
     kind: workspace.kind,
     title: workspace.title,
+    background: workspace.background,
   };
 }
 
@@ -1047,13 +1052,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const canonicalTopLevelInputSchema = {
     ...canonicalCreateAgentFields,
-    background: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
-      ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1071,7 +1069,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     ...commonCreateAgentFields,
     relationship: legacyCreateAgentPlacementFields.relationship.optional(),
     workspace: legacyCreateAgentPlacementFields.workspace.optional(),
-    background: canonicalTopLevelInputSchema.background,
     notifyOnFinish: canonicalTopLevelInputSchema.notifyOnFinish,
     cwd: z
       .string()
@@ -1129,13 +1126,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
-    background: z
-      .boolean()
-      .optional()
-      .default(true)
-      .describe(
-        "Run agent in background. Agent-scoped default is true so you can continue until the finish notification arrives. Set false only when you need a blocking response.",
-      ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1146,13 +1136,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
-    background: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
-      ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1249,6 +1232,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           ),
         projectId: z.string().optional().describe("Existing project id to own the workspace."),
         title: z.string().trim().min(1).optional(),
+        background: z
+          .boolean()
+          .optional()
+          .describe(
+            "True hides the workspace from default lists and the sidebar while its contents remain durable and accessible; omit background to inherit your current workspace’s value (false without a caller), and override it only when the user explicitly asks.",
+          ),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
           .optional()
@@ -1287,6 +1276,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       path,
       projectId,
       title,
+      background,
       mode,
       worktreeSlug,
       branchName,
@@ -1316,7 +1306,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         if (!options.createDirectoryWorkspace) {
           throw new Error("Workspace provisioning is not configured");
         }
-        workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
+        workspace = await options.createDirectoryWorkspace(cwd, title, projectId, {
+          background,
+          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
+        });
       } else {
         let cwd =
           path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
@@ -1347,6 +1340,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
+            background,
+            callerWorkspaceId: resolveCallerAgent()?.workspaceId,
           },
         );
         if (!result.ok) {
@@ -1367,15 +1362,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "List workspaces",
       description: "List active workspaces.",
-      inputSchema: {},
+      inputSchema: { includeBackground: z.boolean().optional().default(false) },
       outputSchema: { workspaces: z.array(WorkspaceAutomationSummarySchema) },
     },
-    async () => {
+    async ({ includeBackground = false }) => {
       if (!options.workspaceRegistry) {
         throw new Error("Workspace registry is not configured");
       }
       const workspaces = (await options.workspaceRegistry.list())
-        .filter((workspace) => !workspace.archivedAt)
+        .filter(
+          (workspace) => !workspace.archivedAt && (includeBackground || !workspace.background),
+        )
         .map(toWorkspaceAutomationSummary);
       return {
         content: [],
@@ -1442,30 +1439,21 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         workspaceId: z.string().optional(),
         currentModeId: z.string().nullable(),
         availableModes: z.array(ProviderModeSchema),
-        lastMessage: z.string().nullable().optional(),
-        permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
         guidance: z.string().optional(),
       },
     },
     async (args: unknown) => {
       const resolvedArgs = await resolveCreateAgentToolArgs(args);
       const { parsedArgs, worktree } = resolvedArgs;
-      let requestedBackground: boolean;
       let notifyOnFinish: boolean;
       if (resolvedArgs.kind === "agent-scoped") {
-        requestedBackground = true;
         notifyOnFinish = parsedArgs.notifyOnFinish;
       } else {
-        requestedBackground = resolvedArgs.parsedArgs.background;
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
-      const {
-        snapshot,
-        background: createdInBackground,
-        initialPromptStarted,
-      } = await createAgentCommand(
+      const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
           agentStorage,
@@ -1491,7 +1479,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           features: parsedArgs.settings?.features,
           labels: parsedArgs.labels,
           mode: parsedArgs.settings?.modeId,
-          background: requestedBackground,
+          promptFailure: "throw",
           notifyOnFinish,
           detached: resolvedArgs.detached,
           callerAgentId,
@@ -1500,43 +1488,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         },
       );
 
-      try {
-        if (!createdInBackground && initialPromptStarted) {
-          const result = await waitForAgentWithTimeout(agentManager, snapshot.id, {
-            waitForActive: true,
-          });
-
-          const liveSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
-          const responseData = {
-            agentId: snapshot.id,
-            type: snapshot.provider,
-            status: result.status,
-            cwd: liveSnapshot.cwd,
-            ...(liveSnapshot.workspaceId ? { workspaceId: liveSnapshot.workspaceId } : {}),
-            currentModeId: liveSnapshot.currentModeId,
-            availableModes: liveSnapshot.availableModes,
-            lastMessage: result.lastMessage,
-            permission: sanitizePermissionRequest(result.permission),
-          };
-          const validJson = ensureValidJson(responseData);
-
-          const response = {
-            content: [],
-            structuredContent: validJson,
-          };
-          return response;
-        }
-      } catch (error) {
-        childLogger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
-        throw error;
-      }
-
       // Return immediately for async creation.
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
       const guidance =
         callerAgentId && notifyOnFinish && initialPromptStarted
           ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
-          : undefined;
+          : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
       const response = {
         content: [],
         structuredContent: ensureValidJson({
@@ -1547,8 +1504,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           ...(currentSnapshot.workspaceId ? { workspaceId: currentSnapshot.workspaceId } : {}),
           currentModeId: currentSnapshot.currentModeId,
           availableModes: currentSnapshot.availableModes,
-          lastMessage: null,
-          permission: null,
           ...(guidance ? { guidance } : {}),
         }),
       };
@@ -1682,7 +1637,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const cwd = process.cwd();
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
+          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
+        }),
       };
     }
     const caller = resolveCallerAgent();
@@ -1850,7 +1807,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
+          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
+        }),
         worktree: undefined,
       };
     }
@@ -1897,88 +1856,62 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Send agent prompt",
       description:
-        "Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default.",
+        "Send a task and return after dispatch acknowledgement. Calling agents receive finish notifications by default.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
+        disposition: z.enum(["turn_started", "out_of_band"]).optional(),
         status: AgentStatusEnum,
-        lastMessage: z.string().nullable().optional(),
-        permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
         guidance: z.string().optional(),
       },
     },
-    async ({
-      agentId,
-      prompt,
-      sessionMode,
-      background = Boolean(callerAgentId),
-      notifyOnFinish = Boolean(callerAgentId),
-    }) => {
-      function armFinishNotification(): boolean {
+    async ({ agentId, prompt, sessionMode, notifyOnFinish = Boolean(callerAgentId) }) => {
+      let stopNotification: (() => void) | undefined;
+      function armFinishNotification(disposition: PromptDispatchDisposition): void {
         if (!callerAgentId || !notifyOnFinish) {
-          return false;
+          return;
         }
-        setupFinishNotification({
+        stopNotification = setupFinishNotification({
           agentManager,
           agentStorage,
           childAgentId: agentId,
           callerAgentId,
+          waitForTurnStart: disposition === "turn_started",
           logger: childLogger,
         });
-        return true;
       }
 
+      const notifying = Boolean(callerAgentId && notifyOnFinish);
       const { disposition } = await sendPromptToAgent({
         agentManager,
         agentStorage,
         agentId,
         prompt,
+        source: callerAgentId ? { kind: "agent-message", agentId: callerAgentId } : undefined,
         sessionMode,
+        onDispatch: armFinishNotification,
         logger: childLogger,
+      }).catch((error) => {
+        stopNotification?.();
+        throw error;
       });
-
-      // If not running in background, wait for completion
-      if (!background) {
-        const result = await waitForAgentWithTimeout(agentManager, agentId, {
-          waitForActive: true,
-        });
-        // The wait ran out while the agent keeps working, so its result arrives as a
-        // finish notification instead of in this response.
-        const notifying =
-          result.timedOut &&
-          agentManager.getAgent(agentId)?.lifecycle === "running" &&
-          armFinishNotification();
-
-        const responseData = {
-          success: true,
-          status: result.status,
-          lastMessage: result.lastMessage,
-          permission: sanitizePermissionRequest(result.permission),
-          ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
-        };
-        const validJson = ensureValidJson(responseData);
-
-        const response = {
-          content: [],
-          structuredContent: validJson,
-        };
-        return response;
-      }
-
-      const notifying = armFinishNotification();
 
       // Return once the provider has accepted the turn, so the status reports it running.
       if (disposition === "turn_started") {
-        await waitForAgentRunStartWithTimeout(agentManager, agentId);
+        await waitForAgentRunStartWithTimeout(agentManager, agentId).catch((error) => {
+          stopNotification?.();
+          throw error;
+        });
       }
       const currentSnapshot = agentManager.getAgent(agentId);
 
       const responseData = {
         success: true,
+        disposition,
         status: currentSnapshot?.lifecycle ?? "idle",
-        lastMessage: null,
-        permission: null,
-        ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
+        guidance: notifying
+          ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
+          : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
       };
       const validJson = ensureValidJson(responseData);
 
@@ -2046,6 +1979,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       title: "List agents",
       description: "List recent agents as compact metadata.",
       inputSchema: {
+        includeBackground: z.boolean().optional().default(false),
         includeArchived: z.boolean().optional().default(false),
         cwd: z.string().optional(),
         sinceHours: z
@@ -2062,29 +1996,38 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agents: z.array(AgentListItemPayloadSchema),
       },
     },
-    async ({ includeArchived = false, cwd, sinceHours = 48, statuses, limit = 50 }) => {
+    async ({
+      includeBackground = false,
+      includeArchived = false,
+      cwd,
+      sinceHours = 48,
+      statuses,
+      limit = 50,
+    }) => {
       const callerCwd = callerAgentId ? resolveCallerAgent()?.cwd : undefined;
       const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
       const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
       const sinceMs = Date.now() - sinceHours * 60 * 60 * 1000;
-      const liveSnapshots = agentManager.listAgents();
-      const liveAgents = await Promise.all(
-        liveSnapshots.map((snapshot) =>
+      if (!options.workspaceRegistry) throw new Error("Workspace registry is not configured");
+      const directory = new AgentDirectory({
+        manager: agentManager,
+        storage: agentStorage,
+        workspaces: options.workspaceRegistry,
+        projectLive: (snapshot) =>
           serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
-        ),
-      );
-      const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
-      const storedRecords = await agentStorage.list();
-      const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
-      const storedAgents = storedRecords
-        .filter((record) => !record.internal && !liveIds.has(record.id))
-        .filter((record) => includeArchived || !record.archivedAt)
-        .filter(
-          (record) =>
-            includeArchived || isStoredAgentProviderAvailable(record, registeredProviderIds),
-        )
-        .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
-      const agents = [...liveAgents, ...storedAgents]
+        projectStored: (record) =>
+          buildStoredAgentPayload(
+            record,
+            new Set(providerSnapshotManager.listRegisteredProviderIds()),
+          ),
+        isProviderVisible: () => true,
+        isStoredProviderAvailable: (record) =>
+          isStoredAgentProviderAvailable(
+            record,
+            new Set(providerSnapshotManager.listRegisteredProviderIds()),
+          ),
+      });
+      const agents = (await directory.list({ includeBackground, includeArchived }))
         .map(toAgentListItemPayload)
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
         .filter((agent) => !statusFilter || statusFilter.has(agent.status))

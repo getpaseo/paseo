@@ -51,6 +51,20 @@ describe("@tintinweb/pi-subagents adapter", () => {
     ).toEqual(["running", "running", "completed"]);
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
   });
+  test("completes every background child in a grouped notification", async () => {
+    const events = await verifySubagentFixture(
+      readSubagentFixture(new URL("./fixtures/background-group.json", import.meta.url)),
+    );
+    const finalStatus = new Map<string, string>();
+    for (const { event } of events) {
+      if (event.type === "upsert" && event.status) finalStatus.set(event.id, event.status);
+    }
+    expect(Object.fromEntries(finalStatus)).toEqual({
+      call_277173: "completed",
+      call_277176: "completed",
+      call_277179: "completed",
+    });
+  });
   test("declines foreign Agent results", () => {
     expect(
       createPiExtensionHost().mapToolCall({

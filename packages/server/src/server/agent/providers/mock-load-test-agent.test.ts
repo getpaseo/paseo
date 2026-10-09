@@ -449,6 +449,18 @@ describe("MockLoadTestAgentClient", () => {
     unsubscribe();
   });
 
+  test("emits distinct configured responses across consecutive fixture turns", async () => {
+    const session = await new MockLoadTestAgentClient().createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "e2e-fast-stream",
+      featureValues: { mockAssistantResponses: ["First response", "![Second](second.png)"] },
+    });
+    await session.run("Emit a synthetic turn failure.");
+    expect((await session.run("First prompt")).finalText).toBe("First response");
+    expect((await session.run("Second prompt")).finalText).toBe("![Second](second.png)");
+  });
+
   test("emits a settled assistant Markdown image path selected by prompt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();
