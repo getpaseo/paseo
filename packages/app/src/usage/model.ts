@@ -113,7 +113,10 @@ export function resolveUsageView(input: {
     return { kind: "unavailable", message: usageCopy.hostUpgradeRequired(hostLabel) };
   }
   if (query?.data) {
-    return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
+    const reports = [...query.data].sort(
+      (a, b) => a.sourceLabel.localeCompare(b.sourceLabel) || a.id.localeCompare(b.id),
+    );
+    return { kind: "ready", reports, isRefreshing: query.isFetching };
   }
   if (query?.error) {
     return {
