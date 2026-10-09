@@ -511,7 +511,8 @@ agent executable is unavailable.
 `usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
 accounts without rediscovering identity. If a store switches accounts, the existing card shows the
 new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+bypasses that cache and rediscovers an agent's logins. Discovery reconciles account changes across
+scopes sharing the same login store. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
 `loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.

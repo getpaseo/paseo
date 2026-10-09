@@ -94,21 +94,6 @@ function listReports(
   });
 }
 
-async function getReport(
-  serverId: string,
-  reportId: string,
-  forceRefresh = false,
-  agentId?: string,
-): Promise<UsageReportEntry | null> {
-  return (
-    (
-      await requireClient(serverId).listUsageReports(
-        agentId === undefined ? { reportIds: [reportId], forceRefresh } : { agentId, forceRefresh },
-      )
-    ).reports.find((report) => report.id === reportId) ?? null
-  );
-}
-
 function supportsUsage(session: SessionState | undefined): boolean {
   return supportsUsageReports(session?.serverInfo?.features);
 }
@@ -237,14 +222,29 @@ export function useReportRefresh(
 ): { refresh: () => void; refreshState: UsageRefresh } {
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: () => getReport(serverId, reportId, true, agentId),
-    onSuccess: (report) => {
+    mutationFn: () =>
+      requireClient(serverId).listUsageReports(
+        agentId === undefined
+          ? { reportIds: [reportId], forceRefresh: true }
+          : { agentId, forceRefresh: true },
+      ),
+    onSuccess: ({ reports: refreshed }) => {
       queryClient.setQueryData<UsageReportEntry[]>(
         agentId === undefined
           ? usageReportsQueryKey(serverId)
           : agentUsageQueryKey(serverId, agentId),
-        (reports) => (reports ? replaceReport(reports, reportId, report) : reports),
+        (reports) => {
+          if (agentId !== undefined) return settleReports(reports, refreshed);
+          const report = refreshed.find((entry) => entry.id === reportId) ?? null;
+          return reports ? replaceReport(reports, reportId, report) : reports;
+        },
       );
+      if (!refreshed.some((entry) => entry.id === reportId)) {
+        void queryClient.invalidateQueries({
+          queryKey: usageReportsQueryKey(serverId),
+          exact: true,
+        });
+      }
     },
   });
   const { mutate } = mutation;

@@ -112,6 +112,35 @@ test("disabling a provider while usage loads prevents streaming its report", asy
   expect(updates).toEqual([]);
 });
 
+test("agent discovery follows provider enablement without a new session", async () => {
+  let enabled = false;
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    {
+      hasAgent: () => true,
+      usageSession: () => ({ provider: "cursor", env: {}, sessionKey: "launch" }),
+    },
+    undefined,
+    () => enabled,
+  );
+  registry.register(
+    source({
+      id: "cursor",
+      provider: "cursor",
+      discover: async () => [{ key: "account", input: {} }],
+    }),
+  );
+  expect(await registry.listReports({ agentId: "agent" })).toEqual([]);
+  enabled = true;
+  expect((await registry.listReports({ agentId: "agent" })).map((entry) => entry.id)).toEqual([
+    "cursor:account",
+  ]);
+  enabled = false;
+  expect(await registry.listReports({ agentId: "agent" })).toEqual([]);
+});
+
 test("discovery preserves account IDs and updates input after token rotation", async () => {
   const registry = new UsageSourceRegistry();
   let token = "old";

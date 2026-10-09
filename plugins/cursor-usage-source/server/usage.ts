@@ -27,12 +27,7 @@ function toIsoStringOrNull(timestampMs: number): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
-// the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
-// kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
-// depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
-// Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
-// The CLI uses Keychain on macOS, or a platform-specific auth.json with the file store.
+// Desktop uses state.vscdb; the CLI uses macOS Keychain or a platform-specific auth.json.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
 const CURSOR_KEYCHAIN_SERVICE = "cursor-access-token";
@@ -45,8 +40,7 @@ interface CursorCredentialLookup {
 
 async function readCursorKeychainToken(): Promise<string | null> {
   try {
-    // Matches cursor-agent's default macOS credential store. Read only the access
-    // token; the CLI owns refresh and must remain the only writer of credentials.
+    // The CLI owns token refresh; usage only reads its access token.
     const { stdout } = await execFileAsync(
       "/usr/bin/security",
       ["find-generic-password", "-s", CURSOR_KEYCHAIN_SERVICE, "-a", "cursor-user", "-w"],
@@ -197,7 +191,12 @@ export async function fetchUsage(
   if (!token) throw new Error("Cursor login store no longer exists");
 
   const planLabel = fetchPlanLabel(token, fetchApi);
-  const res = await fetchDashboard("GetCurrentPeriodUsage", token, fetchApi, 15_000);
+  const res = await fetchDashboard({
+    method: "GetCurrentPeriodUsage",
+    token,
+    fetchApi,
+    timeoutMs: 15_000,
+  });
 
   if (res.status === 401 || res.status === 403)
     return unavailable({ kind: "rejected", status: res.status });
@@ -208,8 +207,7 @@ export async function fetchUsage(
   const windows: UsageWindow[] = [];
   const balances: UsageBalance[] = [];
   if (resp.planUsage) {
-    // Metered dollars include bonus usage and do not measure subscription quota.
-    // Use Cursor's explicit percentages whenever it supplies them.
+    // Metered spend includes bonus usage; the percentages measure subscription quota.
     for (const [id, label, usedPct] of [
       ["plan_usage", "Total", resp.planUsage.totalPercentUsed],
       ["cursor_usage", "Cursor", resp.planUsage.autoPercentUsed],
@@ -253,12 +251,19 @@ export async function fetchUsage(
   };
 }
 
-function fetchDashboard(
-  method: "GetCurrentPeriodUsage" | "GetPlanInfo",
-  token: string,
-  fetchApi: typeof fetch,
-  timeoutMs: number,
-): Promise<Response> {
+interface CursorDashboardRequest {
+  method: "GetCurrentPeriodUsage" | "GetPlanInfo";
+  token: string;
+  fetchApi: typeof fetch;
+  timeoutMs: number;
+}
+
+function fetchDashboard({
+  method,
+  token,
+  fetchApi,
+  timeoutMs,
+}: CursorDashboardRequest): Promise<Response> {
   return fetchApi(`https://api2.cursor.sh/aiserver.v1.DashboardService/${method}`, {
     signal: AbortSignal.timeout(timeoutMs),
     method: "POST",
@@ -273,8 +278,16 @@ function fetchDashboard(
 
 async function fetchPlanLabel(token: string, fetchApi: typeof fetch): Promise<string | undefined> {
   try {
-    const response = await fetchDashboard("GetPlanInfo", token, fetchApi, 5_000);
-    if (!response.ok) return undefined;
+    const response = await fetchDashboard({
+      method: "GetPlanInfo",
+      token,
+      fetchApi,
+      timeoutMs: 5_000,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      return undefined;
+    }
     return CursorPlanInfoSchema.parse(await response.json()).planInfo?.planName;
   } catch {
     // Plan metadata is optional; it must not hide a successful quota response.
