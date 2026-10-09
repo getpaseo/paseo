@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import {
   applyAgentChanges,
+  updateAgentFeatures,
+  type AgentFeatureUpdateClient,
   toAgentUpdateResult,
   type AgentMetadataChanges,
   type AgentUpdateClient,
@@ -13,7 +15,6 @@ class RecordingAgentUpdateClient implements AgentUpdateClient {
     updates: AgentMetadataChanges;
   }> = [];
   readonly thinkingUpdates: Array<{ agentId: string; thinkingOptionId: string }> = [];
-  readonly featureUpdates: Array<{ agentId: string; featureId: string; value: unknown }> = [];
   thinkingNotice: AgentProviderNotice | null = null;
 
   constructor(private readonly supportsThinkingUpdate = true) {}
@@ -32,10 +33,6 @@ class RecordingAgentUpdateClient implements AgentUpdateClient {
   ): Promise<AgentProviderNotice | null> {
     this.thinkingUpdates.push({ agentId, thinkingOptionId });
     return this.thinkingNotice;
-  }
-
-  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
-    this.featureUpdates.push({ agentId, featureId, value });
   }
 }
 
@@ -66,23 +63,6 @@ describe("applyAgentChanges", () => {
     });
     expect(client.metadataUpdates).toEqual([]);
     expect(client.thinkingUpdates).toEqual([]);
-  });
-
-  it("sets each feature value without metadata or thinking updates", async () => {
-    const client = new RecordingAgentUpdateClient();
-
-    const result = await applyAgentChanges(client, "agent-1", {
-      type: "features",
-      values: { service_tier: "priority", plan_mode: false },
-    });
-
-    expect(client.featureUpdates).toEqual([
-      { agentId: "agent-1", featureId: "service_tier", value: "priority" },
-      { agentId: "agent-1", featureId: "plan_mode", value: false },
-    ]);
-    expect(client.metadataUpdates).toEqual([]);
-    expect(client.thinkingUpdates).toEqual([]);
-    expect(result).toEqual({ notice: null });
   });
 
   it("returns the provider notice from a thinking update", async () => {
@@ -154,5 +134,72 @@ describe("toAgentUpdateResult", () => {
     );
 
     expect(result.features).toBe("service_tier=priority,plan_mode=false");
+  });
+});
+
+class RecordingFeatureClient implements AgentFeatureUpdateClient {
+  readonly updates: Array<{ agentId: string; featureId: string; value: unknown }> = [];
+
+  constructor(private readonly rejectFeatureId?: string) {}
+
+  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    if (featureId === this.rejectFeatureId) {
+      throw new Error("provider rejected the value");
+    }
+    this.updates.push({ agentId, featureId, value });
+  }
+}
+
+describe("updateAgentFeatures", () => {
+  const agent = {
+    id: "agent-1",
+    features: [
+      {
+        type: "select" as const,
+        id: "service_tier",
+        label: "Speed",
+        value: "default",
+        options: [
+          { id: "default", label: "Normal" },
+          { id: "priority", label: "Fast" },
+        ],
+      },
+      { type: "toggle" as const, id: "plan_mode", label: "Plan", value: false },
+    ],
+  };
+
+  it("sets each feature with its typed value", async () => {
+    const client = new RecordingFeatureClient();
+
+    await updateAgentFeatures(client, agent, { service_tier: "priority", plan_mode: "true" });
+
+    expect(client.updates).toEqual([
+      { agentId: "agent-1", featureId: "service_tier", value: "priority" },
+      { agentId: "agent-1", featureId: "plan_mode", value: true },
+    ]);
+  });
+
+  it("sets nothing when any requested value is invalid", async () => {
+    const client = new RecordingFeatureClient();
+
+    await expect(
+      updateAgentFeatures(client, agent, { service_tier: "priority", plan_mode: "maybe" }),
+    ).rejects.toMatchObject({ code: "INVALID_FEATURE" });
+    expect(client.updates).toEqual([]);
+  });
+
+  it("names the features already applied when the provider rejects a later one", async () => {
+    const client = new RecordingFeatureClient("plan_mode");
+
+    await expect(
+      updateAgentFeatures(client, agent, { service_tier: "priority", plan_mode: "true" }),
+    ).rejects.toMatchObject({
+      code: "FEATURE_UPDATE_FAILED",
+      message: "Failed to set feature plan_mode: provider rejected the value",
+      details: "Already applied: service_tier=priority",
+    });
+    expect(client.updates).toEqual([
+      { agentId: "agent-1", featureId: "service_tier", value: "priority" },
+    ]);
   });
 });

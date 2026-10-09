@@ -6,7 +6,6 @@ import {
   formatFeatureValues,
   parseFeatureFlags,
   resolveFeatureValues,
-  type AgentFeatureValues,
 } from "../../utils/agent-features.js";
 import type {
   CommandOptions,
@@ -65,19 +64,18 @@ export interface AgentUpdateClient {
     agentId: string,
     thinkingOptionId: string,
   ): Promise<AgentProviderNotice | null>;
+}
+
+export interface AgentFeatureUpdateClient {
   setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
 }
 
 export type AgentChanges =
   | { type: "metadata"; updates: AgentMetadataChanges }
-  | { type: "thinking"; thinkingOptionId: string }
-  | { type: "features"; values: AgentFeatureValues };
+  | { type: "thinking"; thinkingOptionId: string };
 
-// Feature values are parsed before connecting and checked against the agent's own features after
-// it is fetched, so `--feature` arrives here unresolved.
-type ParsedAgentChanges =
-  | Exclude<AgentChanges, { type: "features" }>
-  | { type: "features"; requested: Record<string, string> };
+// Feature values are checked against the agent's own features once it is fetched.
+type ParsedAgentChanges = AgentChanges | { type: "features"; requested: Record<string, string> };
 
 export interface AppliedAgentChanges {
   notice: AgentProviderNotice | null;
@@ -106,12 +104,6 @@ export async function applyAgentChanges(
   agentId: string,
   changes: AgentChanges,
 ): Promise<AppliedAgentChanges> {
-  if (changes.type === "features") {
-    for (const [featureId, value] of Object.entries(changes.values)) {
-      await client.setAgentFeature(agentId, featureId, value);
-    }
-    return { notice: null };
-  }
   if (changes.type === "thinking") {
     // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
     if (client.getLastServerInfoMessage()?.features?.agentThinkingUpdate !== true) {
@@ -125,6 +117,41 @@ export async function applyAgentChanges(
   }
   await client.updateAgent(agentId, changes.updates);
   return { notice: null };
+}
+
+/**
+ * Rejects malformed ids and values absent from the agent's features before setting any, then sets
+ * them one by one. The setters are not a transaction: if the provider rejects one, the ones before
+ * it stay applied and the error names them.
+ */
+export async function updateAgentFeatures(
+  client: AgentFeatureUpdateClient,
+  agent: Pick<AgentSnapshotPayload, "id" | "features">,
+  requested: Record<string, string>,
+): Promise<void> {
+  const values = resolveFeatureValues(requested, agent.features ?? []);
+  const applied: string[] = [];
+  for (const [featureId, value] of Object.entries(values)) {
+    try {
+      await client.setAgentFeature(agent.id, featureId, value);
+    } catch (error) {
+      throw featureUpdateFailed(featureId, applied, error);
+    }
+    applied.push(`${featureId}=${String(value)}`);
+  }
+}
+
+function featureUpdateFailed(featureId: string, applied: string[], error: unknown): CommandError {
+  const reason = error instanceof Error ? error.message : String(error);
+  let details = "No feature was changed.";
+  if (applied.length > 0) {
+    details = `Already applied: ${applied.join(", ")}`;
+  }
+  return {
+    code: "FEATURE_UPDATE_FAILED",
+    message: `Failed to set feature ${featureId}: ${reason}`,
+    details,
+  };
 }
 
 function parseLabelOptions(labels: string[] | undefined): Record<string, string> {
@@ -269,15 +296,12 @@ export async function runUpdateCommand(
     }
     const agentId = fetchResult.agent.id;
 
-    let resolvedChanges: AgentChanges;
+    let appliedChanges: AppliedAgentChanges = { notice: null };
     if (changes.type === "features") {
-      // Every value is checked before any is applied, so a bad flag changes nothing.
-      const values = resolveFeatureValues(changes.requested, fetchResult.agent.features ?? []);
-      resolvedChanges = { type: "features", values };
+      await updateAgentFeatures(client, fetchResult.agent, changes.requested);
     } else {
-      resolvedChanges = changes;
+      appliedChanges = await applyAgentChanges(client, agentId, changes);
     }
-    const appliedChanges = await applyAgentChanges(client, agentId, resolvedChanges);
 
     const updatedResult = await client.fetchAgent({ agentId });
     if (!updatedResult) {

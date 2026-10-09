@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
 import {
-  resolveExistingRunPlacement,
+  buildRunAgentRequest,
+  prepareRun,
   resolveExistingRunWorkspace,
   resolveRunFeatureValues,
+  type RunModelEntry,
+  type RunPreparationClient,
   runRunCommand,
   waitsForFinish,
   type AgentRunOptions,
@@ -19,7 +22,7 @@ function daemonWithAgents(...agentIds: string[]) {
       if (!agentIds.includes(agentId)) {
         throw new Error(`Agent not found: ${agentId}`);
       }
-      return { agent: { id: agentId } };
+      return { agent: { id: agentId, cwd: `/agents/${agentId}` } };
     },
   };
 }
@@ -172,76 +175,174 @@ describe("runRunCommand option validation", () => {
   });
 });
 
-describe("run feature values", () => {
-  const draft = { provider: "codex", cwd: "/repo", model: "gpt-5.5", thinkingOptionId: "high" };
-  const serviceTier = {
-    type: "select" as const,
-    id: "service_tier",
-    label: "Speed",
-    value: "default",
-    options: [
-      { id: "default", label: "Normal" },
-      { id: "priority", label: "Fast" },
-    ],
-  };
+const serviceTier = {
+  type: "select" as const,
+  id: "service_tier",
+  label: "Speed",
+  value: "default",
+  options: [
+    { id: "default", label: "Normal" },
+    { id: "priority", label: "Fast" },
+  ],
+};
 
-  function featureDaemon(models: Array<{ id: string; isDefault?: boolean }> = []) {
-    const featureDrafts: unknown[] = [];
-    const modelLookups: unknown[] = [];
+// A daemon with one workspace and Codex-like features. It records what feature discovery was asked
+// and offers no way to create anything, so preparation cannot leave a workspace or agent behind.
+class PreparationDaemon implements RunPreparationClient {
+  readonly modelLookups: Array<{ provider: string; cwd: string }> = [];
+  readonly featureDrafts: unknown[] = [];
+
+  constructor(private readonly models: RunModelEntry[] = []) {}
+
+  async fetchWorkspaces() {
     return {
-      featureDrafts,
-      modelLookups,
-      async listProviderModels(provider: string, options: { cwd: string }) {
-        modelLookups.push({ provider, ...options });
-        return { models };
-      },
-      async listProviderFeatures(draftConfig: unknown) {
-        featureDrafts.push(draftConfig);
-        return { features: [serviceTier] };
-      },
+      entries: [{ id: "workspace-2", workspaceDirectory: "/remote/repo" }],
+      pageInfo: { nextCursor: null },
     };
   }
 
-  it("does not ask the daemon when no --feature is given", async () => {
-    const client = {
-      async listProviderModels(): Promise<never> {
-        throw new Error("unexpected model lookup");
-      },
-      async listProviderFeatures(): Promise<never> {
-        throw new Error("unexpected feature lookup");
-      },
-    };
+  async listProviderModels(provider: string, options: { cwd: string }) {
+    this.modelLookups.push({ provider, cwd: options.cwd });
+    return { models: this.models };
+  }
 
-    await expect(resolveRunFeatureValues(client, {}, draft)).resolves.toBeUndefined();
+  async listProviderFeatures(draftConfig: unknown) {
+    this.featureDrafts.push(draftConfig);
+    return { features: [serviceTier] };
+  }
+}
+
+describe("run preparation", () => {
+  const originalWorkspaceId = process.env.PASEO_WORKSPACE_ID;
+  afterEach(() => {
+    if (originalWorkspaceId === undefined) delete process.env.PASEO_WORKSPACE_ID;
+    else process.env.PASEO_WORKSPACE_ID = originalWorkspaceId;
   });
 
-  it("checks values against the features of the run's provider and model", async () => {
-    const client = featureDaemon();
+  const draft = {
+    provider: "codex",
+    model: "gpt-5.5",
+    modeId: undefined,
+    thinkingOptionId: "high",
+  };
+  const fast = { service_tier: "priority" };
+  const caller = { id: "parent-agent", cwd: "/caller/workspace" };
+
+  it("checks features in an explicit workspace's directory, not the shell's", async () => {
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: { workspace: "workspace-2" },
+      cwd: "/local/shell",
+      caller: undefined,
+      requestedFeatures: fast,
+      draft,
+    });
+
+    expect(prepared).toEqual({
+      placement: { id: "workspace-2", cwd: "/remote/repo" },
+      featureValues: { service_tier: "priority" },
+    });
+    expect(daemon.featureDrafts).toEqual([{ ...draft, cwd: "/remote/repo" }]);
+  });
+
+  it("checks a subagent's features in its caller's directory, ahead of an ambient workspace", async () => {
+    process.env.PASEO_WORKSPACE_ID = "workspace-2";
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: {},
+      cwd: "/local/shell",
+      caller,
+      requestedFeatures: fast,
+      draft,
+    });
+
+    expect(prepared.placement).toEqual({ cwd: "/caller/workspace" });
+    expect(daemon.featureDrafts).toEqual([{ ...draft, cwd: "/caller/workspace" }]);
+  });
+
+  it("checks a run that needs a new workspace in the shell's directory and leaves it unplaced", async () => {
+    delete process.env.PASEO_WORKSPACE_ID;
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: { newWorkspace: "worktree" },
+      cwd: "/local/shell",
+      caller,
+      requestedFeatures: fast,
+      draft,
+    });
+
+    expect(prepared.placement).toBeUndefined();
+    expect(daemon.featureDrafts).toEqual([{ ...draft, cwd: "/local/shell" }]);
+  });
+
+  it("rejects an unknown feature before any workspace or agent exists", async () => {
+    const daemon = new PreparationDaemon();
 
     await expect(
-      resolveRunFeatureValues(client, { service_tier: "priority" }, draft),
-    ).resolves.toEqual({ service_tier: "priority" });
-    expect(client.featureDrafts).toEqual([draft]);
-    expect(client.modelLookups).toEqual([]);
+      prepareRun(daemon, {
+        options: {},
+        cwd: "/local/shell",
+        caller: undefined,
+        requestedFeatures: { fast_mode: "true" },
+        draft,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_FEATURE", message: "Unknown feature: fast_mode" });
   });
 
-  it("checks a run without --model against the model the daemon will default to", async () => {
-    const client = featureDaemon([{ id: "gpt-5.4" }, { id: "gpt-5.5", isDefault: true }]);
-    const { model: _model, ...withoutModel } = draft;
+  it("asks the daemon nothing about features without --feature", async () => {
+    const daemon = new PreparationDaemon();
 
-    await expect(
-      resolveRunFeatureValues(client, { service_tier: "priority" }, withoutModel),
-    ).resolves.toEqual({ service_tier: "priority" });
-    expect(client.modelLookups).toEqual([{ provider: "codex", cwd: "/repo" }]);
-    expect(client.featureDrafts).toEqual([{ ...withoutModel, model: "gpt-5.5" }]);
+    const prepared = await prepareRun(daemon, {
+      options: {},
+      cwd: "/local/shell",
+      caller: undefined,
+      requestedFeatures: {},
+      draft,
+    });
+
+    expect(prepared.featureValues).toBeUndefined();
+    expect(daemon.modelLookups).toEqual([]);
+    expect(daemon.featureDrafts).toEqual([]);
   });
+});
+
+describe("run feature values", () => {
+  const draft = { provider: "codex", cwd: "/repo", thinkingOptionId: "high" };
+  const models = [{ id: "gpt-5.4" }, { id: "gpt-5.5", isDefault: true }];
+
+  it("checks an explicit model without listing models", async () => {
+    const daemon = new PreparationDaemon(models);
+
+    await resolveRunFeatureValues(
+      daemon,
+      { service_tier: "priority" },
+      { ...draft, model: "gpt-5.4" },
+    );
+    expect(daemon.modelLookups).toEqual([]);
+    expect(daemon.featureDrafts).toEqual([{ ...draft, model: "gpt-5.4" }]);
+  });
+
+  it.each([undefined, "default", " default "])(
+    "checks model %j against the model the daemon defaults to",
+    async (model) => {
+      const daemon = new PreparationDaemon(models);
+
+      await expect(
+        resolveRunFeatureValues(daemon, { service_tier: "priority" }, { ...draft, model }),
+      ).resolves.toEqual({ service_tier: "priority" });
+      expect(daemon.modelLookups).toEqual([{ provider: "codex", cwd: "/repo" }]);
+      expect(daemon.featureDrafts).toEqual([{ ...draft, model: "gpt-5.5" }]);
+    },
+  );
 
   it("falls back to the first listed model when none is marked default", async () => {
-    const client = featureDaemon([{ id: "gpt-5.4" }, { id: "gpt-5.5" }]);
-    const { model: _model, ...withoutModel } = draft;
+    const daemon = new PreparationDaemon([{ id: "gpt-5.4" }, { id: "gpt-5.5" }]);
 
-    await resolveRunFeatureValues(client, { service_tier: "priority" }, withoutModel);
-    expect(client.featureDrafts).toEqual([{ ...withoutModel, model: "gpt-5.4" }]);
+    await resolveRunFeatureValues(daemon, { service_tier: "priority" }, draft);
+    expect(daemon.featureDrafts).toEqual([{ ...draft, model: "gpt-5.4" }]);
   });
 
   it("reports a provider that cannot list its features", async () => {
@@ -255,7 +356,7 @@ describe("run feature values", () => {
     };
 
     await expect(
-      resolveRunFeatureValues(client, { service_tier: "priority" }, draft),
+      resolveRunFeatureValues(client, { service_tier: "priority" }, { ...draft, model: "gpt-5.5" }),
     ).rejects.toMatchObject({
       code: "FEATURES_UNAVAILABLE",
       message: "Could not list features for codex: provider unavailable",
@@ -263,36 +364,35 @@ describe("run feature values", () => {
   });
 });
 
-describe("existing run placement", () => {
-  const originalWorkspaceId = process.env.PASEO_WORKSPACE_ID;
-  afterEach(() => {
-    if (originalWorkspaceId === undefined) delete process.env.PASEO_WORKSPACE_ID;
-    else process.env.PASEO_WORKSPACE_ID = originalWorkspaceId;
-  });
-
-  it("uses an explicit workspace's directory, not the shell's", async () => {
-    const fetchWorkspaces = vi.fn().mockResolvedValue({
-      entries: [{ id: "workspace-2", workspaceDirectory: "/remote/repo" }],
-      pageInfo: { nextCursor: null },
+describe("run agent request", () => {
+  it("carries the checked feature values and the resolved placement", () => {
+    expect(
+      buildRunAgentRequest({
+        provider: "codex",
+        model: undefined,
+        modeId: "full-access",
+        thinkingOptionId: "high",
+        featureValues: { service_tier: "priority" },
+        workspace: { id: "workspace-2", cwd: "/remote/repo" },
+        callerAgentId: "parent-agent",
+        title: "Task",
+        images: undefined,
+        env: undefined,
+        labels: {},
+      }),
+    ).toEqual({
+      provider: "codex",
+      cwd: "/remote/repo",
+      workspaceId: "workspace-2",
+      callerAgentId: "parent-agent",
+      title: "Task",
+      modeId: "full-access",
+      model: undefined,
+      thinkingOptionId: "high",
+      featureValues: { service_tier: "priority" },
+      images: undefined,
+      env: undefined,
+      labels: undefined,
     });
-
-    await expect(
-      resolveExistingRunPlacement(
-        { fetchWorkspaces },
-        { workspace: "workspace-2" },
-        "/local/shell",
-        undefined,
-      ),
-    ).resolves.toEqual({ id: "workspace-2", cwd: "/remote/repo" });
-  });
-
-  it("leaves a run that needs a new workspace unplaced", async () => {
-    delete process.env.PASEO_WORKSPACE_ID;
-    const fetchWorkspaces = vi.fn();
-
-    await expect(
-      resolveExistingRunPlacement({ fetchWorkspaces }, {}, "/local/shell", undefined),
-    ).resolves.toBeUndefined();
-    expect(fetchWorkspaces).not.toHaveBeenCalled();
   });
 });

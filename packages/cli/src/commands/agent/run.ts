@@ -3,9 +3,14 @@ import {
   getStructuredAgentResponse,
   StructuredAgentResponseError,
 } from "@getpaseo/server/agent-response";
-import type { AgentFeature } from "@getpaseo/protocol/agent-types";
+import type { CreateAgentRequestOptions } from "@getpaseo/client/internal/daemon-client";
+import type {
+  AgentFeature,
+  AgentModelDefinition,
+  AgentSessionConfig,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import { resolveCallerAgentId } from "../../utils/caller-agent.js";
+import { resolveCallerAgent, type CallerAgent } from "../../utils/caller-agent.js";
 import { connectToDaemon } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -466,34 +471,45 @@ function loadRunImages(
   });
 }
 
+export type RunFeatureDraft = Pick<
+  AgentSessionConfig,
+  "provider" | "cwd" | "model" | "modeId" | "thinkingOptionId"
+>;
+export type RunModelEntry = Pick<AgentModelDefinition, "id" | "isDefault">;
+
+export interface RunModelListing {
+  models?: RunModelEntry[];
+  error?: string | null;
+}
+
+export interface RunFeatureListing {
+  features?: AgentFeature[];
+  error?: string | null;
+}
+
 export interface RunFeatureLookupClient {
-  listProviderModels(
-    provider: string,
-    options: { cwd: string },
-  ): Promise<{ models?: Array<{ id: string; isDefault?: boolean }>; error?: string | null }>;
-  listProviderFeatures(draftConfig: {
-    provider: string;
-    cwd: string;
-    model?: string;
-    modeId?: string;
-    thinkingOptionId?: string;
-  }): Promise<{ features?: AgentFeature[]; error?: string | null }>;
+  listProviderModels(provider: string, options: { cwd: string }): Promise<RunModelListing>;
+  listProviderFeatures(draftConfig: RunFeatureDraft): Promise<RunFeatureListing>;
 }
 
 // Feature values are checked against what the provider reports for this exact draft (provider,
 // model, mode, thinking), since a feature such as a service tier exists only for some models.
 // Agent creation fills in the provider's default model; feature discovery does not, so a run
-// without --model is checked against that same default (the model marked default, else the
-// first), the rule the daemon applies when it creates the agent.
+// without a model (or with the "default" sentinel the daemon treats the same way) is checked
+// against the model marked default in the provider's listing, else its first model, which is
+// how the daemon picks the default when it creates the agent.
 export async function resolveRunFeatureValues(
   client: RunFeatureLookupClient,
   requested: Record<string, string>,
-  draftConfig: Parameters<RunFeatureLookupClient["listProviderFeatures"]>[0],
+  draftConfig: RunFeatureDraft,
 ): Promise<AgentFeatureValues | undefined> {
   if (Object.keys(requested).length === 0) {
     return undefined;
   }
-  const model = draftConfig.model ?? (await resolveDefaultModel(client, draftConfig));
+  let model = draftConfig.model?.trim();
+  if (!model || model === "default") {
+    model = await resolveDefaultModel(client, draftConfig);
+  }
   const result = await client.listProviderFeatures({ ...draftConfig, model });
   if (result.error) {
     throw {
@@ -506,7 +522,7 @@ export async function resolveRunFeatureValues(
 
 async function resolveDefaultModel(
   client: RunFeatureLookupClient,
-  draftConfig: { provider: string; cwd: string },
+  draftConfig: RunFeatureDraft,
 ): Promise<string | undefined> {
   const { models } = await client.listProviderModels(draftConfig.provider, {
     cwd: draftConfig.cwd,
@@ -598,13 +614,13 @@ export async function resolveExistingRunWorkspace(
 //   3. $PASEO_WORKSPACE_ID         -> exported by workspace terminals
 //   4. --new-workspace <kind>      -> mint a new workspace explicitly
 //   5. bare run                    -> mint a new local-backed workspace for cwd
-// The placement a run already has: an explicit or ambient workspace, or the caller agent's
-// directory. Resolving it creates nothing; undefined means the run needs a new workspace.
-export async function resolveExistingRunPlacement(
+// The placement a run already has: an explicit workspace, the caller agent's placement (the
+// daemon runs a subagent in its caller's directory, whatever cwd the CLI sends), or an ambient
+// workspace. Resolving it creates nothing; undefined means the run needs a new workspace.
+async function resolveExistingRunPlacement(
   client: RunWorkspaceLookupClient,
   options: AgentRunOptions,
-  cwd: string,
-  callerAgentId: string | undefined,
+  caller: CallerAgent | undefined,
 ): Promise<RunWorkspace | undefined> {
   const newWorkspace = resolveNewWorkspaceKind(options);
   const explicit = newWorkspace ? undefined : options.workspace?.trim();
@@ -613,8 +629,8 @@ export async function resolveExistingRunPlacement(
     return resolveExistingRunWorkspace(client, explicit);
   }
 
-  if (!newWorkspace && callerAgentId) {
-    return { cwd };
+  if (!newWorkspace && caller) {
+    return { cwd: caller.cwd };
   }
 
   const ambientWorkspaceId = newWorkspace ? undefined : process.env.PASEO_WORKSPACE_ID?.trim();
@@ -625,30 +641,67 @@ export async function resolveExistingRunPlacement(
   return undefined;
 }
 
-// Features are checked before a new workspace is created, in the directory the agent runs in
-// when its placement already exists (on a remote host that may differ from this shell's).
-async function placeRun(
-  client: ConnectedDaemonClient,
-  options: AgentRunOptions,
-  cwd: string,
-  callerAgentId: string | undefined,
-  features: {
-    requested: Record<string, string>;
-    provider: string;
-    model?: string;
-    thinkingOptionId?: string;
-  },
-): Promise<{ workspace: RunWorkspace; featureValues?: AgentFeatureValues }> {
-  const existing = await resolveExistingRunPlacement(client, options, cwd, callerAgentId);
-  const featureValues = await resolveRunFeatureValues(client, features.requested, {
-    provider: features.provider,
-    cwd: existing?.cwd ?? cwd,
-    model: features.model,
-    modeId: options.mode,
-    thinkingOptionId: features.thinkingOptionId,
+export type RunPreparationClient = RunWorkspaceLookupClient & RunFeatureLookupClient;
+
+export interface RunPreparationInput {
+  options: AgentRunOptions;
+  cwd: string;
+  caller: CallerAgent | undefined;
+  requestedFeatures: Record<string, string>;
+  draft: Omit<RunFeatureDraft, "cwd">;
+}
+
+export interface PreparedRun {
+  /** Where the agent runs when that is already decided; undefined when a workspace is needed. */
+  placement: RunWorkspace | undefined;
+  featureValues: AgentFeatureValues | undefined;
+}
+
+// Resolves an existing placement and checks --feature in the directory the agent will run in
+// (on a remote host that may differ from this shell's). The client it takes cannot create
+// anything, so a rejected feature leaves no workspace or agent behind.
+export async function prepareRun(
+  client: RunPreparationClient,
+  input: RunPreparationInput,
+): Promise<PreparedRun> {
+  const placement = await resolveExistingRunPlacement(client, input.options, input.caller);
+  const featureValues = await resolveRunFeatureValues(client, input.requestedFeatures, {
+    ...input.draft,
+    cwd: placement?.cwd ?? input.cwd,
   });
-  const workspace = existing ?? (await createRunWorkspace(client, options, cwd, callerAgentId));
-  return { workspace, featureValues };
+  return { placement, featureValues };
+}
+
+export interface RunAgentRequestInput {
+  provider: string;
+  model: string | undefined;
+  modeId: string | undefined;
+  thinkingOptionId: string | undefined;
+  featureValues: AgentFeatureValues | undefined;
+  workspace: RunWorkspace;
+  callerAgentId: string | undefined;
+  title: string | undefined;
+  images: CreateAgentRequestOptions["images"];
+  env: Record<string, string> | undefined;
+  labels: Record<string, string>;
+}
+
+/** The createAgent settings shared by a plain run and a structured-output run. */
+export function buildRunAgentRequest(input: RunAgentRequestInput): CreateAgentRequestOptions {
+  return {
+    provider: input.provider,
+    cwd: input.workspace.cwd,
+    workspaceId: input.workspace.id,
+    callerAgentId: input.callerAgentId,
+    title: input.title,
+    modeId: input.modeId,
+    model: input.model,
+    thinkingOptionId: input.thinkingOptionId,
+    featureValues: input.featureValues,
+    images: input.images,
+    env: input.env,
+    labels: Object.keys(input.labels).length > 0 ? input.labels : undefined,
+  };
 }
 
 async function createRunWorkspace(
@@ -718,15 +771,35 @@ export async function runRunCommand(
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
-    const callerAgentId = await resolveCallerAgentId(client);
-    const { workspace, featureValues } = await placeRun(client, options, cwd, callerAgentId, {
-      requested: requestedFeatures,
+    const caller = await resolveCallerAgent(client);
+    const callerAgentId = caller?.id;
+    const prepared = await prepareRun(client, {
+      options,
+      cwd,
+      caller,
+      requestedFeatures,
+      draft: {
+        provider: resolvedProviderModel.provider,
+        model: resolvedProviderModel.model,
+        modeId: options.mode,
+        thinkingOptionId,
+      },
+    });
+    const workspace =
+      prepared.placement ?? (await createRunWorkspace(client, options, cwd, callerAgentId));
+    const agentRequest = buildRunAgentRequest({
       provider: resolvedProviderModel.provider,
       model: resolvedProviderModel.model,
+      modeId: options.mode,
       thinkingOptionId,
+      featureValues: prepared.featureValues,
+      workspace,
+      callerAgentId,
+      title: resolvedTitle,
+      images,
+      env: requestEnv,
+      labels,
     });
-    const workspaceId = workspace.id;
-    const runCwd = workspace.cwd;
 
     if (outputSchema) {
       let structuredAgent: AgentSnapshotPayload | null = null;
@@ -734,20 +807,9 @@ export async function runRunCommand(
       const callStructuredTurn = async (structuredPrompt: string): Promise<string> => {
         if (!structuredAgent) {
           structuredAgent = await client.createAgent({
-            provider: resolvedProviderModel.provider,
-            cwd: runCwd,
-            workspaceId,
-            callerAgentId,
-            title: resolvedTitle,
-            modeId: options.mode,
-            model: resolvedProviderModel.model,
-            thinkingOptionId,
-            featureValues,
+            ...agentRequest,
             initialPrompt: structuredPrompt,
             outputSchema,
-            images,
-            env: requestEnv,
-            labels: Object.keys(labels).length > 0 ? labels : undefined,
           });
         } else {
           await client.sendMessage(structuredAgent.id, structuredPrompt);
@@ -805,21 +867,7 @@ export async function runRunCommand(
     }
 
     // Create the agent
-    const agent = await client.createAgent({
-      provider: resolvedProviderModel.provider,
-      cwd: runCwd,
-      workspaceId,
-      callerAgentId,
-      title: resolvedTitle,
-      modeId: options.mode,
-      model: resolvedProviderModel.model,
-      thinkingOptionId,
-      featureValues,
-      initialPrompt: prompt,
-      images,
-      env: requestEnv,
-      labels: Object.keys(labels).length > 0 ? labels : undefined,
-    });
+    const agent = await client.createAgent({ ...agentRequest, initialPrompt: prompt });
 
     // Default run behavior is foreground: wait for completion unless --no-wait is set.
     if (waitsForFinish(options)) {
