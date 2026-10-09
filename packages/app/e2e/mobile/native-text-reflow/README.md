@@ -13,6 +13,11 @@ bash packages/app/e2e/mobile/native-text-reflow/ios.sh
 The probe constructs the installed `RNUITextView`, fills its real UIKit text view,
 and resizes its content container from 500 to 240 and back to 500 points. It
 asserts the inner frame follows both widths and the same selection survives.
+It then recycles the view the way Fabric's pool does and remounts it 30 points
+wider and at the same size; the inner frame must still match the container.
+A zeroed frame on recycle comes back 30 or 0 points wide. This assertion checks
+the intermediate recycled geometry; it does not reproduce visible clipping in a
+mounted Fabric paragraph or exercise the subsequent `drawRect` call.
 It uses public UIView/UITextView operations, without mocking React Native.
 LLDB detaches after the probe. An assertion failure or evaluation error fails the
 shell command; the log distinguishes them.

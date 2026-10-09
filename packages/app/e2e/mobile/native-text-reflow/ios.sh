@@ -15,4 +15,4 @@ xcrun lldb --batch -p "$PASEO_NATIVE_TEXT_REFLOW_PID" \
   -o "process detach" -o quit > "$PASEO_NATIVE_TEXT_REFLOW_LOG" 2>&1
 
 grep '^NATIVE_REFLOW_' "$PASEO_NATIVE_TEXT_REFLOW_LOG"
-grep -q '^NATIVE_REFLOW_PASS narrow=240 wide=500 selection=12:9$' "$PASEO_NATIVE_TEXT_REFLOW_LOG"
+grep -q '^NATIVE_REFLOW_PASS narrow=240 wide=500 recycled=530,530 selection=12:9$' "$PASEO_NATIVE_TEXT_REFLOW_LOG"
