@@ -8,7 +8,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { type CollectionRead, VersionedCollection } from "./internal/versioned-collection.js";
 
-interface AgentDirectoryEntry {
+export interface AgentDirectoryEntry {
   agent: AgentSnapshotPayload;
   project: ProjectPlacementPayload;
 }
@@ -85,7 +85,7 @@ export class DirectorySyncService {
     cursor: DirectorySyncCursor,
   ): Pick<FetchAgentsResponse, "entries" | "pageInfo" | "sync"> {
     this.agents.replaceAll(snapshot);
-    const read = this.read(this.agents, cursor);
+    const read = this.withWaitingAgents(this.read(this.agents, cursor));
     return {
       entries: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
       pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
@@ -132,6 +132,27 @@ export class DirectorySyncService {
       this.agents.remove(id);
     }
     return this.withVersion(payload, includeSequence, this.version(this.agents, id));
+  }
+
+  // The app's replica cache never stores pending permissions, so after a reconnect or reload
+  // an agent waiting on the user would read as working. A changes read therefore also carries
+  // every agent with a pending permission, changed or not.
+  private withWaitingAgents(
+    read: CollectionRead<AgentDirectoryEntry>,
+  ): CollectionRead<AgentDirectoryEntry> {
+    if (read.mode !== "changes") return read;
+    const sentIds = new Set(read.values.map(({ value }) => value.agent.id));
+    const waiting = this.agents
+      .readSnapshot()
+      .values.filter(
+        ({ value }) =>
+          !sentIds.has(value.agent.id) && (value.agent.pendingPermissions?.length ?? 0) > 0,
+      );
+    if (waiting.length === 0) return read;
+    return {
+      ...read,
+      values: [...read.values, ...waiting].sort((left, right) => left.seq - right.seq),
+    };
   }
 
   private metadata(read: CollectionRead<unknown>) {
