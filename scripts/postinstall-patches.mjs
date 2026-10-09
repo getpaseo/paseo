@@ -39,6 +39,14 @@ const patchedPackages = [
     patchPrefix: "@mattermost+react-native-paste-input+",
   },
   {
+    // Wrap HTML labels when the browser rounds the measured width to a
+    // fractional pixel; without it, long flowchart labels clip instead of
+    // wrapping on fractional device-pixel-ratio displays.
+    // https://github.com/mermaid-js/mermaid/issues/7794
+    nodeModulesPath: "node_modules/mermaid",
+    patchPrefix: "mermaid+",
+  },
+  {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",
     patchPrefix: "@opencode-ai+sdk+",
     cwd: "packages/server",
