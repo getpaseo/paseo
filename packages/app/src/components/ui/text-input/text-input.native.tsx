@@ -6,7 +6,7 @@ import React, {
   useReducer,
   useState,
 } from "react";
-import { TextInput } from "react-native";
+import { Platform, TextInput } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import PasteInput, {
   type PastedFile,
@@ -58,6 +58,10 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     // measured height at the previous content, so an emptied draft keeps several lines. Render
     // again after every edit so `defaultValue` carries the current text and the input is
     // re-measured. Only this leaf renders; the composer stays isolated from typing.
+    // Android only: on iOS every new `text` prop makes the native view compare the JS attributed
+    // string against its own and reassign it when they differ, which cancels Japanese/Chinese
+    // IME composition and moves the caret while editing mid-text (react-native#58807). iOS
+    // measures from the text native reports, so it does not need this render.
     const [, bumpTextRevision] = useReducer((revision: number) => revision + 1, 0);
 
     const assignInputRef = useCallback((input: NativeInput | null) => {
@@ -120,7 +124,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       (nextText: string) => {
         textRef.current = nextText;
         onChangeText?.(nextText);
-        bumpTextRevision();
+        if (Platform.OS === "android") bumpTextRevision();
       },
       [onChangeText],
     );
