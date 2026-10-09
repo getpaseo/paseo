@@ -1933,6 +1933,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentStorage,
         agentId,
         prompt,
+        source: callerAgentId ? { kind: "agent-message", agentId: callerAgentId } : undefined,
         sessionMode,
         logger: childLogger,
       });

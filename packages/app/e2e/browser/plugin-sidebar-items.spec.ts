@@ -20,6 +20,7 @@ import {
 import {
   leaveSettings,
   openSidebarNavSettings,
+  seedSidebarFooterPreferences,
   setFooterItemVisible,
 } from "../support/helpers/sidebar-nav-settings";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -154,8 +155,9 @@ test.describe("Plugin sidebar items", () => {
     page,
   }) => {
     test.setTimeout(180_000);
-    // The Usage item shows only with summary data.
+    // The Usage item shows only with summary data, once it is turned on.
     await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
+    await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);
     const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");

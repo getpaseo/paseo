@@ -8,12 +8,15 @@ import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { pluginRequirements } from "./plugin-fixture";
 
 /** A real store-backed plugin on the worker's isolated daemon. */
-export async function installLoginUsage(initialReport: UsageReport) {
+type LoginReports = Array<{ harness: string; report: UsageReport }>;
+
+export async function installLoginUsage(initialReport: UsageReport | LoginReports) {
   const directory = await mkdtemp(path.join(tmpdir(), "usage-login-journey-"));
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await client.getDaemonConfig();
   const store = path.join(directory, "report.json");
-  const setReport = (report: UsageReport) => writeFile(store, JSON.stringify(report));
+  const setReport = (report: UsageReport | LoginReports) =>
+    writeFile(store, JSON.stringify(report));
   const cleanup = async () => {
     try {
       await client.removePlugin("login-journey");
@@ -35,9 +38,13 @@ export async function installLoginUsage(initialReport: UsageReport) {
 import {readFile} from "node:fs/promises";
 import {z} from "zod";
 export default function contribute(server) {
-  server.registerUsageSource({id: "login-journey", label: "Claude", input: z.object({}),
-    discover: async () => [{key: "account", input: {}}],
-    fetch: async () => JSON.parse(await readFile(${JSON.stringify(store)}, "utf8")),
+  const read = async () => {
+    const value = JSON.parse(await readFile(${JSON.stringify(store)}, "utf8"));
+    return Array.isArray(value) ? value : [{harness: "Claude", report: value}];
+  };
+  server.registerUsageSource({id: "login-journey", label: "Claude", input: z.object({index: z.number()}),
+    discover: async () => (await read()).map((login, index) => ({key: "account", harness: login.harness, input: {index}})),
+    fetch: async ({index}) => (await read())[index].report,
   });
   return () => {};
 }`,
@@ -49,10 +56,6 @@ export default function contribute(server) {
     await cleanup();
     throw error;
   }
-}
-
-export async function openUsage(page: Page) {
-  await page.goto("/usage");
 }
 
 export async function refreshLoginUsage(page: Page) {
@@ -101,7 +104,7 @@ import {fetchUsage, discover} from "./server/usage.js";
 import {inputSchema} from "./shared/input.js";
 export default function contribute(server) {
   server.registerUsageSource({id: "codex-window-qa", label: "Codex", input: inputSchema,
-    discover: () => discover({home: ${JSON.stringify(directory)}, env: {CODEX_HOME: ${JSON.stringify(directory)}}}),
+    discover: (scope) => discover(scope, {home: ${JSON.stringify(directory)}, env: {CODEX_HOME: ${JSON.stringify(directory)}}}),
     fetch: (input) => fetchUsage(input, async () => Response.json(JSON.parse(await readFile(${JSON.stringify(path.join(directory, "payload.json"))}, "utf8")))),
   });
   return () => {};

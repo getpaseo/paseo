@@ -255,12 +255,12 @@ describe("plugin management commands", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const command = createPluginCommand();
 
-    await command.parseAsync(["install", "owner/monorepo", "--path", "plugins/review"], {
+    await command.parseAsync(["install", "git:owner/monorepo", "--path", "plugins/review"], {
       from: "user",
     });
 
     expect(installPluginSource).toHaveBeenCalledWith({
-      source: "owner/monorepo:plugins/review",
+      source: "git:owner/monorepo:plugins/review",
     });
     stderr.mockRestore();
   });

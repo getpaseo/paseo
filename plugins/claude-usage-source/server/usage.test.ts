@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,10 +50,10 @@ function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
@@ -193,7 +194,9 @@ describe("claude usage source", () => {
     "discovers no Claude logins in %s",
     async (scenario) => {
       if (scenario === "unrelated files") writeFileSync(join(homeDir, "unrelated.json"), "{}");
-      expect(await discover({ home: homeDir, env: {}, platform: "linux" })).toEqual([]);
+      expect(
+        await discover({ kind: "global" }, { home: homeDir, env: {}, platform: "linux" }),
+      ).toEqual([]);
     },
   );
 
@@ -757,6 +760,7 @@ it("discovery and fetch share the explicit macOS keychain route", async () => {
   try {
     const lookup = {
       platform: "darwin" as const,
+      env: { USER: "fixture", CLAUDE_CONFIG_DIR: directory },
       claudeHome: directory,
       home: directory,
       readKeychainCredentials: async () => ({
@@ -765,7 +769,13 @@ it("discovery and fetch share the explicit macOS keychain route", async () => {
     };
     let usageRequested = false;
     await fetchUsage(
-      { route: { store: "keychain" } },
+      {
+        route: {
+          store: "keychain",
+          account: "fixture",
+          service: `Claude Code-credentials-${hashAccountKey(directory).slice(0, 8)}`,
+        },
+      },
       async () => {
         usageRequested = true;
         return new Response(null, { status: 401 });
@@ -774,7 +784,13 @@ it("discovery and fetch share the explicit macOS keychain route", async () => {
     );
     expect(usageRequested).toBe(true);
     const account = await accountFor(
-      { route: { store: "keychain" } },
+      {
+        route: {
+          store: "keychain",
+          account: "fixture",
+          service: `Claude Code-credentials-${hashAccountKey(directory).slice(0, 8)}`,
+        },
+      },
       async () =>
         jsonResponse({
           account: { uuid: "keychain-account" },
@@ -864,7 +880,10 @@ it("discovers a Pi OAuth login independently of the CLI login", async () => {
         anthropic: { type: "oauth", access: "fixture-pi", accountId: "pi-account" },
       }),
     );
-    const inputs = await discover({ home: directory, env: {}, platform: "linux" });
+    const inputs = await discover(
+      { kind: "global" },
+      { home: directory, env: {}, platform: "linux" },
+    );
     expect(inputs.map((account) => account.input)).toContainEqual({
       route: { store: "pi", path: join(directory, ".pi", "agent", "auth.json") },
     });
@@ -880,7 +899,7 @@ it("keeps an expired Keychain login without calling the network and prefers Keyc
     const lookup = {
       home: directory,
       claudeHome: directory,
-      env: {},
+      env: { USER: "fixture" },
       platform: "darwin" as const,
       now: () => 10_800_000,
       readKeychainCredentials: async () => ({
@@ -892,9 +911,15 @@ it("keeps an expired Keychain login without calling the network and prefers Keyc
       calls++;
       throw new Error("must not call network");
     };
-    const accounts = await discover(lookup, network);
+    const accounts = await discover({ kind: "global" }, lookup, network);
     expect(accounts).toEqual([
-      { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: { route: { store: "keychain" } } },
+      {
+        key: expect.stringMatching(/^[a-f0-9]{64}$/),
+        harness: "Claude",
+        input: {
+          route: { store: "keychain", service: "Claude Code-credentials", account: "fixture" },
+        },
+      },
     ]);
     expect(await fetchUsage(accounts[0]!.input as UsageInput, network, lookup)).toEqual({
       status: "unavailable",
@@ -912,10 +937,8 @@ async function accountFor(
   now: () => number,
   lookup: Parameters<typeof discover>[0] = {},
 ) {
-  const accounts = await discover({ ...lookup, now }, fetchApi);
-  const account = accounts.find(
-    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
-  );
+  const accounts = await discover({ kind: "global" }, { ...lookup, now }, fetchApi);
+  const account = accounts.find((candidate) => isDeepStrictEqual(candidate.input, input));
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
@@ -936,9 +959,13 @@ it.each([401, 403])("fetch reports rejected usage HTTP %i", async (status) => {
 it.each([401, 403])("a rejected profile HTTP %i keeps a locator-keyed account", async (status) => {
   const lookup = tokenLookup(`profile-rejection-${status}`);
   const api: typeof fetch = async () => new Response(null, { status });
-  const accounts = await discover(lookup, api);
+  const accounts = await discover({ kind: "global" }, lookup, api);
   expect(accounts).toEqual([
-    { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: credentialInput(lookup.claudeHome) },
+    {
+      key: expect.stringMatching(/^[a-f0-9]{64}$/),
+      harness: "Claude",
+      input: credentialInput(lookup.claudeHome),
+    },
   ]);
   let fetches = 0;
   expect(
@@ -969,11 +996,42 @@ it.each([
       if (networkError) throw new Error(error);
       return new Response(null, { status: 500 });
     };
-    const accounts = await discover(lookup, api);
-    expect(accounts).toEqual([{ key: hashAccountKey(JSON.stringify(input.route)), input }]);
+    const accounts = await discover({ kind: "global" }, lookup, api);
+    expect(accounts).toEqual([
+      { key: hashAccountKey(JSON.stringify(input.route)), harness: "Claude", input },
+    ]);
     await expect(fetchUsage(accounts[0]!.input as UsageInput, api, lookup)).rejects.toThrow(error);
   },
 );
+
+it("says when a rate-limited login can retry and does not call the API before then", async () => {
+  let now = Date.parse("2026-10-04T21:00:00Z");
+  const lookup = { ...tokenLookup("rate-limited-token"), now: () => now };
+  const input = credentialInput(lookup.claudeHome);
+  let usageCalls = 0;
+  const api: typeof fetch = async () => {
+    usageCalls += 1;
+    if (usageCalls > 1) return jsonResponse(makeClaudeResponse());
+    return jsonResponse(
+      { error: { type: "rate_limit_error", message: "Rate limited. Please try again later." } },
+      429,
+      { "Retry-After": "2240" },
+    );
+  };
+
+  await expect(fetchUsage(input, api, lookup)).rejects.toThrow(
+    "Rate limited by Claude. Try again in 38m.",
+  );
+  now += 30 * 60_000;
+  await expect(fetchUsage(input, api, lookup)).rejects.toThrow(
+    "Rate limited by Claude. Try again in 8m.",
+  );
+  expect(usageCalls).toBe(1);
+
+  now += 8 * 60_000;
+  expect((await fetchUsage(input, api, lookup)).status).toBe("available");
+  expect(usageCalls).toBe(2);
+});
 
 it("re-reads a refreshed login at the original locator", async () => {
   const lookup = tokenLookup("expiring-token");
@@ -981,7 +1039,7 @@ it("re-reads a refreshed login at the original locator", async () => {
     join(lookup.claudeHome, ".credentials.json"),
     JSON.stringify({ claudeAiOauth: { accessToken: "expiring-token", expiresAt: 0 } }),
   );
-  const [account] = await discover(lookup, async () => {
+  const [account] = await discover({ kind: "global" }, lookup, async () => {
     throw new Error("expired token must not fetch");
   });
   expect(await fetchUsage(account!.input as UsageInput, fetch, lookup)).toEqual({
@@ -998,4 +1056,81 @@ it("re-reads a refreshed login at the original locator", async () => {
     lookup,
   );
   expect(report.status).toBe("available");
+});
+
+it("session discovery reads only its Claude home and excludes foreign sessions", async () => {
+  const home = mkdtempSync(join(tmpdir(), "claude-session-scope-"));
+  try {
+    writeClaudeCredentials(home, "scoped-unique-token");
+    const scope = {
+      kind: "session" as const,
+      provider: "claude",
+      env: { HOME: home, CLAUDE_CONFIG_DIR: home },
+    };
+    const calls: string[] = [];
+    const api: typeof fetch = async (url) => {
+      calls.push(String(url));
+      return jsonResponse({
+        account: { uuid: "session-account", email: "session@example.test" },
+        organization: { uuid: "org" },
+      });
+    };
+    const lookup = { platform: "linux" as const, home: "/unused-default-home", env: {} };
+    const accounts = await discover(scope, lookup, api);
+    expect(accounts).toEqual([
+      {
+        key: "session-account.org",
+        label: "session@example.test",
+        harness: "Claude",
+        input: credentialInput(home),
+      },
+    ]);
+    await discover(scope, lookup, api);
+    expect(calls).toEqual(["https://api.anthropic.com/api/oauth/profile"]);
+    for (const env of [
+      { CLAUDE_CODE_USE_BEDROCK: "1" },
+      { CLAUDE_CODE_USE_VERTEX: "1" },
+      { ANTHROPIC_BASE_URL: "https://other.test" },
+    ]) {
+      expect(await discover({ ...scope, env: { ...scope.env, ...env } }, lookup, api)).toEqual([]);
+    }
+    expect(await discover({ ...scope, provider: "codex" }, lookup, api)).toEqual([]);
+    expect(
+      await discover(
+        { ...scope, env: { ...scope.env, CLAUDE_CONFIG_DIR: join(home, "missing") } },
+        lookup,
+        api,
+      ),
+    ).toEqual([]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("session Keychain input retains the selected config-directory locator through fetch", async () => {
+  const reads: string[] = [];
+  const scope = {
+    kind: "session" as const,
+    provider: "claude",
+    env: { HOME: "/fixture", USER: "fixture-user", CLAUDE_CONFIG_DIR: "/fixture/work" },
+  };
+  const service = `Claude Code-credentials-${hashAccountKey(scope.env.CLAUDE_CONFIG_DIR).slice(0, 8)}`;
+  const lookup = {
+    platform: "darwin" as const,
+    readKeychainCredentials: async (selected: string, account: string) => {
+      reads.push(`${selected}:${account}`);
+      return { claudeAiOauth: { accessToken: "scoped-keychain-fixture" } };
+    },
+  };
+  const accounts = await discover(scope, lookup, async () =>
+    jsonResponse({ account: { uuid: "keychain-scoped" }, organization: { uuid: "org" } }),
+  );
+  expect(accounts).toHaveLength(1);
+  const input = inputSchema.parse(accounts[0]?.input);
+  expect(input.route).toEqual({ store: "keychain", service, account: "fixture-user" });
+  await fetchUsage(input, async () => jsonResponse(makeClaudeResponse()), {
+    ...lookup,
+    env: { CLAUDE_CONFIG_DIR: "/somewhere-else" },
+  });
+  expect(reads).toEqual(Array(3).fill(`${service}:fixture-user`));
 });

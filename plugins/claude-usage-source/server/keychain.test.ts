@@ -134,12 +134,14 @@ describe("Claude credential routes", () => {
         JSON.stringify({ claudeAiOauth: { accessToken: "fixture-default" } }),
       );
       const accounts = await discover(
+        { kind: "global" },
         { home: dir, env: { CLAUDE_CONFIG_DIR: dir }, platform: "linux" },
         fixtureFetch("fixture-default"),
       );
       expect(accounts).toEqual([
         {
           key: "fixture-account.fixture-org",
+          harness: "Claude",
           input: { route: { store: "claude", path: join(dir, ".credentials.json") } },
         },
       ]);
