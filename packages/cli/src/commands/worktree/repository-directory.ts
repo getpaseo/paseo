@@ -6,5 +6,8 @@ export function resolveRepositoryDirectory(options: {
   daemonTarget: DaemonTarget;
 }): string {
   const cwd = options.cwd ?? process.cwd();
-  return options.daemonTarget.kind === "instance" ? resolve(cwd) : cwd;
+  if (options.daemonTarget.kind === "instance") {
+    return resolve(cwd);
+  }
+  return cwd;
 }
