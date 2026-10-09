@@ -1,3 +1,4 @@
+import { StyleSheet } from "react-native";
 import { describe, expect, it } from "vitest";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-styles";
 import { darkTheme } from "./theme";
@@ -117,11 +118,56 @@ describe("createMarkdownStyles", () => {
       ...darkTheme,
       fontSize: { ...darkTheme.fontSize, content: 21 },
     };
-    const styles = createMarkdownStyles(largeContentTheme);
+    const styles = createMarkdownStyles(largeContentTheme, "web");
 
-    expect(styles.heading1.lineHeight).toBeGreaterThan(styles.heading1.fontSize);
-    expect(styles.heading2.lineHeight).toBeGreaterThan(styles.heading2.fontSize);
-    expect(styles.heading3.lineHeight).toBeGreaterThan(styles.heading3.fontSize);
+    expect(styles.heading1.lineHeight).toBe(Math.round(styles.heading1.fontSize * 1.3));
+    expect(styles.heading2.lineHeight).toBe(Math.round(styles.heading2.fontSize * 1.3));
+    expect(styles.heading3.lineHeight).toBe(Math.round(styles.heading3.fontSize * 1.3));
+  });
+
+  it("resets Android heading line heights without changing prose metrics", () => {
+    const styles = createMarkdownStyles(darkTheme, "android");
+    const compactStyles = createCompactMarkdownStyles(darkTheme, "android");
+    const proseLineHeight = Math.round(darkTheme.fontSize.content * 1.4);
+
+    for (const heading of [
+      styles.heading1,
+      styles.heading2,
+      styles.heading3,
+      styles.heading4,
+      styles.heading5,
+      styles.heading6,
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(heading, "lineHeight")).toBe(true);
+      expect(heading.lineHeight).toBeUndefined();
+    }
+
+    for (const heading of [
+      compactStyles.heading1,
+      compactStyles.heading2,
+      compactStyles.heading3,
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(heading, "lineHeight")).toBe(true);
+      expect(heading.lineHeight).toBeUndefined();
+    }
+
+    for (const prose of [
+      styles.body,
+      styles.bullet_list_icon,
+      styles.ordered_list_icon,
+      compactStyles.body,
+      compactStyles.bullet_list_icon,
+      compactStyles.ordered_list_icon,
+    ]) {
+      expect(prose.lineHeight).toBe(proseLineHeight);
+    }
+  });
+
+  it("resets inherited prose lineHeight when Android heading styles are composed", () => {
+    const styles = createMarkdownStyles(darkTheme, "android");
+    const resolvedHeadingStyle = StyleSheet.flatten([styles.body, styles.heading1]);
+
+    expect(resolvedHeadingStyle.lineHeight).toBeUndefined();
   });
 
   it("keeps blockquotes quiet with a square left edge", () => {
