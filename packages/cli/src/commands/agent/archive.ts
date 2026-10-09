@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { connectToDaemon, resolveAgentId } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -56,21 +56,27 @@ export async function runArchiveCommand(
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
-    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
-    const agentId = resolveAgentId(agentIdArg, agents);
-    if (!agentId) {
-      const error: CommandError = {
-        code: "AGENT_NOT_FOUND",
-        message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
-      };
-      throw error;
+    const notFound = (message: string): CommandError => ({
+      code: "AGENT_NOT_FOUND",
+      message,
+      details: 'Use "paseo ls" to list available agents',
+    });
+
+    // Resolve through the daemon rather than a fetchAgents page: that listing is
+    // capped at 200 entries, so an agent behind the cap is unarchivable. The
+    // daemon reports an unknown identifier only as an error string, so that one
+    // rejection is recognized by its text; any other failure is rethrown as is.
+    const fetchResult = await client.fetchAgent({ agentId: agentIdArg }).catch((cause: unknown) => {
+      if (cause instanceof Error && cause.message.startsWith("Agent not found: ")) {
+        throw notFound(cause.message);
+      }
+      throw cause;
+    });
+    if (!fetchResult) {
+      throw notFound(`Agent not found: ${agentIdArg}`);
     }
-    const agent = agents.find((entry) => entry.id === agentId);
-    if (!agent) {
-      throw new Error(`Resolved agent missing from fetched agents: ${agentId}`);
-    }
+    const agent = fetchResult.agent;
+    const agentId = agent.id;
 
     // Check if agent is already archived
     if (agent.archivedAt) {
