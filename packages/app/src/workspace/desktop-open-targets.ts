@@ -11,6 +11,8 @@ export interface DesktopOpenTarget {
   label: string;
   kind: DesktopOpenTargetKind;
   icon: DesktopOpenTargetIcon;
+  /** Present when the target was matched against this workspace specifically. */
+  scope?: "workspace";
 }
 
 export interface OpenDesktopTargetInput {
@@ -56,12 +58,14 @@ export function hasDesktopOpenTargetsBridge(): boolean {
   return getDesktopEditorBridge() !== null;
 }
 
-export async function listDesktopOpenTargets(): Promise<DesktopOpenTarget[]> {
+export async function listDesktopOpenTargets(
+  input: { workspacePath?: string } = {},
+): Promise<DesktopOpenTarget[]> {
   const bridge = getDesktopEditorBridge();
   if (!bridge) {
     return [];
   }
-  return await bridge.listTargets();
+  return await bridge.listTargets(input);
 }
 
 export async function openDesktopTarget(input: OpenDesktopTargetInput): Promise<void> {
@@ -72,15 +76,24 @@ export async function openDesktopTarget(input: OpenDesktopTargetInput): Promise<
   await bridge.openTarget(input);
 }
 
-export function useDesktopOpenTargets(input: { isLocalExecution: boolean }) {
+/**
+ * Pass `workspacePath` whenever it is known. Project-specific targets such as
+ * Xcode are only listed for workspaces they can actually open, so callers that
+ * omit it get the workspace-agnostic targets only.
+ */
+export function useDesktopOpenTargets(input: {
+  isLocalExecution: boolean;
+  workspacePath?: string;
+}) {
   const hasBridge = hasDesktopOpenTargetsBridge();
   const canListTargets = hasBridge && input.isLocalExecution;
+  const workspacePath = input.workspacePath?.trim() ?? "";
   const query = useQuery({
-    queryKey: ["desktop-open-targets"],
+    queryKey: ["desktop-open-targets", workspacePath],
     enabled: canListTargets,
     staleTime: 60_000,
     retry: false,
-    queryFn: listDesktopOpenTargets,
+    queryFn: () => listDesktopOpenTargets(workspacePath ? { workspacePath } : {}),
   });
   const targets = selectDesktopOpenTargets({
     canListTargets,

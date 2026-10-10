@@ -1,12 +1,16 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync as nodeExistsSync } from "node:fs";
+import { existsSync as nodeExistsSync, readdirSync as nodeReaddirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path, { posix, win32 } from "node:path";
 import { app, shell } from "electron";
 
-import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
+import type {
+  EditorTargetDirectoryEntry,
+  EditorTargetIcon,
+  EditorTargetRuntime,
+} from "./target.js";
 
 interface SpawnedProcess {
   once(event: "error", handler: (error: Error) => void): SpawnedProcess;
@@ -24,6 +28,7 @@ export interface EditorTargetRuntimeOptions {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   pathExists?: (path: string) => boolean;
+  readDirectory?: (path: string) => EditorTargetDirectoryEntry[];
   spawn?: (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
   openPath?: (path: string) => Promise<string>;
   revealPath?: (path: string) => void;
@@ -107,6 +112,14 @@ function escapeWindowsCmdValue(value: string): string {
   return `"${quoted}"`;
 }
 
+function readDirectory(targetPath: string): EditorTargetDirectoryEntry[] {
+  return nodeReaddirSync(targetPath, { withFileTypes: true }).map((entry) => {
+    if (entry.isFile()) return { name: entry.name, kind: "file" };
+    if (entry.isDirectory()) return { name: entry.name, kind: "directory" };
+    return { name: entry.name, kind: "other" };
+  });
+}
+
 function spawnProcess(command: string, args: string[], options: SpawnOptions): SpawnedProcess {
   return nodeSpawn(command, args, options) as ChildProcess as SpawnedProcess;
 }
@@ -129,17 +142,30 @@ export function createEditorTargetRuntime(
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const pathExists = options.pathExists ?? nodeExistsSync;
+  const listDirectory = options.readDirectory ?? readDirectory;
   const spawn = options.spawn ?? spawnProcess;
   const openPath = options.openPath ?? ((targetPath) => shell.openPath(targetPath));
   const revealPath = options.revealPath ?? ((targetPath) => shell.showItemInFolder(targetPath));
   const loadIcon = options.loadIcon ?? loadBundledIcon;
   const homeDirectory = options.homeDirectory ?? os.homedir();
 
+  function resolveMacApplicationBundle(applicationName: string): string | null {
+    if (platform !== "darwin") return null;
+    return (
+      [
+        `/Applications/${applicationName}.app`,
+        `${homeDirectory}/Applications/${applicationName}.app`,
+        `/System/Applications/${applicationName}.app`,
+      ].find(pathExists) ?? null
+    );
+  }
+
   return {
     platform,
     env,
     pathExists,
     isAbsolutePath: (targetPath) => isAbsolutePath(targetPath, platform),
+    listDirectory,
     resolveCommand: (commands) => resolveExecutable(commands, { env, pathExists, platform }),
     async spawnDetached({ command, args }) {
       const commandScript = isWindowsCommandScript(command, platform);
@@ -172,17 +198,13 @@ export function createEditorTargetRuntime(
     revealPath,
     loadIcon,
     hasMacApplication(applicationName) {
-      if (platform !== "darwin") return false;
-      return [
-        `/Applications/${applicationName}.app`,
-        `${homeDirectory}/Applications/${applicationName}.app`,
-        `/System/Applications/${applicationName}.app`,
-      ].some(pathExists);
+      return resolveMacApplicationBundle(applicationName) !== null;
     },
-    async openMacApplication({ applicationName, paths }) {
+    getMacApplicationBundle: resolveMacApplicationBundle,
+    async openMacApplication({ applicationName, applicationPath, paths }) {
       await this.spawnDetached({
         command: "/usr/bin/open",
-        args: ["-a", applicationName, ...paths],
+        args: ["-a", applicationPath ?? applicationName, ...paths],
       });
     },
   };
