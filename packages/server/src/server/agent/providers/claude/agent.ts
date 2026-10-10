@@ -30,6 +30,7 @@ import {
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
 } from "./task-notification-tool-call.js";
+import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
   findClaudeModel,
   getClaudeModelsWithSettings,
@@ -383,7 +384,6 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
   "usage",
 ]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
-const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const STEER_SUPERSEDED_PERMISSION_MESSAGE =
   "The user answered with a message instead of approving. Their message follows.";
@@ -741,11 +741,6 @@ function normalizeClaudeTranscriptText(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function isClaudeInterruptPlaceholderText(value: unknown): boolean {
-  const normalized = normalizeClaudeTranscriptText(value);
-  return normalized !== null && INTERRUPT_PLACEHOLDER_PATTERN.test(normalized);
 }
 
 function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
@@ -6021,8 +6016,10 @@ function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): Claud
 
   // Read outcomes straight off the tool_result blocks rather than reusing the agentId scrape,
   // so a subagent linked through its meta sidecar still gets a status when the scrape missed it.
+  // A background launch's result only says the child started, so it is not an outcome.
   const outcomesByToolCallId = new Map<string, { failed: boolean }>();
   for (const entry of parentEntries) {
+    if (isClaudeAsyncLaunchResult(entry)) continue;
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
@@ -6038,6 +6035,11 @@ function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): Claud
     linksByAgentId: readClaudeHistoricalSubagentToolResults(parentEntries),
     outcomesByToolCallId,
   };
+}
+
+/** Claude Code answers a background Agent call at once, before the child has done anything. */
+function isClaudeAsyncLaunchResult(entry: ClaudeHistoryEntry): boolean {
+  return toObjectRecord(entry.toolUseResult)?.status === "async_launched";
 }
 
 interface ClaudeSidechainHistory {
@@ -6164,8 +6166,8 @@ function readClaudeHistoricalSubagentToolCalls(
 
 function readClaudeHistoricalSubagentToolResults(
   entries: ClaudeHistoryEntry[],
-): Map<string, { toolCallId: string; failed: boolean }> {
-  const results = new Map<string, { toolCallId: string; failed: boolean }>();
+): Map<string, { toolCallId: string }> {
+  const results = new Map<string, { toolCallId: string }>();
   for (const entry of entries) {
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
@@ -6174,7 +6176,7 @@ function readClaudeHistoricalSubagentToolResults(
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
       const match = /agentId:\s*([\w-]+)/.exec(JSON.stringify(block.content));
       if (!match?.[1]) continue;
-      results.set(match[1], { toolCallId: block.tool_use_id, failed: block.is_error === true });
+      results.set(match[1], { toolCallId: block.tool_use_id });
     }
   }
   return results;
