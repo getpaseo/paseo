@@ -21,20 +21,85 @@ export type ActionabilityResult =
 
 const DEFAULT_ACTIONABILITY_TIMEOUT_MS = 5_000;
 
+/** Poll a ref until it is enabled, unobscured and stable across layout samples.
+ * Require editability for text input. Main-process timers preserve the timeout
+ * when Electron suspends a hidden guest's animation and timer queues.
+ */
 export async function waitForActionableTarget(input: {
   page: SnapshotPage;
   elementExpression: string;
   editable?: boolean;
   timeoutMs?: number;
 }): Promise<ActionabilityResult> {
-  const result = await input.page.executeJavaScript(
-    buildActionabilityScript({
-      elementExpression: input.elementExpression,
-      editable: input.editable === true,
-      timeoutMs: input.timeoutMs ?? DEFAULT_ACTIONABILITY_TIMEOUT_MS,
-    }),
-  );
-  return readActionabilityResult(result);
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_ACTIONABILITY_TIMEOUT_MS);
+  let previousRect: ActionableTarget["rect"] | null = null;
+  let detail = "not actionable";
+
+  // Hidden guests can suspend their timer queue. Sample layout using main's
+  // clock without waking rendering or changing the guest's visibility.
+  while (Date.now() < deadline) {
+    const sample = await sampleBeforeDeadline({
+      page: input.page,
+      script: buildActionabilityScript({
+        elementExpression: input.elementExpression,
+        editable: input.editable === true,
+        previousRect,
+      }),
+      deadline,
+    });
+    if (sample.timedOut) {
+      return {
+        ok: false,
+        reason: "timeout",
+        detail: "renderer did not respond before the deadline",
+      };
+    }
+    const result = readActionabilityResult(sample.value);
+    if (result.ok || result.reason === "stale_ref") return result;
+    detail = result.detail ?? detail;
+    previousRect = readSampleRect(sample.value);
+    await new Promise<void>((resolve) => setTimeout(resolve, 16));
+  }
+  return { ok: false, reason: "timeout", detail };
+}
+
+type ActionabilitySample = { timedOut: true } | { timedOut: false; value: unknown };
+
+interface ActionabilitySampleRequest {
+  page: SnapshotPage;
+  script: string;
+  deadline: number;
+}
+
+/** Bound each renderer round trip with the same main-process deadline. */
+async function sampleBeforeDeadline({
+  page,
+  script,
+  deadline,
+}: ActionabilitySampleRequest): Promise<ActionabilitySample> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return { timedOut: true };
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<ActionabilitySample>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ timedOut: true }), remaining);
+  });
+  try {
+    return await Promise.race([
+      page
+        .executeJavaScript(script)
+        .then((value): ActionabilitySample => ({ timedOut: false, value })),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** Retain geometry only for a target ready for a stability check. */
+function readSampleRect(value: unknown): ActionableTarget["rect"] | null {
+  if (!value || typeof value !== "object") return null;
+  const rect = (value as Record<string, unknown>).rect;
+  return isRect(rect) ? rect : null;
 }
 
 function readActionabilityResult(value: unknown): ActionabilityResult {
@@ -94,17 +159,12 @@ function isFiniteNumber(value: unknown): value is number {
 function buildActionabilityScript(input: {
   elementExpression: string;
   editable: boolean;
-  timeoutMs: number;
+  previousRect: ActionableTarget["rect"] | null;
 }): string {
-  return String.raw`(async () => {
-    const deadline = performance.now() + ${JSON.stringify(input.timeoutMs)};
+  return String.raw`(() => {
+    const previousRect = ${JSON.stringify(input.previousRect)};
     const requiresEditable = ${JSON.stringify(input.editable)};
 
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    // Electron can suspend requestAnimationFrame while a guest is parked after
-    // workspace LRU eviction even though the guest remains CDP-controllable.
-    // Timed layout samples keep background browser automation live.
-    const waitForLayout = () => sleep(16);
     const nearlyEqual = (a, b) => Math.abs(a - b) < 0.25;
     const sameRect = (a, b) =>
       nearlyEqual(a.x, b.x) &&
@@ -152,50 +212,31 @@ function buildActionabilityScript(input: {
     };
     const resolveElement = () => (${input.elementExpression});
 
-    let detail = 'not actionable';
-    while (performance.now() <= deadline) {
-      const element = resolveElement();
-      if (!element || !element.isConnected) {
-        return { ok: false, reason: 'stale_ref', detail: 'ref no longer resolves' };
-      }
-
-      const rect = element.getBoundingClientRect();
-      if (!isVisible(element, rect)) {
-        detail = 'not visible';
-        await sleep(25);
-        continue;
-      }
-      if (isDisabled(element)) {
-        detail = 'disabled';
-        await sleep(25);
-        continue;
-      }
-      if (requiresEditable && !isEditable(element)) {
-        detail = 'not editable';
-        await sleep(25);
-        continue;
-      }
-
-      element.scrollIntoView?.({ block: 'center', inline: 'center' });
-      await waitForLayout();
-      const firstRect = element.getBoundingClientRect();
-      await waitForLayout();
-      const secondRect = element.getBoundingClientRect();
-      if (!sameRect(firstRect, secondRect)) {
-        detail = 'moving';
-        continue;
-      }
-
-      const point = centerPoint(secondRect);
-      if (!hitTargetReceivesEvents(element, point)) {
-        detail = 'covered';
-        await sleep(25);
-        continue;
-      }
-
-      return { ok: true, target: { point, rect: rectPayload(secondRect) } };
+    const element = resolveElement();
+    if (!element || !element.isConnected) {
+      return { ok: false, reason: 'stale_ref', detail: 'ref no longer resolves' };
     }
-
-    return { ok: false, reason: 'timeout', detail };
+    const rect = element.getBoundingClientRect();
+    if (!isVisible(element, rect)) {
+      return { ok: false, reason: 'timeout', detail: 'not visible' };
+    }
+    if (isDisabled(element)) {
+      return { ok: false, reason: 'timeout', detail: 'disabled' };
+    }
+    if (requiresEditable && !isEditable(element)) {
+      return { ok: false, reason: 'timeout', detail: 'not editable' };
+    }
+    if (!previousRect) {
+      element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' });
+    }
+    const currentRect = element.getBoundingClientRect();
+    if (!previousRect || !sameRect(previousRect, currentRect)) {
+      return { ok: false, reason: 'timeout', detail: 'moving', rect: rectPayload(currentRect) };
+    }
+    const point = centerPoint(currentRect);
+    if (!hitTargetReceivesEvents(element, point)) {
+      return { ok: false, reason: 'timeout', detail: 'covered' };
+    }
+    return { ok: true, target: { point, rect: rectPayload(currentRect) } };
   })()`;
 }

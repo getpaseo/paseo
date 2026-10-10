@@ -13,6 +13,11 @@ It validates the compositor behavior that unit tests cannot see:
 - both viewport `capturePage` and full-page CDP screenshots return real pixels from
   the permanent production parking state;
 - parked guests remain capturable with Chromium background throttling enabled;
+- production trusted clicks reach parked guests with an unfocused, hidden, or minimized
+  host without changing window focus, guest identity, or URL, and hidden animation stops
+  again after input (minimization is reported unsupported when the window manager does
+  not implement it); minimized Windows gestures can take several seconds at its
+  reduced frame cadence, so input checks use the agent broker's 15-second deadline;
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
   host composer;
 - the automation group loads the compiled production keyboard boundary and guest
@@ -92,7 +97,10 @@ is usually saved as 2560x1600.
 The existing `npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop` journey
 verifies that a hidden window stops guest animation, captures fresh viewport pixels,
 and resumes animation after restoring the window. Its artifacts include the screenshot
-and animation measurements. Full-page content correctness remains separately tracked in
+and animation measurements. Detach Playwright during native visibility checks: its host
+session owns a visible-capture lease through focus emulation. A second CDP session cannot
+release that lease. Observe the main process and guest through the existing agent bridge
+while hidden, then reconnect Playwright for the remaining UI journey. Full-page content correctness remains separately tracked in
 [the full-page repetition bug](https://github.com/getpaseo/paseo/issues/3196).
 
 ## Mechanism
@@ -114,8 +122,27 @@ layering inside `overlay-root`. Activating a presented browser also focuses its 
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
 There is no renderer prep/restore handshake or lifetime background-throttling override.
-Screenshot capture temporarily enables frame production inside the shared serialized queue,
-restores the previous throttling policy on success or failure, and retains a 5-second capture budget.
+Screenshot capture and trusted input temporarily enable frame production. CDP pointer
+commands need compositor acknowledgments even for mouse movement in a hidden guest.
+Overlapping operations share the guest scope and restore its prior throttling policy after
+the last operation, including failure and cancellation. Await a post-input paint before
+releasing activity because wheel acknowledgments can precede animation-aligned delivery.
+Captures retain their five-second budget. Sample actionability with main-process
+timers because guest timers and animation frames can be suspended.
+
+Input has a 15-second main-process deadline, including time waiting behind another
+gesture. A stalled renderer or debugger must release the activity scope. Already
+dispatched input cannot be recalled, so a missing acknowledgment after dispatch
+is not retryable. Actionability failures before dispatch remain safe to retry.
+Fence later gesture steps and release a possibly held pointer at the last
+acknowledged position; never repeat the press or synthesize a drop at the
+unreached destination. Dialog interception ends with its command: prompt
+restoration cannot wait behind a missing pointer acknowledgment. Navigation or closure after delivery can interrupt the paint wait
+without turning successful input into a failed action.
+
+Use Electron 44.5 or newer ([upstream restoration fix](https://github.com/electron/electron/pull/54341)). Earlier runtimes can leave hidden webview widgets and their
+Blink schedulers active after background throttling is restored. The runtime fix is required
+for command-scoped activity to return to idle without presenting the pane or focusing the host.
 The browser tool takes one viewport frame through Electron's frame subscription and releases the
 subscription on completion or cancellation. A resized resident guest can produce fresh pixels
 while `capturePage()` leaves its surface-copy request pending; waiting for animation frames or

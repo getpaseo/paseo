@@ -64,24 +64,29 @@ async function dispatchTrustedMouseClick(
   modifiers: number,
   clickCount: number,
 ): Promise<void> {
-  await send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x: point.x,
-    y: point.y,
-    button,
-    buttons: mouseButtonMask(button),
-    clickCount,
-    modifiers,
-  });
-  await send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x: point.x,
-    y: point.y,
-    button,
-    buttons: 0,
-    clickCount,
-    modifiers,
-  });
+  try {
+    await send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: point.x,
+      y: point.y,
+      button,
+      buttons: mouseButtonMask(button),
+      clickCount,
+      modifiers,
+    });
+  } finally {
+    // A missing press acknowledgment does not prove the button stayed up.
+    // Release the original gesture even when its deadline has expired.
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: point.x,
+      y: point.y,
+      button,
+      buttons: 0,
+      clickCount,
+      modifiers,
+    });
+  }
 }
 
 export async function dispatchTrustedHover(
@@ -107,36 +112,45 @@ export async function dispatchTrustedDrag(
     y: source.y,
     button: "none",
   });
-  await send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x: source.x,
-    y: source.y,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: (source.x + target.x) / 2,
-    y: (source.y + target.y) / 2,
-    button: "left",
-    buttons: 1,
-  });
-  await send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: target.x,
-    y: target.y,
-    button: "left",
-    buttons: 1,
-  });
-  await send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x: target.x,
-    y: target.y,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
+  let releasePoint = source;
+  const midpoint = { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 };
+  try {
+    await send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: source.x,
+      y: source.y,
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+    });
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: midpoint.x,
+      y: midpoint.y,
+      button: "left",
+      buttons: 1,
+    });
+    releasePoint = midpoint;
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: target.x,
+      y: target.y,
+      button: "left",
+      buttons: 1,
+    });
+    releasePoint = target;
+  } finally {
+    // Release only at the last acknowledged point. Cancelling an unfinished
+    // drag must not synthesize a mouse-up at its intended drop destination.
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: releasePoint.x,
+      y: releasePoint.y,
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+    });
+  }
 }
 
 export async function dispatchTrustedScroll(

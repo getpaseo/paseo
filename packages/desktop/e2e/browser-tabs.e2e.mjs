@@ -210,6 +210,7 @@ async function startTargetPage() {
         </head>
         <body>
           <button id="bridge-target" onclick="this.textContent = 'Clicked'">Bridge target</button>
+          <button id="background-counter" onclick="window.backgroundClicks = (window.backgroundClicks || 0) + 1">Background counter</button>
           <label for="typing-target">Typing target</label>
           <input id="typing-target" />
         </body>
@@ -454,17 +455,17 @@ function recordViewportMismatch(failures, label, actual, expected) {
   );
 }
 
-async function setWindowHidden(inspectorPort, hidden) {
+async function inspectWindowPresentation(inspectorPort, action = "", value = null) {
   const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   try {
-    await new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       socket.addEventListener("error", reject, { once: true });
       socket.addEventListener("message", ({ data }) => {
         const response = JSON.parse(data);
         if (response.id !== 1) return;
         if (response.error || response.result?.exceptionDetails) reject(new Error(data));
-        else resolve();
+        else resolve(response.result?.result?.value);
       });
       socket.addEventListener(
         "open",
@@ -474,7 +475,9 @@ async function setWindowHidden(inspectorPort, hidden) {
               id: 1,
               method: "Runtime.evaluate",
               params: {
-                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change'); })()`,
+                expression: `(async () => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); ${action} return ${value ?? "{ runtime: process.versions.electron, arch: process.arch, visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(), contents: process.mainModule.require('electron').webContents.getAllWebContents().map(contents => ({ id: contents.id, type: contents.getType(), throttling: contents.getBackgroundThrottling(), url: contents.getURL(), captured: contents.isBeingCaptured(), widgetVisibility: contents.mainFrame?.visibilityState })) }"}; })()`,
+                returnByValue: true,
+                awaitPromise: true,
               },
             }),
           ),
@@ -486,13 +489,56 @@ async function setWindowHidden(inspectorPort, hidden) {
   }
 }
 
-async function verifyHiddenBrowserScreenshots({
-  page,
+async function setWindowHidden(inspectorPort, hidden) {
+  const state = await inspectWindowPresentation(
+    inspectorPort,
+    hidden ? "win.hide();" : "win.showInactive();",
+  );
+  assert(state.visible === !hidden, "Window visibility did not change");
+}
+
+/** Verify real agent tool delivery without selecting the target browser tab. */
+async function verifyBackgroundAgentAccess({
   client,
   browserId,
+  label,
   artifactDir,
   inspectorPort,
 }) {
+  const presentation = await inspectWindowPresentation(inspectorPort);
+  const before = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => ({ clicks: window.backgroundClicks || 0, url: location.href })",
+  });
+  const snapshot = await callBrowserTool(client, "browser_snapshot", { browserId });
+  const ref = snapshot.snapshot.match(/button "Background counter" \[ref=(@e\d+)\]/)?.[1];
+  assert(ref, `${label}: counter ref missing`);
+  const startedAt = Date.now();
+  await callBrowserTool(client, "browser_click", { browserId, ref });
+  const after = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => ({ clicks: window.backgroundClicks || 0, url: location.href })",
+  });
+  const nextPresentation = await inspectWindowPresentation(inspectorPort);
+  assert(
+    nextPresentation.focused === presentation.focused &&
+      nextPresentation.visible === presentation.visible &&
+      nextPresentation.minimized === presentation.minimized,
+    `${label}: agent command changed native window presentation`,
+  );
+  const first = JSON.parse(before.resultJson);
+  const last = JSON.parse(after.resultJson);
+  assert(
+    last.clicks === first.clicks + 1 && last.url === first.url,
+    `${label}: background click was lost or navigated`,
+  );
+  fs.appendFileSync(
+    path.join(artifactDir, "background-agent-access.jsonl"),
+    `${JSON.stringify({ label, browserId, elapsedMs: Date.now() - startedAt, ...last })}\n`,
+  );
+}
+
+async function verifyHiddenBrowserScreenshots({ client, browserId, artifactDir, inspectorPort }) {
   const readFrames = async () => {
     const result = await callBrowserTool(client, "browser_evaluate", {
       browserId,
@@ -518,12 +564,27 @@ async function verifyHiddenBrowserScreenshots({
     const frames = (await readFrames()) - start;
     measurements.push({ label, frames });
     writeJson(path.join(artifactDir, "hidden-browser-frames.json"), measurements);
+    if (frames !== 0)
+      writeJson(
+        path.join(artifactDir, "hidden-window-policy.json"),
+        await inspectWindowPresentation(inspectorPort),
+      );
     assert(frames === 0, `${label}: hidden browser produced ${frames} animation frames`);
   };
   try {
     await expectAnimation();
     await setWindowHidden(inspectorPort, true);
     await expectIdle("before-capture");
+    // Exceed the daemon's 45-second application socket lease without browser requests.
+    await delay(50_000);
+    await verifyBackgroundAgentAccess({
+      client,
+      browserId,
+      label: "window-hidden",
+      artifactDir,
+      inspectorPort,
+    });
+    await expectIdle("after-input");
     await callBrowserTool(client, "browser_evaluate", {
       browserId,
       function: "() => { document.body.style.background = 'rgb(0,255,0)'; }",
@@ -536,20 +597,26 @@ async function verifyHiddenBrowserScreenshots({
       path.join(artifactDir, "hidden-browser-viewport.png"),
       Buffer.from(screenshot.data, "base64"),
     );
-    const pixel = await page.evaluate(async (base64) => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${base64}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      return [
-        ...context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1)
-          .data,
-      ];
-    }, screenshot.data);
+    const pixel = await inspectWindowPresentation(
+      inspectorPort,
+      "",
+      `win.webContents.executeJavaScript("(" + ${JSON.stringify(
+        String(async (base64) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${base64}`;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext("2d");
+          context.drawImage(image, 0, 0);
+          return [
+            ...context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1)
+              .data,
+          ];
+        }),
+      )} + " )(" + ${JSON.stringify(JSON.stringify(screenshot.data))} + ")")`,
+    );
     assert(
       JSON.stringify(pixel) === "[0,255,0,255]",
       `Hidden screenshot returned stale pixels: ${pixel}`,
@@ -623,10 +690,11 @@ async function runRegression({
   typingAgent,
   artifactDir,
   inspectorPort,
+  withoutPlaywrightObservation,
 }) {
   const failures = [];
   const originalWorkspaceId = workspaceIds[0];
-  const originalWorkspaceRow = page.getByTestId(
+  let originalWorkspaceRow = page.getByTestId(
     `sidebar-workspace-row-${serverId}:${originalWorkspaceId}`,
   );
   await originalWorkspaceRow.waitFor({ state: "visible", timeout: timeoutMs });
@@ -646,7 +714,7 @@ async function runRegression({
   const browserId = created.browserId;
   assert(typeof browserId === "string", "browser_new_tab returned no browserId");
 
-  const originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
+  let originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
   await page.waitForFunction(
     (id) => {
@@ -661,6 +729,28 @@ async function runRegression({
   );
   const firstGuest = await readGuest(page, browserId);
   assert(firstGuest, "Original browser guest was not attached to its workspace pane");
+  const visibleWindow = await inspectWindowPresentation(inspectorPort);
+  writeJson(path.join(artifactDir, "visible-window.json"), visibleWindow);
+  await verifyBackgroundAgentAccess({
+    client,
+    browserId,
+    label: visibleWindow.focused ? "visible-focused" : "visible-unfocused",
+    artifactDir,
+    inspectorPort,
+  });
+  const unfocusedWindow = await inspectWindowPresentation(inspectorPort, "win.blur();");
+  assert(!unfocusedWindow.focused, "Fixture window did not lose focus");
+  await verifyBackgroundAgentAccess({
+    client,
+    browserId,
+    label: "visible-unfocused",
+    artifactDir,
+    inspectorPort,
+  });
+  assert(
+    !(await inspectWindowPresentation(inspectorPort)).focused,
+    "Agent access took window focus",
+  );
   recordViewportMismatch(
     failures,
     "Responsive viewport follows the visible browser pane",
@@ -785,6 +875,13 @@ async function runRegression({
     await readViewport(client, browserId),
     responsiveViewport,
   );
+  await verifyBackgroundAgentAccess({
+    client,
+    browserId,
+    label: "pane-hidden",
+    artifactDir,
+    inspectorPort,
+  });
   const focusContinuitySentinel = "preserve-browser-document-across-focus";
   await callBrowserTool(client, "browser_evaluate", {
     browserId,
@@ -888,8 +985,36 @@ async function runRegression({
   const parkedGuest = await readGuest(page, browserId);
   assert(parkedGuest, "Browser guest was not parked after workspace eviction");
 
-  await verifyHiddenBrowserScreenshots({ page, client, browserId, artifactDir, inspectorPort });
+  await verifyBackgroundAgentAccess({
+    client,
+    browserId,
+    label: "another-workspace",
+    artifactDir,
+    inspectorPort,
+  });
+  page = await withoutPlaywrightObservation(() =>
+    verifyHiddenBrowserScreenshots({ client, browserId, artifactDir, inspectorPort }),
+  );
+  originalWorkspaceRow = page.getByTestId(
+    `sidebar-workspace-row-${serverId}:${originalWorkspaceId}`,
+  );
+  originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
 
+  const minimizedWindow = await inspectWindowPresentation(inspectorPort, "win.minimize();");
+  writeJson(path.join(artifactDir, "minimized-window.json"), minimizedWindow);
+  try {
+    if (minimizedWindow.minimized) {
+      await verifyBackgroundAgentAccess({
+        client,
+        browserId,
+        label: "window-minimized",
+        artifactDir,
+        inspectorPort,
+      });
+    }
+  } finally {
+    await inspectWindowPresentation(inspectorPort, "win.restore(); win.showInactive();");
+  }
   const listed = await callBrowserTool(client, "browser_list_tabs");
   assert(
     listed.tabs.some((tab) => tab.browserId === browserId),
@@ -1186,7 +1311,10 @@ async function main() {
     await waitForPort(cdpPort, "Electron CDP", desktop);
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const page = await waitForAppPage(browser, expoPort);
+    let page = await waitForAppPage(browser, expoPort);
+    page.on("pageerror", (error) =>
+      fs.appendFileSync(path.join(artifactDir, "renderer-errors.txt"), `${error.stack}\n`),
+    );
     const status = await waitForDesktopStatus(page);
 
     const checkPluginLinks = () =>
@@ -1233,10 +1361,23 @@ async function main() {
       serverId: status.serverId,
       targetUrl: target.url,
       inspectorPort,
+      // Playwright's session owns a visible-capture lease on the host. A second
+      // CDP session cannot release it, so detach the observer for native idle QA.
+      withoutPlaywrightObservation: async (task) => {
+        await browser.close();
+        try {
+          await task();
+        } finally {
+          browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+          page = await waitForAppPage(browser, expoPort);
+        }
+        return page;
+      },
       callerAgentId,
       typingAgent,
       artifactDir,
     });
+    writeJson(path.join(artifactDir, "browser-report.json"), report);
     const pluginLinks = await checkPluginLinks();
     writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
     console.log(

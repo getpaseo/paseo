@@ -1,3 +1,4 @@
+import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { resolve as resolvePath } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
@@ -7,8 +8,9 @@ import type {
   BrowserAutomationDialogEvent,
   BrowserAutomationExecuteRequest,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { waitForActionableTarget } from "./actionability.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
-import type { BrowserRegistry, TabContents, TabImage } from "./service.js";
+import type { BrowserRegistry, TabContents, TabImage, DialogCaptureOperation } from "./service.js";
 import { executeAutomationCommand } from "./service.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
@@ -33,8 +35,18 @@ class FakeImage implements TabImage {
 }
 
 class FakeTab implements TabContents {
-  public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
-    return capture();
+  private readonly inputQueue = new CdpSessionQueue();
+  public runInput<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return this.inputQueue.run(task, signal);
+  }
+  public frameProductionScopes = 0;
+  public async withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
+    this.frameProductionScopes++;
+    try {
+      return await capture();
+    } finally {
+      this.frameProductionScopes--;
+    }
   }
   public readonly loadedUrls: string[] = [];
   public readonly scripts: string[] = [];
@@ -128,7 +140,7 @@ class FakeTab implements TabContents {
     if (code.includes("__PASEO_ARIA_SNAPSHOT__")) {
       return JSON.stringify(snapshotResult(this.snapshotNodes));
     }
-    if (code.includes("Timed out waiting") || code.includes("performance.now()")) {
+    if (code.includes("const requiresEditable =")) {
       if (this.rejectEditableActionability && code.includes("const requiresEditable = true")) {
         return { ok: false, reason: "timeout", detail: "not editable" };
       }
@@ -194,9 +206,9 @@ class FakeTab implements TabContents {
     return this.consoleMessages;
   }
 
-  public async captureDialogs<T>(
-    task: () => Promise<T>,
-  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
+  public async captureDialogs<T>({
+    task,
+  }: DialogCaptureOperation<T>): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
     return { result: await task(), dialogs: this.dialogsToCapture };
   }
 
@@ -996,57 +1008,44 @@ describe("executeAutomationCommand", () => {
   });
 
   test("click returns a retryable browser timeout when the ref never becomes actionable", async () => {
-    const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotNodes = formElements();
-    browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
 
-    requireSnapshotRefs(await browser.snapshot());
-    const click = await browser.execute({
-      command: "click",
-      args: { browserId: BROWSER_A, ref: "@e2" },
-    });
+      requireSnapshotRefs(await browser.snapshot());
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e2" },
+      });
 
-    expect(click).toEqual({
-      requestId: "req-click",
-      ok: false,
-      error: {
-        code: "browser_timeout",
-        message: "Timed out waiting for browser element @e2 to become actionable.",
-        retryable: true,
-      },
-    });
-    expect(browser.tab.debugCommands).toEqual([]);
+      await vi.advanceTimersByTimeAsync(5016);
+      const click = await pending;
+      expect(click).toEqual({
+        requestId: "req-click",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser element @e2 to become actionable.",
+          retryable: true,
+        },
+      });
+      expect(browser.tab.debugCommands).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("command failures include dialogs handled before the failure", async () => {
-    const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotNodes = formElements();
-    browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
 
-    requireSnapshotRefs(await browser.snapshot());
-    browser.tab.dialogsToCapture = [
-      {
-        type: "prompt",
-        message: "Name?",
-        defaultValue: "Maya",
-        action: "dismissed",
-        timestamp: 124,
-      },
-    ];
-    const click = await browser.execute({
-      command: "click",
-      args: { browserId: BROWSER_A, ref: "@e2" },
-    });
-
-    expect(click).toEqual({
-      requestId: "req-click",
-      ok: false,
-      error: {
-        code: "browser_timeout",
-        message: "Timed out waiting for browser element @e2 to become actionable.",
-        retryable: true,
-      },
-      dialogs: [
+      requireSnapshotRefs(await browser.snapshot());
+      browser.tab.dialogsToCapture = [
         {
           type: "prompt",
           message: "Name?",
@@ -1054,8 +1053,35 @@ describe("executeAutomationCommand", () => {
           action: "dismissed",
           timestamp: 124,
         },
-      ],
-    });
+      ];
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e2" },
+      });
+
+      await vi.advanceTimersByTimeAsync(5016);
+      const click = await pending;
+      expect(click).toEqual({
+        requestId: "req-click",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser element @e2 to become actionable.",
+          retryable: true,
+        },
+        dialogs: [
+          {
+            type: "prompt",
+            message: "Name?",
+            defaultValue: "Maya",
+            action: "dismissed",
+            timestamp: 124,
+          },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("wait resolves when the explicit tab contains the requested text", async () => {
@@ -1974,4 +2000,298 @@ describe("executeAutomationCommand", () => {
       { command: "DOM.describeNode", params: { objectId: "object-1" } },
     ]);
   });
+});
+
+describe("background actionability sampling", () => {
+  test("resamples geometry on the main clock without a guest timer or animation frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const rect = { x: 10, y: 20, width: 30, height: 40 };
+      const target = { point: { x: 25, y: 40 }, rect };
+      const executeJavaScript = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, reason: "timeout", detail: "moving", rect })
+        .mockResolvedValueOnce({ ok: true, target });
+      const pending = waitForActionableTarget({
+        page: { getURL: () => "https://fixture.test", executeJavaScript },
+        elementExpression: "document.querySelector('button')",
+      });
+      await vi.advanceTimersByTimeAsync(16);
+      await expect(pending).resolves.toEqual({ ok: true, target });
+      expect(executeJavaScript).toHaveBeenCalledTimes(2);
+      expect(executeJavaScript.mock.calls[1][0]).toContain(
+        `const previousRect = ${JSON.stringify(rect)}`,
+      );
+      for (const [script] of executeJavaScript.mock.calls) {
+        expect(script).not.toMatch(/setTimeout|requestAnimationFrame/);
+        expect(script).toContain("hitTargetReceivesEvents");
+        expect(script).toContain("isDisabled(element)");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(["disabled", "covered", "not visible", "not editable"])(
+    "bounds %s polling and resets unstable geometry",
+    async (detail) => {
+      vi.useFakeTimers();
+      try {
+        const executeJavaScript = vi
+          .fn()
+          .mockResolvedValue({ ok: false, reason: "timeout", detail });
+        const pending = waitForActionableTarget({
+          page: { getURL: () => "https://fixture.test", executeJavaScript },
+          elementExpression: "document.body",
+          timeoutMs: 32,
+        });
+        await vi.advanceTimersByTimeAsync(48);
+        await expect(pending).resolves.toEqual({ ok: false, reason: "timeout", detail });
+        expect(executeJavaScript).toHaveBeenCalledTimes(2);
+        expect(executeJavaScript.mock.calls[1][0]).toContain("const previousRect = null");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+describe("trusted input activity completion", () => {
+  test.each([1000, 6000])(
+    "holds activity through input paint and releases it with a %i ms paint delay",
+    async (paintDelayMs) => {
+      vi.useFakeTimers();
+      try {
+        const browser = new BrowserAutomationHarness();
+        browser.tab.snapshotNodes = formElements();
+        requireSnapshotRefs(await browser.snapshot());
+        browser.tab.paintDelayMs = paintDelayMs;
+        const pending = browser.execute({
+          command: "click",
+          args: { browserId: BROWSER_A, ref: "@e1" },
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(browser.tab.frameProductionScopes).toBe(1);
+        await vi.advanceTimersByTimeAsync(Math.min(paintDelayMs, 5000));
+        const response = await pending;
+        expect(response.ok).toBe(paintDelayMs <= 5000);
+        if (!response.ok) {
+          expect(response.error.code).toBe("browser_timeout");
+          expect(response.error.retryable).toBe(false);
+          expect(response.error.message).toContain("Input may already have been delivered");
+        }
+        expect(browser.tab.frameProductionScopes).toBe(0);
+        expect(browser.tab.debugCommands).toHaveLength(3);
+        await vi.advanceTimersByTimeAsync(paintDelayMs);
+        expect(browser.tab.debugCommands).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+describe("bounded trusted input lifetime", () => {
+  test("a stalled layout sample releases activity without dispatching late input", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      let finishSample!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finishSample = resolve;
+      });
+      const execute = browser.tab.executeJavaScript.bind(browser.tab);
+      vi.spyOn(browser.tab, "executeJavaScript").mockImplementation((code) =>
+        code.includes("const requiresEditable =") ? stalled : execute(code),
+      );
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e1" },
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: "browser_timeout" },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      finishSample(browser.tab.actionabilityResult);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(browser.tab.debugCommands).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(["mouseMoved", "mousePressed"])(
+    "a missing %s acknowledgment cannot pin activity or resume the gesture",
+    async (blockedType) => {
+      vi.useFakeTimers();
+      try {
+        const browser = new BrowserAutomationHarness();
+        browser.tab.snapshotNodes = formElements();
+        requireSnapshotRefs(await browser.snapshot());
+        let finishInput!: (value: unknown) => void;
+        const stalled = new Promise<unknown>((resolve) => {
+          finishInput = resolve;
+        });
+        const send = browser.tab.sendDebugCommand.bind(browser.tab);
+        vi.spyOn(browser.tab, "sendDebugCommand").mockImplementation((command, params) => {
+          if (params?.type !== blockedType) return send(command, params);
+          browser.tab.debugCommands.push({ command, params });
+          return stalled;
+        });
+        const pending = browser.execute({
+          command: "click",
+          args: { browserId: BROWSER_A, ref: "@e1" },
+        });
+        await vi.advanceTimersByTimeAsync(15000);
+        await expect(pending).resolves.toMatchObject({
+          requestId: "req-click",
+          ok: false,
+          error: { code: "browser_timeout", retryable: false },
+        });
+        expect(browser.tab.frameProductionScopes).toBe(0);
+        const types = browser.tab.debugCommands.map(({ params }) => params?.type);
+        expect(types).toEqual(
+          blockedType === "mouseMoved"
+            ? ["mouseMoved"]
+            : ["mouseMoved", "mousePressed", "mouseReleased"],
+        );
+        finishInput({});
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(types);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("concurrent clicks stay atomic and a waiting click does not wake rendering", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+    let finishMove!: (value: unknown) => void;
+    const stalled = new Promise<unknown>((resolve) => {
+      finishMove = resolve;
+    });
+    const send = browser.tab.sendDebugCommand.bind(browser.tab);
+    vi.spyOn(browser.tab, "sendDebugCommand")
+      .mockImplementationOnce((command, params) => {
+        browser.tab.debugCommands.push({ command, params });
+        return stalled;
+      })
+      .mockImplementation(send);
+    const first = browser.execute({ command: "click", args: { browserId: BROWSER_A, ref: "@e1" } });
+    const second = browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e2" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(browser.tab.frameProductionScopes).toBe(1);
+    expect(browser.tab.debugCommands).toHaveLength(1);
+    finishMove({});
+    await Promise.all([first, second]);
+    expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual([
+      "mouseMoved",
+      "mousePressed",
+      "mouseReleased",
+      "mouseMoved",
+      "mousePressed",
+      "mouseReleased",
+    ]);
+    expect(browser.tab.frameProductionScopes).toBe(0);
+  });
+
+  test("a waiter whose deadline expires with its predecessor never starts input", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      let finishMove!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finishMove = resolve;
+      });
+      const send = browser.tab.sendDebugCommand.bind(browser.tab);
+      vi.spyOn(browser.tab, "sendDebugCommand")
+        .mockImplementationOnce((command, params) => {
+          browser.tab.debugCommands.push({ command, params });
+          return stalled;
+        })
+        .mockImplementation(send);
+      const first = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e1" },
+      });
+      const second = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e2" },
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+      for (const response of await Promise.all([first, second])) {
+        expect(response).toMatchObject({
+          ok: false,
+          error: { code: "browser_timeout", retryable: false },
+        });
+      }
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      finishMove({});
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(["mouseMoved"]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("closure while waiting behind another gesture does not wake the closed guest", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+    let releaseQueue!: () => void;
+    const preceding = browser.tab.runInput(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseQueue = resolve;
+        }),
+    );
+    const pending = browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e1" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    browser.tab.destroyed = true;
+    releaseQueue();
+    await preceding;
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_tab_closed", retryable: false },
+    });
+    expect(browser.tab.frameProductionScopes).toBe(0);
+    expect(browser.tab.debugCommands).toHaveLength(0);
+  });
+
+  test.each(["navigation", "closure"])(
+    "preserves delivered input when %s interrupts its final paint",
+    async (change) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      const execute = browser.tab.executeJavaScript.bind(browser.tab);
+      vi.spyOn(browser.tab, "executeJavaScript").mockImplementation(async (code) => {
+        if (!code.includes("requestAnimationFrame")) return execute(code);
+        if (change === "navigation") browser.tab.loadedUrls.push("https://fixture.test/next");
+        else browser.tab.destroyed = true;
+        throw new Error("document was replaced during paint");
+      });
+      await expect(
+        browser.execute({ command: "click", args: { browserId: BROWSER_A, ref: "@e1" } }),
+      ).resolves.toMatchObject({ ok: true, result: { command: "click" } });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+    },
+  );
 });

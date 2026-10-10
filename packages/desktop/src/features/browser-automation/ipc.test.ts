@@ -408,32 +408,34 @@ describe("browser automation IPC adapter", () => {
     const contents = new FakeWebContents(24);
     const tab = adaptWebContents(contents);
 
-    const captured = tab.captureDialogs?.(async () => {
-      contents.debugger.blockCommands = true;
-      const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseReleased" });
-      await flushMicrotasks();
+    const captured = tab.captureDialogs?.({
+      task: async () => {
+        contents.debugger.blockCommands = true;
+        const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseReleased" });
+        await flushMicrotasks();
 
-      contents.debugger.emitMessage("Page.javascriptDialogOpening", {
-        type: "confirm",
-        message: "Delete item?",
-      });
-      await flushMicrotasks();
+        contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+          type: "confirm",
+          message: "Delete item?",
+        });
+        await flushMicrotasks();
 
-      expect(contents.debugger.commands).toEqual([
-        { command: "Page.enable", params: {} },
-        {
-          command: "Runtime.evaluate",
-          params: { expression: expect.any(String), returnByValue: true },
-        },
-        { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
-        { command: "Page.handleJavaScriptDialog", params: { accept: false } },
-      ]);
+        expect(contents.debugger.commands).toEqual([
+          { command: "Page.enable", params: {} },
+          {
+            command: "Runtime.evaluate",
+            params: { expression: expect.any(String), returnByValue: true },
+          },
+          { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
+          { command: "Page.handleJavaScriptDialog", params: { accept: false } },
+        ]);
 
-      contents.debugger.blockCommands = false;
-      contents.debugger.finishNextCommand();
-      await input;
-      await flushMicrotasks();
-      return "done";
+        contents.debugger.blockCommands = false;
+        contents.debugger.finishNextCommand();
+        await input;
+        await flushMicrotasks();
+        return "done";
+      },
     });
 
     await expect(captured).resolves.toEqual({
@@ -470,31 +472,33 @@ describe("browser automation IPC adapter", () => {
     const contents = new FakeWebContents(25);
     const tab = adaptWebContents(contents);
 
-    const captured = tab.captureDialogs?.(async () => {
-      contents.debugger.blockedCommandNames.add("Input.dispatchMouseEvent");
-      const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mousePressed" });
-      await flushMicrotasks();
+    const captured = tab.captureDialogs?.({
+      task: async () => {
+        contents.debugger.blockedCommandNames.add("Input.dispatchMouseEvent");
+        const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mousePressed" });
+        await flushMicrotasks();
 
-      contents.debugger.emitMessage("Page.javascriptDialogOpening", {
-        type: "alert",
-        message: "Saved",
-      });
-      await flushMicrotasks();
+        contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+          type: "alert",
+          message: "Saved",
+        });
+        await flushMicrotasks();
 
-      expect(contents.debugger.commands).toEqual([
-        { command: "Page.enable", params: {} },
-        {
-          command: "Runtime.evaluate",
-          params: { expression: expect.any(String), returnByValue: true },
-        },
-        { command: "Input.dispatchMouseEvent", params: { type: "mousePressed" } },
-        { command: "Page.handleJavaScriptDialog", params: { accept: true } },
-      ]);
+        expect(contents.debugger.commands).toEqual([
+          { command: "Page.enable", params: {} },
+          {
+            command: "Runtime.evaluate",
+            params: { expression: expect.any(String), returnByValue: true },
+          },
+          { command: "Input.dispatchMouseEvent", params: { type: "mousePressed" } },
+          { command: "Page.handleJavaScriptDialog", params: { accept: true } },
+        ]);
 
-      contents.debugger.blockedCommandNames.clear();
-      contents.debugger.finishNextCommand();
-      await input;
-      return "done";
+        contents.debugger.blockedCommandNames.clear();
+        contents.debugger.finishNextCommand();
+        await input;
+        return "done";
+      },
     });
 
     await expect(captured).resolves.toEqual({
@@ -525,17 +529,21 @@ describe("browser automation IPC adapter", () => {
     const finishFirst = deferred<void>();
     const finishSecond = deferred<void>();
 
-    const first = tab.captureDialogs?.(async () => {
-      firstStarted.resolve();
-      await finishFirst.promise;
-      return "first";
+    const first = tab.captureDialogs?.({
+      task: async () => {
+        firstStarted.resolve();
+        await finishFirst.promise;
+        return "first";
+      },
     });
     await firstStarted.promise;
 
-    const second = tab.captureDialogs?.(async () => {
-      secondStarted.resolve();
-      await finishSecond.promise;
-      return "second";
+    const second = tab.captureDialogs?.({
+      task: async () => {
+        secondStarted.resolve();
+        await finishSecond.promise;
+        return "second";
+      },
     });
     await secondStarted.promise;
 
@@ -618,7 +626,7 @@ describe("browser automation IPC adapter", () => {
     const contents = new FakeWebContents(28);
     const tab = adaptWebContents(contents);
 
-    await expect(tab.captureDialogs?.(async () => "done")).resolves.toEqual({
+    await expect(tab.captureDialogs?.({ task: async () => "done" })).resolves.toEqual({
       result: "done",
       dialogs: [],
     });
@@ -639,7 +647,7 @@ describe("browser automation IPC adapter", () => {
     contents.debugger.failPromptDrain = true;
     const tab = adaptWebContents(contents);
 
-    await expect(tab.captureDialogs?.(async () => "navigated")).resolves.toEqual({
+    await expect(tab.captureDialogs?.({ task: async () => "navigated" })).resolves.toEqual({
       result: "navigated",
       dialogs: [],
     });
@@ -670,7 +678,7 @@ describe("browser automation IPC adapter", () => {
     const tab = adaptWebContents(contents);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await expect(tab.captureDialogs?.(async () => "done")).resolves.toEqual({
+    await expect(tab.captureDialogs?.({ task: async () => "done" })).resolves.toEqual({
       result: "done",
       dialogs: [],
     });
@@ -680,6 +688,32 @@ describe("browser automation IPC adapter", () => {
       { contentsId: 30, error: expect.any(Error) },
     );
     warn.mockRestore();
+  });
+
+  test("prompt installation failure releases ownership before running without interception", async () => {
+    const contents = new FakeWebContents(33);
+    contents.debugger.failedCommandNames.add("Runtime.evaluate");
+    const tab = adaptWebContents(contents);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        tab.captureDialogs?.({
+          task: async () => {
+            contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+              type: "confirm",
+              message: "Human prompt",
+            });
+            await flushMicrotasks();
+            return "done";
+          },
+        }),
+      ).resolves.toEqual({ result: "done", dialogs: [] });
+      expect(
+        contents.debugger.commands.some(({ command }) => command === "Page.handleJavaScriptDialog"),
+      ).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("does not run the command after the debugger target closes during setup", async () => {
@@ -697,7 +731,7 @@ describe("browser automation IPC adapter", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await expect(
-      tab.captureDialogs?.(() => tab.loadURL("https://replacement.example.com")),
+      tab.captureDialogs?.({ task: () => tab.loadURL("https://replacement.example.com") }),
     ).rejects.toThrow("target closed while handling command");
     expect(contents.loadedUrls).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
@@ -709,7 +743,7 @@ describe("browser automation IPC adapter", () => {
     const contents = new FakeWebContents(32);
     const tab = adaptWebContents(contents);
 
-    await expect(tab.captureDialogs?.(async () => "captured")).resolves.toEqual({
+    await expect(tab.captureDialogs?.({ task: async () => "captured" })).resolves.toEqual({
       result: "captured",
       dialogs: [],
     });
@@ -718,7 +752,7 @@ describe("browser automation IPC adapter", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await expect(
-      tab.captureDialogs?.(() => tab.loadURL("https://replacement.example.com")),
+      tab.captureDialogs?.({ task: () => tab.loadURL("https://replacement.example.com") }),
     ).resolves.toEqual({ result: undefined, dialogs: [] });
     expect(contents.loadedUrls).toEqual(["https://replacement.example.com"]);
     expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
@@ -793,5 +827,267 @@ describe("pixel capture frame production", () => {
         throw new Error("capture closed");
       }),
     ).rejects.toThrow("capture closed");
+  });
+});
+
+describe("overlapping guest activity", () => {
+  test("input and screenshot adapters retain frames until the final operation exits", async () => {
+    const contents = new FakeWebContents(8101);
+    const inputTab = adaptWebContents(contents);
+    const captureTab = adaptWebContents(contents);
+    const inputDone = deferred<void>();
+    const captureDone = deferred<void>();
+    const input = inputTab.withFrameProduction(async () => inputDone.promise);
+    const capture = captureTab.withFrameProduction(async () => captureDone.promise);
+    expect(contents.backgroundThrottling).toBe(false);
+    inputDone.resolve();
+    await input;
+    expect(contents.backgroundThrottling).toBe(false);
+    captureDone.resolve();
+    await capture;
+    expect(contents.backgroundThrottling).toBe(true);
+  });
+
+  test("a failed overlapping operation cannot end the remaining guest activity", async () => {
+    const contents = new FakeWebContents(8102);
+    const tab = adaptWebContents(contents);
+    const done = deferred<void>();
+    const remaining = tab.withFrameProduction(async () => done.promise);
+    await expect(
+      tab.withFrameProduction(async () => {
+        throw new Error("input cancelled");
+      }),
+    ).rejects.toThrow("input cancelled");
+    expect(contents.backgroundThrottling).toBe(false);
+    done.resolve();
+    await remaining;
+    expect(contents.backgroundThrottling).toBe(true);
+  });
+});
+
+describe("cancelled CDP queue waiters", () => {
+  test("a queued prompt install does not prolong interception after the active input cancels", async () => {
+    const contents = new FakeWebContents(8206);
+    const tab = adaptWebContents(contents);
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const started = deferred<void>();
+    const first = tab.captureDialogs?.({
+      signal: firstController.signal,
+      task: async () => {
+        contents.debugger.blockedCommandNames.add("Input.dispatchMouseEvent");
+        const pending = tab.sendDebugCommand?.(
+          "Input.dispatchMouseEvent",
+          { type: "mouseMoved" },
+          firstController.signal,
+        );
+        started.resolve();
+        return pending;
+      },
+    });
+    const firstAssertion = expect(first).rejects.toThrow("active input expired");
+    await started.promise;
+    await flushMicrotasks();
+    const task = vi.fn(async () => "unexpected queued input");
+    const second = tab.captureDialogs?.({ task, signal: secondController.signal });
+    const secondAssertion = expect(second).rejects.toThrow("queued input expired");
+    await flushMicrotasks();
+    firstController.abort(new Error("active input expired"));
+    await firstAssertion;
+    expect(contents.debugger.commands.at(-1)?.params.expression).toContain(
+      "delete window[stateKey]",
+    );
+    contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+      type: "confirm",
+      message: "Human prompt while next install waits",
+    });
+    await flushMicrotasks();
+    expect(
+      contents.debugger.commands.some(({ command }) => command === "Page.handleJavaScriptDialog"),
+    ).toBe(false);
+    secondController.abort(new Error("queued input expired"));
+    await secondAssertion;
+    contents.debugger.blockedCommandNames.clear();
+    contents.debugger.finishNextCommand();
+    await flushMicrotasks();
+    expect(task).not.toHaveBeenCalled();
+  });
+
+  test("a cancelled capture cannot restore a prompt still owned by another capture", async () => {
+    const contents = new FakeWebContents(8204);
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const firstStarted = deferred<void>();
+    const secondStarted = deferred<void>();
+    const firstDone = deferred<void>();
+    const secondDone = deferred<void>();
+    const first = tab.captureDialogs?.({
+      signal: controller.signal,
+      task: async () => {
+        firstStarted.resolve();
+        await firstDone.promise;
+      },
+    });
+    const assertion = expect(first).rejects.toThrow("input expired");
+    await firstStarted.promise;
+    const second = tab.captureDialogs?.({
+      task: async () => {
+        secondStarted.resolve();
+        await secondDone.promise;
+      },
+    });
+    await secondStarted.promise;
+    controller.abort(new Error("input expired"));
+    await assertion;
+    const restorations = () =>
+      contents.debugger.commands.filter(
+        ({ params }) =>
+          typeof params.expression === "string" &&
+          params.expression.includes("delete window[stateKey]"),
+      );
+    expect(restorations()).toHaveLength(0);
+    secondDone.resolve();
+    await second;
+    expect(restorations()).toHaveLength(1);
+    firstDone.resolve();
+    await flushMicrotasks();
+    expect(restorations()).toHaveLength(1);
+  });
+
+  test("cancellation during prompt installation restores it without running the later task", async () => {
+    const contents = new FakeWebContents(8205);
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const task = vi.fn(async () => "unexpected input");
+    contents.debugger.beforeCommand = () => {
+      const expression = contents.debugger.commands.at(-1)?.params.expression;
+      contents.debugger.blockCommands =
+        typeof expression === "string" && expression.includes("state.installed = true");
+    };
+    const captured = tab.captureDialogs?.({ task, signal: controller.signal });
+    const assertion = expect(captured).rejects.toThrow("input expired");
+    await flushMicrotasks();
+    controller.abort(new Error("input expired"));
+    await assertion;
+    expect(contents.debugger.commands.at(-1)?.params.expression).toContain(
+      "delete window[stateKey]",
+    );
+    expect(task).not.toHaveBeenCalled();
+    contents.debugger.finishNextCommand();
+    await flushMicrotasks();
+    expect(task).not.toHaveBeenCalled();
+  });
+
+  test("cancelled input restores prompt interception before its missing acknowledgment settles", async () => {
+    const contents = new FakeWebContents(8203);
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const started = deferred<void>();
+    const captured = tab.captureDialogs?.({
+      signal: controller.signal,
+      task: async () => {
+        contents.debugger.blockedCommandNames.add("Input.dispatchMouseEvent");
+        const pending = tab.sendDebugCommand?.(
+          "Input.dispatchMouseEvent",
+          { type: "mouseMoved" },
+          controller.signal,
+        );
+        started.resolve();
+        return pending;
+      },
+    });
+    const assertion = expect(captured).rejects.toThrow("input expired");
+    await started.promise;
+    await flushMicrotasks();
+    controller.abort(new Error("input expired"));
+    await flushMicrotasks();
+    expect(contents.debugger.commands).toContainEqual({
+      command: "Runtime.evaluate",
+      params: {
+        expression: expect.stringContaining("delete window[stateKey]"),
+        returnByValue: true,
+      },
+    });
+    await assertion;
+    contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+      type: "confirm",
+      message: "Human prompt after cancellation",
+    });
+    await flushMicrotasks();
+    expect(
+      contents.debugger.commands.some(({ command }) => command === "Page.handleJavaScriptDialog"),
+    ).toBe(false);
+    contents.debugger.blockedCommandNames.clear();
+    contents.debugger.finishNextCommand();
+    await flushMicrotasks();
+    expect(
+      contents.debugger.commands.filter(
+        ({ params }) =>
+          params.expression && String(params.expression).includes("delete window[stateKey]"),
+      ).length,
+    ).toBe(1);
+  });
+
+  test("pointer release cleanup bypasses a missing press acknowledgment without releasing its queue barrier", async () => {
+    const contents = new FakeWebContents(8202);
+    contents.debugger.blockCommands = true;
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const press = tab.sendDebugCommand?.(
+      "Input.dispatchMouseEvent",
+      { type: "mousePressed" },
+      controller.signal,
+    );
+    await flushMicrotasks();
+    controller.abort(new Error("input expired"));
+    const release = tab.sendDebugCommand?.(
+      "Input.dispatchMouseEvent",
+      { type: "mouseReleased" },
+      controller.signal,
+    );
+    const next = tab.sendDebugCommand?.("Page.getLayoutMetrics", {});
+    await flushMicrotasks();
+    expect(contents.debugger.commands.map(({ params }) => params?.type)).toEqual([
+      "mousePressed",
+      "mouseReleased",
+    ]);
+    contents.debugger.blockCommands = false;
+    contents.debugger.finishNextCommand();
+    contents.debugger.finishNextCommand();
+    await Promise.all([press, release, next]);
+    expect(contents.debugger.commands.map(({ command }) => command)).toEqual([
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+      "Page.getLayoutMetrics",
+    ]);
+  });
+
+  test("removes a cancelled waiter without executing it or releasing the preceding command", async () => {
+    const contents = new FakeWebContents(8201);
+    contents.debugger.blockCommands = true;
+    const tab = adaptWebContents(contents);
+    const first = tab.sendDebugCommand?.("Page.captureScreenshot", {});
+    const controller = new AbortController();
+    const cancelled = tab.sendDebugCommand?.(
+      "Input.dispatchMouseEvent",
+      { type: "mousePressed" },
+      controller.signal,
+    );
+    const assertion = expect(cancelled).rejects.toThrow("input expired");
+    await flushMicrotasks();
+    controller.abort(new Error("input expired"));
+    await assertion;
+    expect(contents.debugger.commands).toHaveLength(1);
+    const next = tab.sendDebugCommand?.("Page.getLayoutMetrics", {});
+    await flushMicrotasks();
+    expect(contents.debugger.commands).toHaveLength(1);
+    contents.debugger.blockCommands = false;
+    contents.debugger.finishNextCommand();
+    await Promise.all([first, next]);
+    expect(contents.debugger.commands.map(({ command }) => command)).toEqual([
+      "Page.captureScreenshot",
+      "Page.getLayoutMetrics",
+    ]);
+    expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
   });
 });

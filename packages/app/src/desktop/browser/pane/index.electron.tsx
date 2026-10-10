@@ -846,6 +846,11 @@ export function BrowserPane({
       }
     };
     const handleWebviewFocus = () => {
+      // Trusted background input must not promote a parked guest into the
+      // user's pane focus or activate its native host window.
+      if (!isPresentedRef.current) {
+        return;
+      }
       onFocusPane?.();
       webview.focus?.();
       const focusBrowser = getDesktopHost()?.browser?.focus;

@@ -28,6 +28,7 @@ export interface BrowserToolsExecuteInput {
 interface PendingBrowserToolsRequest {
   clientId: string;
   rememberAffinity: boolean;
+  canRetryWithoutResponse: boolean;
   timeout: ReturnType<typeof setTimeout>;
   resolve: (payload: BrowserToolsResponsePayload) => void;
 }
@@ -44,6 +45,15 @@ export interface BrowserToolsBrokerOptions {
 }
 
 const DEFAULT_BROWSER_TOOLS_TIMEOUT_MS = 15_000;
+// A missing acknowledgment never establishes that a page action was not delivered.
+// Only commands with read-only semantics are safe to repeat after that uncertainty.
+const READ_ONLY_COMMANDS = new Set<BrowserAutomationCommandName>([
+  "list_tabs",
+  "snapshot",
+  "screenshot",
+  "logs",
+  "wait",
+]);
 
 export class BrowserToolsBroker {
   private readonly defaultTimeoutMs: number;
@@ -96,7 +106,7 @@ export class BrowserToolsBroker {
           requestId,
           code: "browser_no_host",
           message: "The browser automation host disconnected before responding.",
-          retryable: true,
+          retryable: pending.canRetryWithoutResponse,
         }),
       );
     }
@@ -412,6 +422,7 @@ export class BrowserToolsBroker {
   }): Promise<BrowserToolsResponsePayload> {
     const { host, request, timeoutMs } = params;
     const client = host.client;
+    const canRetryWithoutResponse = READ_ONLY_COMMANDS.has(request.command.command);
 
     return new Promise<BrowserToolsResponsePayload>((resolve) => {
       const timeout = setTimeout(() => {
@@ -423,7 +434,7 @@ export class BrowserToolsBroker {
             requestId: request.requestId,
             code: "browser_timeout",
             message: `Browser automation timed out after ${timeoutMs}ms.`,
-            retryable: true,
+            retryable: canRetryWithoutResponse,
           }),
         );
       }, timeoutMs);
@@ -431,6 +442,7 @@ export class BrowserToolsBroker {
       this.pending.set(request.requestId, {
         clientId: client.id,
         rememberAffinity: params.rememberAffinity ?? true,
+        canRetryWithoutResponse,
         timeout,
         resolve,
       });
