@@ -82,7 +82,7 @@ function shouldSkipSpacerCell(cells: TerminalRenderableCell[], col: number, char
   if (terminalCharWidth(char) < 2) {
     return false;
   }
-  return cells[col + 1]?.char === " ";
+  return cells[col + 1]?.char === "" || cells[col + 1]?.char === " ";
 }
 
 function terminalCellCount(cells: TerminalRenderableCell[], col: number, char: string): number {

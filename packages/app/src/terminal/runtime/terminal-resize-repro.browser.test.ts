@@ -23,6 +23,9 @@ interface InspectableTerminal {
   buffer: {
     active: {
       length: number;
+      baseY: number;
+      cursorX: number;
+      cursorY: number;
       getLine: (
         index: number,
       ) => { translateToString: (trimRight: boolean) => string; isWrapped: boolean } | undefined;
@@ -141,6 +144,49 @@ afterEach(() => {
 });
 
 describe("terminal resize reflow repro (Paseo terminal)", () => {
+  it("preserves Korean spacing and table columns when a hidden terminal restores its snapshot", async () => {
+    await page.viewport(800, 500);
+    const m = mount(720, 320);
+    await waitFor(() => m.terminal.cols > 40);
+    const lines = ["한글 문장", "공급사 | 상태", "AWS    | 성공", "끝"];
+    const rows: TerminalState["grid"] = [];
+    for (const line of lines) {
+      rows.push(
+        [...line].flatMap((char) =>
+          /[가-힣]/u.test(char) ? [{ char }, { char: "" }] : [{ char }],
+        ),
+      );
+    }
+    const state: TerminalState = {
+      rows: 3,
+      cols: m.terminal.cols,
+      scrollback: rows.slice(0, 1),
+      grid: rows.slice(1),
+      scrollbackWrapped: [false],
+      gridWrapped: [false, false, false],
+      cursor: { row: 2, col: 2 },
+    };
+
+    for (let restore = 0; restore < 5; restore += 1) {
+      m.root.style.display = "none";
+      await nextFrame();
+      m.root.style.display = "block";
+      await nextFrame();
+      await renderSnapshotCommitted(m.runtime, state);
+      await nextFrame();
+      await nextFrame();
+    }
+    expect(
+      dumpRows(m.terminal)
+        .map((row) => row.text)
+        .filter(Boolean),
+    ).toEqual(lines);
+    expect(m.terminal.buffer.active.cursorX).toBe(2);
+    expect(m.terminal.buffer.active.baseY + m.terminal.buffer.active.cursorY).toBe(
+      state.scrollback.length + state.cursor.row,
+    );
+  });
+
   it("snapshot-restored rows stay frozen at the snapshot width after the terminal grows", async () => {
     await page.viewport(1600, 700);
     const m = mount(560, 360); // ~70 cols
