@@ -523,6 +523,7 @@ describe("checkout git utilities", () => {
 
   it("honors commit signing configuration", async () => {
     execFileSync("git", ["config", "commit.gpgsign", "true"], { cwd: repoDir });
+    execFileSync("git", ["config", "gpg.format", "openpgp"], { cwd: repoDir });
     execFileSync("git", ["config", "gpg.program", process.execPath], { cwd: repoDir });
     writeFileSync(join(repoDir, "file.txt"), "signed\n");
 
@@ -3576,6 +3577,7 @@ const x = 1;
       cwd: repoDir,
     });
     execFileSync("git", ["config", "commit.gpgsign", "true"], { cwd: repoDir });
+    execFileSync("git", ["config", "gpg.format", "openpgp"], { cwd: repoDir });
     execFileSync("git", ["config", "gpg.program", process.execPath], { cwd: repoDir });
 
     await expect(mergeToBase(repoDir, { baseRef: "main", mode: "squash" })).rejects.toThrow(
