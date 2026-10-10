@@ -37,6 +37,7 @@ vi.mock("lucide-react-native", () => {
     Ellipsis: StubIcon,
     Pencil: StubIcon,
     RotateCw: StubIcon,
+    Sparkles: StubIcon,
     X: StubIcon,
   };
 });
@@ -146,6 +147,7 @@ function renderAccessory(
     onCopyFilePath: vi.fn(),
     onReloadAgent: vi.fn(),
     onRenameTab,
+    onRetitleAgent: vi.fn(),
     onCloseTab: vi.fn(),
     onCloseTabsBefore: vi.fn(),
     onCloseTabsAfter: vi.fn(),

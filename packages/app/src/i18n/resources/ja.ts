@@ -654,6 +654,7 @@ export const ja: TranslationResources = {
         close: "閉じる",
         renameTerminal: "ターミナルの名前を変更",
         renameAgent: "エージェントの名前を変更",
+        aiRenameAgent: "AI で名前を変更",
       },
       actions: {
         newTab: "新しいタブ",
@@ -692,6 +693,7 @@ export const ja: TranslationResources = {
         reloadingAgent: "エージェントを再読み込み中...",
         reloadedAgent: "エージェントを再読み込みしました",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
+        failedToRetitleAgent: "エージェントの名前変更に失敗しました",
         failedToCloseAgent: "エージェントを閉じられませんでした",
       },
       confirmations: {

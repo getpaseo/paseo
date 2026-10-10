@@ -416,6 +416,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onRetitleAgent: (agentId: string) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
@@ -523,6 +524,7 @@ function MobileWorkspaceTabOption({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onRetitleAgent,
   onCloseTab,
   onCloseTabsAbove,
   onCloseTabsBelow,
@@ -542,6 +544,7 @@ function MobileWorkspaceTabOption({
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onRetitleAgent: (agentId: string) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
@@ -555,6 +558,7 @@ function MobileWorkspaceTabOption({
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
+      aiRenameAgent: t("workspace.tabs.menu.aiRenameAgent"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
       closeLeft: t("workspace.tabs.menu.closeLeft"),
@@ -579,6 +583,7 @@ function MobileWorkspaceTabOption({
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,
+    onRetitleAgent,
     onCloseTab,
     onCloseTabsBefore: onCloseTabsAbove,
     onCloseTabsAfter: onCloseTabsBelow,
@@ -651,6 +656,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onRetitleAgent,
   onCloseTab,
   onCloseTabsAbove,
   onCloseTabsBelow,
@@ -708,6 +714,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
+          onRetitleAgent={onRetitleAgent}
           onCloseTab={onCloseTab}
           onCloseTabsAbove={onCloseTabsAbove}
           onCloseTabsBelow={onCloseTabsBelow}
@@ -727,6 +734,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       onCopyFilePath,
       onReloadAgent,
       onRenameTab,
+      onRetitleAgent,
       onCloseTab,
       onCloseTabsAbove,
       onCloseTabsBelow,
@@ -2778,6 +2786,27 @@ function WorkspaceScreenContent({
     [client, isConnected, normalizedServerId, toast, t],
   );
 
+  const handleRetitleAgent = useCallback(
+    async (agentId: string) => {
+      if (!agentId) return;
+      if (!client || !isConnected) {
+        toast.error(t("workspace.terminal.hostDisconnected"));
+        return;
+      }
+      // The daemon recognizes this label as "regenerate the title from the
+      // latest user messages" and answers with the normal update_agent_response
+      // plus an agent_update broadcast once the generated title lands.
+      try {
+        await client.updateAgent(agentId, { labels: { "paseo.retitle": "1" } });
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToRetitleAgent"),
+        );
+      }
+    },
+    [client, isConnected, toast, t],
+  );
+
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
       toast.error(t("workspace.header.toasts.workspacePathUnavailable"));
@@ -3976,6 +4005,7 @@ function WorkspaceScreenContent({
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
+        onRetitleAgent={handleRetitleAgent}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
         onCloseOtherTabs={handleCloseOtherTabsInPane}
@@ -4012,6 +4042,7 @@ function WorkspaceScreenContent({
     handleCopyFilePath,
     handleReloadAgent,
     handleRenameTab,
+    handleRetitleAgent,
     handleCloseTabsToLeftInPane,
     handleCloseTabsToRightInPane,
     handleCloseOtherTabsInPane,
@@ -4055,6 +4086,7 @@ function WorkspaceScreenContent({
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
+          onRetitleAgent={handleRetitleAgent}
           onCloseTab={handleCloseTabById}
           onCloseTabsAbove={handleCloseTabsToLeft}
           onCloseTabsBelow={handleCloseTabsToRight}
@@ -4079,6 +4111,7 @@ function WorkspaceScreenContent({
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
             onRenameTab={handleRenameTab}
+            onRetitleAgent={handleRetitleAgent}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}

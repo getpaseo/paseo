@@ -653,6 +653,7 @@ export const fr: TranslationResources = {
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l’agent",
+        aiRenameAgent: "Renommer avec l’IA",
       },
       actions: {
         newTab: "Nouvel onglet",
@@ -691,6 +692,7 @@ export const fr: TranslationResources = {
         reloadingAgent: "Rechargement de l’agent…",
         reloadedAgent: "Agent rechargé",
         failedToReloadAgent: "Impossible de recharger l’agent",
+        failedToRetitleAgent: "Impossible de renommer l’agent",
         failedToCloseAgent: "Impossible de fermer l’agent",
       },
       confirmations: {

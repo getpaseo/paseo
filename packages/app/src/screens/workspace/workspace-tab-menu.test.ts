@@ -38,6 +38,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath,
       onReloadAgent,
       onRenameTab,
+      onRetitleAgent: vi.fn(),
       onCloseTab,
       onCloseTabsBefore,
       onCloseTabsAfter,
@@ -48,6 +49,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Copy resume command",
       "Copy agent id",
       "Rename",
+      "Rename with AI",
       "Close to the left",
       "Close to the right",
       "Close other tabs",
@@ -69,6 +71,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -79,6 +82,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Copy resume command",
       "Copy agent id",
       "Rename",
+      "Rename with AI",
       "Close tabs above",
       "Close tabs below",
       "Close other tabs",
@@ -105,6 +109,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -134,6 +139,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -164,6 +170,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -177,6 +184,65 @@ describe("buildWorkspaceTabMenuEntries", () => {
     renameEntry.onSelect();
 
     expect(onRenameTab).toHaveBeenCalledWith(tab);
+  });
+
+  it("invokes onRetitleAgent with the agent id when the AI rename entry is selected", () => {
+    const onRetitleAgent = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onRetitleAgent,
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const entry = entries.find((item) => item.kind === "item" && item.key === "ai-rename");
+    if (!entry || entry.kind !== "item") {
+      throw new Error("AI rename entry missing");
+    }
+    entry.onSelect();
+
+    expect(onRetitleAgent).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("omits the AI rename entry for non-agent tabs", () => {
+    const terminalTab: WorkspaceTabDescriptor = {
+      key: "terminal_abc",
+      tabId: "terminal_abc",
+      kind: "terminal",
+      target: { kind: "terminal", terminalId: "terminal-abc" },
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: terminalTab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-terminal_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries.some((entry) => entry.kind === "item" && entry.key === "ai-rename")).toBe(false);
   });
 
   it("includes copy id and rename for terminal tabs", () => {
@@ -200,6 +266,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -251,6 +318,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath,
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -294,6 +362,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsToLeft: vi.fn(),
       onCloseTabsToRight: vi.fn(),
@@ -325,6 +394,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onRetitleAgent: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),

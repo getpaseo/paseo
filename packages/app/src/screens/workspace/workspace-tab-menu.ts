@@ -11,6 +11,7 @@ export interface WorkspaceTabMenuLabels {
   copyTerminalId: string;
   copyFilePath: string;
   rename: string;
+  aiRenameAgent: string;
   closeAbove: string;
   closeBelow: string;
   closeLeft: string;
@@ -27,6 +28,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
+  aiRenameAgent: i18n.t("workspace.tabs.menu.aiRenameAgent"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
   closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
   closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
@@ -49,6 +51,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "sparkles"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -74,6 +77,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onRetitleAgent: (agentId: string) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
@@ -91,6 +95,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onRetitleAgent: (agentId: string) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -178,6 +183,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,
+    onRetitleAgent,
     onCloseTab,
     onCloseTabsBefore,
     onCloseTabsAfter,
@@ -254,6 +260,21 @@ export function buildWorkspaceTabMenuEntries(
         onRenameTab(tab);
       },
     });
+  }
+  if (tab.target.kind === "agent") {
+    const { agentId } = tab.target;
+    entries.push({
+      kind: "item",
+      key: "ai-rename",
+      label: labels.aiRenameAgent,
+      icon: "sparkles",
+      testID: `${menuTestIDBase}-ai-rename`,
+      onSelect: () => {
+        void onRetitleAgent(agentId);
+      },
+    });
+  }
+  if (tab.target.kind === "agent" || tab.target.kind === "terminal") {
     entries.push({
       kind: "separator",
       key: "rename-separator",
@@ -339,6 +360,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
       onRenameTab: input.onRenameTab,
+      onRetitleAgent: input.onRetitleAgent,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,

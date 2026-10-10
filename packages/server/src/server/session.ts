@@ -3402,12 +3402,57 @@ export class Session {
     };
   }
 
+  private async retitleAgentFromRecentPrompts(agentId: string, requestId: string): Promise<void> {
+    const respond = (accepted: boolean, error: string | null) =>
+      this.emit({
+        type: "update_agent_response" as const,
+        payload: { requestId, agentId, accepted, error },
+      });
+    try {
+      await ensureAgentLoaded(agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const rows = await this.agentManager.getTimelineRows(agentId);
+      const prompts = rows
+        .flatMap((row) => {
+          if (row.item.type !== "user_message") return [];
+          const text = row.item.text.trim();
+          return text.length > 0 ? [text] : [];
+        })
+        .slice(-5);
+      if (prompts.length === 0) {
+        respond(false, "no user messages to summarize");
+        return;
+      }
+      const stored = await this.agentStorage.get(agentId);
+      const cwd = stored?.cwd ?? "";
+      respond(true, null);
+      const title = await this.workspaceAutoName.generateAgentTitle({
+        cwd,
+        prompt: prompts.join("\n\n"),
+        currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
+      });
+      if (title) {
+        await this.agentManager.setTitle(agentId, title);
+      }
+    } catch (error) {
+      this.sessionLogger.error({ err: error, agentId, requestId }, "session: agent retitle failed");
+      respond(false, getErrorMessage(error));
+    }
+  }
+
   private async handleUpdateAgentRequest(
     agentId: string,
     name: string | undefined,
     labels: Record<string, string> | undefined,
     requestId: string,
   ): Promise<void> {
+    if (name === undefined && labels?.["paseo.retitle"] === "1") {
+      await this.retitleAgentFromRecentPrompts(agentId, requestId);
+      return;
+    }
     this.sessionLogger.info(
       {
         agentId,
