@@ -42,6 +42,7 @@ import {
   type ProviderRefreshContext,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { ToolPolicyUnsupportedError } from "../../provider-options.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
@@ -260,6 +261,8 @@ interface PiMcpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  exposure?: "hidden";
+  toolExposure?: Record<string, "direct">;
 }
 
 // Pi's built-in MCP extension takes servers from Paseo's extension; pi-mcp-adapter replaces it
@@ -577,6 +580,26 @@ function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<
     throw new Error(`Pi MCP config must contain a JSON object: ${globalConfigPath}`);
   }
   return globalConfig;
+}
+
+function assertPiMcpConfigHasNoOverrides(
+  configurations: Record<string, unknown>[],
+  toolPolicy: NonNullable<AgentSessionConfig["toolPolicy"]>,
+): void {
+  for (const configuration of configurations) {
+    const configuredServers = configuration.mcpServers ?? configuration["mcp-servers"];
+    for (const grant of toolPolicy.preapproved) {
+      // Pi compares MCP namespaces, where "-" and "_" identify the same server.
+      if (
+        isRecord(configuredServers) &&
+        Object.keys(configuredServers).some(
+          (name) => name.replace(/-/g, "_") === grant.server.replace(/-/g, "_"),
+        )
+      ) {
+        throw new Error(`Pi MCP config overrides injected server "${grant.server}"`);
+      }
+    }
+  }
 }
 
 function createPiMcpConfigFile(
@@ -2512,7 +2535,13 @@ export class PiRpcAgentClient implements AgentClient {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
     };
-    const mcp = await this.prepareMcpInjection(config.cwd, config.mcpServers, mcpEnv, runtime);
+    const mcp = await this.prepareMcpInjection(
+      config.cwd,
+      config.mcpServers,
+      mcpEnv,
+      runtime,
+      config.toolPolicy,
+    );
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
@@ -2579,6 +2608,7 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.config.mcpServers,
       mcpEnv,
       runtime,
+      resumeConfig.config.toolPolicy,
     );
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
@@ -2776,13 +2806,43 @@ export class PiRpcAgentClient implements AgentClient {
     servers: Record<string, McpServerConfig> | undefined,
     env: Record<string, string> | undefined,
     runtime: PiRuntime,
+    toolPolicy?: AgentSessionConfig["toolPolicy"],
   ): Promise<PiMcpInjection | null> {
+    for (const grant of toolPolicy?.preapproved ?? []) {
+      if (
+        !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(grant.tool) ||
+        !Object.hasOwn(servers ?? {}, grant.server)
+      ) {
+        throw new Error("Pi requires exact MCP grants for an injected server");
+      }
+    }
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
     const mcpSupport = await this.detectMcpSupport(cwd, env, runtime);
+    if (toolPolicy && mcpSupport !== "builtin") {
+      throw new ToolPolicyUnsupportedError(
+        "pi",
+        "Pi exact MCP preapproval requires built-in MCP support",
+      );
+    }
     if (mcpSupport === "builtin") {
-      return { kind: "builtin", servers: toPiBuiltinMcpServers(servers) };
+      const piServers = toPiBuiltinMcpServers(servers);
+      if (toolPolicy) {
+        const configurations = [
+          readPiGlobalMcpConfig(env),
+          readPiGlobalMcpConfig({ PI_CODING_AGENT_DIR: join(cwd, ".pi") }),
+        ];
+        assertPiMcpConfigHasNoOverrides(configurations, toolPolicy);
+      }
+      // Pi has no native approval mode. Limit exposure to the exact grants without bypassing
+      // permission extensions, whose tool_call handlers still apply to these MCP calls.
+      for (const grant of toolPolicy?.preapproved ?? []) {
+        const server = piServers[grant.server]!;
+        server.exposure = "hidden";
+        server.toolExposure = { ...server.toolExposure, [grant.tool]: "direct" };
+      }
+      return { kind: "builtin", servers: piServers };
     }
     if (mcpSupport === "adapter") {
       return {

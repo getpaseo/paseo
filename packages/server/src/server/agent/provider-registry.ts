@@ -154,6 +154,7 @@ const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
   claude: { supportsExactMcpPreapproval: true },
   codex: { supportsExactMcpPreapproval: true },
   opencode: { supportsExactMcpPreapproval: true },
+  pi: { supportsExactMcpPreapproval: true },
 };
 
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
