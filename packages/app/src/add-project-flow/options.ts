@@ -87,6 +87,14 @@ export function pathBaseName(path: string): string {
   return parts[parts.length - 1] ?? trimmed;
 }
 
+export function directoryBrowsePath(path: string): string {
+  // Suggestions are absolute daemon paths. Backslashes can be literal POSIX filename characters.
+  const windowsPath = /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+  const separator = windowsPath && path.includes("\\") ? "\\" : "/";
+  const hasSeparator = windowsPath ? /[\\/]$/.test(path) : path.endsWith("/");
+  return hasSeparator ? path : `${path}${separator}`;
+}
+
 export function buildManualGithubRepositoryChoices(query: string): GithubRepositoryChoice[] {
   const repo = query.trim();
   if (!repo) return [];
