@@ -60,7 +60,6 @@ import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
-import { useComposerTextMeasurement } from "./text-measurement";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
@@ -651,11 +650,10 @@ interface ComposerTextSurfaceProps {
  */
 function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElement {
   const { onChangeText, onRenderedLinesChange } = props;
-  const [measurementText, setMeasurementText] = useComposerTextMeasurement(
-    props.value,
-    props.textReplacementKey,
-    !isWeb,
-  );
+  const [measurementText, setMeasurementText] = useState(props.value);
+  useEffect(() => {
+    if (!isWeb) setMeasurementText(props.value);
+  }, [props.value, props.textReplacementKey]);
   const handleTextChange = useCallback(
     (text: string) => {
       if (!isWeb) setMeasurementText(text);

@@ -2,9 +2,6 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { EditingTextInput as ComposerTextInput } from "@/components/ui/text-input/text-input.web";
-import { useComposerTextMeasurement } from "./text-measurement";
-import { resolveComposerSurfaceText } from "./state";
-import type { TextReplacement } from "@/composer/types";
 import type { EditingTextInputHandle as ComposerTextInputHandle } from "@/components/ui/text-input";
 
 interface MountedInput {
@@ -238,73 +235,5 @@ describe("ComposerTextInput web IME composition", () => {
     });
 
     expect(mounted.textarea.value).toBe("");
-  });
-});
-
-describe("composer line measurement text", () => {
-  it("applies replacements without publishing live typing through the parent", () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    let reportTypedText: (text: string) => void = () => {};
-    let parentRenders = 0;
-    function Surface({ text, replacementKey }: { text: string; replacementKey: string }) {
-      const [measuredText, editText] = useComposerTextMeasurement(text, replacementKey, true);
-      reportTypedText = editText;
-      return <span>{measuredText}</span>;
-    }
-    function Editor({
-      liveText,
-      replacementText,
-      replacementKey,
-      appliedKey,
-    }: {
-      liveText: string;
-      replacementText: string;
-      replacementKey: string;
-      appliedKey: string;
-    }) {
-      parentRenders += 1;
-      const replacement: TextReplacement = {
-        kind: "replace",
-        text: replacementText,
-        key: replacementKey,
-      };
-      return (
-        <Surface
-          text={resolveComposerSurfaceText(liveText, replacement, appliedKey)}
-          replacementKey={replacementKey}
-        />
-      );
-    }
-    function replaceDraft(liveText: string, key: string, text: string, appliedKey: string) {
-      act(() =>
-        root.render(
-          <Editor
-            liveText={liveText}
-            replacementText={text}
-            replacementKey={key}
-            appliedKey={appliedKey}
-          />,
-        ),
-      );
-    }
-    try {
-      replaceDraft("Short draft", "draft:1", "Short draft", "draft:1");
-      expect(container.textContent).toBe("Short draft");
-      replaceDraft("Short draft", "draft:2", "First\nSecond\nThird", "draft:1");
-      expect(container.textContent).toBe("First\nSecond\nThird");
-      const beforeTyping = parentRenders;
-      act(() => reportTypedText("Locally edited"));
-      expect(container.textContent).toBe("Locally edited");
-      expect(parentRenders).toBe(beforeTyping);
-      replaceDraft("Locally edited", "draft:3", "First\nSecond\nThird", "draft:2");
-      expect(container.textContent).toBe("First\nSecond\nThird");
-      replaceDraft("Live handoff", "draft:3", "First\nSecond\nThird", "draft:3");
-      expect(container.textContent).toBe("Live handoff");
-    } finally {
-      act(() => root.unmount());
-      container.remove();
-    }
   });
 });
