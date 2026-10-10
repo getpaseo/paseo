@@ -308,6 +308,10 @@ async function dispatchExternalUrl(input: {
   ) {
     return;
   }
+  if (current.onOpenExternalUrl) {
+    await current.onOpenExternalUrl(input.url);
+    return;
+  }
   await openExternalUrl(input.url);
 }
 

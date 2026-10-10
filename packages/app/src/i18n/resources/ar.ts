@@ -1868,6 +1868,12 @@ export const ar: TranslationResources = {
     externalBrowser: "متصفح خارجي",
     dontAskAgain: "لا تسأل مرة أخرى",
   },
+  chatLink: {
+    title: "فتح عنوان URL",
+    message: "هل تريد فتح {{url}} في Paseo أم في متصفحك الخارجي؟",
+    internalTab: "المتصفح الداخلي — علامة تبويب",
+    externalBrowser: "المتصفح الخارجي",
+  },
   downloads: {
     requestTokenFailed: "فشل طلب رمز التنزيل.",
     hostUnavailable: "مضيف التنزيل غير متاح.",
@@ -2146,6 +2152,14 @@ export const ar: TranslationResources = {
           ask: "بسأل",
           inApp: "في Paseo",
           external: "متصفح خارجي",
+        },
+      },
+      chatLinks: {
+        options: {
+          ask: "اسأل",
+          internalSide: "المتصفح الداخلي — الجانب",
+          internalTab: "المتصفح الداخلي — علامة تبويب",
+          external: "المتصفح الخارجي",
         },
       },
       terminalScrollback: {

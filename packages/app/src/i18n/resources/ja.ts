@@ -1887,6 +1887,12 @@ export const ja: TranslationResources = {
     externalBrowser: "外部ブラウザ",
     dontAskAgain: "次回から確認しない",
   },
+  chatLink: {
+    title: "URLを開く",
+    message: "{{url}} を Paseo または外部ブラウザで開きますか？",
+    internalTab: "内部ブラウザ — タブ",
+    externalBrowser: "外部ブラウザ",
+  },
   downloads: {
     requestTokenFailed: "ダウンロードトークンのリクエストに失敗しました。",
     hostUnavailable: "ダウンロードホストが利用できません。",
@@ -2165,6 +2171,14 @@ export const ja: TranslationResources = {
         options: {
           ask: "確認する",
           inApp: "Paseoで",
+          external: "外部ブラウザ",
+        },
+      },
+      chatLinks: {
+        options: {
+          ask: "確認する",
+          internalSide: "内部ブラウザ — サイド",
+          internalTab: "内部ブラウザ — タブ",
           external: "外部ブラウザ",
         },
       },
