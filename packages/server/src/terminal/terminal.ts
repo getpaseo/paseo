@@ -90,7 +90,7 @@ export interface TerminalSession {
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   getActivity(): TerminalActivity | null;
-  setActivity(state: TerminalActivityState): void;
+  setActivity(state: TerminalActivityState, atNs?: string): void;
   clearActivityAttention(): boolean;
   setTitle(title: string): void;
   getExitInfo(): TerminalExitInfo | null;
@@ -1441,8 +1441,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return toTerminalActivity(activityTracker.getSnapshot());
   }
 
-  function setActivity(state: TerminalActivityState): void {
-    activityTracker.set(state);
+  function setActivity(state: TerminalActivityState, atNs?: string): void {
+    activityTracker.set(state, atNs);
   }
 
   function clearActivityAttention(): boolean {

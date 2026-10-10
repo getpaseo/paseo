@@ -14,12 +14,22 @@ export class TerminalActivityTracker {
   private resolvedState: TerminalActivityState | null = null;
   private attentionReason: TerminalActivityAttentionReason | null = null;
   private changedAt = Date.now();
+  private lastReportAtNs: bigint | null = null;
 
   private readonly changeListeners = new Set<
     (snapshot: TerminalActivitySnapshot, previous: TerminalActivitySnapshot) => void
   >();
 
-  set(state: TerminalActivityState): void {
+  set(state: TerminalActivityState, atNs?: string): void {
+    if (atNs !== undefined) {
+      const timestamp = BigInt(atNs);
+      if (this.lastReportAtNs !== null && timestamp <= this.lastReportAtNs) {
+        return;
+      }
+      // Advance even when state is unchanged; a newer busy report supersedes an old Stop.
+      this.lastReportAtNs = timestamp;
+    }
+
     if (state === "idle" && this.resolvedState === "working") {
       this.setState("idle", "finished");
       return;

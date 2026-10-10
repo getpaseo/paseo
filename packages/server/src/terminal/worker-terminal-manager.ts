@@ -320,9 +320,11 @@ export function createWorkerTerminalManager(
       getActivity(): TerminalActivity | null {
         return record.activity;
       },
-      setActivity(state: TerminalActivityState): void {
-        record.activity = { state, changedAt: Date.now() };
-        sendBestEffortRequest({ type: "setActivity", terminalId: record.info.id, state });
+      setActivity(state: TerminalActivityState, atNs?: string): void {
+        if (atNs === undefined) {
+          record.activity = { state, changedAt: Date.now() };
+        }
+        sendBestEffortRequest({ type: "setActivity", terminalId: record.info.id, state, atNs });
       },
       clearActivityAttention(): boolean {
         if (record.activity?.attentionReason == null) {
@@ -761,12 +763,16 @@ export function createWorkerTerminalManager(
       return true;
     },
 
-    async setTerminalActivity(id: string, state: TerminalActivityState): Promise<boolean> {
+    async setTerminalActivity(
+      id: string,
+      state: TerminalActivityState,
+      atNs?: string,
+    ): Promise<boolean> {
       const record = recordsById.get(id);
       if (!record) {
         return false;
       }
-      await sendRequest({ type: "setActivity", terminalId: id, state });
+      await sendRequest({ type: "setActivity", terminalId: id, state, atNs });
       return true;
     },
 
