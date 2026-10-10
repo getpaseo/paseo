@@ -69,6 +69,12 @@ export interface CachedTimeline {
 }
 
 const PERSIST_DELAY_MS = 1_000;
+// A store that keeps rejecting writes (a corrupt or blocked IndexedDB is the
+// observed case) used to retry on a fixed 1s timer forever — one full
+// serialize-and-transact pass per second per process, which spun renderers at a
+// whole core for days. Retries instead back off exponentially to this cap and
+// reset on the first successful write.
+const PERSIST_MAX_RETRY_DELAY_MS = 60_000;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
 const IsoDateSchema = z.iso.datetime();
@@ -893,6 +899,7 @@ export class ReplicaCache {
   private readonly maxBytes: number;
   private totalBytes = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistFailureCount = 0;
   private writeQueue: Promise<void> = Promise.resolve();
   private preparePromise: Promise<void> | null = null;
   private storedIndexPromise: Promise<void> | null = null;
@@ -1213,7 +1220,10 @@ export class ReplicaCache {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
-    if (!this.hasPendingChanges()) return true;
+    if (!this.hasPendingChanges()) {
+      this.persistFailureCount = 0;
+      return true;
+    }
     const write = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
@@ -1230,11 +1240,29 @@ export class ReplicaCache {
           for (const serverId of pending.baselines) {
             if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
           }
-        } catch {
+        } catch (error) {
           this.restorePendingChanges(pending);
-          if (this.hasPendingChanges()) this.schedulePersist();
+          if (!this.hasPendingChanges()) {
+            this.persistFailureCount = 0;
+            return false;
+          }
+          this.persistFailureCount += 1;
+          const retryDelayMs = this.persistRetryDelayMs();
+          console.warn("[ReplicaCache] Failed to persist replica rows; will retry", {
+            retryDelayMs,
+            error,
+          });
+          // A commit that raced this attempt may have armed the debounce timer;
+          // the failure's backoff owns the next attempt so a stream of commits
+          // against a rejecting store cannot pin retries at the base delay.
+          if (this.persistTimer) {
+            clearTimeout(this.persistTimer);
+            this.persistTimer = null;
+          }
+          this.schedulePersist(retryDelayMs);
           return false;
         }
+        this.persistFailureCount = 0;
         return true;
       });
     // The queue only sequences writes; every consumer decides for itself what a failure means.
@@ -1500,34 +1528,46 @@ export class ReplicaCache {
   }
 
   private prepareStore(): Promise<void> {
-    this.preparePromise ??= (async () => {
-      await this.rowStore.open();
-      // COMPAT(replica-blob-cache): remove after 2026-11
-      await this.clearLegacyCache().catch(() => undefined);
-    })();
-    return this.preparePromise;
+    // open() runs on every call rather than once inside the memoized promise: a
+    // connection dropped after a successful open (a second context deleting or
+    // upgrading the database closes ours) must be re-established on the next
+    // attempt instead of leaving every operation to throw "not been opened".
+    return this.rowStore.open().then(
+      () =>
+        (this.preparePromise ??=
+          // COMPAT(replica-blob-cache): remove after 2026-11
+          this.clearLegacyCache().catch(() => undefined)),
+    );
   }
 
   private ensureStoredIndex(): Promise<void> {
-    this.storedIndexPromise ??= this.rowStore.readAll().then(async (hosts) => {
-      this.storedRows.clear();
-      this.hostBytes.clear();
-      this.hostWriteOrder.clear();
-      this.totalBytes = 0;
-      for (const host of hosts) {
-        if (!this.activeServerIds.has(host.serverId)) {
-          await this.rowStore.deleteHost(host.serverId);
-          continue;
+    this.storedIndexPromise ??= this.rowStore
+      .readAll()
+      .then(async (hosts) => {
+        this.storedRows.clear();
+        this.hostBytes.clear();
+        this.hostWriteOrder.clear();
+        this.totalBytes = 0;
+        for (const host of hosts) {
+          if (!this.activeServerIds.has(host.serverId)) {
+            await this.rowStore.deleteHost(host.serverId);
+            continue;
+          }
+          const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
+          const bytes = host.rows.reduce((sum, row) => sum + rowBytes(row), 0);
+          this.storedRows.set(host.serverId, rows);
+          this.hostBytes.set(host.serverId, bytes);
+          this.totalBytes += bytes;
+          this.touchHost(host.serverId);
         }
-        const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
-        const bytes = host.rows.reduce((sum, row) => sum + rowBytes(row), 0);
-        this.storedRows.set(host.serverId, rows);
-        this.hostBytes.set(host.serverId, bytes);
-        this.totalBytes += bytes;
-        this.touchHost(host.serverId);
-      }
-      return undefined;
-    });
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        // A rejected promise cannot be memoized: left in place it re-throws on
+        // every persist attempt forever and the real readAll() never retries.
+        this.storedIndexPromise = null;
+        throw error;
+      });
     return this.storedIndexPromise;
   }
 
@@ -1543,11 +1583,16 @@ export class ReplicaCache {
     return this.writeQueue;
   }
 
-  private schedulePersist(): void {
+  private persistRetryDelayMs(): number {
+    const exponent = Math.min(Math.max(this.persistFailureCount - 1, 0), 10);
+    return Math.min(PERSIST_DELAY_MS * 2 ** exponent, PERSIST_MAX_RETRY_DELAY_MS);
+  }
+
+  private schedulePersist(delayMs: number = PERSIST_DELAY_MS): void {
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
       void this.flushPending();
-    }, PERSIST_DELAY_MS);
+    }, delayMs);
   }
 }

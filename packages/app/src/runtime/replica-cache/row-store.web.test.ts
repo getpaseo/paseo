@@ -24,6 +24,32 @@ runReplicaRowStoreContract("IndexedDB", async () => {
   };
 });
 
+it("releases its connection when another context deletes the database, then reconnects", async () => {
+  const databaseName = `replica-row-store-deleted-${databaseSequence++}`;
+  const store = createIndexedDbReplicaRowStore({ databaseName, schemaVersion: 1 });
+  await store.open();
+  await store.apply({
+    upserts: [{ serverId: "server-a", kind: "agent", id: "agent-1", payload: "a" }],
+    deletes: [],
+  });
+
+  // Deleting the replica database is the documented recovery for a corrupted
+  // cache; a live connection that ignored versionchange would block it forever.
+  await new Promise<void>((resolve, reject) => {
+    const request = fakeIndexedDb.deleteDatabase(databaseName);
+    request.addEventListener("success", () => resolve());
+    request.addEventListener("error", () =>
+      reject(request.error ?? new Error("database deletion failed")),
+    );
+    request.addEventListener("blocked", () =>
+      reject(new Error("database deletion was blocked by the open connection")),
+    );
+  });
+
+  await store.open();
+  expect(await store.readAll()).toEqual([]);
+});
+
 it("uses exact IndexedDB keys for targeted rows instead of scanning the host", async () => {
   const store = createIndexedDbReplicaRowStore({
     databaseName: `replica-row-store-targeted-${databaseSequence++}`,
