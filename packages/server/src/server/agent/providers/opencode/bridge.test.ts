@@ -9,6 +9,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import { createPaseoToolCatalog } from "../../tools/paseo-tools.js";
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
 import {
   OpenCodeBridge,
   loadOpenCodeBridgePluginArtifact,
@@ -291,12 +295,81 @@ describe("OpenCodeBridge", () => {
       ).resolves.toMatchObject({ content: [{ type: "text", text: "child result" }] });
       await expect(
         tools.get("paseo_echo_context")!.execute({ value: "blocked" }, { sessionID: "disabled" }),
-      ).rejects.toThrow("HTTP 403");
+      ).rejects.toMatchObject({
+        message: "Paseo tools are disabled for this session",
+        status: 403,
+      });
       await dispose();
     } finally {
       release();
       releaseDisabled();
       await bridge.close();
+    }
+  });
+
+  test("v2 plugin preserves create_agent validation errors from the daemon", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-errors-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger });
+    const catalog = createPaseoToolCatalog({
+      agentManager: new AgentManager({ logger }),
+      agentStorage: new AgentStorage(paseoHome, logger),
+      providerSnapshotManager,
+      logger,
+    });
+    const bridge = new OpenCodeBridge({ paseoHome, logger });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    const release = bridge.bindSession({ sessionId: "caller", env: {}, tools: catalog });
+    try {
+      const env = await bridge.decorateV2ServerEnv({});
+      const { plugins } = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+      const plugin = plugins[0];
+      const module = await import(
+        pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
+      );
+      const tools = new Map<string, V2TestTool>();
+      const dispose = await module.default.setup({
+        options: plugin.options,
+        tool: {
+          transform: async (transform: (editor: { add(tool: V2TestTool): void }) => void) => {
+            transform({ add: (tool) => tools.set(tool.name, tool) });
+            return { dispose: async () => undefined };
+          },
+        },
+        session: {
+          context: async () => [],
+          get: async () => ({ parentID: "" }),
+          hook: async () => ({ dispose: async () => undefined }),
+        },
+      } satisfies V2TestPluginContext);
+      try {
+        const input = { provider: "codex", title: "Invalid provider", initialPrompt: "Hello" };
+        const response = await fetch(
+          `${plugin.options.baseUrl}/_internal/opencode/sessions/caller/tools/create_agent`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${plugin.options.token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input),
+          },
+        );
+        expect(response.status).toBe(500);
+        const payload = await response.json();
+        expect(payload.error).toContain("provider must be provider/model");
+        await expect(
+          tools.get("paseo_create_agent")!.execute(input, { sessionID: "caller" }),
+        ).rejects.toMatchObject({ message: payload.error, status: 500 });
+      } finally {
+        await dispose();
+      }
+    } finally {
+      release();
+      await bridge.close();
+      await providerSnapshotManager.shutdown();
     }
   });
 

@@ -9,7 +9,10 @@ import { usageCopy } from "./copy";
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
-/** Refreshes every report on the host; spins while a refresh is in flight. */
+/**
+ * Refreshes every report on the host; spins while a refresh is in flight. On compact it sits in the
+ * header's island, so its highlight is round.
+ */
 export function UsageRefreshButton({ busy, onRefresh }: { busy: boolean; onRefresh: () => void }) {
   const compact = useIsCompactFormFactor();
   const iconSize = paneContentToolbarIconSize(compact);
