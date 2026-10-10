@@ -1,0 +1,12 @@
+
+> @getpaseo/app@0.11.1 test:browser
+> vitest run --project browser src/components/add-remote-ssh-host-modal.browser.test.tsx --bail=1
+
+
+ RUN  v4.1.7 /home/rewen/.paseo/worktrees/3m44i0ag/mobile-ssh/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  11:10:39
+   Duration  3.42s (transform 0ms, setup 0ms, import 1.71s, tests 679ms, environment 0ms)

@@ -1,0 +1,7 @@
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+Exception in thread "main" java.util.concurrent.TimeoutException
+	at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:204)
+	at SshSmoke.stalledClose(SshSmoke.java:71)
+	at SshSmoke.main(SshSmoke.java:90)

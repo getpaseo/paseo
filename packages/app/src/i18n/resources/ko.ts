@@ -1714,7 +1714,7 @@ export const ko: TranslationResources = {
       },
       remoteSsh: {
         title: "원격 SSH",
-        description: "데스크톱 SSH 클라이언트를 통해 연결합니다.",
+        description: "SSH를 통해 연결합니다.",
       },
       scanQr: {
         title: "QR 코드 스캔",
@@ -1769,6 +1769,15 @@ export const ko: TranslationResources = {
     remoteSsh: {
       title: "원격 SSH",
       helper: "원격 호스트에서 실행 중인 Paseo 데몬에 연결합니다.",
+      keyImport: {
+        key: "개인 키",
+        import: "개인 키 가져오기",
+        passphrase: "키 암호문구 (선택 사항)",
+        fingerprint: "서버 지문",
+        verify: "신뢰하기 전에 이 지문을 서버의 지문과 비교하세요.",
+        trustAndConnect: "신뢰하고 연결",
+        required: "연결하려면 개인 키를 가져오세요.",
+      },
       fields: {
         target: "SSH 호스트",
         password: "데몬 비밀번호",

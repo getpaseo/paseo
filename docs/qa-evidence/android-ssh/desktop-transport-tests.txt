@@ -1,0 +1,12 @@
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/desktop/daemon/desktop-daemon-transport.test.ts --bail=1
+
+
+ RUN  v4.1.7 /home/rewen/.paseo/worktrees/3m44i0ag/mobile-ssh/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  11:13:27
+   Duration  1.94s (transform 1.38s, setup 46ms, import 1.72s, tests 58ms, environment 0ms)

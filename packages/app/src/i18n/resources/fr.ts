@@ -1746,7 +1746,7 @@ export const fr: TranslationResources = {
       },
       remoteSsh: {
         title: "SSH distant",
-        description: "Connexion via le client SSH de bureau.",
+        description: "Connexion via SSH.",
       },
       scanQr: {
         title: "Scanner le code QR",
@@ -1803,6 +1803,15 @@ export const fr: TranslationResources = {
     remoteSsh: {
       title: "SSH distant",
       helper: "Connectez-vous à un daemon Paseo qui tourne sur l’hôte distant.",
+      keyImport: {
+        key: "Clé privée",
+        import: "Importer une clé privée",
+        passphrase: "Phrase secrète de la clé (facultatif)",
+        fingerprint: "Empreinte du serveur",
+        verify: "Comparez cette empreinte avec celle du serveur avant de lui faire confiance.",
+        trustAndConnect: "Faire confiance et se connecter",
+        required: "Importez une clé privée pour vous connecter.",
+      },
       fields: {
         target: "Hôte SSH",
         password: "Mot de passe du daemon",

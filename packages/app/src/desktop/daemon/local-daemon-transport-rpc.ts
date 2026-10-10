@@ -3,25 +3,13 @@ import {
   listenToLocalTransportEvents,
   openLocalTransportSession,
   sendLocalTransportMessage,
-  type OpenLocalTransportSessionInput,
 } from "./desktop-daemon";
 
-export interface LocalDaemonTransportEvent {
-  sessionId: string;
-  kind: "open" | "message" | "close" | "error";
-  text?: string | null;
-  binaryBase64?: string | null;
-  code?: number | null;
-  reason?: string | null;
-  error?: string | null;
-}
-
-export interface LocalDaemonTransportRpc {
-  openSession(input: OpenLocalTransportSessionInput): Promise<void>;
-  listenToEvents(handler: (event: LocalDaemonTransportEvent) => void): Promise<() => void>;
-  sendMessage(input: { sessionId: string; text?: string; binaryBase64?: string }): Promise<void>;
-  closeSession(sessionId: string): Promise<void>;
-}
+import type { DaemonTransportBridge as LocalDaemonTransportRpc } from "@/hosts/daemon-transport-bridge";
+export type {
+  BridgeDaemonTransportEvent as LocalDaemonTransportEvent,
+  DaemonTransportBridge as LocalDaemonTransportRpc,
+} from "@/hosts/daemon-transport-bridge";
 
 export const defaultLocalDaemonTransportRpc: LocalDaemonTransportRpc = {
   openSession: openLocalTransportSession,

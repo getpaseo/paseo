@@ -3977,6 +3977,43 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("commits imported SSH credentials before publishing a saved host", async () => {
+    const store = createPairingStore({
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    await store.boot();
+    const hasImportedHost = () => store.getHosts().find((host) => host.serverId === "srv_ssh");
+    const commit = vi.fn(async () => {
+      expect(hasImportedHost()).toBeUndefined();
+    });
+    await store.probeAndUpsertRemoteSshConnection({
+      host: "deploy@example.com",
+      beforeSave: commit,
+    });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(
+      store.getHosts().find((host) => host.serverId === "srv_ssh")?.connections[0],
+    ).toMatchObject({ type: "remoteSsh", host: "deploy@example.com" });
+    store.syncHosts([]);
+  });
+
+  it("keeps the host unsaved when importing SSH credentials fails", async () => {
+    const store = createPairingStore({
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    await store.boot();
+    await expect(
+      store.probeAndUpsertRemoteSshConnection({
+        host: "deploy@example.com",
+        beforeSave: async () => {
+          throw new Error("Secure storage unavailable");
+        },
+      }),
+    ).rejects.toThrow("Secure storage unavailable");
+    expect(store.getHosts().find((host) => host.serverId === "srv_ssh")).toBeUndefined();
+    store.syncHosts([]);
+  });
+
   it("rejects Remote SSH probes without the daemon password, the way the daemon does", async () => {
     const store = createPairingStore({
       password: "s3cret",

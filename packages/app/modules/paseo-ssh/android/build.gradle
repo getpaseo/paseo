@@ -1,0 +1,16 @@
+apply plugin: 'com.android.library'
+group = 'sh.paseo.ssh'
+version = '0.1.0'
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+android { namespace "sh.paseo.ssh" }
+dependencies {
+  implementation 'com.hierynomus:sshj:0.41.1'
+  implementation 'org.bouncycastle:bcprov-jdk18on:1.86'
+  implementation 'org.bouncycastle:bcpkix-jdk18on:1.86'
+  testImplementation 'junit:junit:4.13.2'
+  implementation 'com.squareup.okhttp3:okhttp:4.9.2' // Match React Native's OkHttp ABI.
+}

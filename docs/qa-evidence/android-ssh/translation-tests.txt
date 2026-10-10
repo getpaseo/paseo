@@ -1,0 +1,12 @@
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/i18n/resources.test.ts --bail=1
+
+
+ RUN  v4.1.7 /home/rewen/.paseo/worktrees/3m44i0ag/mobile-ssh/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  39 passed (39)
+   Start at  11:15:58
+   Duration  1.65s (transform 577ms, setup 68ms, import 616ms, tests 785ms, environment 1ms)

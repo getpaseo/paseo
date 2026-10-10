@@ -1729,7 +1729,7 @@ export const en = {
       },
       remoteSsh: {
         title: "Remote SSH",
-        description: "Connect through the desktop SSH client.",
+        description: "Connect over SSH.",
       },
       scanQr: {
         title: "Scan QR code",
@@ -1785,6 +1785,15 @@ export const en = {
     remoteSsh: {
       title: "Remote SSH",
       helper: "Connect to a Paseo daemon running on the remote host.",
+      keyImport: {
+        key: "Private key",
+        import: "Import private key",
+        passphrase: "Key passphrase (optional)",
+        fingerprint: "Server fingerprint",
+        verify: "Compare this fingerprint with the server before trusting it.",
+        trustAndConnect: "Trust and connect",
+        required: "Import a private key to connect.",
+      },
       fields: {
         target: "SSH host",
         password: "Daemon password",

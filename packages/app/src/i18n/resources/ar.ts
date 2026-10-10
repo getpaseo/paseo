@@ -1704,7 +1704,7 @@ export const ar: TranslationResources = {
       },
       remoteSsh: {
         title: "SSH عن بُعد",
-        description: "الاتصال عبر عميل SSH لسطح المكتب.",
+        description: "الاتصال عبر SSH.",
       },
       scanQr: {
         title: "مسح رمز QR",
@@ -1761,6 +1761,15 @@ export const ar: TranslationResources = {
     remoteSsh: {
       title: "SSH عن بُعد",
       helper: "الاتصال بخادم Paseo يعمل على المضيف البعيد.",
+      keyImport: {
+        key: "المفتاح الخاص",
+        import: "استيراد مفتاح خاص",
+        passphrase: "عبارة مرور المفتاح (اختياري)",
+        fingerprint: "بصمة الخادم",
+        verify: "قارن هذه البصمة ببصمة الخادم قبل الوثوق به.",
+        trustAndConnect: "الوثوق والاتصال",
+        required: "استورد مفتاحًا خاصًا للاتصال.",
+      },
       fields: {
         target: "مضيف SSH",
         password: "كلمة مرور الدايمون",

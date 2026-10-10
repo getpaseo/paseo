@@ -1,0 +1,34 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :preBuild UP-TO-DATE
+> Task :preDebugBuild UP-TO-DATE
+> Task :generateDebugResValues UP-TO-DATE
+> Task :generateDebugResources UP-TO-DATE
+> Task :packageDebugResources UP-TO-DATE
+> Task :parseDebugLocalResources UP-TO-DATE
+> Task :generateDebugRFile UP-TO-DATE
+> Task :javaPreCompileDebug UP-TO-DATE
+> Task :preDebugUnitTestBuild UP-TO-DATE
+> Task :generateDebugUnitTestStubRFile UP-TO-DATE
+> Task :javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :compileDebugKotlin
+> Task :compileDebugJavaWithJavac NO-SOURCE
+> Task :bundleLibRuntimeToJarDebug
+> Task :bundleLibCompileToJarDebug
+> Task :processDebugJavaRes UP-TO-DATE
+> Task :compileDebugUnitTestKotlin
+> Task :compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :processDebugUnitTestJavaRes UP-TO-DATE
+> Task :testDebugUnitTest
+
+[Incubating] Problems report is available at: file:///native-check/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 20s
+15 actionable tasks: 5 executed, 10 up-to-date

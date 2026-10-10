@@ -1686,7 +1686,7 @@ export const zhCN: TranslationResources = {
       },
       remoteSsh: {
         title: "远程 SSH",
-        description: "通过桌面 SSH 客户端连接。",
+        description: "通过 SSH 连接。",
       },
       scanQr: {
         title: "扫描二维码",
@@ -1741,6 +1741,15 @@ export const zhCN: TranslationResources = {
     remoteSsh: {
       title: "远程 SSH",
       helper: "连接到远程主机上运行的 Paseo 守护进程。",
+      keyImport: {
+        key: "私钥",
+        import: "导入私钥",
+        passphrase: "密钥口令（可选）",
+        fingerprint: "服务器指纹",
+        verify: "信任前，请将此指纹与服务器的指纹进行比较。",
+        trustAndConnect: "信任并连接",
+        required: "请导入私钥以连接。",
+      },
       fields: {
         target: "SSH 主机",
         password: "守护进程密码",

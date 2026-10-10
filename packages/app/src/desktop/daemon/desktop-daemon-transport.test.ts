@@ -109,3 +109,49 @@ describe("desktop-daemon-transport", () => {
     expect(() => transportFactory!({ url })).toThrow("Invalid SSH transport target");
   });
 });
+
+it("closes a bridge session that finishes opening after disposal", async () => {
+  const rpc = createFakeLocalDaemonTransportRpc();
+  const transport = createDesktopDaemonTransportFactory(rpc)!({ url: LOCAL_URL });
+  rpc.resolveListen(vi.fn());
+  await Promise.resolve();
+  const sessionId = rpc.openCalls[0].sessionId;
+  transport.close();
+  expect(rpc.closedSessions).toEqual([sessionId]);
+  rpc.resolveRegistration();
+  await Promise.resolve();
+  expect(rpc.closedSessions).toEqual([sessionId, sessionId]);
+});
+
+it("preserves text and binary frame order across asynchronous bridge calls", async () => {
+  const rpc = createFakeLocalDaemonTransportRpc();
+  let finishFirst!: () => void;
+  const firstSend = new Promise<void>((resolve) => {
+    finishFirst = resolve;
+  });
+  const send = vi
+    .fn()
+    .mockImplementationOnce(() => firstSend)
+    .mockResolvedValue(undefined);
+  rpc.sendMessage = send;
+  const transport = createDesktopDaemonTransportFactory(rpc)!({ url: LOCAL_URL });
+  rpc.resolveListen(vi.fn());
+  await Promise.resolve();
+  const sessionId = rpc.openCalls[0].sessionId;
+  rpc.emitEvent({ sessionId, kind: "open" });
+
+  transport.send("first");
+  transport.send(new Uint8Array([1, 2, 3]));
+  transport.send("last");
+  await Promise.resolve();
+  expect(send.mock.calls).toEqual([[{ sessionId, text: "first" }]]);
+
+  finishFirst();
+  await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+  expect(send.mock.calls).toEqual([
+    [{ sessionId, text: "first" }],
+    [{ sessionId, binaryBase64: "AQID" }],
+    [{ sessionId, text: "last" }],
+  ]);
+  transport.close();
+});

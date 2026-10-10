@@ -57,27 +57,13 @@ export interface DesktopUpdaterDiagnostics {
   stderr: DesktopUpdaterDiagnosticFile | null;
 }
 
-export interface LocalTransportTarget {
-  [key: string]: unknown;
-  transportType: "socket" | "pipe";
-  transportPath: string;
-}
-
-export interface RemoteSshTransportTarget {
-  [key: string]: unknown;
-  transportType: "ssh";
-  host: string;
-  sshPort?: number;
-  daemonPort?: number;
-}
-
-export type DesktopDaemonTransportTarget = LocalTransportTarget | RemoteSshTransportTarget;
-
-export interface OpenLocalTransportSessionInput {
-  [key: string]: unknown;
-  sessionId: string;
-  target: DesktopDaemonTransportTarget;
-}
+export type {
+  LocalTransportTarget,
+  SshTransportTarget as RemoteSshTransportTarget,
+  BridgeDaemonTransportTarget as DesktopDaemonTransportTarget,
+  OpenBridgeTransportSessionInput as OpenLocalTransportSessionInput,
+} from "@/hosts/daemon-transport-bridge";
+import type { OpenBridgeTransportSessionInput as OpenLocalTransportSessionInput } from "@/hosts/daemon-transport-bridge";
 
 interface LocalTransportEventPayload {
   sessionId: string;

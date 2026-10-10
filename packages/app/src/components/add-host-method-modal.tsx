@@ -6,7 +6,7 @@ import { QrCode, Link2, ClipboardPaste, Terminal } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
 import { isFdroidBuild } from "@/constants/build-profile";
 import { isNative } from "@/constants/platform";
-import { isElectronRuntime } from "@/desktop/host";
+import { isSshAvailable } from "@/hosts/ssh/ssh-transport";
 import type { Theme } from "@/styles/theme";
 
 const ThemedQrCode = withUnistyles(QrCode);
@@ -100,7 +100,7 @@ export function AddHostMethodModal({
         </View>
       </Pressable>
 
-      {isElectronRuntime() ? (
+      {isSshAvailable() ? (
         <Pressable
           style={styles.option}
           onPress={handleRemoteSsh}

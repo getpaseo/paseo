@@ -25,7 +25,7 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isFdroidBuild } from "@/constants/build-profile";
 import { isWeb, isNative } from "@/constants/platform";
-import { isElectronRuntime } from "@/desktop/host";
+import { isSshAvailable } from "@/hosts/ssh/ssh-transport";
 
 interface WelcomeAction {
   key: "scan-qr" | "direct-connection" | "remote-ssh" | "paste-pairing-link";
@@ -261,7 +261,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           },
         ];
 
-  if (isElectronRuntime()) {
+  if (isSshAvailable()) {
     actions.splice(1, 0, {
       key: "remote-ssh",
       label: t("pairing.connectionMethods.remoteSsh.title"),

@@ -174,6 +174,12 @@ export default {
           android: {
             minSdkVersion: 29,
             kotlinVersion: "2.1.20",
+            // SSH cryptography jars share license paths. Retain every notice in the APK.
+            packagingOptions: {
+              merge: ["META-INF/LICENSE.md"],
+              // Android does not use the jars' duplicate OSGi bundle manifests.
+              exclude: ["META-INF/versions/9/OSGI-INF/MANIFEST.MF"],
+            },
             // Allow HTTP connections for local network hosts in release builds
             usesCleartextTraffic: true,
           },

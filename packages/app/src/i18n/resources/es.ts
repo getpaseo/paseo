@@ -1750,7 +1750,7 @@ export const es: TranslationResources = {
       },
       remoteSsh: {
         title: "SSH remoto",
-        description: "Conéctate mediante el cliente SSH de escritorio.",
+        description: "Conéctate mediante SSH.",
       },
       scanQr: {
         title: "Escanea el códigoQR",
@@ -1807,6 +1807,15 @@ export const es: TranslationResources = {
     remoteSsh: {
       title: "SSH remoto",
       helper: "Conéctate a un daemon de Paseo en el host remoto.",
+      keyImport: {
+        key: "Clave privada",
+        import: "Importar clave privada",
+        passphrase: "Frase de contraseña de la clave (opcional)",
+        fingerprint: "Huella del servidor",
+        verify: "Compare esta huella con la del servidor antes de confiar en él.",
+        trustAndConnect: "Confiar y conectar",
+        required: "Importe una clave privada para conectarse.",
+      },
       fields: {
         target: "Host SSH",
         password: "Contraseña del daemon",

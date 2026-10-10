@@ -1,3 +1,4 @@
+import { saveImportedSshHost, type SshKeyImportBridge } from "@/hosts/ssh/ssh-key-import-model";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import { DaemonAuthenticationError } from "@getpaseo/client/internal/daemon-client";
@@ -145,6 +146,22 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.createdConfigs()[0]?.url).toBe("paseo+desktop://socket?path=%2Ftmp%2Fpaseo.sock");
   });
 
+  it("uses the Android SSH bridge for probes when supplied", async () => {
+    const { buildClientConfig } = await import("./test-daemon-connection");
+    const androidTransport = vi.fn();
+    const config = await buildClientConfig(
+      { id: "ssh:deploy%40example.com::", type: "remoteSsh", host: "deploy@example.com" },
+      undefined,
+      undefined,
+      {
+        ...probe.deps,
+        createSshTransportFactory: () => androidTransport,
+      },
+    );
+    expect(config.transportFactory).toBe(androidTransport);
+    expect(config.url).toBe("paseo+desktop://ssh?host=deploy%40example.com");
+  });
+
   it("uses the desktop transport for Remote SSH connections", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const transportFactory = vi.fn();
@@ -279,5 +296,73 @@ describe("test-daemon-connection connectToDaemon", () => {
     ).rejects.toMatchObject({
       message: "Transport error",
     });
+  });
+});
+
+describe("imported SSH credentials", () => {
+  const approved = {
+    target: { host: "deploy@example.com" },
+    privateKey: "test-only-private-key",
+    passphrase: "test-passphrase",
+    fingerprint: "SHA256:test",
+  };
+  function createBridge(events: string[], failCommit = false): SshKeyImportBridge {
+    return {
+      inspect: async () => approved.fingerprint,
+      stage: async () => {
+        events.push("stage");
+      },
+      commit: async () => {
+        events.push("commit");
+        if (failCommit) throw new Error("Secure storage unavailable");
+      },
+      discard: async () => {
+        events.push("discard");
+      },
+    };
+  }
+  it("stores credentials after the probe and before saving the host", async () => {
+    const events: string[] = [];
+    const result = await saveImportedSshHost({
+      bridge: createBridge(events),
+      approved,
+      saveHost: async (beforeSave) => {
+        events.push("probe");
+        await beforeSave();
+        events.push("save-host");
+        return "saved";
+      },
+    });
+    expect(result).toBe("saved");
+    expect(events).toEqual(["stage", "probe", "commit", "save-host", "discard"]);
+  });
+  it("discards a failed probe without replacing saved credentials", async () => {
+    const events: string[] = [];
+    await expect(
+      saveImportedSshHost({
+        bridge: createBridge(events),
+        approved,
+        saveHost: async () => {
+          events.push("probe");
+          throw new Error("Fingerprint changed");
+        },
+      }),
+    ).rejects.toThrow("Fingerprint changed");
+    expect(events).toEqual(["stage", "probe", "discard"]);
+  });
+  it("does not save the host when secure storage fails", async () => {
+    const events: string[] = [];
+    await expect(
+      saveImportedSshHost({
+        bridge: createBridge(events, true),
+        approved,
+        saveHost: async (beforeSave) => {
+          events.push("probe");
+          await beforeSave();
+          events.push("save-host");
+        },
+      }),
+    ).rejects.toThrow("Secure storage unavailable");
+    expect(events).toEqual(["stage", "probe", "commit", "discard"]);
   });
 });

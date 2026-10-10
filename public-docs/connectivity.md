@@ -8,7 +8,7 @@ category: Getting started
 
 # Connectivity
 
-Your Paseo app connects to the daemon running on your computer or server. Paseo Desktop and the CLI can tunnel through SSH. Mobile clients can connect through the Paseo relay or directly with Tailscale.
+Your Paseo app connects to the daemon running on your computer or server. Paseo Desktop, Android, and the CLI can tunnel through SSH. Mobile clients can also connect through the Paseo relay or directly with Tailscale.
 
 This is client-to-daemon transport. If you are looking for the service that starts agents from GitHub, Slack, and Discord events, that is [Hub](/docs/hub).
 
@@ -18,12 +18,12 @@ This is client-to-daemon transport. If you are looking for the service that star
 
 ## SSH
 
-SSH transport connects to an existing daemon through your local OpenSSH client. It does not install, start, or configure Paseo on the remote host.
+SSH transport connects to an existing daemon. It does not install, start, or configure Paseo on the remote host. Desktop and CLI use your local OpenSSH client. Android uses an imported private key.
 
 Before connecting:
 
 1. Start the Paseo daemon on the remote host.
-2. Confirm `ssh user@host` works with a key or SSH agent. Paseo uses non-interactive SSH and follows your OpenSSH config.
+2. Confirm key-based SSH login works. Desktop and CLI use non-interactive SSH and follow your OpenSSH config.
 
 The CLI accepts an SSH URI as its host:
 
@@ -48,6 +48,25 @@ Put `--host` before the command. `paseo daemon status` observes the default loca
 In Paseo Desktop, open **Settings → Add host → Remote SSH** and enter the same `ssh://` destination, including `:port` or `?daemonPort=` when those differ from the defaults.
 
 If the remote daemon has a password, enter it in **Daemon password**; it is stored with the host and sent on every connection, the same as a direct connection's password. SSH login itself stays key-based — Paseo never prompts for an SSH password.
+
+### Android
+
+Open **Settings → Add host → Remote SSH**, enter `ssh://user@hostname`, and select
+**Import private key**. Choose an OpenSSH or PEM private-key file, not its `.pub` file.
+Enter the key passphrase if the file is encrypted. **Daemon password** remains separate.
+
+Select **Connect** to read the server fingerprint. Compare it with the server's fingerprint
+through a trusted channel, then select **Trust and connect**. The app rejects a changed
+fingerprint on later connections. To approve a replacement server key, remove and re-add
+the SSH connection after verifying the change.
+
+Keys and passphrases are encrypted with Android Keystore and excluded from backups.
+Removing the SSH connection deletes its saved credentials. The app deletes its temporary
+import copy; the original file you selected remains in its original location.
+
+Use an explicit username and reachable hostname or IP address. Android does not read your
+computer's SSH aliases, SSH agent, or jump-host configuration. SSH password login is not
+supported. iOS and browser clients can use the relay or a direct connection.
 
 ## Paseo relay
 
@@ -123,7 +142,7 @@ If the host was already paired through the relay, Paseo adds the direct connecti
 
 ## Troubleshooting
 
-- **SSH authentication failed:** Run `ssh user@host` in a terminal and fix the key, agent, host key, or `~/.ssh/config` entry there. Paseo does not prompt for SSH passwords.
+- **SSH authentication failed:** On desktop or CLI, run `ssh user@host` in a terminal and fix the key, agent, host key, or `~/.ssh/config` entry there. On Android, check the imported private key, its passphrase, and the explicit username. Paseo does not prompt for SSH passwords.
 - **SSH connects but Paseo is refused:** Run `paseo daemon status` on the remote host. SSH transport does not start the daemon.
 - **SSH connects but Paseo reports "Password required":** The remote daemon is password-protected. Remove the SSH connection from the host and add it again, this time entering the daemon password in **Daemon password**.
 - **Connection timed out:** Check that Tailscale is connected on both devices and that you used the daemon machine's Tailscale IP.
