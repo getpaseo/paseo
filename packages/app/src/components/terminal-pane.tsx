@@ -559,6 +559,7 @@ export function TerminalPane({
         isRendererReady: rendererReadyStreamKey === terminalStreamKey,
       }),
       size: measuredTerminalSizeRef.current,
+      scrollbackLines: settings.terminalScrollbackLines,
     }),
   );
 

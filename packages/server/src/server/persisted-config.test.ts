@@ -47,6 +47,17 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon terminal scrollback config", () => {
+  test("accepts terminal scrollback up to 10,000 lines", () => {
+    const parsed = PersistedConfigSchema.parse({ daemon: { terminalScrollbackLines: 10_000 } });
+
+    expect(parsed.daemon?.terminalScrollbackLines).toBe(10_000);
+    expect(
+      PersistedConfigSchema.safeParse({ daemon: { terminalScrollbackLines: 10_001 } }).success,
+    ).toBe(false);
+  });
+});
+
 describe("PersistedConfigSchema daemon browser tools config", () => {
   test("accepts optional browser tools opt-in", () => {
     const parsed = PersistedConfigSchema.parse({

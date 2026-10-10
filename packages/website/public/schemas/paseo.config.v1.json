@@ -92,6 +92,11 @@
             "enableTerminalAgentHooks": {
               "type": "boolean"
             },
+            "terminalScrollbackLines": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
             "appendSystemPrompt": {
               "type": "string"
             },

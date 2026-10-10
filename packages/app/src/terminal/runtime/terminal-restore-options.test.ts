@@ -9,20 +9,22 @@ describe("terminal restore options", () => {
         supportsTerminalRestoreModes: false,
         canClaimSize: true,
         size: { rows: 24, cols: 80 },
+        scrollbackLines: 10_000,
       }),
     ).toBeUndefined();
   });
 
-  it("requests visible snapshot restore with bounded scrollback for capable daemons", () => {
+  it("requests visible snapshot restore with the configured scrollback for capable daemons", () => {
     expect(
       resolveTerminalRestoreOptions({
         supportsTerminalRestoreModes: true,
         canClaimSize: true,
         size: { rows: 24, cols: 80 },
+        scrollbackLines: 10_000,
       }),
     ).toEqual({
       mode: "visible-snapshot",
-      scrollbackLines: 200,
+      scrollbackLines: 10_000,
       size: { rows: 24, cols: 80 },
     });
   });
@@ -33,10 +35,11 @@ describe("terminal restore options", () => {
         supportsTerminalRestoreModes: true,
         canClaimSize: true,
         size: null,
+        scrollbackLines: 10_000,
       }),
     ).toEqual({
       mode: "visible-snapshot",
-      scrollbackLines: 200,
+      scrollbackLines: 10_000,
     });
   });
 
@@ -46,10 +49,11 @@ describe("terminal restore options", () => {
         supportsTerminalRestoreModes: true,
         canClaimSize: false,
         size: { rows: 24, cols: 80 },
+        scrollbackLines: 10_000,
       }),
     ).toEqual({
       mode: "visible-snapshot",
-      scrollbackLines: 200,
+      scrollbackLines: 10_000,
     });
   });
 });

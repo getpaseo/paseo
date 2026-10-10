@@ -293,6 +293,31 @@ it("pulls fresh terminal state from the worker authority", async () => {
   expect(visibleText).toContain("worker-state-ready");
 });
 
+it("retains the configured scrollback", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-scrollback-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager({ scrollbackLines: 1500 });
+  const session = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "ws-test",
+      cwd,
+      ...nodeTerminalCommand(`
+      for (let line = 1; line <= 2000; line += 1) process.stdout.write("line-" + line + "\\n");
+      setInterval(() => {}, 1000);
+    `),
+    }),
+  );
+
+  let scrollbackLines = 0;
+  await waitForCondition(async () => {
+    const snapshot = await manager!.getTerminalState(session.id);
+    scrollbackLines = snapshot?.state.scrollback.length ?? 0;
+    return snapshot !== null && getVisibleTextFromState(snapshot.state).includes("line-2000");
+  }, 10000);
+
+  expect(scrollbackLines).toBe(1500);
+});
+
 // Windows ConPTY normalizes away the kitty keyboard escape the child writes, so it
 // never reaches the worker's input-mode tracker and the preamble stays empty. The
 // preamble-caching contract is verified on Linux/macOS; the daemon's input-mode
