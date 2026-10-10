@@ -647,6 +647,7 @@ export const ja: TranslationResources = {
         closeLeft: "左のタブを閉じる",
         closeRight: "右のタブを閉じる",
         closeOthers: "他のタブを閉じる",
+        moveToWorkspace: "ワークスペースへ移動…",
         moveToMain: "メインパネルへ移動",
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
@@ -722,6 +723,11 @@ export const ja: TranslationResources = {
             "{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           tabs: "{{tabs}}件のタブを閉じます。",
           agents: "{{agents}}件のエージェントをアーカイブします。",
+        },
+        moveSheet: {
+          title: "タブをワークスペースに移動",
+          hint: "エージェントは元のディレクトリで実行を継続します。",
+          empty: "利用可能な他のワークスペースがありません",
         },
       },
     },

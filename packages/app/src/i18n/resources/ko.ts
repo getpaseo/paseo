@@ -642,6 +642,7 @@ export const ko: TranslationResources = {
         closeLeft: "왼쪽 탭 닫기",
         closeRight: "오른쪽 탭 닫기",
         closeOthers: "다른 탭 닫기",
+        moveToWorkspace: "다른 워크스페이스로 이동…",
         moveToMain: "기본 패널로 이동",
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
@@ -718,6 +719,11 @@ export const ko: TranslationResources = {
             "터미널 {{terminals}}개를 닫습니다. 닫히는 터미널에서 실행 중인 프로세스는 즉시 중지됩니다.",
           tabs: "탭 {{tabs}}개를 닫습니다.",
           agents: "에이전트 {{agents}}개를 보관합니다.",
+        },
+        moveSheet: {
+          title: "탭을 워크스페이스로 이동",
+          hint: "에이전트는 원래 디렉터리에서 계속 실행됩니다.",
+          empty: "다른 워크스페이스가 없습니다",
         },
       },
     },

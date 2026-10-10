@@ -647,6 +647,7 @@ export const es: TranslationResources = {
         closeLeft: "Cerrar pestañas a la izquierda",
         closeRight: "Cerrar pestañas a la derecha",
         closeOthers: "Cerrar otras pestañas",
+        moveToWorkspace: "Mover a un workspace…",
         moveToMain: "Mover al panel principal",
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
@@ -725,6 +726,11 @@ export const es: TranslationResources = {
             "Esto cerrará los terminales{{terminals}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
           tabs: "Esto cerrará las pestañas{{tabs}}.",
           agents: "Esto archivará los agentes{{agents}}.",
+        },
+        moveSheet: {
+          title: "Mover pestaña a un workspace",
+          hint: "El agente sigue ejecutándose en su directorio original.",
+          empty: "No hay otro workspace disponible",
         },
       },
     },
