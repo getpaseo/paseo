@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
+import nativeFs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
+import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
@@ -15,9 +19,11 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
+  ImportableProviderSession,
   AgentPromptInput,
   AgentSession,
   AgentTimelineItem,
@@ -1710,6 +1716,577 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  async function descriptorFixture(count: number) {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-errors-"));
+    const projectDir = path.join(configDir, "projects", "errors");
+    await fs.mkdir(projectDir, { recursive: true });
+    const files: string[] = [];
+    const descriptors: ImportableProviderSession[] = [];
+    const logs: unknown[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const file = path.join(projectDir, `${index}.jsonl`);
+      const timestamp = new Date(Date.UTC(2026, 0, 1) + (count - index) * 1000);
+      await fs.writeFile(
+        file,
+        JSON.stringify({
+          type: "user",
+          sessionId: `session-${index}`,
+          cwd: "/errors",
+          message: { content: `Prompt ${index}` },
+        }),
+      );
+      await fs.utimes(file, timestamp, timestamp);
+      files.push(file);
+      descriptors.push({
+        providerHandleId: `session-${index}`,
+        cwd: "/errors",
+        title: `Prompt ${index}`,
+        firstPromptPreview: `Prompt ${index}`,
+        lastPromptPreview: `Prompt ${index}`,
+        lastActivityAt: timestamp,
+      });
+    }
+    const options = {
+      logger: pino({ level: "warn" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+    };
+    return {
+      files,
+      descriptors,
+      logs,
+      options,
+      cleanup: () => fs.rm(configDir, { recursive: true, force: true }),
+    };
+  }
+
+  function readError(code: string, filePath: string): Error {
+    return Object.assign(new Error(`${code}: cannot read ${filePath}`), {
+      code,
+      path: filePath,
+      syscall: "open",
+    });
+  }
+
+  test.each(["ENOENT", "ENOTDIR", "EPERM"])(
+    "isolates %s from one transcript while returning a healthy session",
+    async (code) => {
+      const fixture = await descriptorFixture(2);
+      const originalReadStream = nativeFs.createReadStream;
+      const error = readError(code, fixture.files[0]!);
+      const spy = vi.spyOn(nativeFs, "createReadStream").mockImplementation((file, options) => {
+        if (file === fixture.files[0]) throw error;
+        return originalReadStream(file, options);
+      });
+      try {
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+          fixture.descriptors[1],
+        ]);
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: fixture.files[0],
+            err: expect.objectContaining({ code }),
+            msg: "Skipping Claude transcript with unreadable import metadata",
+          }),
+        ]);
+      } finally {
+        spy.mockRestore();
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  const cannotEnforceFilePermissions = process.platform === "win32" || process.getuid?.() === 0;
+  const discoveryPermissionCases = [
+    { label: "project enumeration", mode: 0, deniedSuffix: "", existingSuffix: "" },
+    {
+      label: "candidate stat",
+      mode: 0o400,
+      deniedSuffix: "hidden.jsonl",
+      existingSuffix: "0.jsonl",
+    },
+  ];
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "logs denied $label while discovering a healthy project",
+    async ({ mode, deniedSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const projectsRoot = path.dirname(path.dirname(fixture.files[0]!));
+      const deniedProject = path.join(projectsRoot, "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual(
+          fixture.descriptors,
+        );
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: path.join(deniedProject, deniedSuffix),
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude session discovery path with denied access",
+          }),
+        ]);
+      } finally {
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "surfaces a provider error when $label denies discovery in every project",
+    async ({ mode, deniedSuffix, existingSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const existingProject = path.dirname(fixture.files[0]!);
+      const deniedProject = path.join(path.dirname(existingProject), "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(existingProject, mode);
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          message: expect.stringContaining("no transcripts could be discovered"),
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(existingProject, existingSuffix),
+            }),
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(deniedProject, deniedSuffix),
+            }),
+          ]),
+        });
+        expect(fixture.logs).toHaveLength(2);
+        expect(fixture.logs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: path.join(existingProject, existingSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+            expect.objectContaining({
+              path: path.join(deniedProject, deniedSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+          ]),
+        );
+      } finally {
+        await fs.chmod(existingProject, 0o700);
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "isolates an actual access-denied transcript while returning a healthy session",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await fs.chmod(fixture.files[0]!, 0);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+          fixture.descriptors[1],
+        ]);
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: fixture.files[0],
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude transcript with unreadable import metadata",
+          }),
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "surfaces a provider error when every actual candidate is access denied",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await Promise.all(fixture.files.map((file) => fs.chmod(file, 0)));
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          errors: fixture.files.map((file) =>
+            expect.objectContaining({ code: "EACCES", path: file }),
+          ),
+          message: expect.stringContaining(
+            "all 2 candidate transcripts have unreadable import metadata",
+          ),
+        });
+        expect(fixture.logs).toHaveLength(2);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test("returns an empty listing for readable transcripts without import metadata", async () => {
+    const fixture = await descriptorFixture(2);
+    try {
+      await Promise.all(fixture.files.map((file) => fs.writeFile(file, '{"type":"assistant"}')));
+      const client = new ClaudeAgentClient(fixture.options);
+      await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([]);
+      expect(fixture.logs).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test.each(["EMFILE", "ENFILE", "EIO", "ERR_INVALID_ARG_TYPE"])(
+    "propagates %s and cancels sibling streams instead of skipping transcripts",
+    async (code) => {
+      const fixture = await descriptorFixture(6);
+      const started: string[] = [];
+      const streams: nativeFs.ReadStream[] = [];
+      const originalReadStream = nativeFs.createReadStream;
+      const error = readError(code, fixture.files[0]!);
+      const spy = vi.spyOn(nativeFs, "createReadStream").mockImplementation((file, options) => {
+        started.push(String(file));
+        if (file === fixture.files[0]) throw error;
+        const stream = originalReadStream(file, options);
+        streams.push(stream);
+        return stream;
+      });
+      try {
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 6 })).rejects.toBe(error);
+        expect(started).toEqual(fixture.files.slice(0, 4));
+        expect(streams.map((stream) => stream.destroyed)).toEqual([true, true, true]);
+        function closedStates(): boolean[] {
+          return streams.map((stream) => stream.closed);
+        }
+        await vi.waitFor(() => expect(closedStates()).toEqual([true, true, true]));
+        expect(fixture.logs).toEqual([]);
+      } finally {
+        spy.mockRestore();
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test("refreshes descriptors after append, rewrite, replacement, and deletion", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-cache-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "changing-transcript");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "changing.jsonl");
+      const initial = `${JSON.stringify({
+        type: "user",
+        sessionId: "changing-session",
+        cwd: "/changing-project",
+        message: { content: "First prompt" },
+      })}\n`;
+      function title(customTitle: string): string {
+        return `${JSON.stringify({ type: "custom-title", customTitle })}\n`;
+      }
+      await fs.writeFile(sessionFile, initial + title("First title"));
+      const timestamp = new Date("2026-06-01T12:00:00.000Z");
+      await fs.utimes(sessionFile, timestamp, timestamp);
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      const first = await client.listImportableSessions({ limit: 1 });
+      expect(first.map((session) => session.title)).toEqual(["First title"]);
+      // Callers must not be able to mutate a cached descriptor, including its Date.
+      first[0]!.title = "Changed by caller";
+      first[0]!.lastActivityAt.setTime(0);
+      const repeated = await Promise.all([
+        client.listImportableSessions({ limit: 1 }),
+        client.listImportableSessions({ limit: 1 }),
+      ]);
+      expect(repeated.map((sessions) => [sessions[0]!.title, sessions[0]!.lastActivityAt])).toEqual(
+        [
+          ["First title", timestamp],
+          ["First title", timestamp],
+        ],
+      );
+
+      repeated[0]![0]!.title = "Changed by overlapping caller";
+      repeated[0]![0]!.lastActivityAt.setTime(0);
+      expect([repeated[1]![0]!.title, repeated[1]![0]!.lastActivityAt]).toEqual([
+        "First title",
+        timestamp,
+      ]);
+
+      await fs.appendFile(sessionFile, title("After append"));
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["After append"]);
+
+      // Same-length rewrites with a restored mtime still invalidate the descriptor.
+      await fs.writeFile(sessionFile, initial + title("Other title"));
+      await fs.utimes(sessionFile, timestamp, timestamp);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Other title"]);
+
+      const replacement = path.join(projectDir, "replacement.tmp");
+      await fs.writeFile(replacement, initial + title("Final title"));
+      await fs.utimes(replacement, timestamp, timestamp);
+      await fs.rename(replacement, sessionFile);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Final title"]);
+
+      await fs.unlink(sessionFile);
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers a transcript larger than the available heap", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-heap-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "large-transcript");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "large.jsonl");
+      const transcript = await fs.open(sessionFile, "w");
+      try {
+        await transcript.writeFile(
+          `${JSON.stringify({
+            type: "user",
+            sessionId: "large-session",
+            cwd: "/large-project",
+            message: { content: "First prompt" },
+          })}\r\n`,
+        );
+        const block = `${JSON.stringify({ type: "assistant", text: "x".repeat(1024) })}\n`.repeat(
+          1024,
+        );
+        for (let index = 0; index < 128; index += 1) {
+          await transcript.writeFile(block);
+        }
+        // A malformed record must not hide the final unterminated record.
+        await transcript.writeFile(
+          `incomplete json\n${JSON.stringify({
+            type: "user",
+            message: { content: "Last prompt 🐢" },
+          })}`,
+        );
+      } finally {
+        await transcript.close();
+      }
+
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          "--max-old-space-size=96",
+          "--import",
+          import.meta.resolve("tsx"),
+          "--input-type=module",
+          "--eval",
+          `
+            import { deepStrictEqual } from "node:assert";
+            import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+            import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+            const client = new ClaudeAgentClient({
+              logger: pino({ level: "silent" }),
+              runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
+            });
+            const listings = await Promise.all(Array.from({ length: 4 }, () => client.listImportableSessions({ limit: 1 })));
+            const sessions = listings[0];
+            for (const listing of listings) deepStrictEqual(listing, sessions);
+            console.log(JSON.stringify(sessions));
+          `,
+        ],
+        { timeout: 20_000 },
+      );
+
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          providerHandleId: "large-session",
+          cwd: "/large-project",
+          title: "First prompt",
+          firstPromptPreview: "First prompt",
+          lastPromptPreview: "Last prompt 🐢",
+          lastActivityAt: (await fs.stat(sessionFile)).mtime.toISOString(),
+        },
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports an unreadable single record larger than the heap without allocating the full line", async () => {
+    const configDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "paseo-claude-import-single-record-"),
+    );
+    try {
+      const projectDir = path.join(configDir, "projects", "single-record");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "single-record.jsonl");
+      const transcript = await fs.open(sessionFile, "w");
+      try {
+        await transcript.writeFile('{"payload":"');
+        const block = "x".repeat(1024 * 1024);
+        for (let index = 0; index < 128; index += 1) await transcript.writeFile(block);
+        await transcript.writeFile('","type":"custom-title","customTitle":"Latest title"}');
+      } finally {
+        await transcript.close();
+      }
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          "--max-old-space-size=96",
+          "--import",
+          import.meta.resolve("tsx"),
+          "--input-type=module",
+          "--eval",
+          `
+          import { rejects } from "node:assert";
+          import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+          import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+          const client = new ClaudeAgentClient({
+            logger: pino({ level: "silent" }),
+            runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
+          });
+          await rejects(client.listImportableSessions({ limit: 1 }), {
+            name: "AggregateError", message: /all 1 candidate transcripts have unreadable import metadata/,
+          });
+          console.log("Oversized transcript reported");
+        `,
+        ],
+        { timeout: 20_000 },
+      );
+      expect(stdout.trim()).toEqual("Oversized transcript reported");
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps metadata and UTF-8 in a record exactly at the byte limit", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-limit-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "boundary");
+      await fs.mkdir(projectDir, { recursive: true });
+      const prefix = '{"padding":"';
+      // Split the four-byte turtle across a 64 KiB input chunk boundary.
+      const padding = "x".repeat(64 * 1024 - Buffer.byteLength(prefix) - 1);
+      const suffix =
+        '","type":"user","sessionId":"boundary-session","cwd":"/boundary","message":{"content":"Hello 🐢"}}';
+      const remaining = 4 * 1024 * 1024 - Buffer.byteLength(prefix + padding + "🐢" + suffix);
+      await fs.writeFile(
+        path.join(projectDir, "boundary.jsonl"),
+        prefix + padding + "🐢" + "x".repeat(remaining) + suffix,
+      );
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => ({
+          providerHandleId: session.providerHandleId,
+          cwd: session.cwd,
+          title: session.title,
+          firstPromptPreview: session.firstPromptPreview,
+          lastPromptPreview: session.lastPromptPreview,
+        })),
+      ).toEqual([
+        {
+          providerHandleId: "boundary-session",
+          cwd: "/boundary",
+          title: "Hello 🐢",
+          firstPromptPreview: "Hello 🐢",
+          lastPromptPreview: "Hello 🐢",
+        },
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("logs and skips an oversized transcript while retaining healthy sessions", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-record-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "oversized");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "oversized.jsonl");
+      await fs.writeFile(
+        sessionFile,
+        `${JSON.stringify({
+          type: "user",
+          sessionId: "oversized-session",
+          cwd: "/oversized-project",
+          message: { content: "First prompt" },
+        })}\n`,
+      );
+      const records: unknown[] = [];
+      const client = new ClaudeAgentClient({
+        logger: pino(
+          { level: "warn" },
+          { write: (line: string) => records.push(JSON.parse(line)) },
+        ),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      expect((await client.listImportableSessions({ limit: 1 }))[0]!.title).toEqual("First prompt");
+      const healthyFile = path.join(projectDir, "healthy.jsonl");
+      await fs.writeFile(
+        healthyFile,
+        JSON.stringify({
+          type: "user",
+          sessionId: "healthy-session",
+          cwd: "/healthy-project",
+          message: { content: "Healthy prompt" },
+        }),
+      );
+      const timestamp = new Date("2026-01-01T00:00:00Z");
+      await fs.utimes(healthyFile, timestamp, timestamp);
+      // Metadata placed after the payload defeats prefix-only relevance checks.
+      await fs.appendFile(
+        sessionFile,
+        JSON.stringify({
+          payload: "x".repeat(4 * 1024 * 1024),
+          type: "custom-title",
+          customTitle: "Latest title",
+        }),
+      );
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([
+        {
+          providerHandleId: "healthy-session",
+          cwd: "/healthy-project",
+          title: "Healthy prompt",
+          firstPromptPreview: "Healthy prompt",
+          lastPromptPreview: "Healthy prompt",
+          lastActivityAt: timestamp,
+        },
+      ]);
+      expect(records).toEqual([
+        expect.objectContaining({
+          level: pino.levels.values.warn,
+          path: sessionFile,
+          msg: "Skipping Claude transcript with unreadable import metadata",
+          err: expect.objectContaining({
+            type: "ClaudeImportRecordTooLargeError",
+            filePath: sessionFile,
+            recordNumber: 2,
+            maxRecordBytes: 4 * 1024 * 1024,
+          }),
+        }),
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a cancelled listing before doing filesystem work", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Picker closed"));
+    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    await expect(client.listImportableSessions({ signal: controller.signal })).rejects.toThrow(
+      "Picker closed",
+    );
+  });
+
   test("uses the latest native custom title and leaves fixture mtimes unchanged", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -3535,5 +4112,186 @@ describe("Claude question permission notifications", () => {
 
     expect(request.title).toBeUndefined();
     expect(request.description).toBeUndefined();
+  });
+});
+
+describe("Claude import descriptor scheduling", () => {
+  function controlledReads() {
+    const started: string[] = [];
+    const reads = new Map<
+      string,
+      { resolve: (value: string) => void; reject: (reason: unknown) => void }
+    >();
+    const signals = new Map<string, AbortSignal>();
+    const sharedScheduler = createImportDescriptorScheduler(
+      (candidate: { cacheKey: string }, signal) => {
+        started.push(candidate.cacheKey);
+        signals.set(candidate.cacheKey, signal);
+        return new Promise<string>((resolve, reject) => {
+          reads.set(candidate.cacheKey, { resolve, reject });
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+    function scheduler(candidates: string[], signal: AbortSignal): Promise<string[]> {
+      return sharedScheduler(
+        candidates.map((cacheKey) => ({ cacheKey })),
+        signal,
+      );
+    }
+    return { scheduler, started, reads, signals };
+  }
+
+  test("shares a cold read across overlapping listings and leaves capacity for unrelated work", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const signal = new AbortController().signal;
+    const overlapping = Array.from({ length: 4 }, () => scheduler(["shared"], signal));
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    const unrelated = scheduler(["unrelated"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated"]));
+    reads.get("unrelated")!.resolve("unrelated descriptor");
+    await expect(unrelated).resolves.toEqual(["unrelated descriptor"]);
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(Promise.all(overlapping)).resolves.toEqual(
+      Array.from({ length: 4 }, () => ["shared descriptor"]),
+    );
+    // A settled entry must not become an accidental second cache.
+    const later = scheduler(["shared"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated", "shared"]));
+    reads.get("shared")!.resolve("updated descriptor");
+    await expect(later).resolves.toEqual(["updated descriptor"]);
+  });
+
+  test("cancelling the initiating listing keeps its other subscriber alive", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const initiator = new AbortController();
+    const first = scheduler(["shared"], initiator.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const second = scheduler(["shared"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    initiator.abort(new Error("First picker closed"));
+    await firstRejected;
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(second).resolves.toEqual(["shared descriptor"]);
+    expect(started).toEqual(["shared"]);
+  });
+
+  test("the final subscriber cancellation aborts the read and allows a fresh subscription", async () => {
+    const { scheduler, started, signals } = controlledReads();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = scheduler(["shared"], firstController.signal);
+    const second = scheduler(["shared"], secondController.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const secondRejected = expect(second).rejects.toThrow("Final picker closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    firstController.abort(new Error("First picker closed"));
+    await firstRejected;
+    expect(signals.get("shared")!.aborted).toEqual(false);
+    secondController.abort(new Error("Final picker closed"));
+    await secondRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+    const retryController = new AbortController();
+    const retry = scheduler(["shared"], retryController.signal);
+    const retryRejected = expect(retry).rejects.toThrow("Retry closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared", "shared"]));
+    retryController.abort(new Error("Retry closed"));
+    await retryRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+  });
+
+  test("runs four reads per listing and gives a later small listing a bounded turn", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const controller = new AbortController();
+    const large = scheduler(
+      Array.from({ length: 500 }, (_, index) => `large-${index}`),
+      controller.signal,
+    );
+    const largeRejected = expect(large).rejects.toThrow("Fairness check complete");
+    await vi.waitFor(() => expect(started).toEqual(["large-0", "large-1", "large-2", "large-3"]));
+    const small = scheduler(["small"], new AbortController().signal);
+    reads.get("large-0")!.resolve("first descriptor");
+    await vi.waitFor(() =>
+      expect(started).toEqual(["large-0", "large-1", "large-2", "large-3", "small"]),
+    );
+    reads.get("small")!.resolve("small descriptor");
+    await expect(small).resolves.toEqual(["small descriptor"]);
+    controller.abort(new Error("Fairness check complete"));
+    await largeRejected;
+    expect(signals.get("large-1")!.aborted).toEqual(true);
+    expect(signals.get("large-2")!.aborted).toEqual(true);
+    expect(signals.get("large-3")!.aborted).toEqual(true);
+    expect(started.length).toBeLessThanOrEqual(6);
+  });
+
+  test("refills four workers while retaining candidate order after out-of-order completions", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("3")!.resolve("descriptor-3");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4"]));
+    reads.get("2")!.resolve("descriptor-2");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4", "5"]));
+    reads.get("5")!.resolve("descriptor-5");
+    reads.get("4")!.resolve("descriptor-4");
+    reads.get("1")!.resolve("descriptor-1");
+    reads.get("0")!.resolve("descriptor-0");
+    await expect(listing).resolves.toEqual([
+      "descriptor-0",
+      "descriptor-1",
+      "descriptor-2",
+      "descriptor-3",
+      "descriptor-4",
+      "descriptor-5",
+    ]);
+  });
+
+  test("an unexpected read failure cancels sibling workers without starting remaining candidates", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    const rejected = expect(listing).rejects.toThrow("Unexpected read failure");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("0")!.reject(new TypeError("Unexpected read failure"));
+    await rejected;
+    expect(signals.get("1")!.aborted).toEqual(true);
+    expect(signals.get("2")!.aborted).toEqual(true);
+    expect(signals.get("3")!.aborted).toEqual(true);
+    expect(started).toEqual(["0", "1", "2", "3"]);
+  });
+
+  test("bounds global reads and skips cancelled queued candidates", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const controllers = Array.from({ length: 5 }, () => new AbortController());
+    const listings = controllers.map((controller, index) =>
+      scheduler([`${index}-first`], controller.signal),
+    );
+    // Attach handlers before aborting any promises.
+    function errorMessage(error: Error): string {
+      return error.message;
+    }
+    const settled = listings.map((listing) => listing.catch(errorMessage));
+    await vi.waitFor(() => expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]));
+    controllers[4]!.abort(new Error("Queued picker closed"));
+    await expect(settled[4]).resolves.toEqual("Queued picker closed");
+    controllers[0]!.abort(new Error("Active picker closed"));
+    await expect(settled[0]).resolves.toEqual("Active picker closed");
+    reads.get("1-first")!.reject(new Error("Stop 1"));
+    reads.get("2-first")!.reject(new Error("Stop 2"));
+    reads.get("3-first")!.reject(new Error("Stop 3"));
+    await expect(Promise.all(settled)).resolves.toEqual([
+      "Active picker closed",
+      "Stop 1",
+      "Stop 2",
+      "Stop 3",
+      "Queued picker closed",
+    ]);
+    expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]);
+    // A cancelled queue entry must not consume a later listing's read slot.
+    const later = scheduler(["later"], new AbortController().signal);
+    await vi.waitFor(() =>
+      expect(started).toEqual(["0-first", "1-first", "2-first", "3-first", "later"]),
+    );
+    reads.get("later")!.resolve("later descriptor");
+    await expect(later).resolves.toEqual(["later descriptor"]);
   });
 });
