@@ -298,6 +298,7 @@ export function createPluginWorker(options: {
         .map(async (source) => ({
           id: source.id,
           label: source.label,
+          provider: source.provider,
           icon: source.icon
             ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
             : undefined,

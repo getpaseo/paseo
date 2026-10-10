@@ -14,6 +14,7 @@ import {
 export interface UsageSource {
   id: string;
   label: string;
+  provider?: string;
   icon?: string;
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
@@ -27,6 +28,11 @@ interface Login {
 interface KnownReport {
   source: UsageSource;
   logins: [Login, ...Login[]];
+  label?: string;
+}
+
+interface LoginIdentity {
+  id: string;
   label?: string;
 }
 
@@ -46,6 +52,7 @@ interface AgentReports {
   provider: string;
   model?: string;
   sessionKey: string;
+  sources: UsageSource[];
   reports: Map<string, KnownReport>;
 }
 
@@ -64,6 +71,7 @@ export class UsageSourceRegistry {
     private readonly logger: Pick<Logger, "warn"> = { warn: console.warn },
     private readonly agents: AgentUsageLookup = { hasAgent: () => false, usageSession: () => null },
     private readonly deadlineMs = 20_000,
+    private readonly isProviderEnabled: (provider: string) => boolean = () => true,
   ) {}
 
   register(source: UsageSource): void {
@@ -91,27 +99,34 @@ export class UsageSourceRegistry {
     let ids: string[];
     let reports = this.known;
     if (options.agentId !== undefined) {
-      ids = await this.discoverAgent(options.agentId);
+      ids = await this.discoverAgent(options.agentId, options.forceRefresh);
       reports = this.byAgent.get(options.agentId)?.reports ?? new Map();
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
       this.defaults = await this.discover({ kind: "global" });
+      this.rebindLogins(this.defaults);
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
-    return Promise.all(
+    const entries = await Promise.all(
       [...new Set(ids)].flatMap((id) => {
         const known = reports.get(id);
-        if (!known) return [];
+        if (!known || !this.isSourceEnabled(known.source)) return [];
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
+            if (!this.isSourceEnabled(known.source)) return null;
             options.onReport?.(entry);
             return entry;
           }),
         ];
       }),
     );
+    return entries.filter((entry) => entry !== null);
+  }
+
+  private isSourceEnabled(source: UsageSource): boolean {
+    return source.provider === undefined || this.isProviderEnabled(source.provider);
   }
 
   private pruneAgents(): void {
@@ -121,16 +136,21 @@ export class UsageSourceRegistry {
     this.mergeKnown();
   }
 
-  private async discoverAgent(agentId: string): Promise<string[]> {
+  private async discoverAgent(agentId: string, forceRefresh = false): Promise<string[]> {
     if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
     const session = this.agents.usageSession(agentId);
     if (!session) return [];
     const previous = this.byAgent.get(agentId);
+    const sources = [...this.sources.values()].filter((source) => this.isSourceEnabled(source));
+    const sameSources =
+      previous?.sources.length === sources.length &&
+      previous.sources.every((source, index) => source === sources[index]);
     const sameScope =
       previous?.sessionKey === session.sessionKey &&
       previous.provider === session.provider &&
-      previous.model === session.model;
-    if (sameScope) return [...previous.reports.keys()];
+      previous.model === session.model &&
+      sameSources;
+    if (sameScope && !forceRefresh) return [...previous.reports.keys()];
     const reports = await this.discover({
       kind: "session",
       provider: session.provider,
@@ -143,10 +163,41 @@ export class UsageSourceRegistry {
       sessionKey: session.sessionKey,
       provider: session.provider,
       model: session.model,
+      sources,
       reports,
     });
+    this.rebindLogins(reports);
     this.mergeKnown();
     return [...reports.keys()];
+  }
+
+  private rebindLogins(fresh: Map<string, KnownReport>): void {
+    // A shared login store changes identity for every scope when its account switches.
+    const identities = new Map<string, LoginIdentity>();
+    for (const [id, report] of fresh) {
+      for (const login of report.logins)
+        identities.set(`${report.source.id}:${loginKey(login)}`, { id, label: report.label });
+    }
+    for (const reports of [this.defaults, ...[...this.byAgent.values()].map((a) => a.reports)]) {
+      if (reports === fresh) continue;
+      const rebound = new Map<string, KnownReport>();
+      for (const [id, report] of reports) {
+        for (const login of report.logins) {
+          const identity = identities.get(`${report.source.id}:${loginKey(login)}`);
+          const currentId = identity?.id ?? id;
+          const current = rebound.get(currentId);
+          if (current) current.logins.push(login);
+          else
+            rebound.set(currentId, {
+              source: report.source,
+              label: identity ? identity.label : report.label,
+              logins: [login],
+            });
+        }
+      }
+      reports.clear();
+      for (const [id, report] of rebound) reports.set(id, report);
+    }
   }
 
   private mergeKnown(): void {
@@ -156,7 +207,11 @@ export class UsageSourceRegistry {
       ...[...this.byAgent.values()].map((agent) => agent.reports),
     ]) {
       for (const [id, report] of reports) {
-        if (this.sources.get(report.source.id) !== report.source) continue;
+        if (
+          this.sources.get(report.source.id) !== report.source ||
+          !this.isSourceEnabled(report.source)
+        )
+          continue;
         const known = this.known.get(id);
         if (!known) {
           this.known.set(id, { ...report, logins: [...report.logins] });
@@ -171,8 +226,9 @@ export class UsageSourceRegistry {
   }
 
   private async discover(scope: UsageScope): Promise<Map<string, KnownReport>> {
+    const sources = [...this.sources.values()].filter((source) => this.isSourceEnabled(source));
     const discovered = await Promise.all(
-      [...this.sources.values()].map(async (source) => {
+      sources.map(async (source) => {
         const reports = new Map<string, KnownReport>();
         try {
           const accounts = z

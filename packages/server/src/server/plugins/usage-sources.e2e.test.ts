@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "./builtin/index.js";
 
@@ -11,6 +12,62 @@ const fixtureRoot = fileURLToPath(new URL("./test-fixtures/", import.meta.url));
 const subprocessDirectory = fileURLToPath(
   new URL("./test-fixtures/usage-source-directory/", import.meta.url),
 );
+
+test("provider enablement gates built-in and subprocess usage through the daemon", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "usage-provider-gating-"));
+  for (const id of ["bound-builtin", "bound-subprocess"]) {
+    const directory = path.join(root, id);
+    await mkdir(directory);
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id, requirements: { paseo: ">=0.9.2" } }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+import { z } from 'zod';
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: '${id}', label: 'Bound usage', provider: 'codex', input: z.object({}),
+    discover: async () => [{key: 'one', input: {}}],
+    fetch: async () => ({status: 'available', windows: [{id: 'total', label: 'Total', usedPct: 25}]}),
+  });
+  return () => {};
+}`,
+    );
+  }
+  const daemon = await createTestPaseoDaemon({
+    pluginsEnabled: true,
+    providerOverrides: { codex: { enabled: false } },
+    agentClients: { codex: createTestAgentClient("codex") },
+    builtinPlugins: new BuiltinPluginLoader(root, ["bound-builtin"]),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.installDirectoryPlugin(path.join(root, "bound-subprocess"));
+    expect((await client.listUsageReports()).reports).toEqual([]);
+    await client.patchDaemonConfig({ providers: { codex: { enabled: true } } });
+    expect((await client.listUsageReports()).reports.map((report) => report.id).sort()).toEqual([
+      "bound-builtin:one",
+      "bound-subprocess:one",
+    ]);
+    await client.patchDaemonConfig({ providers: { codex: { enabled: false } } });
+    expect(
+      (
+        await client.listUsageReports({
+          reportIds: ["bound-builtin:one", "bound-subprocess:one"],
+          forceRefresh: true,
+        })
+      ).reports,
+    ).toEqual([]);
+    expect((await client.listUsageReports()).reports).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
 
 test("lists built-in and subprocess usage; validates input and isolates fetch errors", async () => {
   const daemon = await createTestPaseoDaemon({

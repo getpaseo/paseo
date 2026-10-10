@@ -3,16 +3,143 @@ import { UsageSourceRegistry } from "./index.js";
 
 function source(input: {
   id: string;
+  provider?: string;
   discover?: () => Promise<Array<{ key: string; label?: string; input: unknown }>>;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
     id: input.id,
+    provider: input.provider,
     label: input.id,
     discover: input.discover ?? (async () => []),
     fetch: input.fetch ?? (async () => ({ status: "available", windows: [] })),
   };
 }
+
+test("provider-bound sources follow enablement before discovery, fetch, and cached refresh", async () => {
+  const enabled = new Set(["cursor"]);
+  let grokDiscoveries = 0;
+  let grokFetches = 0;
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    undefined,
+    undefined,
+    (provider) => enabled.has(provider),
+  );
+  registry.register(
+    source({
+      id: "grok",
+      provider: "grok",
+      discover: async () => {
+        grokDiscoveries++;
+        return [{ key: "installed", input: {} }];
+      },
+      fetch: async () => {
+        grokFetches++;
+        return { status: "available", windows: [] };
+      },
+    }),
+  );
+  registry.register(
+    source({
+      id: "cursor",
+      provider: "cursor",
+      discover: async () => [{ key: "plan", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "independent-billing",
+      discover: async () => [{ key: "account", input: {} }],
+    }),
+  );
+  expect((await registry.listReports()).map((r) => r.sourceId)).toEqual([
+    "cursor",
+    "independent-billing",
+  ]);
+  expect(grokDiscoveries).toBe(0);
+  expect(grokFetches).toBe(0);
+  enabled.add("grok");
+  expect((await registry.listReports()).map((r) => r.sourceId)).toContain("grok");
+  expect(grokFetches).toBe(1);
+  enabled.delete("grok");
+  expect(await registry.listReports({ reportIds: ["grok:installed"], forceRefresh: true })).toEqual(
+    [],
+  );
+  expect((await registry.listReports()).map((r) => r.sourceId)).not.toContain("grok");
+  expect(grokDiscoveries).toBe(1);
+  expect(grokFetches).toBe(1);
+});
+
+test("disabling a provider while usage loads prevents streaming its report", async () => {
+  let enabled = true;
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let started!: () => void;
+  const fetching = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    undefined,
+    undefined,
+    () => enabled,
+  );
+  registry.register(
+    source({
+      id: "grok",
+      provider: "grok",
+      discover: async () => [{ key: "one", input: {} }],
+      fetch: async () => {
+        started();
+        await gate;
+        return { status: "available", windows: [] };
+      },
+    }),
+  );
+  const updates: string[] = [];
+  const listing = registry.listReports({ onReport: (report) => updates.push(report.id) });
+  await fetching;
+  enabled = false;
+  finish();
+  expect(await listing).toEqual([]);
+  expect(updates).toEqual([]);
+});
+
+test("agent discovery follows provider enablement without a new session", async () => {
+  let enabled = false;
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    {
+      hasAgent: () => true,
+      usageSession: () => ({ provider: "cursor", env: {}, sessionKey: "launch" }),
+    },
+    undefined,
+    () => enabled,
+  );
+  registry.register(
+    source({
+      id: "cursor",
+      provider: "cursor",
+      discover: async () => [{ key: "account", input: {} }],
+    }),
+  );
+  expect(await registry.listReports({ agentId: "agent" })).toEqual([]);
+  enabled = true;
+  expect((await registry.listReports({ agentId: "agent" })).map((entry) => entry.id)).toEqual([
+    "cursor:account",
+  ]);
+  enabled = false;
+  expect(await registry.listReports({ agentId: "agent" })).toEqual([]);
+});
 
 test("discovery preserves account IDs and updates input after token rotation", async () => {
   const registry = new UsageSourceRegistry();
@@ -34,6 +161,82 @@ test("discovery preserves account IDs and updates input after token rotation", a
   const refreshed = await registry.listReports({ forceRefresh: true });
   expect(refreshed.map((entry) => entry.id)).toEqual(["codex:work"]);
   expect(refreshed[0]?.report.windows[0]?.label).toBe("new");
+});
+
+test.each(["host", "agent"])(
+  "%s refresh rebinds the same login after account switching",
+  async (refreshedScope) => {
+    let account = "personal";
+    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+      hasAgent: () => true,
+      usageSession: () => ({ provider: "claude", env: {}, sessionKey: "same-launch" }),
+    });
+    registry.register({
+      id: "claude",
+      label: "Claude",
+      discover: async () => [
+        {
+          key: account,
+          label: `${account}@example.test`,
+          harness: "Claude",
+          input: { store: "keychain", service: "shared-login" },
+        },
+      ],
+      fetch: async () => ({ status: "available", windows: [], planLabel: account }),
+    });
+    await registry.listReports({ agentId: "agent" });
+    await registry.listReports();
+    account = "team";
+    if (refreshedScope === "agent") {
+      const refreshed = await registry.listReports({ agentId: "agent", forceRefresh: true });
+      expect(refreshed.map((entry) => entry.id)).toEqual(["claude:team"]);
+    }
+    const host = await registry.listReports({ forceRefresh: true });
+    expect(host.map((entry) => entry.id)).toEqual(["claude:team"]);
+    expect(host[0]?.account.label).toBe("team@example.test");
+    const agent = await registry.listReports({ agentId: "agent" });
+    expect(agent.map((entry) => entry.id)).toEqual(["claude:team"]);
+    expect(agent[0]?.report.planLabel).toBe("team");
+    account = "personal";
+    expect((await registry.listReports({ forceRefresh: true })).map((entry) => entry.id)).toEqual([
+      "claude:personal",
+    ]);
+  },
+);
+
+test("switching one login preserves a different login still using the original account", async () => {
+  let account = "personal";
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => true,
+    usageSession: () => ({ provider: "claude", env: {}, sessionKey: "launch" }),
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => [
+      { key: account, harness: "Claude", input: { path: "shared-login" } },
+      ...(scope.kind === "session"
+        ? [{ key: "personal", harness: "Pi", input: { path: "separate-login" } }]
+        : []),
+    ],
+    fetch: async (input) => ({
+      status: "available",
+      windows: [],
+      planLabel: (input as { path: string }).path === "shared-login" ? account : "personal",
+    }),
+  });
+  await registry.listReports({ agentId: "agent" });
+  account = "team";
+  const host = await registry.listReports({ forceRefresh: true });
+  expect(host.map((entry) => [entry.id, entry.report.planLabel])).toEqual([
+    ["claude:team", "team"],
+    ["claude:personal", "personal"],
+  ]);
+  const agent = await registry.listReports({ agentId: "agent" });
+  expect(agent.map((entry) => [entry.id, entry.report.planLabel])).toEqual([
+    ["claude:team", "team"],
+    ["claude:personal", "personal"],
+  ]);
 });
 
 test("coalesces per account, caches errors, and refreshes only requested IDs", async () => {
