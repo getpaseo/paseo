@@ -83,6 +83,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     return usesPluginTheme && snapshot ? pluginThemeOption(snapshot) : null;
   }, [live, snapshot, usesPluginTheme]);
 
+  // The picked host is module state, lost on restart. Restore it from the snapshot before any
+  // plugin catalog loads (screens mount after the first apply), so a theme that several hosts
+  // contribute resolves to the same host and palette as last time.
+  useEffect(() => {
+    if (snapshot) rememberPluginThemeHost(snapshot);
+  }, [snapshot]);
+
   useEffect(() => {
     if (isLoading || snapshot === settings.pluginThemeSnapshot) return;
     void updateSettings({ pluginThemeSnapshot: snapshot });

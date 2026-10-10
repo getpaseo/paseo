@@ -37,21 +37,17 @@ export function parsePluginThemeContribution(value: unknown): PluginThemeContrib
   return contributionSchema.parse(value);
 }
 
-/**
- * The contributed theme last applied, kept in app settings so a start can paint it before any
- * plugin has loaded. `id` is the catalog id, `serverId` the host that contributed it.
- */
-export interface PluginThemeSnapshot {
-  id: string;
-  serverId: string;
-  contribution: PluginThemeContribution;
-}
-
-export const pluginThemeSnapshotSchema: z.ZodType<PluginThemeSnapshot> = z.strictObject({
+export const pluginThemeSnapshotSchema = z.strictObject({
   id: z.string(),
   serverId: z.string(),
   contribution: contributionSchema,
 });
+
+/**
+ * The contributed theme last applied, kept in app settings so a start can paint it before any
+ * plugin has loaded. `id` is the catalog id, `serverId` the host that contributed it.
+ */
+export type PluginThemeSnapshot = z.infer<typeof pluginThemeSnapshotSchema>;
 
 function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;

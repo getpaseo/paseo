@@ -75,7 +75,8 @@ interface ContributedThemeSelection {
  * Plugin themes only exist once a host's plugin catalog has loaded, which takes seconds on a slow
  * connection and starts over after every reconnect. Until then the stored snapshot stands in for
  * the selected theme. It is dropped only when the host that contributed it has loaded its catalog
- * without the theme, so an offline or reconnecting host keeps it.
+ * without the theme, so an offline or reconnecting host keeps it. Another host contributing the
+ * same id first does not replace it either: that host's palette can differ.
  */
 export function resolveContributedTheme(input: {
   pluginThemeId: string | null;
@@ -85,6 +86,11 @@ export function resolveContributedTheme(input: {
 }): ContributedThemeSelection {
   const { pluginThemeId, options, stored, loadedHosts } = input;
   const selected = options.find((option) => option.id === pluginThemeId) ?? null;
+  const storedHostPending =
+    stored !== null && stored.id === pluginThemeId && !loadedHosts.has(stored.serverId);
+  if (selected && storedHostPending && selected.serverId !== stored.serverId) {
+    return { selected: null, snapshot: stored };
+  }
   if (selected) {
     const current =
       stored?.id === selected.id &&
@@ -92,10 +98,7 @@ export function resolveContributedTheme(input: {
       samePalette(stored.contribution, selected.contribution);
     return { selected, snapshot: current ? stored : snapshotPluginTheme(selected) };
   }
-  if (!stored || stored.id !== pluginThemeId || loadedHosts.has(stored.serverId)) {
-    return { selected: null, snapshot: null };
-  }
-  return { selected: null, snapshot: stored };
+  return { selected: null, snapshot: storedHostPending ? stored : null };
 }
 
 export function snapshotPluginTheme(option: PluginThemeOption): PluginThemeSnapshot {
@@ -114,8 +117,9 @@ function samePalette(left: PluginThemeContribution, right: PluginThemeContributi
   );
 }
 
-export function rememberPluginThemeHost(option: PluginThemeOption): void {
-  rememberPluginContributionHost(option.id, option.serverId);
+/** Makes the catalog prefer this theme's host when several hosts contribute the same id. */
+export function rememberPluginThemeHost(theme: Pick<PluginThemeSnapshot, "id" | "serverId">): void {
+  rememberPluginContributionHost(theme.id, theme.serverId);
 }
 
 function supportedThemeHosts(support: ReadonlyMap<string, boolean>): Set<string> {

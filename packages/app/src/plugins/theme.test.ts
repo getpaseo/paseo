@@ -296,4 +296,39 @@ describe("resolveContributedTheme", () => {
       contribution: MOCHA_FORK,
     });
   });
+
+  // Two hosts can contribute the same theme id with different palettes; the one that answers
+  // first must not repaint the app or overwrite the palette saved from the other.
+  it("keeps the stored palette while its host loads and another host offers the same theme", () => {
+    const options = collectPluginThemes([installed("host-z", [MOCHA_FORK])], SUPPORTED);
+
+    expect(
+      resolveContributedTheme({
+        pluginThemeId: MOCHA_ID,
+        options,
+        stored: STORED_MOCHA,
+        loadedHosts: new Set(["host-z"]),
+      }),
+    ).toEqual({ selected: null, snapshot: STORED_MOCHA });
+  });
+
+  // The picked host lives in module state and is gone after a restart; the snapshot brings it back.
+  it("resolves to the stored snapshot's host once both hosts have loaded", () => {
+    rememberPluginThemeHost(STORED_MOCHA);
+    const options = collectPluginThemes(
+      [installed("host-a", [MOCHA]), installed("host-z", [MOCHA_FORK])],
+      SUPPORTED,
+    );
+    const stored = structuredClone(STORED_MOCHA);
+
+    const resolved = resolveContributedTheme({
+      pluginThemeId: MOCHA_ID,
+      options,
+      stored,
+      loadedHosts: new Set(["host-a", "host-z"]),
+    });
+
+    expect(resolved.selected?.serverId).toBe("host-a");
+    expect(resolved.snapshot).toBe(stored);
+  });
 });
