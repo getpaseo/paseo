@@ -1364,13 +1364,16 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  readonly interruptTimeoutMs?: number;
 
   constructor(
     config: AgentSessionConfig,
     readonly turnId: string,
     private readonly interruptBehavior: (session: ControlledInterruptSession) => Promise<void>,
+    interruptTimeoutMs?: number,
   ) {
     super(config);
+    this.interruptTimeoutMs = interruptTimeoutMs;
   }
 
   override async startTurn(): Promise<{ turnId: string }> {
@@ -1399,12 +1402,14 @@ async function createControlledInterruptFixture(options: {
   agentId: string;
   turnId: string;
   interrupt: (session: ControlledInterruptSession) => Promise<void>;
+  interruptTimeoutMs?: number;
 }): Promise<ControlledInterruptFixture> {
   const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${options.name}-`));
   const session = new ControlledInterruptSession(
     { provider: "codex", cwd: workdir },
     options.turnId,
     options.interrupt,
+    options.interruptTimeoutMs,
   );
   const client = new (class extends TestAgentClient {
     override async createSession(): Promise<AgentSession> {
@@ -2767,6 +2772,40 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
         turnId: "queued-completion-turn",
       });
       throw new Error("turn already completed");
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun waits for the provider-declared interrupt timeout", async () => {
+  // The interrupt settles the turn after 50ms — past the 10ms rescueTimeout
+  // the fixture installs, but within the provider-declared 500ms window.
+  const fixture = await createControlledInterruptFixture({
+    name: "provider-interrupt-window",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "provider-window-turn",
+    interruptTimeoutMs: 500,
+    interrupt: async (session) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        reason: "Interrupted",
+        turnId: "provider-window-turn",
+      });
     },
   });
 

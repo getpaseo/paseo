@@ -3436,6 +3436,167 @@ describe("ACPAgentSession", () => {
   });
 });
 
+interface ACPInterruptInternals {
+  sessionId: string | null;
+  connection: unknown;
+}
+
+interface InterruptibleAgentHarness {
+  session: ACPAgentSession;
+  connection: ClientSideConnection;
+  agentConnection: AgentSideConnection;
+  releasePrompt: (response: PromptResponse) => void;
+  failPrompt: (error: Error) => void;
+  cancelCalls: number;
+}
+
+// session/cancel is a notification — the agent keeps the turn alive until its
+// teardown finishes and the in-flight session/prompt resolves. This harness
+// builds a real ACP pipe whose prompt() stays pending until the test releases
+// it, which is exactly what agents like Devin do while parking subagents.
+function createInterruptibleSession(): InterruptibleAgentHarness {
+  const session = createSession();
+  const clientToAgent = new TransformStream();
+  const agentToClient = new TransformStream();
+  let releasePrompt: (response: PromptResponse) => void = () => {};
+  let failPrompt: (error: Error) => void = () => {};
+  const promptGate = new Promise<PromptResponse>((resolve, reject) => {
+    releasePrompt = resolve;
+    failPrompt = reject;
+  });
+  let cancelCalls = 0;
+  const agent: Agent = {
+    async initialize() {
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: {},
+        authMethods: [],
+      };
+    },
+    async newSession() {
+      return { sessionId: "session-1" };
+    },
+    async prompt() {
+      return await promptGate;
+    },
+    async authenticate() {},
+    async cancel() {
+      cancelCalls += 1;
+    },
+  };
+  const agentConnection = new AgentSideConnection(
+    () => agent,
+    ndJsonStream(agentToClient.writable, clientToAgent.readable),
+  );
+  const connection = new ClientSideConnection(
+    () => ({
+      async requestPermission() {
+        return { outcome: { outcome: "cancelled" } };
+      },
+      async sessionUpdate() {},
+    }),
+    ndJsonStream(clientToAgent.writable, agentToClient.readable),
+  );
+  return {
+    session,
+    connection,
+    agentConnection,
+    releasePrompt: (response) => releasePrompt(response),
+    failPrompt: (error) => failPrompt(error),
+    get cancelCalls() {
+      return cancelCalls;
+    },
+  };
+}
+
+async function connectInterruptibleSession(
+  session: ACPAgentSession,
+  connection: ClientSideConnection,
+): Promise<void> {
+  await connection.initialize({
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: {},
+    clientInfo: { name: "Paseo test", version: "dev" },
+  });
+  const sessionResponse = await connection.newSession({
+    cwd: "/tmp/paseo-acp-test",
+    mcpServers: [],
+  });
+  const internals = asInternals<ACPInterruptInternals>(session);
+  internals.sessionId = sessionResponse.sessionId;
+  internals.connection = connection;
+}
+
+async function expectPending(promise: Promise<unknown>, waitMs = 50): Promise<void> {
+  const outcome = await Promise.race([
+    promise.then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    ),
+    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), waitMs)),
+  ]);
+  expect(outcome).toBe("pending");
+}
+
+describe("ACPAgentSession interrupt settlement", () => {
+  test("interrupt() stays pending until the in-flight prompt settles, then startTurn works again", async () => {
+    const harness = createInterruptibleSession();
+    await connectInterruptibleSession(harness.session, harness.connection);
+
+    const events: AgentStreamEvent[] = [];
+    harness.session.subscribe((event) => events.push(event));
+    const { turnId } = await harness.session.startTurn("hello");
+
+    const interrupt = harness.session.interrupt();
+    await vi.waitFor(() => expect(harness.cancelCalls).toBe(1));
+    await expectPending(interrupt);
+
+    harness.releasePrompt({ stopReason: "cancelled" });
+    await interrupt;
+
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId }),
+    ]);
+    await expect(harness.session.startTurn("next")).resolves.toMatchObject({
+      turnId: expect.any(String),
+    });
+  });
+
+  test("interrupt() resolves when the turn fails instead of cancelling", async () => {
+    const harness = createInterruptibleSession();
+    await connectInterruptibleSession(harness.session, harness.connection);
+
+    await harness.session.startTurn("hello");
+    const interrupt = harness.session.interrupt();
+    await vi.waitFor(() => expect(harness.cancelCalls).toBe(1));
+    await expectPending(interrupt);
+
+    harness.failPrompt(new Error("prompt crashed"));
+    await interrupt;
+  });
+
+  test("interrupt() resolves immediately when no turn is active", async () => {
+    const harness = createInterruptibleSession();
+    await connectInterruptibleSession(harness.session, harness.connection);
+
+    await harness.session.interrupt();
+    expect(harness.cancelCalls).toBe(0);
+  });
+
+  test("close() releases a pending interrupt wait", async () => {
+    const harness = createInterruptibleSession();
+    await connectInterruptibleSession(harness.session, harness.connection);
+
+    await harness.session.startTurn("hello");
+    const interrupt = harness.session.interrupt();
+    await vi.waitFor(() => expect(harness.cancelCalls).toBe(1));
+    await expectPending(interrupt);
+
+    await harness.session.close();
+    await interrupt;
+  });
+});
+
 interface ACPCloseInternals {
   child: ChildProcess | null;
   connection: unknown;

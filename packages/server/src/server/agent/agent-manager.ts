@@ -3200,10 +3200,11 @@ export class AgentManager {
   }
 
   private async interruptSession(session: AgentSession, agentId: string): Promise<boolean> {
+    const timeoutMs = session.interruptTimeoutMs ?? this.rescueTimeouts.interruptSessionMs;
     try {
       const result = await this.waitWithTimeout({
         operation: session.interrupt(),
-        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+        timeoutMs,
         onLateError: (error) => {
           this.logger.warn(
             { err: error, agentId },
@@ -3213,10 +3214,7 @@ export class AgentManager {
       });
 
       if (result === "timed_out") {
-        this.logger.warn(
-          { agentId, timeoutMs: this.rescueTimeouts.interruptSessionMs },
-          "Timed out interrupting session during cancel",
-        );
+        this.logger.warn({ agentId, timeoutMs }, "Timed out interrupting session during cancel");
         return false;
       }
       return true;

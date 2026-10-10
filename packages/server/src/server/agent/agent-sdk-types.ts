@@ -686,6 +686,15 @@ export interface AgentSession {
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   /**
+   * Upper bound callers should give interrupt() to prove the active turn
+   * stopped before treating cancellation as refused. Providers whose cancel is
+   * a fire-and-forget notification (e.g. ACP session/cancel) only resolve
+   * interrupt() once the provider's turn actually ends, and declare a longer
+   * bound so provider-side teardown (tool wind-down, parked subagents) can
+   * settle. Defaults to AgentManager's interruptSessionMs when unset.
+   */
+  readonly interruptTimeoutMs?: number;
+  /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.
    * Calling while already idle is a successful no-op. Reject only when foreground ownership is
    * still uncertain.
