@@ -53,6 +53,7 @@ export function resolveSidebarNavGroupHeight(input: {
   requestedHeight: number | null;
   viewportHeight: number;
   footerHeight: number;
+  rowHeight?: number;
 }): number {
   const defaultHeight = resolveSidebarNavGroupMaxHeight(input.viewportHeight);
   if (input.requestedHeight === null || !Number.isFinite(input.requestedHeight)) {
@@ -64,14 +65,14 @@ export function resolveSidebarNavGroupHeight(input: {
   const footerHeight = Number.isFinite(input.footerHeight)
     ? Math.max(input.footerHeight, 0)
     : SIDEBAR_FOOTER_DEFAULT_HEIGHT;
+  const rowHeight = input.rowHeight ?? SIDEBAR_NAV_GROUP_HEADER_HEIGHT;
   // The default share is the floor: dragging may never cost the list more than not
   // dragging at all, however short the window is.
   const maximum = Math.max(
     defaultHeight,
     Math.min(
       Math.round(viewportHeight * SIDEBAR_NAV_GROUP_DRAGGED_MAX_HEIGHT_FRACTION),
-      viewportHeight -
-        (SIDEBAR_NAV_GROUP_HEADER_HEIGHT + footerHeight + SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT),
+      viewportHeight - (rowHeight * 2 + footerHeight),
     ),
   );
   return Math.min(

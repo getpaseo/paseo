@@ -13,6 +13,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarNavResizeHandle } from "@/components/sidebar/sidebar-nav-resize-handle";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -31,6 +32,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { usePanelStore } from "@/stores/panel-store";
+import { density } from "@/styles/density";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   buildNewWorkspaceRoute,
@@ -58,6 +60,8 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  */
 export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: SidebarNavRowsProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const rowHeight = isCompact ? density.rowHeight.xs : density.rowHeight.md;
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const collapsed = useSidebarViewStore((state) => state.navCollapsed);
@@ -73,6 +77,7 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
     requestedHeight,
     viewportHeight,
     footerHeight: resolvedFooterHeight,
+    rowHeight,
   });
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const rowsStyle = useMemo(
@@ -91,11 +96,12 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
           requestedHeight: nextHeight,
           viewportHeight,
           footerHeight: resolvedFooterHeight,
+          rowHeight,
         }),
       );
       setDraggedHeight(null);
     },
-    [resolvedFooterHeight, setStoredHeight, viewportHeight],
+    [resolvedFooterHeight, rowHeight, setStoredHeight, viewportHeight],
   );
 
   if (visibleItems.length === 0) return null;

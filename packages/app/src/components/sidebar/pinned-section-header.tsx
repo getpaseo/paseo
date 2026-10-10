@@ -9,6 +9,7 @@ export function PinnedSectionHeader({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+
   return (
     <SidebarSectionHeader
       title={t("sidebar.pinned.title")}

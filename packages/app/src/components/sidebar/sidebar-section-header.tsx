@@ -1,16 +1,11 @@
 import { useMemo } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { Pressable, Text } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
-import type { Theme } from "@/styles/theme";
-
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedChevronRight = withUnistyles(ChevronRight);
-const foregroundMutedColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
+import { density, densityFontSize } from "@/styles/density";
 
 /**
  * A muted section title that collapses the rows under it. The chevron shows on hover
@@ -34,7 +29,6 @@ export function SidebarSectionHeader({
   // react-native-web does not carry `accessibilityState.expanded` through to the DOM,
   // so the attribute a screen reader and the e2e suite read is set here.
   const ariaExpandedProps = isWeb ? ({ "aria-expanded": !collapsed } as const) : null;
-  const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
 
   return (
     <Pressable
@@ -49,7 +43,11 @@ export function SidebarSectionHeader({
         <>
           <Text style={styles.title}>{title}</Text>
           {hovered || isNative || isCompact ? (
-            <Chevron size={12} uniProps={foregroundMutedColorMapping} />
+            <DensityIcon
+              icon={collapsed ? ChevronRight : ChevronDown}
+              size="xs"
+              color="foregroundMuted"
+            />
           ) : null}
         </>
       )}
@@ -59,7 +57,7 @@ export function SidebarSectionHeader({
 
 const styles = StyleSheet.create((theme) => ({
   header: {
-    minHeight: 36,
+    minHeight: density.rowHeight,
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
@@ -70,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: densityFontSize(theme, "sm"),
     fontWeight: theme.fontWeight.normal,
   },
 }));

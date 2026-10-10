@@ -82,6 +82,24 @@ describe("resolveSidebarNavGroupHeight", () => {
     ).toBe(450);
   });
 
+  it("reserves compact header and workspace row heights when dragging", () => {
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 260,
+        footerHeight: 80,
+      }),
+    ).toBe(108);
+    expect(
+      resolveSidebarNavGroupHeight({
+        requestedHeight: 900,
+        viewportHeight: 260,
+        footerHeight: 80,
+        rowHeight: 44,
+      }),
+    ).toBe(92);
+  });
+
   it("shrinks the dragged cap when the measured footer is taller", () => {
     expect(
       resolveSidebarNavGroupHeight({
