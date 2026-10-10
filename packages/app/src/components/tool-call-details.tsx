@@ -1,4 +1,4 @@
-import React, { useMemo, type ReactNode } from "react";
+import React, { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
+import { WrapText } from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -25,6 +26,10 @@ import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { Button } from "./ui/button";
+import { CONTROL_HEIGHTS } from "./ui/control-geometry";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
@@ -37,6 +42,43 @@ interface ToolCallDetailsContentProps {
   maxHeight?: number;
   fillAvailableHeight?: boolean;
   showLoadingSkeleton?: boolean;
+  wrapLines?: boolean;
+  onWrapLinesChange?: (wrapLines: boolean) => void;
+  showWrapToggle?: boolean;
+}
+
+interface ToolCallWrapButtonProps {
+  wrapLines: boolean;
+  onPress: () => void;
+  iconOnly?: boolean;
+}
+
+export function ToolCallWrapButton({
+  wrapLines,
+  onPress,
+  iconOnly = false,
+}: ToolCallWrapButtonProps) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const accessibilityState = useMemo(() => ({ selected: wrapLines }), [wrapLines]);
+  const label = t("toolCallDetails.wrapLongLines");
+
+  return (
+    <Button
+      variant="ghost"
+      size={iconOnly || isCompact ? "md" : "xs"}
+      leftIcon={WrapText}
+      style={[wrapLines && styles.wrapSelected, iconOnly && styles.wrapIconButton]}
+      testID="tool-detail-wrap-toggle"
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={accessibilityState}
+      aria-pressed={wrapLines}
+      onPress={onPress}
+    >
+      {iconOnly ? null : label}
+    </Button>
+  );
 }
 
 interface DetailStyles {
@@ -151,14 +193,43 @@ interface ShellDetailProps {
   command: string;
   output: string | null | undefined;
   ds: DetailStyles;
+  wrapLines: boolean;
 }
 
-function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+function ShellDetailSection({ command, output, ds, wrapLines }: ShellDetailProps) {
   const normalizedCommand = command.replace(/\n+$/, "");
+  const commandLines = useMemo(
+    () => highlightToKeyedLines(normalizedCommand, "sh"),
+    [normalizedCommand],
+  );
   const commandOutput = (output ?? "").replace(/^\n+/, "");
   const hasOutput = commandOutput.length > 0;
+  const content = (
+    <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
+      <Text
+        selectable
+        testID="shell-detail-text"
+        style={[styles.scrollText, styles.shellText, wrapLines && styles.wrappedShellText]}
+      >
+        <Text style={styles.shellPrompt}>$ </Text>
+        {commandLines
+          ? commandLines.map((line, index) => (
+              <React.Fragment key={line.key}>
+                {index > 0 ? "\n" : null}
+                {line.tokens.map(({ key, token }) => (
+                  <Text key={key} style={syntaxTokenStyleFor(token.style)}>
+                    {token.text}
+                  </Text>
+                ))}
+              </React.Fragment>
+            ))
+          : normalizedCommand}
+        {hasOutput ? `\n\n${commandOutput}` : ""}
+      </Text>
+    </View>
+  );
   return (
-    <View style={ds.sectionFillStyle}>
+    <View style={ds.sectionFillStyle} testID="shell-detail-content">
       <View style={ds.codeBlockFillStyle}>
         <ScrollView
           style={ds.codeVerticalScrollStyle}
@@ -166,20 +237,19 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
           nestedScrollEnabled
           showsVerticalScrollIndicator
         >
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            contentContainerStyle={styles.codeHorizontalContent}
-          >
-            <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
-              <Text selectable style={styles.scrollText}>
-                <Text style={styles.shellPrompt}>$ </Text>
-                {normalizedCommand}
-                {hasOutput ? `\n\n${commandOutput}` : ""}
-              </Text>
-            </View>
-          </ScrollView>
+          {wrapLines ? (
+            content
+          ) : (
+            <ScrollView
+              horizontal
+              testID="shell-detail-horizontal-scroll"
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              contentContainerStyle={styles.codeHorizontalContent}
+            >
+              {content}
+            </ScrollView>
+          )}
         </ScrollView>
       </View>
     </View>
@@ -409,15 +479,17 @@ function SubAgentDetailSection({
 interface EditDetailProps {
   diffLines: DiffLine[] | undefined;
   ds: DetailStyles;
+  wrapLines: boolean;
 }
 
-function EditDetailSection({ diffLines, ds }: EditDetailProps) {
+function EditDetailSection({ diffLines, ds, wrapLines }: EditDetailProps) {
   return (
     <View style={ds.sectionFillStyle}>
       {diffLines ? (
         <View style={ds.codeBlockFillStyle}>
           <DiffViewer
             diffLines={diffLines}
+            wrapLines={wrapLines}
             maxHeight={ds.resolvedMaxHeight}
             fillAvailableHeight={ds.shouldFill}
           />
@@ -665,17 +737,33 @@ function buildPaseoUnknownSections(
   return sections.map((section) => <PaseoDetailSection key={section.title} section={section} />);
 }
 
-function buildDetailSections(
-  toolName: string | undefined,
-  detail: ToolCallDetail | undefined,
-  diffLines: DiffLine[] | undefined,
-  ds: DetailStyles,
-  t: TFunction,
-): ReactNode[] {
+interface DetailSectionOptions {
+  toolName: string | undefined;
+  detail: ToolCallDetail | undefined;
+  diffLines: DiffLine[] | undefined;
+  ds: DetailStyles;
+  t: TFunction;
+  wrapLines: boolean;
+}
+
+function buildDetailSections({
+  toolName,
+  detail,
+  diffLines,
+  ds,
+  t,
+  wrapLines,
+}: DetailSectionOptions): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
     return [
-      <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
+      <ShellDetailSection
+        key="shell"
+        command={detail.command}
+        output={detail.output}
+        ds={ds}
+        wrapLines={wrapLines}
+      />,
     ];
   }
   if (detail.type === "worktree_setup") {
@@ -702,7 +790,7 @@ function buildDetailSections(
     ];
   }
   if (detail.type === "edit") {
-    return [<EditDetailSection key="edit" diffLines={diffLines} ds={ds} />];
+    return [<EditDetailSection key="edit" diffLines={diffLines} ds={ds} wrapLines={wrapLines} />];
   }
   if (detail.type === "write") {
     return [
@@ -787,13 +875,33 @@ export function ToolCallDetailsContent({
   maxHeight,
   fillAvailableHeight = false,
   showLoadingSkeleton = false,
+  wrapLines: controlledWrapLines,
+  onWrapLinesChange,
+  showWrapToggle = true,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const [wrapOverride, setWrapOverride] = useState<boolean | null>(null);
+  const wrapLines = controlledWrapLines ?? wrapOverride ?? isCompact;
+  const toggleWrap = useCallback(() => {
+    if (onWrapLinesChange) {
+      onWrapLinesChange(!wrapLines);
+    } else {
+      setWrapOverride(!wrapLines);
+    }
+  }, [onWrapLinesChange, wrapLines]);
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
+  const sections: ReactNode[] = buildDetailSections({
+    toolName,
+    detail,
+    diffLines,
+    ds,
+    t,
+    wrapLines,
+  });
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
@@ -806,7 +914,17 @@ export function ToolCallDetailsContent({
     return <Text style={styles.emptyStateText}>{t("toolCallDetails.empty")}</Text>;
   }
 
-  return <View style={ds.fullBleedContainerStyle}>{sections}</View>;
+  const supportsWrapping = detail?.type === "shell" || detail?.type === "edit";
+  return (
+    <View style={ds.fullBleedContainerStyle}>
+      {supportsWrapping && showWrapToggle ? (
+        <View style={styles.codeToolbar}>
+          <ToolCallWrapButton wrapLines={wrapLines} onPress={toggleWrap} />
+        </View>
+      ) : null}
+      {sections}
+    </View>
+  );
 }
 
 // ---- Styles ----
@@ -946,6 +1064,30 @@ const styles = StyleSheet.create((theme) => {
         ? {
             whiteSpace: "pre",
             overflowWrap: "normal",
+          }
+        : null),
+    },
+    codeToolbar: {
+      alignItems: "flex-end",
+      paddingHorizontal: insets.padding,
+      paddingTop: theme.spacing[1],
+    },
+    wrapSelected: {
+      backgroundColor: theme.colors.interactionHighlight,
+    },
+    wrapIconButton: {
+      width: CONTROL_HEIGHTS.field,
+      paddingHorizontal: 0,
+    },
+    shellText: {
+      lineHeight: theme.lineHeight.diff,
+    },
+    wrappedShellText: {
+      minWidth: 0,
+      ...(isWeb
+        ? {
+            whiteSpace: "pre-wrap" as const,
+            overflowWrap: "anywhere" as const,
           }
         : null),
     },

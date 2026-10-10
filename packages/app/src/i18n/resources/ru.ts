@@ -1989,6 +1989,7 @@ export const ru: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "Переносить длинные строки",
     error: "Ошибка",
     empty: "Дополнительные сведения отсутствуют",
     subAgentActivity: "Активность субагента",

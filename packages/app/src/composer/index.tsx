@@ -557,7 +557,11 @@ function dispatchComposerKeyboardAction(args: DispatchComposerKeyboardActionArgs
   const passthroughAction = resolveMessageInputPassthroughAction(action.id);
   if (!passthroughAction) return false;
   const result = messageInputRef.current?.runKeyboardAction(passthroughAction);
-  if (passthroughAction === "send" || passthroughAction === "dictation-confirm") {
+  const conditionalAction =
+    passthroughAction === "send" ||
+    passthroughAction === "dictation-confirm" ||
+    passthroughAction === "voice-mute-toggle";
+  if (conditionalAction) {
     return result ?? false;
   }
   return true;

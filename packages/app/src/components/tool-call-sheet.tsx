@@ -12,7 +12,9 @@ import {
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
-import { ToolCallDetailsContent } from "./tool-call-details";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
+import { ToolCallDetailsContent, ToolCallWrapButton } from "./tool-call-details";
 
 // ----- Types -----
 
@@ -149,6 +151,11 @@ interface ToolCallSheetContentProps {
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const [wrapOverride, setWrapOverride] = React.useState<boolean | null>(null);
+  const wrapLines = wrapOverride ?? isCompact;
+  const toggleWrap = useCallback(() => setWrapOverride(!wrapLines), [wrapLines]);
+  const showHeaderWrapToggle = isNative || isCompact;
   const {
     toolName,
     displayName,
@@ -157,26 +164,32 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     icon: IconComponent,
     showLoadingSkeleton,
   } = data;
+  const supportsWrapping = detail?.type === "shell" || detail?.type === "edit";
 
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={styles.header} testID="tool-call-sheet-header">
         <View style={styles.headerLeft}>
           <ThemedToolCallHeaderIcon icon={IconComponent} size={20} />
-          <Text style={styles.headerTitle} numberOfLines={1}>
+          <Text style={styles.headerTitle} numberOfLines={1} testID="tool-call-sheet-title">
             {displayName}
           </Text>
         </View>
-        <Pressable
-          onPress={onClose}
-          style={styles.closeButton}
-          accessibilityRole="button"
-          accessibilityLabel={t("common.actions.close")}
-          testID="tool-call-sheet-close"
-        >
-          <ThemedCloseIcon size={20} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          {supportsWrapping && showHeaderWrapToggle ? (
+            <ToolCallWrapButton wrapLines={wrapLines} onPress={toggleWrap} iconOnly />
+          ) : null}
+          <Pressable
+            onPress={onClose}
+            style={styles.closeButton}
+            accessibilityRole="button"
+            accessibilityLabel={t("common.actions.close")}
+            testID="tool-call-sheet-close"
+          >
+            <ThemedCloseIcon size={20} />
+          </Pressable>
+        </View>
       </View>
 
       {/* Content */}
@@ -187,6 +200,9 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
           errorText={errorText}
           fillAvailableHeight
           showLoadingSkeleton={showLoadingSkeleton}
+          wrapLines={wrapLines}
+          onWrapLinesChange={setWrapOverride}
+          showWrapToggle={!showHeaderWrapToggle}
         />
       </BottomSheetScrollView>
     </View>
@@ -214,6 +230,12 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     flex: 1,
+    minWidth: 0,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
   },
   headerTitle: {
     fontSize: theme.fontSize.base,
