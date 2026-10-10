@@ -700,6 +700,60 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     },
   );
 
+  test("keeps a foreground subagent card's action log after a restart", async () => {
+    writeSession({
+      parentLines: [
+        parentEntry([
+          {
+            type: "tool_use",
+            id: TOOL_USE_ID,
+            name: "Agent",
+            input: {
+              subagent_type: "general-purpose",
+              description: "Count files foreground",
+              prompt: "Run ls and reply with the number of entries.",
+              run_in_background: false,
+            },
+          },
+        ]),
+        taskToolResult(),
+      ],
+      meta: JSON.stringify({ agentType: "general-purpose", toolUseId: TOOL_USE_ID }),
+      sidechainLines: [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          sessionId: "replay-session",
+          timestamp: "2026-07-26T06:27:49.000Z",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_child_bash",
+                name: "Bash",
+                input: { command: "ls -1 | wc -l", description: "Count entries" },
+              },
+            ],
+          },
+        }),
+        sidechainEntry({ stopReason: "end_turn" }),
+      ],
+    });
+
+    const cards = (await replayEvents()).flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === TOOL_USE_ID
+        ? [event.item]
+        : [],
+    );
+    expect(cards.at(-1)).toMatchObject({
+      detail: { type: "sub_agent", log: "[Bash] ls -1 | wc -l" },
+    });
+  });
+
   test("replays the subagent's own transcript onto its timeline", async () => {
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
