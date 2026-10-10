@@ -914,7 +914,6 @@ export class ScheduleService {
         features: config.featureValues,
         unattended: true,
         promptFailure: "return-error",
-        background: true,
         notifyOnFinish: false,
       });
       const agent = created.snapshot;

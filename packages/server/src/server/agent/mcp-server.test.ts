@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { createAgentMcpServer } from "./mcp-server.js";
+import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -834,6 +834,14 @@ function createPaseoWorktreeForMcpTest(options: {
   };
 }
 
+// Typed in-memory workspace port for catalogue tests without workspace setup.
+function createAgentMcpServer(options: Parameters<typeof createAgentMcpServerWithDependencies>[0]) {
+  return createAgentMcpServerWithDependencies({
+    workspaceRegistry: { get: async () => null, list: async () => [], upsert: async () => {} },
+    ...options,
+  });
+}
+
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
 
@@ -1328,15 +1336,44 @@ describe("create_agent MCP tool", () => {
       title: "Top-level agent",
       provider: "codex/gpt-5.4",
       initialPrompt: "Do work",
-      background: true,
     });
 
-    expect(ensureWorkspace).toHaveBeenCalledWith(existingCwd, { prompt: "Do work" });
+    expect(ensureWorkspace).toHaveBeenCalledWith(
+      existingCwd,
+      { prompt: "Do work" },
+      { callerWorkspaceId: undefined },
+    );
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: existingCwd }),
       undefined,
       { workspaceId: "workspace-created" },
     );
+  });
+
+  it("rejects public internal helpers and the old top-level execution background option", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-public-helper-removal-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger,
+    });
+    try {
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+      const input = { title: "Helper", provider: "codex/gpt-5.4", initialPrompt: "Summarize" };
+      await expect(tool.handler({ ...input, internal: true })).rejects.toThrow(/Unrecognized key/);
+      await expect(tool.handler({ ...input, background: true })).rejects.toThrow(
+        /Unrecognized key/,
+      );
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
   });
 
   it("rejects partial explicit workspace shape", async () => {
@@ -1447,7 +1484,6 @@ describe("create_agent MCP tool", () => {
       title: "Existing workspace",
       provider: "codex/gpt-5.4",
       initialPrompt: "Do work",
-      background: true,
     });
 
     expect(response.structuredContent.workspaceId).toBe("wks_existing");
@@ -1484,7 +1520,7 @@ describe("create_agent MCP tool", () => {
       title: "Feature test",
       provider: "codex/gpt-5.4",
       initialPrompt: "Do work",
-      background: true,
+
       settings: { features: { fast_mode: true } },
     };
 
@@ -1537,7 +1573,6 @@ describe("create_agent MCP tool", () => {
       title: "Mode test",
       provider: "codex/gpt-5.4",
       initialPrompt: "Do work",
-      background: true,
     });
 
     expect(response.structuredContent).toEqual(
@@ -1863,7 +1898,6 @@ describe("create_agent MCP tool", () => {
         title: "Worktree agent",
         provider: "codex/gpt-5.4",
         initialPrompt: "Do work",
-        background: true,
       });
 
       expect(broadcasts).toHaveLength(1);
@@ -1951,7 +1985,6 @@ describe("create_agent MCP tool", () => {
         title: "Worktree agent",
         provider: "codex/gpt-5.4",
         initialPrompt: "Fix workspace creation naming",
-        background: true,
       });
 
       const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
@@ -2032,7 +2065,6 @@ describe("create_agent MCP tool", () => {
         title: "Agent title",
         provider: "codex/gpt-5.4",
         initialPrompt: "Build a workspace auto title flow",
-        background: true,
       });
       const workspaceId = z.string().parse(createdWorkspaceIds[0]);
       await waitForWorkspaceTitle(workspaceRecords, workspaceId, "Workspace Auto Title Flow");
@@ -2134,7 +2166,6 @@ describe("create_agent MCP tool", () => {
         title: "Agent title",
         provider: "codex/gpt-5.4",
         initialPrompt: "Keep the manually renamed workspace title",
-        background: true,
       });
       const renameWorkspaceTool = registeredTool(server, "rename_workspace");
       await renameWorkspaceTool.handler({
@@ -2224,7 +2255,6 @@ describe("create_agent MCP tool", () => {
         title: "Explicit Agent Title",
         provider: "codex/gpt-5.4",
         initialPrompt: "Generate the workspace title anyway",
-        background: true,
       });
       const workspaceId = z.string().parse(createdWorkspaceIds[0]);
       await waitForWorkspaceTitle(workspaceRecords, workspaceId, "Generated Workspace Title");
@@ -2331,7 +2361,6 @@ describe("create_agent MCP tool", () => {
         title: "Directory agent",
         provider: "codex/gpt-5.4",
         initialPrompt: "Name a directory workspace from the prompt",
-        background: true,
       });
       await waitForWorkspaceTitle(
         workspaceRecords,
@@ -2438,7 +2467,6 @@ describe("create_agent MCP tool", () => {
         title: "Checkout agent",
         provider: "codex/gpt-5.4",
         initialPrompt: "Rename this checkout from the prompt",
-        background: true,
       });
 
       const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
@@ -2459,7 +2487,7 @@ describe("create_agent MCP tool", () => {
       });
       expect(readPaseoWorktreeMetadata(agentCwd)).toMatchObject({
         version: 1,
-        baseRefName: "existing-feature",
+        baseRefName: "main",
       });
       expect(generateCalls).toBe(1);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
@@ -2545,7 +2573,6 @@ describe("create_agent MCP tool", () => {
       title: "PR agent",
       provider: "codex/gpt-5.4",
       initialPrompt: "Rename this PR branch from prompt",
-      background: true,
     });
 
     expect(createPaseoWorktree).toHaveBeenCalledWith(
@@ -3057,6 +3084,47 @@ describe("create_agent MCP tool", () => {
     ]);
   });
 
+  it("creates an background local workspace and leaves it out of list_workspaces", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const createCalls: Array<{ cwd: string; context: { background?: boolean } | undefined }> = [];
+    const backgroundWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-background",
+      projectId: "project-1",
+      cwd: process.cwd(),
+      kind: "directory",
+      displayName: "helper",
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:00:00.000Z",
+      background: true,
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      workspaceRegistry: {
+        get: vi.fn(async () => backgroundWorkspace),
+        list: vi.fn(async () => [backgroundWorkspace]),
+        upsert: vi.fn(async () => undefined),
+      },
+      createDirectoryWorkspace: async (cwd, _title, _projectId, context) => {
+        createCalls.push({ cwd, context });
+        return backgroundWorkspace;
+      },
+      logger,
+    });
+
+    const created = await invokeToolWithParsedInput(registeredTool(server, "create_workspace"), {
+      isolation: "local",
+      path: process.cwd(),
+      background: true,
+    });
+    expect(created.structuredContent.workspaceId).toBe("ws-background");
+    expect(createCalls).toEqual([{ cwd: process.cwd(), context: { background: true } }]);
+
+    const listed = await registeredTool(server, "list_workspaces").handler({});
+    expect(listed.structuredContent.workspaces).toEqual([]);
+  });
+
   it("accepts custom provider IDs in create_agent input validation", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
@@ -3085,6 +3153,7 @@ describe("create_agent MCP tool", () => {
     await mkdir(subdir, { recursive: true });
     spies.agentManager.getAgent.mockReturnValue({
       id: "voice-agent",
+      config: { title: "Voice" },
       cwd: baseDir,
       workspaceId: "wks_voice",
       provider: "codex",
@@ -3713,6 +3782,7 @@ class HeldTurnAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private activeTurnId: string | null = null;
   private turnStartGate: Promise<void> | null = null;
+  private nextStartError: Error | null = null;
 
   constructor(
     readonly provider: AgentProvider,
@@ -3732,12 +3802,37 @@ class HeldTurnAgentSession implements AgentSession {
     return { sessionId: this.id, finalText: "", timeline: [] };
   }
 
+  rejectNextTurnStart(error: Error): void {
+    this.nextStartError = error;
+  }
+
+  tryHandleOutOfBand(prompt: AgentPromptInput) {
+    const text = typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : null;
+    return text === "/side-command" ? { run: async () => {} } : null;
+  }
+
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
     this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
     await this.turnStartGate;
+    if (this.nextStartError) {
+      const error = this.nextStartError;
+      this.nextStartError = null;
+      throw error;
+    }
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "user_message",
+        text: typeof prompt === "string" ? prompt : JSON.stringify(prompt),
+        messageId: randomUUID(),
+      },
+    });
     setTimeout(() => {
+      if (this.activeTurnId !== turnId) return;
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
       if (!this.holdTurns && this.activeTurnId === turnId) {
         this.finishTurn();
@@ -3746,13 +3841,27 @@ class HeldTurnAgentSession implements AgentSession {
     return { turnId };
   }
 
-  finishTurn(): void {
+  finishTurn(finalText?: string): void {
     const turnId = this.activeTurnId;
     if (!turnId) {
       throw new Error("No held turn to finish");
     }
     this.activeTurnId = null;
+    if (finalText)
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: { type: "assistant_message", text: finalText },
+      });
     this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
+  failTurn(error: string): void {
+    const turnId = this.activeTurnId;
+    if (!turnId) throw new Error("No held turn to fail");
+    this.activeTurnId = null;
+    this.pushEvent({ type: "turn_failed", provider: this.provider, error, turnId });
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -3885,7 +3994,6 @@ describe("send_agent_prompt MCP tool", () => {
       throw new Error("Expected caller send_agent_prompt input to parse");
     }
     expect(parsed.data).toMatchObject({
-      background: true,
       notifyOnFinish: true,
     });
 
@@ -3898,7 +4006,7 @@ describe("send_agent_prompt MCP tool", () => {
     );
   });
 
-  it("keeps top-level prompts blocking by default", async () => {
+  it("acknowledges top-level prompts without a completion wait", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "child-agent",
@@ -3926,20 +4034,16 @@ describe("send_agent_prompt MCP tool", () => {
       throw new Error("Expected top-level send_agent_prompt input to parse");
     }
     expect(parsed.data).toMatchObject({
-      background: false,
       notifyOnFinish: false,
     });
 
     await tool.handler(parsed.data as Record<string, unknown>);
 
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
-    expect(spies.agentManager.waitForAgentEvent).toHaveBeenCalledWith(
-      "child-agent",
-      expect.objectContaining({ waitForActive: true }),
-    );
+    expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
-  it("does not arm a finish notification for blocking agent-scoped prompts", async () => {
+  it("allows agent-scoped callers to opt out of finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
@@ -3975,17 +4079,175 @@ describe("send_agent_prompt MCP tool", () => {
     await invokeToolWithParsedInput(tool, {
       agentId: "child-agent",
       prompt: "Follow up",
-      background: false,
+      notifyOnFinish: false,
     });
 
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
-    expect(spies.agentManager.waitForAgentEvent).toHaveBeenCalledWith(
-      "child-agent",
-      expect.objectContaining({ waitForActive: true }),
-    );
+    expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
-  it("notifies the caller when a blocking agent-scoped prompt outlasts the wait", async () => {
+  it.each([
+    { immediateFinish: false, failure: false },
+    { immediateFinish: true, failure: false },
+    { immediateFinish: false, failure: true },
+  ])(
+    "notifies the retry outcome rather than the prior failed turn (immediate: $immediateFinish, failure: $failure)",
+    async ({ immediateFinish, failure }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-retry-notification-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const parentClient = new HeldTurnAgentClient("claude", false);
+      const childClient = new HeldTurnAgentClient("codex", true);
+      const agentManager = new AgentManager({
+        clients: { claude: parentClient, codex: childClient },
+        registry: storage,
+        logger,
+      });
+      try {
+        const parent = await agentManager.createAgent(
+          { provider: "claude", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const child = await agentManager.createAgent(
+          { provider: "codex", cwd: existingCwd, title: "Retry child" },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        const tool = registeredTool(server, "send_agent_prompt");
+        await invokeToolWithParsedInput(tool, {
+          agentId: child.id,
+          prompt: "Old task",
+          notifyOnFinish: false,
+        });
+        childClient.sessions[0]!.failTurn("Old task failed");
+        await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("error"));
+        const unsubscribe = agentManager.subscribe(
+          (event) => {
+            if (
+              immediateFinish &&
+              event.type === "agent_state" &&
+              event.agent.lifecycle === "running"
+            ) {
+              childClient.sessions[0]!.finishTurn("Retry done");
+            }
+          },
+          { agentId: child.id, replayState: false },
+        );
+        const response = await invokeToolWithParsedInput(tool, {
+          agentId: child.id,
+          prompt: "Retry now",
+        });
+        unsubscribe();
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          disposition: "turn_started",
+        });
+        if (!immediateFinish) {
+          expect(response.structuredContent.status).toBe("running");
+          if (failure) childClient.sessions[0]!.failTurn("Retry failed");
+          else childClient.sessions[0]!.finishTurn("Retry done");
+        }
+        await vi.waitFor(() => {
+          expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+          expect(parentClient.sessions[0]!.prompts[0]).toContain(
+            `Agent ${child.id} (Retry child) ${failure ? "errored" : "finished"}.`,
+          );
+          expect(parentClient.sessions[0]!.prompts[0]).not.toContain("Old task failed");
+        });
+        await vi.waitFor(() => expect(agentManager.getAgent(parent.id)?.lifecycle).toBe("idle"));
+        expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it.each(["out_of_band", "startup_failure"] as const)(
+    "preserves %s dispatch notification semantics",
+    async (scenario) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-dispatch-notification-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const parentClient = new HeldTurnAgentClient("claude", false);
+      const childClient = new HeldTurnAgentClient("codex", true);
+      const agentManager = new AgentManager({
+        clients: { claude: parentClient, codex: childClient },
+        registry: storage,
+        logger,
+      });
+      try {
+        const parent = await agentManager.createAgent(
+          { provider: "claude", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const child = await agentManager.createAgent(
+          { provider: "codex", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        const tool = registeredTool(server, "send_agent_prompt");
+        await invokeToolWithParsedInput(tool, {
+          agentId: child.id,
+          prompt: "Ongoing task",
+          notifyOnFinish: false,
+        });
+        if (scenario === "out_of_band") {
+          const response = await invokeToolWithParsedInput(tool, {
+            agentId: child.id,
+            prompt: "/side-command",
+          });
+          expect(response.structuredContent).toMatchObject({
+            success: true,
+            disposition: "out_of_band",
+            status: "running",
+          });
+          expect(childClient.sessions[0]!.prompts).toHaveLength(1);
+          expect(parseAgentMessage(childClient.sessions[0]!.prompts[0])).toMatchObject({
+            source: { kind: "agent-message", agentId: parent.id },
+            text: "Ongoing task",
+          });
+          expect(parentClient.sessions[0]!.prompts).toHaveLength(0);
+          childClient.sessions[0]!.finishTurn("Ongoing task done");
+          await vi.waitFor(() => {
+            expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+            expect(parentClient.sessions[0]!.prompts[0]).toContain("finished.");
+          });
+        } else {
+          childClient.sessions[0]!.rejectNextTurnStart(new Error("Requested turn could not start"));
+          await expect(
+            invokeToolWithParsedInput(tool, { agentId: child.id, prompt: "Replacement task" }),
+          ).rejects.toThrow("Requested turn could not start");
+          // A later real turn must not inherit a subscription from the rejected dispatch.
+          await invokeToolWithParsedInput(tool, {
+            agentId: child.id,
+            prompt: "Recovery",
+            notifyOnFinish: false,
+          });
+          childClient.sessions[0]!.finishTurn("Recovered");
+          await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
+          expect(parentClient.sessions[0]!.prompts).toHaveLength(0);
+        }
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it("acknowledges a pending agent-scoped turn and notifies its completion", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-blocking-send-timeout-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const parentClient = new HeldTurnAgentClient("claude", false);
@@ -4016,24 +4278,19 @@ describe("send_agent_prompt MCP tool", () => {
       });
       const tool = registeredTool(server, "send_agent_prompt");
 
-      vi.useFakeTimers();
       const pending = invokeToolWithParsedInput(tool, {
         agentId: child.id,
         prompt: "Follow up",
-        background: false,
       });
-      await vi.advanceTimersByTimeAsync(31_000);
       const response = await pending;
       expect(response.structuredContent).toMatchObject({
         status: "running",
         guidance:
           "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
       });
-      expect(response.structuredContent.lastMessage).toContain("timed out after 30s");
+      expect(response.structuredContent).not.toHaveProperty("lastMessage");
 
       childClient.sessions[0]!.finishTurn();
-      await vi.advanceTimersByTimeAsync(1_000);
-      vi.useRealTimers();
 
       await vi.waitFor(() => {
         const parentPrompts = parentClient.sessions[0]!.prompts;
@@ -4092,6 +4349,7 @@ describe("send_agent_prompt MCP tool", () => {
       const childSession = childClient.sessions[0]!;
       await vi.waitFor(() => expect(childSession.prompts).toHaveLength(2));
 
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(0);
       childSession.finishTurn();
 
       function finishNotifications() {
@@ -4221,7 +4479,11 @@ describe("send_agent_prompt MCP tool", () => {
         },
       );
       unsubscribe();
-      expect(response.structuredContent).toMatchObject({ success: true, status: "idle" });
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "turn_started",
+      });
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
       await vi.waitFor(() => {
         const parentPrompts = parentClient.sessions[0]!.prompts;
         expect(parentPrompts).toHaveLength(1);
