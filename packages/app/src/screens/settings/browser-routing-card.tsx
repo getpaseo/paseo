@@ -19,6 +19,7 @@ import {
   routingChangedSchema,
   routingDesktop,
   supportsNetworkTunnel,
+  type RoutingDesktop,
 } from "@/desktop/browser/network-routing/contract";
 
 export function BrowserRoutingCard({ serverId }: { serverId: string }) {
@@ -38,11 +39,24 @@ export function BrowserRoutingCard({ serverId }: { serverId: string }) {
         key={serverId}
         serverId={serverId}
         available={availability.available}
+        desktop={routingDesktop}
       />
     </SettingsSection>
   );
 }
-function BrowserRoutingSetting({ serverId, available }: { serverId: string; available: boolean }) {
+/**
+ * The per-host switch. `desktop` is the port to the desktop main process, where the choice
+ * is persisted; the card passes the Electron bridge and tests pass an in-memory adapter.
+ */
+export function BrowserRoutingSetting({
+  serverId,
+  available,
+  desktop,
+}: {
+  serverId: string;
+  available: boolean;
+  desktop: RoutingDesktop;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const permissionDenied = useNetworkRoutingStatus(
@@ -53,14 +67,14 @@ function BrowserRoutingSetting({ serverId, available }: { serverId: string; avai
     dataShape: "value",
     staleTimeMs: 0,
     queryKey,
-    queryFn: () => getBrowserRoutingState(serverId),
+    queryFn: () => getBrowserRoutingState(serverId, desktop),
     retry: false,
   });
   const mutation = useMutation({
     mutationFn: async (enabled: boolean) => {
       requireIpcSuccess(
         ipcAckSchema.parse(
-          await routingDesktop.invoke("browser_routing_set_enabled", { serverId, enabled }),
+          await desktop.invoke("browser_routing_set_enabled", { serverId, enabled }),
         ),
       );
       return enabled;
@@ -70,7 +84,7 @@ function BrowserRoutingSetting({ serverId, available }: { serverId: string; avai
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void routingDesktop
+    void desktop
       .listen("browser_routing_changed", (raw) => {
         const event = routingChangedSchema.parse(raw);
         if (event.serverId === serverId)
@@ -88,7 +102,7 @@ function BrowserRoutingSetting({ serverId, available }: { serverId: string; avai
       disposed = true;
       unlisten?.();
     };
-  }, [queryClient, serverId]);
+  }, [desktop, queryClient, serverId]);
   const failed = state.isError || mutation.isError;
   const handleValueChange = useCallback((next: boolean) => mutation.mutate(next), [mutation]);
   const handleRetry = useCallback(() => {
