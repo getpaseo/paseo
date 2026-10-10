@@ -320,3 +320,101 @@ const SourceSchema = z.object({
     expect(result.success).toBe(true);
   });
 });
+
+describe("network tunnel generated validation", () => {
+  const subscriptionId = "11111111-1111-4111-8111-111111111111";
+  const payload = {
+    requestId: "open",
+    ok: true,
+    subscriptionId,
+    initialWindowBytes: 262144,
+    maxDataBytes: 65536,
+    maxStreams: 64,
+    connectTimeoutMs: 10000,
+  };
+
+  it.each([
+    { type: "network.tunnel.open.response", payload },
+    {
+      type: "network.tunnel.open.response",
+      payload: {
+        ...payload,
+        initialWindowBytes: 524288,
+        maxDataBytes: 131072,
+        maxStreams: 128,
+        connectTimeoutMs: 20000,
+      },
+    },
+    {
+      type: "network.tunnel.close.response",
+      payload: { requestId: "close", ok: true, subscriptionId },
+    },
+    {
+      type: "network.tunnel.open.response",
+      payload: {
+        requestId: "open",
+        ok: false,
+        error: { code: "resource_limit", message: "Too many tunnels" },
+      },
+    },
+    {
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: "close",
+        ok: false,
+        error: { code: "not_found", message: "Unknown tunnel" },
+      },
+    },
+    {
+      type: "network.tunnel.closed",
+      payload: { subscriptionId, reason: "protocol_error" },
+    },
+    {
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "host",
+        features: { networkTunnel: true },
+        permissions: ["network.proxy"],
+      },
+    },
+    { type: "status", payload: { status: "server_info", serverId: "old-host" } },
+  ])("accepts $type", (message) => {
+    const envelope = { type: "session", message };
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
+  it.each([
+    { ...payload, ok: "true" },
+    { ...payload, ok: "false" },
+    { ...payload, maxStreams: 0 },
+    { ...payload, initialWindowBytes: -1 },
+    { ...payload, maxDataBytes: 1.5 },
+    { ...payload, subscriptionId: "not-a-uuid" },
+    { requestId: "open", ok: true, subscriptionId },
+    { requestId: "open", ok: false },
+    { requestId: "open", ok: false, error: { code: "unknown", message: "error" } },
+  ])("rejects invalid tunnel response %j", (invalidPayload) => {
+    expect(
+      GeneratedWSOutboundMessageSchema.safeParse({
+        type: "session",
+        message: { type: "network.tunnel.open.response", payload: invalidPayload },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    { subscriptionId, reason: "disconnected" },
+    { subscriptionId: "not-a-uuid", reason: "revoked" },
+  ])("rejects invalid generated tunnel closure %j", (invalidPayload) => {
+    expect(
+      GeneratedWSOutboundMessageSchema.safeParse({
+        type: "session",
+        message: { type: "network.tunnel.closed", payload: invalidPayload },
+      }).success,
+    ).toBe(false);
+  });
+});
