@@ -922,15 +922,9 @@ export class ScheduleService {
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
-      const result = await this.agentManager.runAgent(agent.id, schedule.prompt);
-      const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
-        waitForActive: true,
-      });
+      const { result, waitResult } = await this.runScheduledAgent(agent.id, schedule.prompt);
       if (result.canceled) {
         throw new Error(`Scheduled agent ${agent.id} was canceled`);
-      }
-      if (waitResult.permission) {
-        throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
       }
       if (waitResult.status === "error") {
         throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
@@ -967,6 +961,37 @@ export class ScheduleService {
     }
   }
 
+  // A permission prompt doesn't end the turn, so runAgent alone would wait for an approval
+  // nobody is watching for. Watch the agent while the run is in flight and fail the run on
+  // the first prompt, so the run records which tool it stopped on.
+  private async runScheduledAgent(
+    agentId: string,
+    prompt: string,
+  ): Promise<{
+    result: Awaited<ReturnType<ScheduleAgentManager["runAgent"]>>;
+    waitResult: Awaited<ReturnType<ScheduleAgentManager["waitForAgentEvent"]>>;
+  }> {
+    const run = settle(this.agentManager.runAgent(agentId, prompt));
+    let waitResult: Awaited<ReturnType<ScheduleAgentManager["waitForAgentEvent"]>>;
+    try {
+      waitResult = await this.agentManager.waitForAgentEvent(agentId, { waitForActive: true });
+    } catch (waitError) {
+      // The run's own failure explains more than losing track of the agent it failed on.
+      const settledRun = await run;
+      throw settledRun.status === "rejected" ? settledRun.reason : waitError;
+    }
+    if (waitResult.permission) {
+      throw new Error(
+        `Scheduled agent ${agentId} is waiting for permission to use ${waitResult.permission.name}`,
+      );
+    }
+    const settled = await run;
+    if (settled.status === "rejected") {
+      throw settled.reason;
+    }
+    return { result: settled.value, waitResult };
+  }
+
   private async createScheduleRunWorkspace(
     config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
     prompt: string,
@@ -994,6 +1019,15 @@ export class ScheduleService {
       throw error;
     }
   }
+}
+
+// Attach the rejection handler up front so a run that fails while we are still
+// watching for permission prompts is never reported as unhandled.
+function settle<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason: unknown) => ({ status: "rejected", reason }),
+  );
 }
 
 function buildScheduleAgentConfig(

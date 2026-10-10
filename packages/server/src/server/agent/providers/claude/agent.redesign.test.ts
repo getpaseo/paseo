@@ -371,8 +371,8 @@ test("does not keep a query started in a mode that Claude Code rejected", async 
     await expect(session.setMode("bypassPermissions")).rejects.toThrow("bypass refused");
     await session.listCommands();
 
-    expect(await session.getCurrentMode()).toBe("default");
-    expect(launchedModes).toEqual(["bypassPermissions", "default"]);
+    expect(await session.getCurrentMode()).toBe("auto");
+    expect(launchedModes).toEqual(["bypassPermissions", "auto"]);
   } finally {
     await session.close();
   }

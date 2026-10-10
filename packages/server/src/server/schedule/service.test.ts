@@ -456,6 +456,45 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("fails a new-agent run when its agent stops on a permission prompt", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "rm -f permission.txt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          modeId: "default",
+          cwd: tempDir,
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toMatch(/is waiting for permission to use Bash/);
+  });
+
   test("delivers agent-target schedules through the steer-or-interrupt path", async () => {
     const manager = new AgentManager({
       logger: createTestLogger(),

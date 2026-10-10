@@ -16,6 +16,7 @@ import {
   toClaudeSdkMcpConfig,
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import { resolveDefaultAgentCreateConfig } from "../../create-agent-mode.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
   AgentPromptInput,
@@ -566,6 +567,36 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
   });
+
+  test("an unattended agent created without a mode runs in Bypass", async () => {
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
+        configDir: emptyConfigDir,
+      });
+      const { modes } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
+
+      const resolved = resolveDefaultAgentCreateConfig({
+        provider: "claude",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent: null,
+        unattended: true,
+        availableModes: modes,
+      });
+
+      expect(resolved.modeId).toBe("bypassPermissions");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ClaudeAgentClient binary resolution", () => {
@@ -657,6 +688,39 @@ describe("ClaudeAgentClient binary resolution", () => {
     );
 
     await session.close();
+  });
+});
+
+describe("ClaudeAgentSession mode without a requested mode", () => {
+  const logger = createTestLogger();
+
+  test("starts in Auto, the provider's default mode", async () => {
+    const session = await new ClaudeAgentClient({
+      logger,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      await expect(session.getCurrentMode()).resolves.toBe("auto");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("starts in Always Ask when Claude Code uses Bedrock", async () => {
+    const session = await new ClaudeAgentClient({
+      logger,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession(
+      { provider: "claude", cwd: process.cwd() },
+      { agentId: "claude-bedrock-default-mode", env: { CLAUDE_CODE_USE_BEDROCK: "1" } },
+    );
+
+    try {
+      await expect(session.getCurrentMode()).resolves.toBe("default");
+    } finally {
+      await session.close();
+    }
   });
 });
 

@@ -257,6 +257,7 @@ const CODEX_MODES: AgentMode[] = [
     id: "full-access",
     label: "Full Access",
     description: "Edit files, run commands, and access the network without additional prompts.",
+    isUnattended: true,
   },
 ];
 
