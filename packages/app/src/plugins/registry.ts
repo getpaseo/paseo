@@ -19,6 +19,7 @@ export class PluginRegistry {
   private readonly byHost = new Map<string, InstalledPlugin[]>();
   private readonly listeners = new Set<() => void>();
   private snapshot: InstalledPlugin[] = [];
+  private loadedHosts: ReadonlySet<string> = new Set();
   private readonly disposed = new WeakSet<InstalledPlugin>();
   private readonly evaluationErrors = new Map<string, string>();
   private readonly catalogStatuses = new Map<string, PluginCatalogStatus>();
@@ -39,6 +40,9 @@ export class PluginRegistry {
   };
 
   getSnapshot = (): InstalledPlugin[] => this.snapshot;
+
+  /** Hosts whose plugin catalog has been installed and that are still connected. */
+  getLoadedHosts = (): ReadonlySet<string> => this.loadedHosts;
 
   getEvaluationError(serverId: string, pluginId: string): string | undefined {
     return this.evaluationErrors.get(`${serverId}/${pluginId}`);
@@ -63,6 +67,7 @@ export class PluginRegistry {
       audio: Pick<AudioEngine, "play">;
     },
   ): boolean {
+    const firstCatalog = !this.byHost.has(serverId);
     const previous = this.byHost.get(serverId) ?? [];
     const previousErrors = this.hostEvaluationErrors(serverId);
     // Installations call the client they were created with, so a new client replaces them all.
@@ -173,8 +178,10 @@ export class PluginRegistry {
     }
     this.byHost.set(serverId, installed);
     // An unchanged catalog keeps the snapshot, so timeline projections cached against the
-    // installed transformers stay valid across a reconnect.
+    // installed transformers stay valid across a reconnect. A first catalog publishes even when
+    // empty: the host now counts as loaded.
     const unchanged =
+      !firstCatalog &&
       installed.length === previous.length &&
       installed.every((plugin, index) => plugin === previous[index]) &&
       this.hostEvaluationErrors(serverId) === previousErrors;
@@ -237,6 +244,13 @@ export class PluginRegistry {
       .sort((left, right) =>
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
+    const hostIds = [...this.byHost.keys()];
+    if (
+      hostIds.length !== this.loadedHosts.size ||
+      hostIds.some((hostId) => !this.loadedHosts.has(hostId))
+    ) {
+      this.loadedHosts = new Set(hostIds);
+    }
     for (const listener of this.listeners) listener();
   }
 }
@@ -260,6 +274,14 @@ export function useInstalledPlugins(): InstalledPlugin[] {
     pluginRegistry.subscribe,
     pluginRegistry.getSnapshot,
     pluginRegistry.getSnapshot,
+  );
+}
+
+export function useLoadedPluginHosts(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    pluginRegistry.subscribe,
+    pluginRegistry.getLoadedHosts,
+    pluginRegistry.getLoadedHosts,
   );
 }
 
