@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
-import { gotoWorkspace } from "../support/helpers/launcher";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
@@ -30,7 +30,7 @@ test.describe("New tab keyboard launcher", () => {
       await waitForWorkspaceTabsVisible(page);
 
       const explorer = await openExplorerWithKeyboard(page);
-      await expect(explorer.getByTestId("explorer-sidebar-tab-changes_tree")).toBeVisible();
+      await expect(explorer.getByTestId("workspace-tab-changes_tree")).toBeVisible();
       await expect(explorer.getByTestId("changes-tree-panel")).toBeVisible();
     } finally {
       await workspace.cleanup();
@@ -43,6 +43,7 @@ test.describe("New tab keyboard launcher", () => {
     try {
       await gotoWorkspace(page, workspace.workspaceId);
       await waitForWorkspaceTabsVisible(page);
+      await clickNewChat(page);
       await runWorkspaceActionFromCommandCenter(page, "Split pane right");
 
       const launcher = visibleNewTabPanel(page);

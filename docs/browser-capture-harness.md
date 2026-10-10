@@ -43,6 +43,18 @@ Run the shared browser profile fixture with:
 PASEO_CAPTURE_HARNESS_GROUP=browser-profile npm run capture-harness --workspace=@getpaseo/desktop
 ```
 
+On macOS, test native titlebar dragging after scrolling with:
+
+```bash
+PASEO_CAPTURE_HARNESS_GROUP=titlebar-drag npm run capture-harness --workspace=@getpaseo/desktop
+```
+
+This group needs Xcode Command Line Tools and Accessibility permission for the
+terminal running it. It sends real mouse input to its test window and checks
+window movement, including button clicks and a portal over the titlebar. Leave
+the mouse idle during this group. It reads the app's production CSS and writes
+screenshots and window bounds to the output directory.
+
 The browser profile group runs two Electron processes in sequence. It verifies that each
 renderer-side `did-attach` identity maps to the correct main-process guest, that two live
 tabs share cookies and local storage through one persistent session, and that the data is
@@ -103,6 +115,9 @@ layering inside `overlay-root`. Activating a presented browser also focuses its 
 
 There is no renderer prep/restore handshake or lifetime background-throttling override.
 Screenshot capture temporarily enables frame production inside the shared serialized queue,
-restores the previous throttling policy on success or failure, invalidates before each attempt,
-and retries known first-frame failures within the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
-full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
+restores the previous throttling policy on success or failure, and retains a 5-second capture budget.
+The browser tool takes one viewport frame through Electron's frame subscription and releases the
+subscription on completion or cancellation. A resized resident guest can produce fresh pixels
+while `capturePage()` leaves its surface-copy request pending; waiting for animation frames or
+retrying the copy does not repair that state. Full-page screenshots retain the CDP path with layout
+metrics and screenshot clip.

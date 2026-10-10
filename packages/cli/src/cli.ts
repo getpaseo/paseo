@@ -3,6 +3,7 @@ import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
+import { createUsageCommand } from "./commands/usage/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
 import { createPluginCommand } from "./commands/plugin/index.js";
 import { createProjectCommand } from "./commands/project/index.js";
@@ -148,6 +149,7 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand());
+  program.addCommand(createUsageCommand());
   program.addCommand(createPluginCommand());
 
   // Speech model commands
@@ -159,6 +161,23 @@ export function createCli(): Command {
   // COMPAT(worktreeCli): legacy command alias added before workspace was the product unit.
   // Added in v0.2.0; remove after 2027-01-17.
   program.addCommand(createWorktreeCommand(), { hidden: true });
+
+  // Stop root parsing at the command so `plugin update --version` belongs to update.
+  // Keep global options available after a command, as they were before positional parsing.
+  program.enablePositionalOptions();
+  for (const command of program.commands) {
+    for (const option of program.options) {
+      if (option.long === "--version") continue;
+      if (!command.options.some((local) => local.long === option.long)) command.addOption(option);
+      if (option.long === "--home" || option.long === "--host") continue;
+      command.on(`option:${option.name()}`, () => {
+        const key = option.attributeName();
+        program.setOptionValueWithSource(key, command.opts()[key], "cli");
+      });
+    }
+    if (command.name() !== "plugin")
+      command.version(VERSION, "-v, --version", "output the version number");
+  }
 
   const enforceSelectorDuplicates = (command: Command) => {
     for (const option of command.options) {

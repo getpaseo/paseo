@@ -9,6 +9,8 @@ import { expectWorkspaceTabVisible, openSessions } from "../support/helpers/arch
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import { expectMobileAgentSidebarVisible } from "../support/helpers/sidebar";
+import { expectNewWorkspaceProjectSelected } from "../support/helpers/new-workspace";
 
 const TEST_COMMANDS = [
   {
@@ -337,6 +339,16 @@ function expectPopoverFramesStable(frames: PopoverFrame[]): void {
   ).toBeUndefined();
 }
 
+function recordCommandRequestsByAgentId(page: Page): string[] {
+  const requests: string[] = [];
+  const record = ({ payload }: { payload: string | Buffer }) => {
+    if (typeof payload !== "string" || !payload.includes("list_commands_request")) return;
+    if (!payload.includes("draftConfig")) requests.push(payload);
+  };
+  page.on("websocket", (socket) => socket.on("framesent", record));
+  return requests;
+}
+
 function expectPopoverDoesNotDisappearAfterFirstVisible(frames: PopoverFrame[]): void {
   const firstVisibleIndex = frames.findIndex(
     (frame) =>
@@ -358,6 +370,25 @@ function expectPopoverDoesNotDisappearAfterFirstVisible(frames: PopoverFrame[]):
 }
 
 test.describe("Composer autocomplete", () => {
+  test("keeps New workspace off the running-agent command list before a project is chosen", async ({
+    page,
+  }) => {
+    const commandRequestsByAgentId = recordCommandRequestsByAgentId(page);
+
+    await page.goto("/new");
+    await expectNewWorkspaceProjectSelected(page, "Choose project");
+    await composerLocator(page).fill("/");
+
+    const popover = page
+      .getByTestId("composer-autocomplete-popover")
+      .filter({ visible: true })
+      .first();
+    await expect(popover).toContainText("Choose a project to see commands", { timeout: 30_000 });
+    await expect(popover).not.toContainText("/clear");
+    await expect(popover).not.toContainText("/exit");
+    expect(commandRequestsByAgentId).toEqual([]);
+  });
+
   test("stays visible after returning from app-wide routes", async ({ page }) => {
     await installListCommandsStub(page);
     const serverId = getServerId();
@@ -671,7 +702,7 @@ test.describe("Composer autocomplete", () => {
         });
 
         await page.getByRole("button", { name: "Open menu" }).click();
-        await expect(page.getByTestId("sidebar-sessions")).toBeInViewport({ timeout: 5_000 });
+        await expectMobileAgentSidebarVisible(page);
 
         const popoverBox = await popover.boundingBox();
         expect(popoverBox).not.toBeNull();

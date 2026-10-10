@@ -4,6 +4,8 @@ import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 
 interface DiffDocumentBaseProps {
   files: ParsedDiffFile[];
+  /** Scrollable space kept below the last line so a floating control never traps content. */
+  contentInsetBottom?: number;
   displayPreferences: {
     layout: "unified" | "split";
     wrapLines: boolean;

@@ -120,6 +120,17 @@ REACT_NATIVE_PACKAGER_HOSTNAME=localhost \
 
 This is the Android counterpart of the iOS local-simulator flow in [development.md](development.md): on iOS the simulator shares the Mac's loopback so `localhost:<port>` works directly; on Android you need `10.0.2.2` or `adb reverse`.
 
+## Inverted timeline selection
+
+Android focus and selection visibility requests must not reposition inverted timelines. The
+`modules/paseo-scroll` package keeps React Native's scroll manager interface and returns zero for
+child-reveal scroll calculations when the vertical scale is inverted. Dragging and explicit scroll
+commands still work; non-inverted scroll views keep Android's default behavior.
+
+Register this package before React Native's core package through its Expo config plugin. Normal
+Android builds use the prebuilt `react-android` library, so patching Java under `node_modules` does
+not change the shipped scroll view. Keep this behavior in the app's compiled native module.
+
 ## F-Droid / source-only Android builds
 
 F-Droid builds should set `PASEO_FDROID_BUILD=1` when running Expo prebuild:

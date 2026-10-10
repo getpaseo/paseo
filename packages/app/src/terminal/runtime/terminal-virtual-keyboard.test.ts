@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   getTerminalVirtualKeyboardControlId,
+  resolveTerminalVirtualKeyboardRows,
+  shouldShowTerminalVirtualKeyBar,
   shouldShowTerminalFloatingCopyAction,
   shouldShowTerminalPasteAction,
   TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+  TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS,
+  TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
   type TerminalVirtualKeyboardControl,
 } from "./terminal-virtual-keyboard";
 
@@ -41,6 +45,38 @@ function controlsByType(
 }
 
 describe("terminal virtual keyboard policy", () => {
+  it("keeps terminal controls on wide native touch screens with either IME state", () => {
+    expect(shouldShowTerminalVirtualKeyBar({ isNative: true, isCompact: false })).toBe(true);
+    expect(shouldShowTerminalVirtualKeyBar({ isNative: true, isCompact: true })).toBe(true);
+    expect(shouldShowTerminalVirtualKeyBar({ isNative: false, isCompact: true })).toBe(true);
+    expect(shouldShowTerminalVirtualKeyBar({ isNative: false, isCompact: false })).toBe(false);
+  });
+
+  it("selects the same controls in narrow and wide row arrangements", () => {
+    const ids = (rows: readonly (readonly TerminalVirtualKeyboardControl[])[]) =>
+      rows.flatMap((row) => row.map(getTerminalVirtualKeyboardControlId));
+    expect([...ids(TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS)].sort()).toEqual(
+      [...ids(TERMINAL_VIRTUAL_KEYBOARD_ROWS)].sort(),
+    );
+    expect([...ids(TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS)].sort()).toEqual(
+      [...ids(TERMINAL_VIRTUAL_KEYBOARD_ROWS)].sort(),
+    );
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 0 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+    );
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 515 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+    );
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 160 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS,
+    );
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 698 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
+    );
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: true, availableWidth: 700 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+    );
+  });
   it("does not expose redundant Space or Backspace controls", () => {
     expect(controlIds()).toEqual([
       "terminal-key-esc",

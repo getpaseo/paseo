@@ -16,11 +16,12 @@ import {
   DaemonConnectionError,
   type WebSocketLike,
 } from "@getpaseo/client/internal/daemon-client";
-import { readDaemonInstance, isSameDaemonInstance } from "@getpaseo/server";
+import { readDaemonInstance, isSameDaemonInstance } from "@getpaseo/server/daemon-control";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
 import { getAvailablePort } from "./helpers/network.ts";
 
 const pollIntervalMs = 100;
+const daemonReadyTimeoutMs = 120_000;
 const testEnv = {
   PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
   PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? "0",
@@ -135,7 +136,7 @@ import('node:fs').then(({appendFileSync}) => {
       supervisor = await readDaemonInstance(paseoHome);
       return supervisor?.pid === supervisorProcess?.pid && Boolean(supervisor?.listen);
     },
-    120000,
+    daemonReadyTimeoutMs,
     "daemon did not publish its bound endpoint in time",
   );
   assert(supervisor?.listen, "owned supervisor should publish its bound endpoint");
@@ -176,7 +177,8 @@ import('node:fs').then(({appendFileSync}) => {
     "restart request should be acknowledged",
   );
 
-  const deadline = Date.now() + 20000;
+  // A restart includes worker startup and client reconnection, as initial readiness does.
+  const deadline = Date.now() + daemonReadyTimeoutMs;
   let statusAfterRestart = statusBeforeRestart;
   await waitFor(
     async () => {
@@ -193,7 +195,7 @@ import('node:fs').then(({appendFileSync}) => {
         throw error;
       }
     },
-    20000,
+    daemonReadyTimeoutMs,
     "worker pid did not change after restart request",
   );
   assert.notStrictEqual(

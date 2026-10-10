@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { gotoAppShell } from "./app";
 import { openCommandCenter } from "./command-center";
+import { openGlobalNewWorkspaceComposer } from "./new-workspace";
 import { getServerId } from "./server-id";
 import { expectMobileAgentSidebarVisible, openMobileAgentSidebar } from "./sidebar";
 
@@ -18,17 +19,24 @@ export class ImportSessionFlow {
       timeout: 30_000,
     });
   }
-  async revealMobileEntryPoint() {
-    await openMobileAgentSidebar(this.page);
-    await expectMobileAgentSidebarVisible(this.page);
-    const button = this.page.getByTestId("sidebar-import-session");
+  /** The new workspace screen's Import session button, reached from the sidebar. */
+  async revealNewWorkspaceEntryPoint() {
+    const compact = (this.page.viewportSize()?.width ?? 0) < 768;
+    if (compact) {
+      await openMobileAgentSidebar(this.page);
+      await expectMobileAgentSidebarVisible(this.page);
+    }
+    await openGlobalNewWorkspaceComposer(this.page);
+    const button = this.page.getByTestId("new-workspace-import-session");
     await expect(button).toHaveAccessibleName("Import session");
-    await button.hover();
-    await expect(this.page.getByText("Import session", { exact: true })).toBeVisible();
+    await expect(button).toBeInViewport();
   }
   async openGlobally() {
-    await expect(this.page.getByTestId("sidebar-import-session")).toBeVisible();
-    await this.page.getByTestId("sidebar-import-session").click();
+    await this.revealNewWorkspaceEntryPoint();
+    await this.openFromNewWorkspace();
+  }
+  async openFromNewWorkspace() {
+    await this.page.getByTestId("new-workspace-import-session").click();
     await this.expectSheetReady();
   }
   async openFromWorkspaceHeader() {
@@ -49,6 +57,9 @@ export class ImportSessionFlow {
     before?: [string, string];
     folders?: Array<[string, string]>;
   }) {
+    for (const id of input.first ?? input.before ?? []) {
+      await expect(this.page.getByTestId(rowTestId(id))).toHaveCount(1);
+    }
     const ids = await this.rowIds();
     if (input.first) expect(ids.slice(0, input.first.length)).toEqual(input.first.map(rowTestId));
     if (input.before) {
@@ -106,8 +117,12 @@ export class ImportSessionFlow {
     });
   }
   async expectTranscript(userText: string, assistantText: string) {
-    await expect(this.page.getByTestId("user-message")).toContainText(userText);
-    await expect(this.page.getByTestId("assistant-message")).toContainText(assistantText);
+    await expect(this.page.getByTestId("user-message").filter({ visible: true })).toContainText(
+      userText,
+    );
+    await expect(
+      this.page.getByTestId("assistant-message").filter({ visible: true }),
+    ).toContainText(assistantText);
   }
   async showAll() {
     await this.page.getByTestId("import-session-show-all").click();
@@ -118,7 +133,9 @@ export class ImportSessionFlow {
       timeout: 30_000,
     });
     const workspace = this.page.getByTestId(`workspace-deck-entry-${getServerId()}:${workspaceId}`);
-    await expect(workspace.getByTestId("user-message")).toContainText(userText);
+    await expect(workspace.getByTestId("user-message").filter({ visible: true })).toContainText(
+      userText,
+    );
   }
   async close() {
     await this.page.keyboard.press("Escape");

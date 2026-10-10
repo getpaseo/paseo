@@ -65,6 +65,19 @@ test("blank composer lines remain present and keep their measured height", async
     const blankLines = "\n\n\n\n\n";
     const collapsedHeight = await composerHeight(page);
 
+    await test.step("remeasure the current draft when the window narrows", async () => {
+      await page.setViewportSize({ width: 1280, height: 1200 });
+      const text = "A sentence that wraps when the editor becomes narrower. ".repeat(8);
+      await composer.fill(text);
+      await expect(composer).toHaveValue(text);
+      await expect.poll(() => composerHeight(page)).toBeGreaterThan(collapsedHeight);
+      const wideHeight = await composerHeight(page);
+      await page.setViewportSize({ width: 480, height: 1200 });
+      await expect.poll(() => composerHeight(page)).toBeGreaterThan(wideHeight);
+      await expect(composer).toHaveValue(text);
+      await page.setViewportSize({ width: 1280, height: 720 });
+    });
+
     await test.step("grow the composer with blank lines followed by text", async () => {
       await composer.fill(`${blankLines}x`);
       await expect(composer).toHaveValue(`${blankLines}x`);

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "./agent-message.js";
 import type { AgentAttachment } from "./messages.js";
 
 export type AgentProvider = string;
@@ -102,6 +103,17 @@ export function normalizeAgentModelDefinition(model: AgentModelDefinition): Agen
   return { ...model, defaultThinkingOptionId };
 }
 
+/** A provider addresses models by ID; repeated rows retain the first definition. */
+export function normalizeAgentModelCatalog(models: AgentModelDefinition[]): AgentModelDefinition[] {
+  const ids = new Set<string>();
+  const unique = models.filter((model) => {
+    if (ids.has(model.id)) return false;
+    ids.add(model.id);
+    return true;
+  });
+  return unique.length === models.length ? models : unique;
+}
+
 export interface ProviderSnapshotEntry {
   provider: AgentProvider;
   status: ProviderStatus;
@@ -134,6 +146,8 @@ export interface AgentFeatureSelect {
   description?: string;
   tooltip?: string;
   icon?: string;
+  /** Desktop toolbar presentation; omitted means labeled. Mobile selectors stay labeled. */
+  desktopTrigger?: "icon" | "label";
   value: string | null;
   options: AgentSelectOption[];
 }
@@ -298,6 +312,7 @@ export type ToolCallDetail =
     };
 
 interface ToolCallBase {
+  agentMessage?: AgentMessage;
   [key: string]: unknown;
   type: "tool_call";
   callId: string;
@@ -485,7 +500,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type ProviderOptions = Record<string, JsonValue>;
+export type ProviderOptions = Record<string, unknown>;
 
 export interface McpToolRef {
   kind: "mcp";

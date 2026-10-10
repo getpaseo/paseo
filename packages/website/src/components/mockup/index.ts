@@ -6,3 +6,4 @@ export { MobileDiff } from "./mobile/diff";
 export { MobileSidebar } from "./mobile/sidebar";
 export { DEFAULT_MOCKUP_STATE, MOCKUP_STATES, type MockupStateId } from "./states";
 export { MockupWindow } from "./window";
+export { ScaledMockup } from "./scaled-mockup";

@@ -354,46 +354,44 @@ second line'`,
     expect(result.attachment.text).toContain("[Assistant] Done.");
   });
 
-  it("selects the fork boundary before collapsing later tool updates", () => {
-    const result = buildAgentForkContextAttachment({
-      boundaryMessageId: "assistant-1",
-      rows: [
-        row(1, { type: "user_message", text: "Run it", messageId: "user-1" }),
-        row(
-          2,
-          toolCallItem({
-            callId: "terminal-1",
-            name: "terminal",
-            status: "running",
-            detail: {
-              type: "plain_text",
-              label: "before boundary",
-            },
+  it("rejects a checkpoint whose projected tool state changed later", () => {
+    expect(() =>
+      buildAgentForkContextAttachment({
+        boundaryMessageId: "assistant-1",
+        rows: [
+          row(1, { type: "user_message", text: "Run it", messageId: "user-1" }),
+          row(
+            2,
+            toolCallItem({
+              callId: "terminal-1",
+              name: "terminal",
+              status: "running",
+              detail: {
+                type: "plain_text",
+                label: "before boundary",
+              },
+            }),
+          ),
+          row(3, {
+            type: "assistant_message",
+            text: "Partial result.",
+            messageId: "assistant-1",
           }),
-        ),
-        row(3, {
-          type: "assistant_message",
-          text: "Partial result.",
-          messageId: "assistant-1",
-        }),
-        row(
-          4,
-          toolCallItem({
-            callId: "terminal-1",
-            name: "terminal",
-            status: "completed",
-            detail: {
-              type: "plain_text",
-              label: "after boundary",
-            },
-          }),
-        ),
-      ],
-    });
-
-    expect(result.attachment.text).toContain("[Terminal] before boundary");
-    expect(result.attachment.text).toContain("[Assistant] Partial result.");
-    expect(result.attachment.text).not.toContain("after boundary");
+          row(
+            4,
+            toolCallItem({
+              callId: "terminal-1",
+              name: "terminal",
+              status: "completed",
+              detail: {
+                type: "plain_text",
+                label: "after boundary",
+              },
+            }),
+          ),
+        ],
+      }),
+    ).toThrow("Fork from a later completed response");
   });
 
   it("selects a synthetic assistant error by its timeline cursor", () => {
@@ -439,4 +437,50 @@ second line'`,
       }),
     ).toThrow("Selected assistant message is no longer available.");
   });
+});
+
+it("bounds fork history to 100,000 characters while preserving the newest messages", () => {
+  const result = buildAgentForkContextAttachment({
+    rows: [
+      row(1, { type: "user_message", text: "old-message " + "x".repeat(1_100_000) }),
+      row(2, { type: "assistant_message", messageId: "checkpoint", text: "Latest answer." }),
+      row(3, { type: "user_message", text: "Beyond the selected checkpoint." }),
+    ],
+    boundaryMessageId: "checkpoint",
+  });
+  expect(result.attachment.text.length).toBeLessThanOrEqual(100_000);
+  expect(result.attachment.text).toContain("[Earlier chat history omitted]");
+  expect(result.attachment.text).toContain("[Assistant] Latest answer.");
+  expect(result.attachment.text).not.toContain("old-message");
+  expect(result.attachment.text).not.toContain("Beyond the selected checkpoint.");
+  expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
+  expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+});
+
+it("bounds one oversized fork message and metadata without losing its beginning and end", () => {
+  const result = buildAgentForkContextAttachment({
+    rows: [
+      row(1, {
+        type: "assistant_message",
+        text: "Beginning. " + "x".repeat(1_100_000) + " The end.",
+      }),
+    ],
+    agentTitle: "T".repeat(200_000),
+    cwd: "/" + "p".repeat(200_000),
+  });
+  expect(result.attachment.text.length).toBe(100_000);
+  expect(result.attachment.text).toContain("[Assistant] Beginning.");
+  expect(result.attachment.text).toContain("[Message truncated]");
+  expect(result.attachment.text).toContain("The end.");
+  expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+});
+
+it("preserves every message in fork history below the character budget", () => {
+  const text = "Complete conversation " + "x".repeat(90_000);
+  const result = buildAgentForkContextAttachment({
+    rows: [row(1, { type: "user_message", text })],
+  });
+  expect(result.attachment.text).toBe(
+    `<chat-history-summary>\nChat history from a previous Paseo agent.\n\n[User] ${text}\n</chat-history-summary>`,
+  );
 });

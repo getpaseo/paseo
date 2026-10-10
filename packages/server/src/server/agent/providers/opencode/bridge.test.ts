@@ -1,4 +1,5 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { SessionMessageInfo } from "@opencode/client";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,7 +9,11 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
-import { OpenCodeBridge, loadOpenCodeBridgePluginArtifact } from "./bridge.js";
+import {
+  OpenCodeBridge,
+  loadOpenCodeBridgePluginArtifact,
+  materializeOpenCodeV2Plugin,
+} from "./bridge.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -97,6 +102,12 @@ describe("OpenCodeBridge", () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-"));
     temporaryDirectories.push(paseoHome);
     const catalog = createCatalog();
+    const executedInputs: unknown[] = [];
+    const executeTool = catalog.executeTool;
+    catalog.executeTool = async (name, input, context) => {
+      executedInputs.push(input);
+      return await executeTool(name, input, context);
+    };
     const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
     await bridge.start();
     bridge.setManifestCatalog(catalog);
@@ -168,12 +179,30 @@ describe("OpenCodeBridge", () => {
           token: plugin.token,
         },
       );
+      const asked: unknown[] = [];
       await expect(
         hooks.tool.paseo_echo_context.execute(
           { value: "through bundled plugin" },
-          { sessionID: "ses_one" },
+          { sessionID: "ses_one", ask: async (request: unknown) => void asked.push(request) },
         ),
       ).resolves.toMatchObject({ output: "through bundled plugin" });
+      expect(asked).toEqual([
+        { permission: "paseo_echo_context", patterns: ["*"], always: ["*"], metadata: {} },
+      ]);
+
+      executedInputs.length = 0;
+      await expect(
+        hooks.tool.paseo_echo_context.execute(
+          { value: "rejected" },
+          {
+            sessionID: "ses_one",
+            ask: async () => {
+              throw new Error("The user rejected permission to use this specific tool call.");
+            },
+          },
+        ),
+      ).rejects.toThrow("rejected permission");
+      expect(executedInputs).toEqual([]);
 
       release();
       const pluginError = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -192,6 +221,258 @@ describe("OpenCodeBridge", () => {
       expect(released.status).toBe(404);
     } finally {
       release();
+      await bridge.close();
+    }
+  });
+
+  test("v2 plugin filters caller tools and inherits child session bindings", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-scope-"));
+    temporaryDirectories.push(paseoHome);
+    const catalog = createCatalog();
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    const release = bridge.bindSession({ sessionId: "parent", env: {}, tools: catalog });
+    const releaseDisabled = bridge.bindSession({ sessionId: "disabled", env: {} });
+    try {
+      const env = await bridge.decorateV2ServerEnv({});
+      const config = z
+        .object({
+          plugins: z.array(
+            z.object({
+              package: z.string(),
+              options: z.object({ baseUrl: z.string(), token: z.string() }),
+            }),
+          ),
+        })
+        .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT));
+      expect(await bridge.decorateV2ServerEnv(env)).toEqual(env);
+      const plugin = config.plugins[0]!;
+      const tools = new Map<string, V2TestTool>();
+      let filter!: (input: V2TestContext) => Promise<void>;
+      const module: {
+        default: { setup(context: V2TestPluginContext): Promise<() => Promise<void>> };
+      } = await import(pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href);
+      const dispose = await module.default.setup({
+        options: plugin.options,
+        tool: {
+          transform: async (transform) => {
+            transform({
+              add: (tool) => {
+                tools.set(tool.name, tool);
+              },
+            });
+            return { dispose: async () => undefined };
+          },
+        },
+        session: {
+          context: async () => [],
+          get: async () => ({ parentID: "parent" }),
+          hook: async (_name, callback) => {
+            filter = callback;
+            return { dispose: async () => undefined };
+          },
+        },
+      });
+      const allowed: V2TestContext = {
+        sessionID: "child",
+        tools: { paseo_echo_context: {}, native: {} },
+      };
+      await filter(allowed);
+      expect(Object.keys(allowed.tools)).toEqual(["paseo_echo_context", "native"]);
+      const disabled: V2TestContext = {
+        sessionID: "disabled",
+        tools: { paseo_echo_context: {}, native: {} },
+      };
+      await filter(disabled);
+      expect(Object.keys(disabled.tools)).toEqual(["native"]);
+      await expect(
+        tools.get("paseo_echo_context")!.execute({ value: "child result" }, { sessionID: "child" }),
+      ).resolves.toMatchObject({ content: [{ type: "text", text: "child result" }] });
+      await expect(
+        tools.get("paseo_echo_context")!.execute({ value: "blocked" }, { sessionID: "disabled" }),
+      ).rejects.toThrow("HTTP 403");
+      await dispose();
+    } finally {
+      release();
+      releaseDisabled();
+      await bridge.close();
+    }
+  });
+
+  test("v2 plugin returns a tool image as OpenCode file content", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-image-"));
+    temporaryDirectories.push(paseoHome);
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const screenshot = {
+      name: "browser_screenshot",
+      title: "Browser screenshot",
+      description: "Captures the page.",
+      inputSchema: {},
+      async handler() {
+        return {
+          content: [
+            { type: "text", text: "Captured browser screenshot." },
+            { type: "image", data: png, mimeType: "image/png" },
+          ],
+        };
+      },
+    };
+    const tools = new Map([[screenshot.name, screenshot]]);
+    const catalog: PaseoToolCatalog = {
+      tools,
+      getTool: (name) => tools.get(name),
+      executeTool: async (name, input, context) =>
+        await tools.get(name)!.handler(input, context ?? {}),
+    };
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    const release = bridge.bindSession({ sessionId: "session", env: {}, tools: catalog });
+    try {
+      const env = await bridge.decorateV2ServerEnv({});
+      const plugin = z
+        .object({
+          plugins: z.array(
+            z.object({
+              package: z.string(),
+              options: z.object({ baseUrl: z.string(), token: z.string() }),
+            }),
+          ),
+        })
+        .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).plugins[0]!;
+      const pluginTools = new Map<string, V2TestTool>();
+      const module: {
+        default: { setup(context: V2TestPluginContext): Promise<() => Promise<void>> };
+      } = await import(pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href);
+      const dispose = await module.default.setup({
+        options: plugin.options,
+        tool: {
+          transform: async (transform) => {
+            transform({ add: (tool) => pluginTools.set(tool.name, tool) });
+            return { dispose: async () => undefined };
+          },
+        },
+        session: {
+          context: async () => [],
+          get: async () => ({ parentID: undefined }),
+          hook: async () => ({ dispose: async () => undefined }),
+        },
+      });
+      const result = await pluginTools
+        .get("paseo_browser_screenshot")!
+        .execute({}, { sessionID: "session" });
+      expect(result).toMatchObject({
+        content: [
+          { type: "text", text: "Captured browser screenshot." },
+          { type: "file", mime: "image/png", uri: `data:image/png;base64,${png}` },
+        ],
+      });
+      await dispose();
+    } finally {
+      release();
+      await bridge.close();
+    }
+  });
+
+  test("v2 structured output validates values and clears its tool on ordinary turns", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-structured-"));
+    temporaryDirectories.push(root);
+    const pluginUrl = await materializeOpenCodeV2Plugin(root);
+    const module: {
+      default: { setup(context: V2TestPluginContext): Promise<() => Promise<void>> };
+    } = await import(pathToFileURL(path.join(fileURLToPath(pluginUrl), "server.js")).href);
+    const schema = {
+      type: "object",
+      properties: { answer: { type: "integer" } },
+      required: ["answer"],
+      additionalProperties: false,
+    };
+    const history: SessionMessageInfo[] = [
+      {
+        id: "user",
+        type: "user",
+        text: "answer",
+        time: { created: 1 },
+        metadata: { paseoOutputSchema: schema },
+      },
+    ];
+    const tools = new Map<string, V2TestTool>();
+    let hook!: (input: V2TestContext) => Promise<void>;
+    const dispose = await module.default.setup({
+      options: { baseUrl: "", token: "" },
+      tool: {
+        transform: async (transform) => {
+          transform({
+            add: (tool) => {
+              tools.set(tool.name, tool);
+            },
+          });
+          return { dispose: async () => undefined };
+        },
+      },
+      session: {
+        context: async () => history,
+        get: async () => ({ parentID: "parent" }),
+        hook: async (_name, callback) => {
+          hook = callback;
+          return { dispose: async () => undefined };
+        },
+      },
+    });
+    try {
+      const context: V2TestContext = {
+        sessionID: "session",
+        tools: { paseo_structured_output: {} },
+        system: [],
+      };
+      await hook(context);
+      expect(context.tools.paseo_structured_output.input).toMatchObject({
+        properties: { value: schema },
+      });
+      const tool = tools.get("paseo_structured_output")!;
+      await expect(
+        tool.execute({ value: { answer: "wrong" } }, { sessionID: "session" }),
+      ).rejects.toThrow("Invalid structured output");
+      await expect(
+        tool.execute({ value: { answer: 42 } }, { sessionID: "session" }),
+      ).resolves.toMatchObject({ metadata: { paseoStructuredOutput: { answer: 42 } } });
+      history.push({ id: "next", type: "user", text: "ordinary", time: { created: 2 } });
+      await hook(context);
+      expect(context.tools).toEqual({});
+      await expect(
+        tool.execute({ value: { answer: 42 } }, { sessionID: "session" }),
+      ).rejects.toThrow("no structured-output request");
+    } finally {
+      await dispose();
+    }
+  });
+
+  test("packages the v2 bridge as a directory with a server entry point", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-package-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    await bridge.start();
+    try {
+      expect(
+        (await readdir(path.join(paseoHome, "runtime", "opencode"))).filter((name) =>
+          name.startsWith("paseo-v2-"),
+        ),
+      ).toEqual([]);
+      const env = await bridge.decorateV2ServerEnv({
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugins: ["user-plugin"] }),
+      });
+      const config = z
+        .object({ plugins: z.tuple([z.literal("user-plugin"), z.object({ package: z.string() })]) })
+        .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT));
+      const directory = fileURLToPath(config.plugins[1].package);
+      expect((await stat(directory)).isDirectory()).toBe(true);
+      const entry = await readFile(path.join(directory, "server.js"), "utf8");
+      expect(entry).toContain('id: "paseo"');
+      const manifest = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
+      expect(manifest).toMatchObject({ type: "module", exports: { "./server": "./server.js" } });
+    } finally {
       await bridge.close();
     }
   });
@@ -224,3 +505,29 @@ describe("OpenCodeBridge", () => {
     }
   });
 });
+
+interface V2TestTool {
+  name: string;
+  execute(input: unknown, call: { sessionID: string }): Promise<unknown>;
+}
+interface V2TestContext {
+  sessionID: string;
+  tools: Record<string, { input?: unknown }>;
+  system?: Array<{ type: "text"; text: string }>;
+}
+interface V2TestPluginContext {
+  options: { baseUrl: string; token: string };
+  tool: {
+    transform(
+      callback: (editor: { add(tool: V2TestTool): void }) => void,
+    ): Promise<{ dispose(): Promise<void> }>;
+  };
+  session: {
+    context(input: { sessionID: string }): Promise<SessionMessageInfo[]>;
+    get(input: { sessionID: string }): Promise<{ parentID: string }>;
+    hook(
+      name: string,
+      callback: (input: V2TestContext) => Promise<void>,
+    ): Promise<{ dispose(): Promise<void> }>;
+  };
+}

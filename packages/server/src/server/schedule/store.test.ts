@@ -1,7 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Writable } from "node:stream";
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleStore } from "./store.js";
 
 describe("ScheduleStore", () => {
@@ -10,7 +13,7 @@ describe("ScheduleStore", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "schedule-store-test-"));
-    store = new ScheduleStore(tempDir);
+    store = new ScheduleStore(tempDir, createTestLogger());
   });
 
   afterEach(async () => {
@@ -40,12 +43,65 @@ describe("ScheduleStore", () => {
       runs: [],
     });
 
-    const reloaded = new ScheduleStore(tempDir);
+    const reloaded = new ScheduleStore(tempDir, createTestLogger());
     const listed = await reloaded.list();
 
     expect(created.id).toHaveLength(8);
     expect(listed).toEqual([created]);
   });
+
+  test("reports an invalid schedule file once while it stays invalid, by name, and lists the rest", async () => {
+    const created = await store.create({
+      name: "Morning summary",
+      prompt: "Summarize new commits",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      nextRunAt: "2026-01-01T00:01:00.000Z",
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    });
+    await writeFile(join(tempDir, "notes.json"), JSON.stringify({ hello: "world" }));
+    const logLines: Array<{ msg: string; filePath?: string }> = [];
+    const logger = pino(
+      { level: "error" },
+      new Writable({
+        write(chunk, _encoding, callback) {
+          logLines.push(JSON.parse(chunk.toString("utf8")));
+          callback();
+        },
+      }),
+    );
+    const reloaded = new ScheduleStore(tempDir, logger);
+
+    expect(await reloaded.list()).toEqual([created]);
+    expect(await reloaded.list()).toEqual([created]);
+    await rm(join(tempDir, "notes.json"));
+    expect(await reloaded.list()).toEqual([created]);
+    await writeFile(join(tempDir, "notes.json"), "{ not json");
+    expect(await reloaded.list()).toEqual([created]);
+
+    const skipped = {
+      msg: "Skipping invalid schedule file",
+      filePath: join(tempDir, "notes.json"),
+    };
+    expect(logLines.map(({ msg, filePath }) => ({ msg, filePath }))).toEqual([skipped, skipped]);
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fails the listing when a schedule file cannot be read",
+    async () => {
+      await writeFile(join(tempDir, "unreadable.json"), "{}");
+      await chmod(join(tempDir, "unreadable.json"), 0o000);
+
+      await expect(store.list()).rejects.toMatchObject({ code: "EACCES" });
+    },
+  );
 
   test("update round-trips an updated schedule to disk", async () => {
     const created = await store.create({
@@ -81,7 +137,7 @@ describe("ScheduleStore", () => {
     };
     await store.update(created.id, () => updated);
 
-    const reloaded = await new ScheduleStore(tempDir).get(created.id);
+    const reloaded = await new ScheduleStore(tempDir, createTestLogger()).get(created.id);
     expect(reloaded).toEqual(updated);
   });
 
@@ -182,7 +238,9 @@ describe("ScheduleStore", () => {
       prompt: "after",
       runs: [{ id: "run-1" }],
     });
-    await expect(new ScheduleStore(tempDir).get(created.id)).resolves.toMatchObject({
+    await expect(
+      new ScheduleStore(tempDir, createTestLogger()).get(created.id),
+    ).resolves.toMatchObject({
       prompt: "after",
       runs: [{ id: "run-1" }],
     });
@@ -211,7 +269,7 @@ describe("ScheduleStore", () => {
       }
     }
 
-    const gatedStore = new GatedListScheduleStore(tempDir);
+    const gatedStore = new GatedListScheduleStore(tempDir, createTestLogger());
     const target = {
       type: "new-agent" as const,
       config: { provider: "claude" as const, cwd: tempDir },

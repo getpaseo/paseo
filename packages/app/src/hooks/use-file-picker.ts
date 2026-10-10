@@ -4,9 +4,9 @@ import { File } from "expo-file-system";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isWeb } from "@/constants/platform";
 import { getMimeTypeFromPath } from "@/attachments/file-types";
-import { readDesktopFileBytes, type PickedFile } from "@/attachments/picked-file";
+import { readDesktopFileBytes, type SelectedFile } from "@/attachments/selected-file";
 
-async function pickFilesWithDesktopDialog(): Promise<PickedFile[] | null> {
+async function pickFilesWithDesktopDialog(): Promise<SelectedFile[] | null> {
   const dialog = getDesktopHost()?.dialog;
   const dialogOpen = dialog?.open;
   if (typeof dialogOpen !== "function") {
@@ -27,20 +27,18 @@ async function pickFilesWithDesktopDialog(): Promise<PickedFile[] | null> {
     return null;
   }
 
-  const result: PickedFile[] = [];
+  const result: SelectedFile[] = [];
 
   for (const filePath of paths) {
     const fileName = filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
     const mimeType = getMimeTypeFromPath(filePath);
-    const bytes = await readDesktopFileBytes(filePath);
-
-    result.push({ fileName, mimeType, bytes });
+    result.push({ fileName, mimeType, readBytes: () => readDesktopFileBytes(filePath) });
   }
 
   return result;
 }
 
-function pickFilesWithWebInput(): Promise<PickedFile[] | null> {
+function pickFilesWithWebInput(): Promise<SelectedFile[] | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -54,13 +52,12 @@ function pickFilesWithWebInput(): Promise<PickedFile[] | null> {
         return;
       }
 
-      const result: PickedFile[] = [];
+      const result: SelectedFile[] = [];
       for (const file of files) {
-        const bytes = new Uint8Array(await file.arrayBuffer());
         result.push({
           fileName: file.name,
           mimeType: file.type || getMimeTypeFromPath(file.name),
-          bytes,
+          readBytes: async () => new Uint8Array(await file.arrayBuffer()),
         });
       }
       resolve(result);
@@ -80,7 +77,7 @@ function pickFilesWithWebInput(): Promise<PickedFile[] | null> {
   });
 }
 
-async function pickFilesWithDocumentPicker(): Promise<PickedFile[] | null> {
+async function pickFilesWithDocumentPicker(): Promise<SelectedFile[] | null> {
   const result = await DocumentPicker.getDocumentAsync({
     multiple: true,
     copyToCacheDirectory: true,
@@ -90,19 +87,17 @@ async function pickFilesWithDocumentPicker(): Promise<PickedFile[] | null> {
     return null;
   }
 
-  return await Promise.all(
-    result.assets.map(async (asset) => ({
-      fileName: asset.name,
-      mimeType: asset.mimeType ?? getMimeTypeFromPath(asset.name),
-      bytes: await new File(asset.uri).bytes(),
-    })),
-  );
+  return result.assets.map((asset) => ({
+    fileName: asset.name,
+    mimeType: asset.mimeType ?? getMimeTypeFromPath(asset.name),
+    readBytes: () => new File(asset.uri).bytes(),
+  }));
 }
 
 export function useFilePicker() {
   const isPickingRef = useRef(false);
 
-  const pickFiles = useCallback(async (): Promise<PickedFile[] | null> => {
+  const pickFiles = useCallback(async (): Promise<SelectedFile[] | null> => {
     if (isPickingRef.current) {
       return null;
     }

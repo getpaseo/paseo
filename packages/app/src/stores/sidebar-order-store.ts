@@ -38,6 +38,8 @@ interface SidebarWorkspaceOrderScope {
   projectViewKey: string;
 }
 
+// Trims each key. Only for persisted state read at migration time, where a
+// stray space is an artifact of an older format rather than part of the key.
 function normalizeKeys(keys: string[]): string[] {
   const seen = new Set<string>();
   const normalized: string[] = [];
@@ -52,6 +54,28 @@ function normalizeKeys(keys: string[]): string[] {
   }
 
   return normalized;
+}
+
+/**
+ * Drops blank keys and duplicates but keeps each key exactly as given. View
+ * keys embed a project's path, so a directory whose name ends in a space
+ * produces a key that ends in a space. Trimming it stores a key that can never
+ * match the one the sidebar looks up, so the caller sees its key as missing,
+ * writes it again, and the effect that reconciles the order never settles.
+ */
+function dedupeKeys(keys: string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const key of keys) {
+    if (!key.trim() || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(key);
+  }
+
+  return deduped;
 }
 
 function normalizeWorkspaceOrderByProject(
@@ -134,27 +158,22 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       workspaceOrderByProject: {},
       getProjectOrder: () => get().projectOrder,
       setProjectOrder: (keys) => {
-        const normalized = normalizeKeys(keys);
-        set({ projectOrder: normalized });
+        set({ projectOrder: dedupeKeys(keys) });
       },
       getPinnedWorkspaceOrder: () => get().pinnedWorkspaceOrder,
       setPinnedWorkspaceOrder: (keys) => {
-        const normalized = normalizeKeys(keys);
-        set({ pinnedWorkspaceOrder: normalized });
+        set({ pinnedWorkspaceOrder: dedupeKeys(keys) });
       },
       getWorkspaceOrder: (projectViewKey) => {
-        const scope = projectViewKey.trim();
-        if (!scope) return [];
-        return get().workspaceOrderByProject[scope] ?? [];
+        if (!projectViewKey.trim()) return [];
+        return get().workspaceOrderByProject[projectViewKey] ?? [];
       },
       setWorkspaceOrder: (projectViewKey, keys) => {
-        const scope = projectViewKey.trim();
-        if (!scope) return;
-        const normalized = normalizeKeys(keys);
+        if (!projectViewKey.trim()) return;
         set((state) => ({
           workspaceOrderByProject: {
             ...state.workspaceOrderByProject,
-            [scope]: normalized,
+            [projectViewKey]: dedupeKeys(keys),
           },
         }));
       },

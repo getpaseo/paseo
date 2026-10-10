@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/client",
-  "version": "0.8.0",
+  "version": "0.11.2",
   "description": "Paseo client SDK package",
   "files": [
     "dist",
@@ -31,7 +31,7 @@
   },
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "build": "npm run build --workspace=@getpaseo/protocol && tsc -p tsconfig.json --incremental false",
+    "build": "npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
     "typecheck": "tsgo --noEmit",
@@ -39,8 +39,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@getpaseo/protocol": "0.8.0",
-    "@getpaseo/relay": "0.8.0",
+    "@getpaseo/protocol": "0.11.2",
+    "@getpaseo/relay": "0.11.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

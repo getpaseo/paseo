@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { areEquivalentPaths } from "../utils/path.js";
+import { deriveProjectKey } from "./project-key.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -336,6 +337,14 @@ class ObservedPlacements {
         projectId: spec.id,
         rootPath,
         kind: "non_git",
+        // Seeded records already carry the key reconciliation derives, so a fixture's
+        // first pass reports only what its test is about.
+        projectKey: deriveProjectKey({
+          rootPath,
+          remoteUrl: null,
+          worktreeRoot: null,
+          mainRepoRoot: null,
+        }),
         displayName: spec.id,
         createdAt: TIMESTAMP,
         updatedAt: TIMESTAMP,
@@ -473,7 +482,11 @@ describe("observed workspace placement", () => {
 
   test("archives missing workspace directories on the periodic pass", async () => {
     const observed = new ObservedPlacements([
-      { id: "project-one", root: "repo", workspaces: [{ id: "workspace-one", cwd: "repo" }] },
+      {
+        id: "project-one",
+        root: "repo",
+        workspaces: [{ id: "workspace-one", cwd: "repo/worktree-one" }],
+      },
     ]);
     await observed.start();
     await observed.deleteWorkspaceDirectory("workspace-one");
@@ -487,7 +500,11 @@ describe("observed workspace placement", () => {
 
   test("preserves a periodic full pass queued behind metadata reconciliation", async () => {
     const observed = new ObservedPlacements([
-      { id: "project-one", root: "repo", workspaces: [{ id: "workspace-one", cwd: "repo" }] },
+      {
+        id: "project-one",
+        root: "repo",
+        workspaces: [{ id: "workspace-one", cwd: "repo/worktree-one" }],
+      },
     ]);
     await observed.start();
     const metadataRead = observed.holdNextReconciliation();

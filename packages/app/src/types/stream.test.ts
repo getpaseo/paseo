@@ -883,7 +883,7 @@ describe("stream reducer canonical tool calls", () => {
     expect(new Set(messages.map((message) => message.id)).size).toBe(2);
   });
 
-  it("keeps every promoted block when an assistant message resumes after a tool", () => {
+  it("keeps whole messages when an assistant resumes after a tool", () => {
     const messageId = "msg-promoted-resume";
     let tail: StreamItem[] = [];
     let head: StreamItem[] = [];
@@ -926,15 +926,13 @@ describe("stream reducer canonical tool calls", () => {
         item.kind === "assistant_message",
     );
     expect(messages.map((message) => message.text)).toEqual([
-      "Before one.",
-      "Before two.",
-      "After one.",
-      "After two.",
+      "Before one.\n\nBefore two.",
+      "After one.\n\nAfter two.",
     ]);
     expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length);
   });
 
-  it("keeps the timeline position on every promoted assistant block", () => {
+  it("keeps the timeline position on the whole assistant message", () => {
     const timelineCursor = { epoch: "epoch-1", seq: 42 };
     const result = applyStreamEvent({
       tail: [],
@@ -949,13 +947,9 @@ describe("stream reducer canonical tool calls", () => {
         item.kind === "assistant_message",
     );
     expect(messages.map((message) => message.text)).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
-    expect(messages.map((message) => message.timelineCursor)).toEqual([
-      timelineCursor,
-      timelineCursor,
-    ]);
+    expect(messages.map((message) => message.timelineCursor)).toEqual([timelineCursor]);
   });
 
   it("preserves old assistant merge behavior when message ids are absent", () => {
@@ -2310,4 +2304,29 @@ describe("notification timeline items", () => {
     ]);
     expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
   });
+});
+
+it("retains agent-message provenance through live delivery and repeated history", () => {
+  const agentMessage = {
+    event: "finished" as const,
+    sender: { id: "remote::worker", title: "Reviewer" },
+    text: "Done",
+  };
+  const event = {
+    type: "timeline",
+    provider: "codex",
+    item: {
+      type: "tool_call",
+      callId: "delivery",
+      name: "agent_message",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: "Done" },
+      agentMessage,
+    },
+  } satisfies AgentStreamEventPayload;
+  const live = reduceStreamUpdate([], event, new Date(1));
+  const replay = reduceStreamUpdate(live, event, new Date(2));
+  expect(replay).toHaveLength(1);
+  expect(replay[0]).toMatchObject({ payload: { data: { agentMessage } } });
 });

@@ -10,6 +10,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { useToast } from "@/contexts/toast-context";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { InlineReviewAddButton, InlineReviewThread } from "@/review";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
@@ -557,23 +558,26 @@ export function DiffSurface(props: DiffSurfaceProps) {
     (event: React.PointerEvent<HTMLDivElement>) => pointHitAt(event.clientX, event.clientY),
     [pointHitAt],
   );
-  const setSelection = useCallback(
-    (selection: DiffSelection | null) => {
-      selectionRef.current = selection;
-      const currentModel = modelRef.current;
-      setHasSelection(
-        Boolean(
-          selection && currentModel && selectedSourceText(currentModel, selection).length > 0,
-        ),
-      );
-      schedulePaint();
-    },
-    [schedulePaint],
-  );
+  const setSelection = useStableEvent((selection: DiffSelection | null) => {
+    selectionRef.current = selection;
+    const currentModel = modelRef.current;
+    setHasSelection(
+      Boolean(selection && currentModel && selectedSourceText(currentModel, selection).length > 0),
+    );
+    schedulePaint();
+  });
+  // Source and code-layout changes invalidate selection coordinates. A new
+  // repaint callback (header typography, palette, viewport height) does not.
   useEffect(() => {
     dragRef.current = null;
     setSelection(null);
-  }, [props.collapsedFilePaths, props.displayPreferences.layout, props.files, setSelection]);
+  }, [
+    props.collapsedFilePaths,
+    props.displayPreferences.layout,
+    props.files,
+    desiredTypography,
+    setSelection,
+  ]);
   const pointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
@@ -768,9 +772,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
     [props.palette.surface],
   );
+  const contentInsetBottom = props.contentInsetBottom ?? 0;
   const contentStyle = useMemo<React.CSSProperties>(
-    () => ({ ...CONTENT_STYLE, height: Math.max(model.height, viewport.height) }),
-    [model.height, viewport.height],
+    () => ({
+      ...CONTENT_STYLE,
+      height: Math.max(model.height, viewport.height) + contentInsetBottom,
+    }),
+    [contentInsetBottom, model.height, viewport.height],
   );
   const affordanceStyle = useMemo<ViewStyle>(
     () => ({

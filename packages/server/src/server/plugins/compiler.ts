@@ -10,6 +10,7 @@ import {
 } from "./plugin-sdk-specifiers.js";
 
 const nodeRequire = createRequire(import.meta.url);
+export const SERVER_HOST_MODULES = [...PLUGIN_SDK_SPECIFIERS, "zod"];
 const ESBUILD_BINARY_PATH = "ESBUILD_BINARY_PATH";
 
 // esbuild resolves its own platform binary via require.resolve() the first time its
@@ -390,6 +391,10 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     jsx: "automatic",
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
+    // The neutral platform reads no package.json entry fields, so packages without
+    // `exports` would not resolve. Read the same fields as esbuild's browser platform
+    // minus `browser`, since the bundle also runs in React Native.
+    mainFields: target === "client" ? ["module", "main"] : undefined,
     // Metro lowers async syntax before Hermes sees app code. Plugin client bundles bypass Metro,
     // so apply the same compatibility transform before the app evaluates them from source.
     supported: target === "client" ? { "async-await": false } : undefined,
@@ -403,7 +408,7 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
             "react-native",
             "zod",
           ]
-        : [...PLUGIN_SDK_SPECIFIERS, "zod"],
+        : SERVER_HOST_MODULES,
     plugins: [createRuntimeBoundaryPlugin(target, pluginDirectory)],
     metafile: true,
     logLevel: "silent",
