@@ -6,12 +6,13 @@ import {
 } from "@/projects/workspace-structure";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
-import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
+import type { Agent, ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 export interface SessionsSnapshot {
+  agentLastActivity?: ReadonlyMap<string, Date>;
   sessions: Record<
     string,
     {
@@ -19,6 +20,7 @@ export interface SessionsSnapshot {
       hasWorkspaceDirectorySnapshot?: boolean;
       workspaces: Map<string, WorkspaceDescriptor>;
       projects?: Map<string, ProjectDescriptor>;
+      agents?: ReadonlyMap<string, Pick<Agent, "id" | "cwd" | "lastActivityAt" | "workspaceId">>;
     }
   >;
 }
@@ -291,13 +293,32 @@ export function selectRecommendedProjectPaths(
   if (!serverId) {
     return EMPTY_WORKSPACE_KEYS;
   }
-  const workspaces = state.sessions[serverId]?.workspaces;
-  if (!workspaces) {
-    return EMPTY_WORKSPACE_KEYS;
-  }
-  return Array.from(workspaces.values())
-    .map((workspace) => workspace.projectRootPath)
-    .filter((path) => path.length > 0);
+  const session = state.sessions[serverId];
+  if (!session) return EMPTY_WORKSPACE_KEYS;
+  const workspaces = Array.from(session.workspaces.values());
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+  const recentPaths = Array.from(session.agents?.values() ?? [])
+    .sort(
+      (a, b) =>
+        (state.agentLastActivity?.get(b.id) ?? b.lastActivityAt).getTime() -
+        (state.agentLastActivity?.get(a.id) ?? a.lastActivityAt).getTime(),
+    )
+    .map(
+      (agent) =>
+        (agent.workspaceId ? workspaceById.get(agent.workspaceId)?.projectRootPath : undefined) ??
+        agent.cwd,
+    );
+  const representedProjects = new Set(workspaces.map((workspace) => workspace.projectId));
+  const projectsWithoutWorkspaces = Array.from(session.projects?.values() ?? []).filter(
+    (project) => !representedProjects.has(project.projectId),
+  );
+  return Array.from(
+    new Set([
+      ...recentPaths,
+      ...workspaces.map((workspace) => workspace.projectRootPath),
+      ...projectsWithoutWorkspaces.map((project) => project.projectRootPath),
+    ]),
+  ).filter((path) => path.length > 0);
 }
 
 export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | null): boolean {
