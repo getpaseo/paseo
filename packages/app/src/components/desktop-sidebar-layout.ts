@@ -36,6 +36,19 @@ export function resolveDesktopAppChromeLayout(input: {
   };
 }
 
+/**
+ * Top of the window sidebar toggle container, centered on the native traffic lights.
+ * Zoom divides the lights' center in CSS px but not the button, so a zoomed-in page
+ * would push the button's top edge above the window. The center stops at half the button.
+ */
+export function resolveWindowSidebarToggleTop(input: {
+  controlsCenterY: number;
+  containerHeight: number;
+  buttonHeight: number;
+}): number {
+  return Math.max(input.controlsCenterY, input.buttonHeight / 2) - input.containerHeight / 2;
+}
+
 function resolveDesktopPanelWidth(input: {
   requestedWidth: number;
   viewportWidth: number;
