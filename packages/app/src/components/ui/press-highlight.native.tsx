@@ -1,6 +1,6 @@
 import { forwardRef, useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Gesture, GestureDetector, PointerType } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { resolveHighlightCorners } from "./press-highlight.shape";
 import type { PressHighlightProps } from "./press-highlight.types";
@@ -20,6 +20,15 @@ export const PressHighlight = forwardRef<View, PressHighlightProps>(function Pre
         .enabled(disabled !== true && highlightStyle != null)
         .maxDistance(8)
         .shouldCancelWhenOutside(true)
+        // A mouse never gets the touch glow. Left unchecked, this Tap activates on the primary
+        // button release and cancels the Pressable's press, so the click never reaches onPress.
+        // Android delivers the first touch-down before the Tap begins, and on the UI thread the
+        // failure lands synchronously, before ACTION_BUTTON_PRESS or ACTION_BUTTON_RELEASE.
+        .onTouchesDown((event, stateManager) => {
+          if (event.pointerType === PointerType.MOUSE) {
+            stateManager.fail();
+          }
+        })
         .onBegin(() => {
           highlighted.value = 1;
         })
