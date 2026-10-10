@@ -286,6 +286,13 @@ export const fr: TranslationResources = {
     tooManyMatches: "Trop de résultats — affinez la recherche",
     hostLoadFailed: "{{host}} : impossible de charger l’historique",
     searchPlaceholder: "Rechercher dans l’historique",
+    projectFilter: {
+      label: "Projet",
+      all: "Tous les projets",
+      title: "Filtrer par projet",
+      empty: "Aucun projet dans l'historique chargé",
+      emptyFiltered: "Aucune session pour {{project}} dans les pages chargées",
+    },
     actions: {
       loadMore: "Charger plus",
       clearSearch: "Effacer la recherche",
@@ -293,6 +300,7 @@ export const fr: TranslationResources = {
   },
   agentList: {
     fallbackTitle: "Nouvelle session",
+    filterByProject: "Filtrer l’historique par {{project}}",
     dateSections: {
       recent: "Récents",
       today: "Aujourd’hui",

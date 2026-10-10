@@ -285,6 +285,13 @@ export const ru: TranslationResources = {
     tooManyMatches: "Слишком много совпадений — уточните запрос",
     hostLoadFailed: "{{host}}: не удалось загрузить историю",
     searchPlaceholder: "Поиск по истории",
+    projectFilter: {
+      label: "Проект",
+      all: "Все проекты",
+      title: "Фильтр по проекту",
+      empty: "Нет проектов в загруженной истории",
+      emptyFiltered: "Нет сессий для {{project}} в загруженных страницах",
+    },
     actions: {
       loadMore: "Загрузить ещё",
       clearSearch: "Очистить поиск",
@@ -292,6 +299,7 @@ export const ru: TranslationResources = {
   },
   agentList: {
     fallbackTitle: "Новая сессия",
+    filterByProject: "Фильтровать историю по {{project}}",
     dateSections: {
       recent: "Недавние",
       today: "Сегодня",

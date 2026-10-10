@@ -282,6 +282,13 @@ export const ko: TranslationResources = {
     tooManyMatches: "일치 항목이 너무 많습니다 — 검색 범위를 좁히세요",
     hostLoadFailed: "{{host}}: 기록을 불러오지 못했습니다",
     searchPlaceholder: "기록 검색",
+    projectFilter: {
+      label: "프로젝트",
+      all: "모든 프로젝트",
+      title: "프로젝트별 필터",
+      empty: "불러온 기록에 프로젝트가 없습니다",
+      emptyFiltered: "불러온 페이지에 {{project}} 세션이 없습니다",
+    },
     actions: {
       loadMore: "더 불러오기",
       clearSearch: "검색 지우기",
@@ -289,6 +296,7 @@ export const ko: TranslationResources = {
   },
   agentList: {
     fallbackTitle: "새 세션",
+    filterByProject: "{{project}} 기록으로 필터",
     dateSections: {
       recent: "최근",
       today: "오늘",

@@ -281,6 +281,13 @@ export const zhCN: TranslationResources = {
     tooManyMatches: "匹配过多 — 请缩小搜索范围",
     hostLoadFailed: "{{host}}：无法加载历史",
     searchPlaceholder: "搜索历史",
+    projectFilter: {
+      label: "项目",
+      all: "全部项目",
+      title: "按项目筛选",
+      empty: "已加载的历史中没有项目",
+      emptyFiltered: "已加载的页面中没有「{{project}}」的会话",
+    },
     actions: {
       loadMore: "加载更多",
       clearSearch: "清除搜索",
@@ -288,6 +295,7 @@ export const zhCN: TranslationResources = {
   },
   agentList: {
     fallbackTitle: "新会话",
+    filterByProject: "只看 {{project}} 的会话",
     dateSections: {
       recent: "最近",
       today: "今天",
