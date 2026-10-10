@@ -8,6 +8,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { NO_DRAG_SCOPE_ATTRIBUTE } from "@/components/desktop/titlebar-drag-region";
 
 /**
  * Shared overlay root for web portals (modals, toasts, etc.)
@@ -28,6 +29,7 @@ export function getOverlayRoot(): HTMLElement {
   if (!el) {
     el = document.createElement("div");
     el.id = "overlay-root";
+    el.setAttribute(NO_DRAG_SCOPE_ATTRIBUTE, "true");
     document.body.appendChild(el);
   }
   el.style.position = "fixed";
