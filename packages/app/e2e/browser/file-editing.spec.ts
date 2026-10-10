@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  expandFolder,
   openFileExplorer,
   openFileFromExplorer,
   expectFileTabOpen,
@@ -682,6 +683,37 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
+  });
+
+  test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-md-relative-image-" });
+    await mkdir(path.join(workspace.repoPath, "docs"), { recursive: true });
+    await mkdir(path.join(workspace.repoPath, "data", "cache"), { recursive: true });
+    await writeFile(path.join(workspace.repoPath, "docs", "sibling.png"), RED_PIXEL);
+    await writeFile(path.join(workspace.repoPath, "data", "cache", "hero.png"), RED_PIXEL);
+    await writeFile(
+      path.join(workspace.repoPath, "docs", "guide.md"),
+      ["# Guide", "", "![sibling](./sibling.png)", "", "![hero](../data/cache/hero.png)", ""].join(
+        "\n",
+      ),
+      "utf8",
+    );
+    await workspace.navigateTo();
+    const tree = page.getByTestId("file-explorer-tree-scroll");
+    if (!(await tree.isVisible())) await openFileExplorer(page);
+    await expandFolder(page, "docs");
+    await openFileFromExplorer(page, "guide.md");
+    await expectFileTabOpen(page, "guide.md");
+
+    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    await expect(visibleFilePane.getByText("Guide", { exact: true })).toBeVisible();
+    const previewImages = visibleFilePane.getByTestId("markdown-preview-image");
+    await expect(previewImages).toHaveCount(2);
+    for (const image of await previewImages.locator("img").all()) {
+      await expect(image).toBeVisible();
+      await expect.poll(async () => (await image.getAttribute("src")) ?? "").not.toBe("");
+    }
   });
 
   test("previews and refreshes an HTML plan while preserving source access", async ({
