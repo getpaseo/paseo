@@ -2144,6 +2144,7 @@ export const zhCN: TranslationResources = {
         label: "语言",
         description: "应用语言",
         options: {
+          it: "Italiano",
           system: "系统",
           ar: "العربية",
           en: "English",
