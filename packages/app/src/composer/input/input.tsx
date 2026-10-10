@@ -475,7 +475,9 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
       if (imageFiles.length === 0) return;
 
-      event.preventDefault();
+      // Copied text often carries an image of itself, as from Word. Let the
+      // text paste normally and attach the images alongside it.
+      if (!event.clipboardData?.getData("text/plain")) event.preventDefault();
 
       void filesToImageAttachments(imageFiles)
         .then((pastedAttachments) => {

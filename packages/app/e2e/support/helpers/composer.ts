@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
@@ -180,6 +180,30 @@ export async function dropFileOnComposer(
   await composerRoot.dispatchEvent("dragover", { dataTransfer });
   await composerRoot.dispatchEvent("drop", { dataTransfer });
   await dataTransfer.dispose();
+}
+
+/** Puts the given formats on the system clipboard together, then pastes them into the composer with the keyboard shortcut. */
+export async function pasteClipboardIntoComposer(
+  page: Page,
+  context: BrowserContext,
+  clipboard: { text?: string; html?: string; png?: Buffer },
+): Promise<void> {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(
+    async ({ text, html, pngBase64 }) => {
+      const formats: Record<string, Blob> = {};
+      if (text !== undefined) formats["text/plain"] = new Blob([text], { type: "text/plain" });
+      if (html !== undefined) formats["text/html"] = new Blob([html], { type: "text/html" });
+      if (pngBase64 !== undefined) {
+        const bytes = Uint8Array.from(atob(pngBase64), (char) => char.charCodeAt(0));
+        formats["image/png"] = new Blob([bytes], { type: "image/png" });
+      }
+      await navigator.clipboard.write([new ClipboardItem(formats)]);
+    },
+    { text: clipboard.text, html: clipboard.html, pngBase64: clipboard.png?.toString("base64") },
+  );
+  await composerInput(page).click();
+  await page.keyboard.press("ControlOrMeta+v");
 }
 
 /** Hover to reveal the X button (hidden until hover on desktop web), then click by accessible label. */
