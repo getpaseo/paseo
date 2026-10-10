@@ -95,6 +95,7 @@ import {
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { resolveDefaultAgentCreateConfig } from "../create-agent-mode.js";
 
 interface CollaborationModeRecord {
   name: string;
@@ -845,6 +846,21 @@ describe("Codex app-server provider", () => {
     await expect(session.getAvailableModes()).resolves.not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "auto-review" })]),
     );
+  });
+
+  test("an unattended agent created without a mode runs in Full Access", async () => {
+    const session = createSession({}, { autoReviewEnabled: true });
+
+    const resolved = resolveDefaultAgentCreateConfig({
+      provider: "codex",
+      requestedMode: undefined,
+      featureValues: undefined,
+      parent: null,
+      unattended: true,
+      availableModes: await session.getAvailableModes(),
+    });
+
+    expect(resolved.modeId).toBe("full-access");
   });
 
   test("setMode auto-review sends approvalsReviewer to thread/start", async () => {

@@ -38,6 +38,7 @@ import {
   type ScheduleServiceOptions,
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
+import { StaleProviderSessionError } from "../agent/stale-provider-session-error.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -79,6 +80,21 @@ type TestScheduleServiceOptions = Omit<
   createPaseoWorktreeWorkspace?: ScheduleServiceOptions["createPaseoWorktreeWorkspace"];
   archiveWorkspace?: ScheduleServiceOptions["archiveWorkspace"];
 };
+
+// Plugins answer prompts from agent.permission_requested, after the request is published.
+function allowPermissionsAfterRequest(manager: AgentManager): void {
+  function allow(agentId: string, requestId: string): void {
+    void manager.respondToPermission(agentId, requestId, { behavior: "allow" });
+  }
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream" && event.event.type === "permission_requested") {
+        queueMicrotask(() => allow(event.agentId, event.event.request.id));
+      }
+    },
+    { replayState: false },
+  );
+}
 
 function createScheduleService(options: TestScheduleServiceOptions): ScheduleService {
   let workspaceCounter = 0;
@@ -454,6 +470,208 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.agentId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+  });
+
+  test("fails a new-agent run when its agent stops on a permission prompt", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      permissionAnswerGraceMs: 0,
+    });
+
+    const created = await service.create({
+      prompt: "rm -f permission.txt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          modeId: "default",
+          cwd: tempDir,
+          archiveOnFinish: false,
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toMatch(/is waiting for permission to use Bash/);
+    // The kept agent must not resume the failed run if someone answers the prompt later.
+    const agentId = inspected.runs[0]?.agentId ?? "";
+    expect(manager.getPendingPermissions(agentId)).toEqual([]);
+    expect(manager.getAgent(agentId)?.lifecycle).not.toBe("running");
+  });
+
+  test("keeps a new-agent run going when a plugin answers its permission prompt", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    allowPermissionsAfterRequest(manager);
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "rm -f permission.txt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", model: "test-model", modeId: "default", cwd: tempDir },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+  });
+
+  test("reports success when a late answer lets the turn finish before the cancel lands", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    // The answer arrives after the grace window but before the cancel reaches the turn.
+    manager.cancelAgentRun = async (agentId) => {
+      const [request] = manager.getPendingPermissions(agentId);
+      await manager.respondToPermission(agentId, request?.id ?? "", { behavior: "allow" });
+      await manager.waitForAgentEvent(agentId);
+      return { status: "not_running" };
+    };
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      permissionAnswerGraceMs: 0,
+    });
+
+    const created = await service.create({
+      prompt: "rm -f permission.txt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", model: "test-model", modeId: "default", cwd: tempDir },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+  });
+
+  test("fails a permission-blocked run without waiting when its turn refuses to cancel", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    manager.cancelAgentRun = async () => ({ status: "refused" });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      permissionAnswerGraceMs: 0,
+    });
+
+    const created = await service.create({
+      prompt: "rm -f permission.txt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          modeId: "default",
+          cwd: tempDir,
+          archiveOnFinish: false,
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toMatch(
+      /is waiting for permission to use Bash; its turn could not be stopped/,
+    );
+  });
+
+  test("fails a new-agent run when its provider session is stale before the turn starts", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients({
+        onStartTurn: () => {
+          throw new StaleProviderSessionError("schedule-stale-session");
+        },
+      }),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "Respond with exactly hello",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", model: "test-model", cwd: tempDir },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toMatch(/is stale/);
   });
 
   test("delivers agent-target schedules through the steer-or-interrupt path", async () => {

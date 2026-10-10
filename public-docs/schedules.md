@@ -29,6 +29,10 @@ Both run on a cadence you set. To start an agent from an external event instead 
 - **Daily triage:** scan issues, PRs, and failing checks every morning.
 - **Maintenance sweeps:** refresh dependencies, audit docs, or clean stale branches.
 
+## Permissions
+
+A schedule that starts a new agent has nobody watching it. If you leave its permission mode unset, Paseo starts the agent in the provider's mode that never asks (Bypass for Claude, Full Access for Codex). If you pick a mode that asks, a plugin can still answer the agent's permission prompts. A prompt left unanswered for 10 seconds stops the agent's turn and fails the run, and the error names the tool it was waiting on.
+
 ## Ways to create one
 
 - **In the app** — open the Schedules view and create one with agent settings, a cron cadence, a repo, and a prompt. This is the main way to create and manage schedules.
