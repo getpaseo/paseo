@@ -544,6 +544,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           transform: transformTimelineItem,
           level: toolCallDetailLevel,
           isTurnActive,
+          serverId: resolvedServerId,
         }),
       [
         presentStream,
@@ -552,6 +553,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         transformTimelineItem,
         toolCallDetailLevel,
         isTurnActive,
+        resolvedServerId,
       ],
     );
     const {
@@ -1112,6 +1114,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
                 agentId,
+                serverId: resolvedServerId,
                 segments: renderModel.segments,
                 historyRowRevision,
                 liveHeadRowRevision: expandedToolCallGroupIds,

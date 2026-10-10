@@ -1,7 +1,10 @@
 import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
 import type { TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import {
+  getMarkdownBlockDelimiterRevision,
+  splitMarkdownBlocks,
+} from "@/utils/split-markdown-blocks";
 import {
   prepareToolCallHistory,
   projectToolCallDetailLevel,
@@ -15,6 +18,7 @@ interface PresentationInput {
   transform: TimelineItemTransform | undefined;
   level: ToolCallDetailLevel;
   isTurnActive: boolean;
+  serverId?: string;
 }
 
 function retainItems(previous: StreamItem[], next: StreamItem[]): StreamItem[] {
@@ -67,7 +71,7 @@ export function createStreamPresentation() {
     return projected;
   }
 
-  const blocksBySource = new WeakMap<AssistantMessageItem, AssistantMessageItem[]>();
+  let blocksBySource = new WeakMap<AssistantMessageItem, AssistantMessageItem[]>();
   let liveSources = new Map<string, AssistantMessageItem>();
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
@@ -78,6 +82,8 @@ export function createStreamPresentation() {
   let preparedTail: StreamItem[] | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
   let preparedHistory: PreparedToolCallHistory | null = null;
+  let presentationServerId: string | undefined;
+  let presentationDelimiterRevision = getMarkdownBlockDelimiterRevision();
 
   /**
    * One display row per Markdown block. Each block renders on its own, so a construct
@@ -86,7 +92,7 @@ export function createStreamPresentation() {
    * at a definition several blocks away renders as literal text. Streamed messages
    * always behaved this way; history now matches them.
    */
-  function nativeBlocks(item: StreamItem): StreamItem[] {
+  function nativeBlocks(item: StreamItem, serverId: string | undefined): StreamItem[] {
     if (item.kind === "user_message") return [presentUserMessage(item)];
     if (item.kind !== "assistant_message") return [item];
     const cached = blocksBySource.get(item);
@@ -103,7 +109,7 @@ export function createStreamPresentation() {
       growingText =
         previous[previous.length - 1]!.text + item.text.slice(previousSource.text.length);
     }
-    const parsed = splitMarkdownBlocks(growingText);
+    const parsed = splitMarkdownBlocks(growingText, { serverId });
     // Whitespace-only text has no block, and a message still owns exactly one row.
     const textBlocks = parsed.length > 0 || prefix.length > 0 ? parsed : [""];
 
@@ -113,9 +119,13 @@ export function createStreamPresentation() {
       let blockText = text;
       if (offset === textBlocks.length - 1) {
         // The split drops trailing blank lines, including a line break followed only
-        // by the next line's indent. Keep them so the next append continues that line.
+        // by the next line's indent — except inside an extension block, which keeps
+        // them. Re-anchor the tail to the stream's own so the next append continues
+        // that line and the tail is never doubled.
         const trailingBlankLines = /\n\s*$/.exec(item.text)?.[0] ?? "";
-        blockText += trailingBlankLines;
+        if (trailingBlankLines) {
+          blockText = `${blockText.replace(/\n\s*$/, "")}${trailingBlankLines}`;
+        }
       }
       const existing = previous?.[index];
       const id = `${item.id}:block:${index}`;
@@ -136,13 +146,28 @@ export function createStreamPresentation() {
   }
 
   return (input: PresentationInput) => {
+    const delimiterRevision = getMarkdownBlockDelimiterRevision();
+    if (
+      presentationServerId !== input.serverId ||
+      presentationDelimiterRevision !== delimiterRevision
+    ) {
+      // Delimiters are host-scoped and plugins install or leave mid-session: cached
+      // blocks split under another host or an older catalog would keep boundaries
+      // nobody declared anymore.
+      blocksBySource = new WeakMap();
+      liveSources = new Map();
+      historySource = undefined;
+      historyTransform = undefined;
+      presentationServerId = input.serverId;
+      presentationDelimiterRevision = delimiterRevision;
+    }
     // Retained history is not reprojected or regrouped on each live text update.
     if (historySource !== input.tail || historyTransform !== input.transform) {
       // One rendering path: history splits the same way the live head does, and
       // `blocksBySource` keeps both the live block identities and the split cost
       // from being paid again when only the tail's array identity changed.
       historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        nativeBlocks,
+        (item) => nativeBlocks(item, input.serverId),
       );
       historySource = input.tail;
       historyTransform = input.transform;
@@ -151,7 +176,7 @@ export function createStreamPresentation() {
     const promoted: StreamItem[] = [];
     const nextLiveSources = new Map<string, AssistantMessageItem>();
     for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
-      const blocks = nativeBlocks(item);
+      const blocks = nativeBlocks(item, input.serverId);
       if (item.kind === "assistant_message") nextLiveSources.set(item.id, item);
       if (item.kind === "assistant_message" && blocks.length > 1) {
         promoted.push(...blocks.slice(0, -1));

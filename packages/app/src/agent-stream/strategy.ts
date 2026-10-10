@@ -72,6 +72,7 @@ export interface StreamHistoryRowRevision {
 
 export interface StreamRenderInput {
   agentId: string;
+  serverId?: string;
   segments: StreamRenderSegments;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;

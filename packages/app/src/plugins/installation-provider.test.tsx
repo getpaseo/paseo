@@ -39,6 +39,7 @@ function installation(invoked: string[]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    markdownExtensions: [],
   };
 }
 

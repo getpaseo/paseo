@@ -12,6 +12,7 @@ const ASSISTANT_MARKDOWN_BLOCK_GAP = 12;
 interface MarkdownBlockHeightInput {
   block: string;
   width: number;
+  serverId?: string;
 }
 
 const assistantMarkdownBlockHeightCache = new Map<string, number>();
@@ -52,13 +53,14 @@ function createMarkdownBlockHeightKey(input: MarkdownBlockHeightInput): string |
   if (input.block.length === 0) {
     return null;
   }
-  return `${normalizedWidth}:${hashMarkdownBlock(input.block)}`;
+  return `${input.serverId ?? ""}:${normalizedWidth}:${hashMarkdownBlock(input.block)}`;
 }
 
 export function setAssistantMarkdownBlockHeight(input: {
   block: string;
   width: number;
   height: number;
+  serverId?: string;
 }): number | null {
   if (!Number.isFinite(input.height) || input.height <= 0) {
     return null;
@@ -66,6 +68,7 @@ export function setAssistantMarkdownBlockHeight(input: {
   const key = createMarkdownBlockHeightKey({
     block: input.block,
     width: input.width,
+    serverId: input.serverId,
   });
   if (!key) {
     return null;
@@ -83,8 +86,9 @@ export function setAssistantMarkdownBlockHeight(input: {
 function estimateAssistantMarkdownBlockHeightFromCache(
   markdown: string,
   contentMaxWidth: number,
+  serverId?: string,
 ): number | null {
-  const blocks = splitMarkdownBlocks(markdown);
+  const blocks = splitMarkdownBlocks(markdown, { serverId });
   if (blocks.length === 0) {
     return null;
   }
@@ -94,6 +98,7 @@ function estimateAssistantMarkdownBlockHeightFromCache(
     const key = createMarkdownBlockHeightKey({
       block,
       width: contentMaxWidth - ASSISTANT_MARKDOWN_BLOCK_INSET,
+      serverId,
     });
     const cachedHeight = key ? assistantMarkdownBlockHeightCache.get(key) : undefined;
     if (cachedHeight === undefined) {
@@ -112,10 +117,11 @@ function estimateAssistantMarkdownBlockHeightFromCache(
 export function estimateAssistantMessageHeightFromCache({
   markdown,
   contentMaxWidth,
+  serverId,
   imageContext,
-}: AssistantMessageHeightEstimateInput): number | null {
+}: AssistantMessageHeightEstimateInput & { serverId?: string }): number | null {
   return (
-    estimateAssistantMarkdownBlockHeightFromCache(markdown, contentMaxWidth) ??
+    estimateAssistantMarkdownBlockHeightFromCache(markdown, contentMaxWidth, serverId) ??
     estimateAssistantImageMessageHeightFromCache({ markdown, contentMaxWidth, imageContext })
   );
 }
