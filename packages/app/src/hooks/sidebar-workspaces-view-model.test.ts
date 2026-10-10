@@ -8,12 +8,15 @@ import {
   buildSidebarWorkspaceEntries,
   buildSidebarWorkspacePlacementModel,
   buildSidebarProjectsFromStructure,
+  buildSidebarOrderLiveState,
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
+  pruneSidebarOrder,
   shouldShowSidebarHostLabels,
   type ProjectStatusSession,
+  type SidebarOrderLiveState,
   type SidebarProjectEntry,
   type SidebarWorkspacePlacement,
 } from "./sidebar-workspaces-view-model";
@@ -940,5 +943,178 @@ describe("deriveProjectStatusBucket", () => {
         },
       }),
     ).toBe("done");
+  });
+});
+
+describe("pruneSidebarOrder", () => {
+  const HISTORY = "@airlock:sidebar-placement-keys:v1";
+  const live = (
+    servers: Record<string, string[]>,
+    hostIds: string[],
+    visibleProjects: string[] = [],
+  ): SidebarOrderLiveState => ({
+    hostIds,
+    servers: new Map(Object.entries(servers).map(([serverId, keys]) => [serverId, new Set(keys)])),
+    visibleProjects: new Set(visibleProjects),
+  });
+
+  it("removes nothing, and returns the same object, when no server has a complete list", () => {
+    const stale = {
+      projectOrder: ["p"],
+      pinnedWorkspaceOrder: ["s:gone"],
+      workspaceOrderByProject: { p: ["s:gone"] },
+    };
+    // No server has said anything, and the one that did has an empty host list.
+    expect(pruneSidebarOrder(stale, live({}, ["s"]))).toBe(stale);
+    expect(pruneSidebarOrder(stale, live({ s: [] }, []))).toBe(stale);
+    // Once one IS complete, the same state does change — the identity above is not an
+    // artefact of a prune that never fires.
+    expect(pruneSidebarOrder(stale, live({ s: ["s:a"] }, ["s"], ["p"]))).not.toBe(stale);
+
+    const settled = {
+      projectOrder: ["p"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { p: ["s:a"] },
+    };
+    expect(pruneSidebarOrder(settled, live({ s: ["s:a"] }, ["s"], ["p"]))).toBe(settled);
+  });
+
+  it("removes only the keys a complete list no longer has, preserving the order of the rest", () => {
+    const state = {
+      projectOrder: ["p"],
+      pinnedWorkspaceOrder: ["s:a", "s:gone"],
+      workspaceOrderByProject: { p: ["s:b", "s:gone", "s:a", "s:c"] },
+    };
+    const next = pruneSidebarOrder(state, live({ s: ["s:a", "s:b", "s:c"] }, ["s"], ["p"]));
+    expect(next.workspaceOrderByProject.p).toEqual(["s:b", "s:a", "s:c"]);
+    expect(next.pinnedWorkspaceOrder).toEqual(["s:a"]);
+    expect(next).not.toBe(state);
+  });
+
+  it("leaves entries that are not workspace keys alone", () => {
+    const history = [JSON.stringify(["s", "repo", "p"])];
+    const state = {
+      projectOrder: ["p", ""],
+      pinnedWorkspaceOrder: ["", "no-colon", HISTORY],
+      workspaceOrderByProject: { [HISTORY]: history, p: ["", "no-colon", "s:gone"] },
+    };
+    const next = pruneSidebarOrder(state, live({ s: ["s:a"] }, ["s"], ["p"]));
+    expect(next.workspaceOrderByProject.p).toEqual(["", "no-colon"]);
+    expect(next.workspaceOrderByProject[HISTORY]).toEqual(history);
+    expect(next.pinnedWorkspaceOrder).toEqual(["", "no-colon", HISTORY]);
+  });
+
+  it("keeps a visible project with zero workspaces, then drops it once it is gone", () => {
+    const state = {
+      projectOrder: ["p"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { p: ["s:last"] },
+    };
+    // The record is left exactly as it was: those stale keys are what name the server
+    // that owns them, and an empty array would leave the next pass nothing to act on. So
+    // this pass has nothing to write at all.
+    const holding = pruneSidebarOrder(state, live({ s: [] }, ["s"], ["p"]));
+    expect(holding).toBe(state);
+
+    // Once it leaves the sidebar, the pass that removes the keys removes the slot in the
+    // same step. Scoping the removal to the transition would have deleted the record on
+    // the first pass, found nothing on the second, and stranded the slot forever.
+    const gone = pruneSidebarOrder(holding, live({ s: [] }, ["s"]));
+    expect(gone.projectOrder).toEqual([]);
+    expect(gone.workspaceOrderByProject.p).toBeUndefined();
+    expect(pruneSidebarOrder(gone, live({ s: [] }, ["s"]))).toBe(gone);
+  });
+
+  it("never costs a project its slot on the strength of an already-empty record", () => {
+    // An empty array names no server, so it is not evidence that this device emptied
+    // anything — and treating it as such dropped a hidden project's slot on the strength
+    // of some OTHER server's prune.
+    const state = {
+      projectOrder: ["hidden", "p"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { hidden: [], p: ["s:gone"] },
+    };
+    const next = pruneSidebarOrder(state, live({ s: [] }, ["s"]));
+    expect(next.projectOrder).toEqual(["hidden"]);
+    expect(next.workspaceOrderByProject.hidden).toEqual([]);
+    expect(next.workspaceOrderByProject.p).toBeUndefined();
+  });
+
+  it("leaves a projectOrder key with no order record at all alone", () => {
+    const state = {
+      projectOrder: ["q"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { p: ["s:a"] },
+    };
+    expect(pruneSidebarOrder(state, live({ s: ["s:a"] }, ["s"]))).toBe(state);
+  });
+
+  it("attributes a key to the longest matching host id", () => {
+    // `a:b:w` is a key of server `a:b`. Judging "does any complete list's prefix match"
+    // would charge it to `a`, which IS complete, and delete it.
+    const state = {
+      projectOrder: ["p"],
+      pinnedWorkspaceOrder: ["a:b:w"],
+      workspaceOrderByProject: { p: ["a:b:w", "a:x", "a:archived"] },
+    };
+    const next = pruneSidebarOrder(state, live({ a: ["a:x"] }, ["a", "a:b"], ["p"]));
+    expect(next.workspaceOrderByProject.p).toEqual(["a:b:w", "a:x"]);
+    expect(next.pinnedWorkspaceOrder).toEqual(["a:b:w"]);
+
+    // With `a:b` unregistered, the key falls to `a` and is judged there.
+    const alone = pruneSidebarOrder(state, live({ a: ["a:x"] }, ["a"], ["p"]));
+    expect(alone.workspaceOrderByProject.p).toEqual(["a:x"]);
+  });
+
+  it("does not let an empty list stand in for one it was never given", () => {
+    const state = {
+      projectOrder: ["p"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { p: ["s:gone"] },
+    };
+    expect(pruneSidebarOrder(state, live({}, ["s"], ["p"]))).toBe(state);
+  });
+});
+
+describe("buildSidebarOrderLiveState", () => {
+  const entry = (
+    viewKey: string,
+    hosts: Array<{ serverId: string; projectId: string }>,
+    workspaceKeys: string[],
+  ): SidebarProjectEntry =>
+    ({
+      viewKey,
+      hosts,
+      workspaces: workspaceKeys.map((workspaceKey) => ({ workspaceKey })),
+    }) as unknown as SidebarProjectEntry;
+
+  it("grants a server's keys only when that server reported a complete list", () => {
+    const next = buildSidebarOrderLiveState({
+      projects: [entry("p", [{ serverId: "s", projectId: "r" }], ["s:a"])],
+      registeredHostIds: ["s"],
+      completeWorkspaceListServerIds: ["s"],
+    });
+    expect([...(next.servers.get("s") ?? [])]).toEqual(["s:a"]);
+    expect([...next.visibleProjects]).toEqual(["p"]);
+
+    const withheld = buildSidebarOrderLiveState({
+      projects: [entry("p", [{ serverId: "s", projectId: "r" }], ["s:a"])],
+      registeredHostIds: ["s"],
+      completeWorkspaceListServerIds: [],
+    });
+    expect(withheld.servers.size).toBe(0);
+  });
+
+  it("files each key under its longest matching registered host, visible or not", () => {
+    // `a:b` is registered but filtered out of the sidebar, so the project list never
+    // mentions it. Filing its key under `a` would hide that `a` never had it.
+    const next = buildSidebarOrderLiveState({
+      projects: [entry("p", [{ serverId: "a", projectId: "r" }], ["a:x", "a:b:w"])],
+      registeredHostIds: ["a", "a:b"],
+      completeWorkspaceListServerIds: ["a", "a:b"],
+    });
+    expect([...(next.servers.get("a") ?? [])]).toEqual(["a:x"]);
+    expect([...(next.servers.get("a:b") ?? [])]).toEqual(["a:b:w"]);
+    expect(next.hostIds).toEqual(["a:b", "a"]);
   });
 });

@@ -17,6 +17,7 @@ export interface SessionsSnapshot {
     {
       hasHydratedWorkspaces?: boolean;
       hasWorkspaceDirectorySnapshot?: boolean;
+      hasCompleteWorkspaceList?: boolean;
       workspaces: Map<string, WorkspaceDescriptor>;
       projects?: Map<string, ProjectDescriptor>;
     }
@@ -137,6 +138,18 @@ export function selectHydratedWorkspaceServerIds(
   serverIds: readonly string[],
 ): string[] {
   return serverIds.filter((serverId) => state.sessions[serverId]?.hasHydratedWorkspaces === true);
+}
+
+/**
+ * Servers whose CURRENT workspace list came from the server in full — not from a local
+ * checkpoint, not from a delta, and not from a single registered project. Only these may
+ * be asked which workspaces no longer exist; see `selectHasHydratedWorkspaces`, which is
+ * also set by `registerProjectDescriptor` and never unset.
+ */
+export function selectCompleteWorkspaceListServerIds(state: SessionsSnapshot): string[] {
+  return Object.entries(state.sessions)
+    .filter(([, session]) => session.hasCompleteWorkspaceList === true)
+    .map(([serverId]) => serverId);
 }
 
 export function selectWorkspaceDirectoryServerIds(

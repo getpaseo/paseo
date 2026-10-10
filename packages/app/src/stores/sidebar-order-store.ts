@@ -14,6 +14,16 @@ interface SidebarOrderStoreState {
   setPinnedWorkspaceOrder: (keys: string[]) => void;
   getWorkspaceOrder: (projectViewKey: string) => string[];
   setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
+  /**
+   * Replaces all three order fields in ONE update. The sidebar effect reconciles new keys
+   * and prunes gone ones in the same pass, and a reload, a failed write or a rehydrate
+   * must never observe half of that transition.
+   */
+  setSidebarOrderState: (state: {
+    projectOrder: string[];
+    pinnedWorkspaceOrder: string[];
+    workspaceOrderByProject: Record<string, string[]>;
+  }) => void;
 }
 
 interface SidebarOrderPersistedState {
@@ -167,6 +177,13 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       getWorkspaceOrder: (projectViewKey) => {
         if (!projectViewKey.trim()) return [];
         return get().workspaceOrderByProject[projectViewKey] ?? [];
+      },
+      setSidebarOrderState: (state) => {
+        set({
+          projectOrder: dedupeKeys(state.projectOrder),
+          pinnedWorkspaceOrder: dedupeKeys(state.pinnedWorkspaceOrder),
+          workspaceOrderByProject: state.workspaceOrderByProject,
+        });
       },
       setWorkspaceOrder: (projectViewKey, keys) => {
         if (!projectViewKey.trim()) return;

@@ -95,6 +95,22 @@ describe("sidebar order keys that end in whitespace", () => {
     expect(runPass().projectOrder).toBeNull();
   });
 
+  it("replaces all three order fields in one write, deduplicating as the setters do", () => {
+    // The sidebar effect reconciles new keys and prunes gone ones in the same pass. A
+    // reload, a failed write or a rehydrate must never observe half of that transition,
+    // which is why this is one setter rather than three.
+    useSidebarOrderStore.getState().setSidebarOrderState({
+      projectOrder: ["b", "b", "a"],
+      pinnedWorkspaceOrder: ["s:one", "s:one"],
+      workspaceOrderByProject: { a: ["s:two"], b: [] },
+    });
+
+    const state = useSidebarOrderStore.getState();
+    expect(state.projectOrder).toEqual(["b", "a"]);
+    expect(state.pinnedWorkspaceOrder).toEqual(["s:one"]);
+    expect(state.workspaceOrderByProject).toEqual({ a: ["s:two"], b: [] });
+  });
+
   it("still trims keys when migrating persisted state", () => {
     const migrated = migrateSidebarOrderState({
       projectOrder: [" host-a:one ", "host-a:one"],
