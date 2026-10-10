@@ -567,6 +567,38 @@ describe("createTerminal", () => {
     expect(state.grid[0][1].char).toBe("");
   });
 
+  it("clears restored fullscreen content when the application leaves the alternate screen", async () => {
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 80,
+        rows: 10,
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write('SHELL\\r\\n\\x1b[?1049h\\x1b[2J\\x1b[HFULLSCREEN'); setInterval(() => {}, 100000);",
+        ],
+      }),
+    );
+    const state = await waitForState(session, (current) => getRowText(current, 0) === "FULLSCREEN");
+    const restored = new xterm.Terminal({ cols: 80, rows: 10, allowProposedApi: true });
+    try {
+      await new Promise<void>((resolve) =>
+        restored.write(renderTerminalSnapshotToAnsi(state), resolve),
+      );
+      expect(restored.buffer.active.getLine(0)?.translateToString(true)).toBe("FULLSCREEN");
+      await new Promise<void>((resolve) => restored.write("\x1b[?1049lPROMPT", resolve));
+      const visible = Array.from({ length: restored.rows }, (_, row) =>
+        restored.buffer.active.getLine(row)?.translateToString(true),
+      ).join("\n");
+      expect(visible).not.toContain("FULLSCREEN");
+      expect(visible.trim()).toBe("PROMPT");
+    } finally {
+      restored.dispose();
+    }
+  });
+
   it("captures exit diagnostics from the terminal buffer", async () => {
     const session = trackSession(
       await createTerminal({
