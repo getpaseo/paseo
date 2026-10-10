@@ -1377,6 +1377,16 @@ export const fr: TranslationResources = {
       searchPlaceholder: "Rechercher des branches et des PR",
       title: "Partir de",
     },
+    folderPicker: {
+      title: "Dossier",
+      chooseFolder: "Choisir un dossier...",
+      backToProjects: "Retour aux projets",
+      searchPlaceholder: "Rechercher des dossiers ou saisir un chemin",
+      searching: "Recherche...",
+      noMatchingFolders: "Aucun dossier correspondant.",
+      openPath: "Ouvrir ce chemin",
+      usePath: 'Utiliser "{{path}}"',
+    },
     launch: {
       title: "Que lancer ?",
       chat: "Chat",

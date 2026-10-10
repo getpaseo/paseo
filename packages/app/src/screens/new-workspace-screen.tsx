@@ -14,7 +14,15 @@ import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  ArrowLeft,
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  FolderSearch,
+  GitBranch,
+  GitPullRequest,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -78,7 +86,6 @@ import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-disp
 import {
   getHostProjectSourceDirectory,
   getHostProjectId,
-  getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   resolveHostProjectCandidate,
@@ -125,6 +132,21 @@ import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 import { ImportSessionButton } from "./new-workspace/import-session-button";
 import { useImportSession } from "@/hooks/use-import-session";
 import {
+  buildFolderPickerComboboxOptions,
+  dispatchProjectPickerSelect,
+  FOLDER_OPTION_PREFIX,
+  folderAwareShowRefPicker,
+  folderPickerEmptyText,
+  folderOptionId,
+  resolveFolderAwareWorktreeSupport,
+  resolveFolderPickerQueryEnabled,
+  resolveFolderTargetView,
+  resolveInitialFolderTarget,
+  resolveProjectPickerPresentation,
+  useNewWorkspaceFolderTarget,
+  type ProjectPickerPresentation,
+} from "./new-workspace/folder-picker";
+import {
   buildTerminalsQueryKey,
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
@@ -136,6 +158,14 @@ const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const addProjectIcon = (
   <ThemedFolderPlus size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
+const ThemedFolderSearch = withUnistyles(FolderSearch);
+const chooseFolderIcon = (
+  <ThemedFolderSearch size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
+const ThemedArrowLeft = withUnistyles(ArrowLeft);
+const backToProjectsIcon = (
+  <ThemedArrowLeft size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
 );
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
@@ -629,6 +659,69 @@ function AddProjectPickerAction({ onPress }: { onPress: () => void }) {
   );
 }
 
+function ChooseFolderPickerAction({ onPress }: { onPress: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <ComboboxItem
+      testID="new-workspace-project-picker-choose-folder"
+      label={t("newWorkspace.folderPicker.chooseFolder")}
+      onPress={onPress}
+      leadingSlot={chooseFolderIcon}
+    />
+  );
+}
+
+function BackToProjectsPickerAction({ onPress }: { onPress: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <ComboboxItem
+      testID="new-workspace-project-picker-back-to-projects"
+      label={t("newWorkspace.folderPicker.backToProjects")}
+      onPress={onPress}
+      leadingSlot={backToProjectsIcon}
+    />
+  );
+}
+
+function FolderPickerOptionItem({
+  option,
+  selected,
+  active,
+  disabled,
+  onPress,
+  iconColor,
+  iconSize,
+}: {
+  option: ComboboxOptionType;
+  selected: boolean;
+  active: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  iconColor: string;
+  iconSize: number;
+}) {
+  const leadingSlot = useMemo(
+    () => (
+      <View style={styles.rowIconBox}>
+        <Folder size={iconSize} color={iconColor} />
+      </View>
+    ),
+    [iconColor, iconSize],
+  );
+  return (
+    <ComboboxItem
+      testID={`new-workspace-folder-picker-option-${option.id}`}
+      label={option.label}
+      description={option.description}
+      selected={selected}
+      active={active}
+      disabled={disabled}
+      onPress={onPress}
+      leadingSlot={leadingSlot}
+    />
+  );
+}
+
 function newWorkspaceHostOptionTestID(serverId: string): string {
   return `new-workspace-host-picker-option-${serverId}`;
 }
@@ -806,7 +899,9 @@ async function createMultiplicityWorkspace(input: {
   worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
-  project: HostProjectListItem;
+  // A null project is the ad-hoc folder target: the workspace runs in the
+  // chosen directory and the daemon registers its project implicitly.
+  project: HostProjectListItem | null;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
@@ -821,8 +916,10 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<WorkspaceCreationResult> {
-  const projectId = getHostProjectId(input.project, input.serverId);
-  if (!projectId) throw new Error("Project is not available on the selected host");
+  const projectId = input.project ? getHostProjectId(input.project, input.serverId) : null;
+  if (input.project && !projectId) {
+    throw new Error("Project is not available on the selected host");
+  }
   const isWorktree = input.isolation === "worktree";
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
@@ -836,14 +933,14 @@ async function createMultiplicityWorkspace(input: {
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
-          projectId,
+          ...(projectId ? { projectId } : {}),
           worktreeSlug: input.worktreeSlug,
           ...input.checkoutRequest,
         }
       : {
           kind: "directory",
           path: input.sourceDirectory,
-          projectId,
+          ...(projectId ? { projectId } : {}),
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
@@ -1380,13 +1477,11 @@ interface NewWorkspaceFormStackInput {
   isCompact: boolean;
   isPending: boolean;
   project: FormPickerControl & {
-    options: ComboboxOptionType[];
+    presentation: ProjectPickerPresentation;
     triggerLabel: string;
     selectedProject: HostProjectListItem | null;
     iconDataByProjectViewKey: Map<string, string | null>;
-    selectedOptionId: string;
     onSelect: (id: string) => void;
-    onAddProject: () => void;
     renderOption: RefPickerRenderOption;
   };
   host: FormPickerControl & {
@@ -1431,10 +1526,6 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
-  const addProjectAction = useMemo(
-    () => <AddProjectPickerAction onPress={project.onAddProject} />,
-    [project.onAddProject],
-  );
 
   const badgePressableStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -1467,20 +1558,15 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         iconSize={theme.iconSize.sm}
       />
       <Combobox
-        options={project.options}
-        value={project.selectedOptionId}
+        {...project.presentation}
         onSelect={project.onSelect}
         searchable
-        searchPlaceholder="Search projects"
-        title="Project"
         open={project.openState}
         onOpenChange={project.onOpenChange}
         desktopPlacement="bottom-start"
         desktopMinWidth={360}
         anchorRef={project.anchorRef}
-        emptyText="No projects available."
         renderOption={project.renderOption}
-        footer={addProjectAction}
       />
     </View>
   );
@@ -1674,6 +1760,16 @@ export function NewWorkspaceScreen({
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const {
+    folderTarget,
+    selectFolderTarget: applyFolderTarget,
+    clearFolderTarget,
+  } = useNewWorkspaceFolderTarget(
+    resolveInitialFolderTarget({ sourceDirectory: sourceDirectoryProp, projectId }),
+  );
+  const [projectPickerMode, setProjectPickerMode] = useState<"project" | "folder">("project");
+  const [folderPickerQuery, setFolderPickerQuery] = useState("");
+  const [debouncedFolderPickerQuery, setDebouncedFolderPickerQuery] = useState("");
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
@@ -1734,6 +1830,12 @@ export function NewWorkspaceScreen({
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
 
+  useEffect(() => {
+    const trimmed = folderPickerQuery.trim();
+    const timer = setTimeout(() => setDebouncedFolderPickerQuery(trimmed), 180);
+    return () => clearTimeout(timer);
+  }, [folderPickerQuery]);
+
   const { workspace } = creationResult;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
@@ -1753,6 +1855,18 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  // While a folder target is chosen the picked project stays parked: it neither
+  // scopes the workspace nor drives worktree/ref controls.
+  const folderView = resolveFolderTargetView({
+    folderTarget,
+    selectedProject,
+    selectedSourceDirectory,
+    projectTriggerLabel,
+    selectedProjectOptionId,
+  });
+  const effectiveProject = folderView.project;
+  const effectiveSourceDirectory = folderView.sourceDirectory;
+  const pickerTargetId = folderView.pickerTargetId;
   const projectIconTargets = useMemo(
     () => buildNewWorkspaceProjectIconTargets(projects, selectedServerId),
     [projects, selectedServerId],
@@ -1773,7 +1887,7 @@ export function NewWorkspaceScreen({
     composer: buildComposerConfig({
       serverId: selectedServerId,
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
-      sourceDirectory: selectedSourceDirectory,
+      sourceDirectory: effectiveSourceDirectory,
       initialSetup: forkDraftSetup?.setup,
     }),
   });
@@ -1804,17 +1918,42 @@ export function NewWorkspaceScreen({
   }, [selectedServerId, t]);
 
   const clientReady = isConnected && Boolean(client);
-  const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
+  const hasSelectedSourceDirectory = effectiveSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
+  const folderPickerQueryEnabled = resolveFolderPickerQueryEnabled({
+    pickerOpen: projectPickerOpen,
+    mode: projectPickerMode,
+    clientReady,
+  });
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: effectiveSourceDirectory ?? "",
   });
 
-  const worktreeSupport = selectedProject
-    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
-    : "unsupported";
+  const folderSuggestionsQuery = useQuery({
+    queryKey: ["new-workspace-folder-suggestions", selectedServerId, debouncedFolderPickerQuery],
+    queryFn: async () => {
+      const connectedClient = withConnectedClient();
+      const payload = await connectedClient.getDirectorySuggestions({
+        query: debouncedFolderPickerQuery,
+        includeDirectories: true,
+        includeFiles: false,
+        limit: 30,
+      });
+      return (
+        payload.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ?? []
+      );
+    },
+    enabled: folderPickerQueryEnabled,
+    staleTime: 15_000,
+  });
+
+  const worktreeSupport = resolveFolderAwareWorktreeSupport({
+    folderTarget,
+    selectedProject,
+    serverId: selectedServerId,
+  });
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
@@ -1826,16 +1965,16 @@ export function NewWorkspaceScreen({
     queryKey: [
       "branch-suggestions",
       selectedServerId,
-      selectedSourceDirectory,
+      effectiveSourceDirectory,
       debouncedPickerSearchQuery,
     ],
     queryFn: async () => {
-      if (!selectedSourceDirectory) {
+      if (!effectiveSourceDirectory) {
         throw new Error("Choose a project");
       }
       const connectedClient = withConnectedClient();
       return connectedClient.getBranchSuggestions({
-        cwd: selectedSourceDirectory,
+        cwd: effectiveSourceDirectory,
         query: debouncedPickerSearchQuery || undefined,
         limit: 20,
       });
@@ -1847,7 +1986,7 @@ export function NewWorkspaceScreen({
   const githubPrSearchQuery = useForgeSearchQuery({
     client,
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: effectiveSourceDirectory ?? "",
     query: debouncedPickerSearchQuery,
     kinds: ["change_request"],
     supportsForgeSearch,
@@ -1919,24 +2058,49 @@ export function NewWorkspaceScreen({
     [chatDraft],
   );
 
-  const handleSelectProjectOption = useCallback(
+  const selectFolderTarget = useCallback(
+    (path: string) => {
+      applyFolderTarget(path);
+      setProjectPickerOpen(false);
+      setProjectPickerMode("project");
+      setFolderPickerQuery("");
+      clearPickerSelectionForTargetChange(pickerTargetId, folderOptionId(path.trim()));
+    },
+    [applyFolderTarget, clearPickerSelectionForTargetChange, pickerTargetId],
+  );
+
+  const selectProjectOptionPinned = useCallback(
     (id: string) => {
       // selectProjectOption enforces selectability (worktree-only when
       // multiplicity is off, any project when it's on); don't re-gate here on
       // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
+      clearFolderTarget();
       setProjectPickerOpen(false);
-      clearPickerSelectionForTargetChange(selectedProjectOptionId, id);
+      clearPickerSelectionForTargetChange(pickerTargetId, id);
     },
-    [clearPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
+    [clearFolderTarget, clearPickerSelectionForTargetChange, pickerTargetId, selectProjectOption],
+  );
+
+  const handleSelectProjectOption = useCallback(
+    (id: string) =>
+      dispatchProjectPickerSelect({
+        mode: projectPickerMode,
+        id,
+        onFolderPath: selectFolderTarget,
+        onProjectOption: selectProjectOptionPinned,
+      }),
+    [projectPickerMode, selectFolderTarget, selectProjectOptionPinned],
   );
 
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
+      // Folder targets are host-local paths; they don't transfer.
+      clearFolderTarget();
       clearPickerSelectionForTargetChange(selectedServerId, id);
     },
-    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
+    [clearFolderTarget, clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
   );
 
   const handleAddProject = useCallback(() => {
@@ -2033,6 +2197,19 @@ export function NewWorkspaceScreen({
 
   const handleProjectPickerOpenChange = useCallback((nextOpen: boolean) => {
     setProjectPickerOpen(nextOpen);
+    if (!nextOpen) {
+      setProjectPickerMode("project");
+      setFolderPickerQuery("");
+    }
+  }, []);
+
+  const handleChooseFolder = useCallback(() => {
+    setProjectPickerMode("folder");
+    setFolderPickerQuery("");
+  }, []);
+
+  const handleBackToProjects = useCallback(() => {
+    setProjectPickerMode("project");
   }, []);
 
   const ensureWorkspace = useCallback(
@@ -2047,20 +2224,21 @@ export function NewWorkspaceScreen({
       if (creationResult.workspace) {
         return creationResult;
       }
-      if (!selectedProject) {
+      if (!folderTarget && !selectedProject) {
         throw new Error("Choose a project");
       }
-      if (!selectedSourceDirectory) {
+      if (!effectiveSourceDirectory) {
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+      const createsWorktree =
+        !folderTarget && (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");
       const checkoutStatusForCreate = createsWorktree
         ? await ensureCheckoutStatus({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
+            cwd: effectiveSourceDirectory,
           })
         : null;
       const checkoutRequest = checkoutStatusForCreate
@@ -2073,8 +2251,8 @@ export function NewWorkspaceScreen({
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
-        project: selectedProject,
-        sourceDirectory: selectedSourceDirectory,
+        project: effectiveProject,
+        sourceDirectory: effectiveSourceDirectory,
         checkoutRequest,
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
@@ -2092,12 +2270,14 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      effectiveProject,
+      effectiveSourceDirectory,
+      folderTarget,
       mergeWorkspaces,
       queryClient,
       selectedItem,
       selectedProject,
       selectedServerId,
-      selectedSourceDirectory,
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
@@ -2188,7 +2368,7 @@ export function NewWorkspaceScreen({
       setPendingAction("terminal");
       let outcome: SubmitOutcome = "background";
       await runCreateTerminalWorkspace({
-        cwd: selectedSourceDirectory ?? "",
+        cwd: effectiveSourceDirectory ?? "",
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
@@ -2241,12 +2421,12 @@ export function NewWorkspaceScreen({
       toast.error(message);
     }
   }, [
+    effectiveSourceDirectory,
     ensureWorkspace,
     isStillOnCreateScreen,
     launchTarget,
     queryClient,
     selectedServerId,
-    selectedSourceDirectory,
     selectedTerminalProfile,
     t,
     terminalPromptText,
@@ -2265,28 +2445,79 @@ export function NewWorkspaceScreen({
     [isPending, itemById],
   );
 
+  const folderPickerOptions = useMemo<ComboboxOptionType[]>(
+    () =>
+      buildFolderPickerComboboxOptions({
+        serverPaths: folderSuggestionsQuery.data ?? [],
+        query: folderPickerQuery,
+        t,
+      }),
+    [folderPickerQuery, folderSuggestionsQuery.data, t],
+  );
+
+  const folderPickerEmpty = folderPickerEmptyText({
+    isFetching: folderSuggestionsQuery.isFetching,
+    t,
+  });
+
+  const projectPickerFooter = useMemo(
+    () => (
+      <>
+        <ChooseFolderPickerAction onPress={handleChooseFolder} />
+        <AddProjectPickerAction onPress={handleAddProject} />
+      </>
+    ),
+    [handleAddProject, handleChooseFolder],
+  );
+  const folderPickerFooter = useMemo(
+    () => <BackToProjectsPickerAction onPress={handleBackToProjects} />,
+    [handleBackToProjects],
+  );
+
+  const projectPickerPresentation = resolveProjectPickerPresentation({
+    mode: projectPickerMode,
+    projectOptions: projectPickerOptions,
+    comboboxValue: folderView.comboboxValue,
+    folderOptions: folderPickerOptions,
+    folderEmptyText: folderPickerEmpty,
+    onFolderQueryChange: setFolderPickerQuery,
+    footer: projectPickerFooter,
+    folderFooter: folderPickerFooter,
+    t,
+  });
+
   const renderProjectOption = useCallback(
     (props: {
       option: ComboboxOptionType;
       selected: boolean;
       active: boolean;
       onPress: () => void;
-    }) => (
-      <NewWorkspaceProjectPickerOption
-        {...props}
-        projectByOptionId={projectByOptionId}
-        projectIconDataByProjectViewKey={projectIconDataByProjectViewKey}
-        selectedServerId={selectedServerId}
-        isPending={isPending}
-        supportsWorkspaceMultiplicity={supportsWorkspaceMultiplicity}
-      />
-    ),
+    }) =>
+      props.option.id.startsWith(FOLDER_OPTION_PREFIX) ? (
+        <FolderPickerOptionItem
+          {...props}
+          disabled={isPending}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+      ) : (
+        <NewWorkspaceProjectPickerOption
+          {...props}
+          projectByOptionId={projectByOptionId}
+          projectIconDataByProjectViewKey={projectIconDataByProjectViewKey}
+          selectedServerId={selectedServerId}
+          isPending={isPending}
+          supportsWorkspaceMultiplicity={supportsWorkspaceMultiplicity}
+        />
+      ),
     [
       isPending,
       projectByOptionId,
       projectIconDataByProjectViewKey,
       selectedServerId,
       supportsWorkspaceMultiplicity,
+      theme.colors.foregroundMuted,
+      theme.iconSize.sm,
     ],
   );
 
@@ -2312,13 +2543,11 @@ export function NewWorkspaceScreen({
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
-      options: projectPickerOptions,
-      triggerLabel: projectTriggerLabel,
-      selectedProject,
+      presentation: projectPickerPresentation,
+      triggerLabel: folderView.triggerLabel,
+      selectedProject: effectiveProject,
       iconDataByProjectViewKey: projectIconDataByProjectViewKey,
-      selectedOptionId: selectedProjectOptionId,
       onSelect: handleSelectProjectOption,
-      onAddProject: handleAddProject,
       openState: projectPickerOpen,
       onOpenChange: handleProjectPickerOpenChange,
       renderOption: renderProjectOption,
@@ -2346,7 +2575,7 @@ export function NewWorkspaceScreen({
     base: {
       anchorRef: pickerAnchorRef,
       open: openPicker,
-      selectedSourceDirectory,
+      selectedSourceDirectory: effectiveSourceDirectory,
       selectedItem,
       triggerLabel,
       options,
@@ -2357,7 +2586,8 @@ export function NewWorkspaceScreen({
       setSearchQuery: setPickerSearchQuery,
       emptyText: pickerEmptyText,
       renderOption: renderPickerOption,
-      showRefPicker,
+      // Folder targets always run locally; a ref pick only matters for worktrees.
+      showRefPicker: folderAwareShowRefPicker(showRefPicker, folderTarget),
     },
     launch: {
       serverId: selectedServerId,
@@ -2393,7 +2623,7 @@ export function NewWorkspaceScreen({
       textReplacement={terminalTextReplacement}
       attachments={NO_TERMINAL_ATTACHMENTS}
       onChangeAttachments={noopChangeAttachments}
-      cwd={selectedSourceDirectory ?? ""}
+      cwd={effectiveSourceDirectory ?? ""}
       clearDraft={noopClearDraft}
       autoFocus={terminalTakesPrompt}
       autoFocusKey={launchFocusKey}
@@ -2421,7 +2651,7 @@ export function NewWorkspaceScreen({
       onChangeAttachments={chatDraft.setAttachments}
       onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
       onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-      cwd={selectedSourceDirectory ?? ""}
+      cwd={effectiveSourceDirectory ?? ""}
       clearDraft={handleClearDraft}
       autoFocus
       autoFocusKey={launchFocusKey}

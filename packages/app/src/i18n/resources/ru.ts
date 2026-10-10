@@ -1367,6 +1367,16 @@ export const ru: TranslationResources = {
       searchPlaceholder: "Поиск веток и PR",
       title: "Начать с",
     },
+    folderPicker: {
+      title: "Папка",
+      chooseFolder: "Выбрать папку...",
+      backToProjects: "Назад к проектам",
+      searchPlaceholder: "Поиск каталогов или ввод пути",
+      searching: "Идет поиск...",
+      noMatchingFolders: "Нет подходящих папок.",
+      openPath: "Открыть этот путь",
+      usePath: 'Использовать "{{path}}"',
+    },
     launch: {
       title: "Что запустить",
       chat: "Чат",

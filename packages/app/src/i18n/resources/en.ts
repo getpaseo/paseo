@@ -1357,6 +1357,16 @@ export const en = {
       searchPlaceholder: "Search branches and PRs",
       title: "Start from",
     },
+    folderPicker: {
+      title: "Folder",
+      chooseFolder: "Choose folder...",
+      backToProjects: "Back to projects",
+      searchPlaceholder: "Search directories or enter a path",
+      searching: "Searching...",
+      noMatchingFolders: "No matching folders.",
+      openPath: "Open this path",
+      usePath: 'Use "{{path}}"',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",

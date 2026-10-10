@@ -1349,6 +1349,16 @@ export const ar: TranslationResources = {
       searchPlaceholder: "بحث الفروع والعلاقات العامة",
       title: "ابدأ من",
     },
+    folderPicker: {
+      title: "مجلد",
+      chooseFolder: "اختر مجلدًا...",
+      backToProjects: "رجوع إلى المشاريع",
+      searchPlaceholder: "ابحث في الأدلة أو أدخل مسارًا",
+      searching: "جارٍ البحث...",
+      noMatchingFolders: "لا توجد مجلدات مطابقة.",
+      openPath: "افتح هذا المسار",
+      usePath: 'استخدم "{{path}}"',
+    },
     launch: {
       title: "What to launch",
       chat: "Chat",
