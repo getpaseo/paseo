@@ -117,6 +117,61 @@ test("history search filters before pagination and keeps newest matches first", 
   }
 });
 
+test("history search matches a stored message and sends the snippet to the client", async () => {
+  const fixture = seedStaleAgentFixture();
+  let daemon: TestPaseoDaemon | null = null;
+  let client: DaemonClient | null = null;
+  try {
+    const agentsDir = path.join(fixture.paseoHomeRoot, ".paseo", "agents");
+    const template = JSON.parse(
+      readFileSync(path.join(agentsDir, `${fixture.healthyAgentId}.json`), "utf8"),
+    );
+    writeJson(path.join(agentsDir, "in-conversation.json"), {
+      ...template,
+      id: "in-conversation",
+      title: "Rename the importer",
+      updatedAt: "2026-06-29T13:00:00.000Z",
+      lastActivityAt: "2026-06-29T13:00:00.000Z",
+      previewMessages: [
+        { role: "user", text: "please rename the legacy importer" },
+        { role: "assistant", text: "I renamed it and updated its callers" },
+      ],
+    });
+    writeJson(path.join(agentsDir, "no-preview.json"), {
+      ...template,
+      id: "no-preview",
+      title: "Terminal resizing",
+      updatedAt: "2026-06-29T12:00:00.000Z",
+      lastActivityAt: "2026-06-29T12:00:00.000Z",
+    });
+
+    daemon = await createTestPaseoDaemon({ paseoHomeRoot: fixture.paseoHomeRoot, cleanup: false });
+    client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    await client.connect();
+
+    // `callers` exists only in the stored assistant message.
+    const byMessage = await client.fetchAgentHistory({ search: "callers" });
+    expect(byMessage.entries.map((entry) => entry.agent.id)).toEqual(["in-conversation"]);
+    expect(byMessage.entries[0].searchSnippet).toEqual({
+      role: "assistant",
+      text: "I renamed it and updated its callers",
+    });
+
+    // A name match keeps the row but needs no snippet.
+    const byName = await client.fetchAgentHistory({ search: "importer" });
+    expect(byName.entries.map((entry) => entry.agent.id)).toEqual(["in-conversation"]);
+    expect(byName.entries[0].searchSnippet).toBeUndefined();
+
+    // Records written before the daemon kept previews still search by name only.
+    const missing = await client.fetchAgentHistory({ search: "resizing" });
+    expect(missing.entries.map((entry) => entry.agent.id)).toEqual(["no-preview"]);
+  } finally {
+    await client?.close().catch(() => undefined);
+    await daemon?.close().catch(() => undefined);
+    for (const target of fixture.cleanupPaths) rmSync(target, { recursive: true, force: true });
+  }
+});
+
 function seedStaleAgentFixture(): StaleAgentFixture {
   const healthyCwd = mkdtempSync(path.join(os.tmpdir(), "paseo-healthy-agent-"));
   const orphanCwd = mkdtempSync(path.join(os.tmpdir(), "paseo-orphan-agent-"));

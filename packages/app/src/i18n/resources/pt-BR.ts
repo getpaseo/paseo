@@ -285,6 +285,10 @@ export const ptBR: TranslationResources = {
     tooManyMatches: "Muitos resultados — refine a busca",
     hostLoadFailed: "{{host}}: Não foi possível carregar o histórico",
     searchPlaceholder: "Buscar no histórico",
+    searchSnippet: {
+      user: "Você",
+      assistant: "Resposta",
+    },
     actions: {
       loadMore: "Carregar mais",
       clearSearch: "Limpar busca",

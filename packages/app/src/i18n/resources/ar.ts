@@ -281,6 +281,10 @@ export const ar: TranslationResources = {
     tooManyMatches: "نتائج كثيرة جدًا — ضيّق نطاق البحث",
     hostLoadFailed: "{{host}}: تعذر تحميل السجل",
     searchPlaceholder: "البحث في السجل",
+    searchSnippet: {
+      user: "أنت",
+      assistant: "الرد",
+    },
     actions: {
       loadMore: "تحميل المزيد",
       clearSearch: "مسح البحث",

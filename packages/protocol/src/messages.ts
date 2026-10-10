@@ -1324,7 +1324,9 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
   filter: AgentDirectoryFilterSchema.optional(),
-  // A free-text filter over agent title, workspace name, branch, and project name.
+  // A free-text filter over agent title, workspace name, branch, project name, and
+  // the newest messages the daemon kept for the session (a bounded preview, not
+  // the whole transcript).
   // Matching rows follow the requested sort and cursor pagination.
   search: z.string().optional(),
   sort: z
@@ -4143,6 +4145,18 @@ export const AgentListMessageSchema = z.object({
 
 export const AgentSearchMatchFieldSchema = z.enum(["workspace", "title", "branch", "project"]);
 
+/**
+ * One stored message: the role that said it and its (capped) text.
+ * COMPAT(messagePreview): added in v0.11.x; older daemons omit it and older
+ * clients ignore it. Remove the optional gates after 2027-04-04.
+ */
+export const AgentMessagePreviewSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  text: z.string(),
+});
+
+export type AgentMessagePreview = z.infer<typeof AgentMessagePreviewSchema>;
+
 export const AgentSearchMatchSchema = z.object({
   field: AgentSearchMatchFieldSchema,
   ranges: z.array(
@@ -4163,6 +4177,9 @@ const AgentDirectoryResponseEntrySchema = z.object({
   searchScore: z.number().optional(),
   // Legacy server-generated highlights. Current clients highlight displayed text locally.
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
+  // The message a query matched when the title, workspace, branch, and project
+  // name did not. Sent only for such rows, so a page stays small.
+  searchSnippet: AgentMessagePreviewSchema.optional(),
   // COMPAT(directorySync): sequence of this latest directory projection.
   syncSeq: z.number().int().positive().optional(),
 });

@@ -127,6 +127,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     persistence: overrides.persistence ?? null,
     historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
+    previewMessages: overrides.previewMessages ?? [],
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
@@ -193,6 +194,33 @@ describe("AgentStorage", () => {
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
+  });
+
+  test("applySnapshot stores the message preview and reloads it", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-preview",
+        previewMessages: [
+          { role: "user", text: "please rename the legacy importer" },
+          { role: "assistant", text: "I renamed it and updated its callers" },
+        ],
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-preview");
+    expect(persisted?.previewMessages).toEqual([
+      { role: "user", text: "please rename the legacy importer" },
+      { role: "assistant", text: "I renamed it and updated its callers" },
+    ]);
+  });
+
+  test("a record written without a preview reads back without one", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-no-preview" }));
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-no-preview");
+    expect(persisted?.previewMessages).toBeUndefined();
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {

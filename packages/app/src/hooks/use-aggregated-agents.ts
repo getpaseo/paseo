@@ -2,6 +2,7 @@ import { useMemo, useCallback, useEffect, useRef, useSyncExternalStore } from "r
 import equal from "fast-deep-equal";
 import { useShallow } from "zustand/shallow";
 import { useSessionStore } from "@/stores/session-store";
+import type { AgentMessagePreview } from "@getpaseo/protocol/messages";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
@@ -9,6 +10,11 @@ import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
   serverLabel: string;
+  /**
+   * The message a History query matched, when the names did not. Only searched
+   * history responses set it, so ordinary lists leave it undefined.
+   */
+  searchSnippet?: AgentMessagePreview | null;
 }
 
 export interface AggregatedAgentsResult {

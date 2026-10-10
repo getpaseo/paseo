@@ -286,6 +286,10 @@ export const fr: TranslationResources = {
     tooManyMatches: "Trop de résultats — affinez la recherche",
     hostLoadFailed: "{{host}} : impossible de charger l’historique",
     searchPlaceholder: "Rechercher dans l’historique",
+    searchSnippet: {
+      user: "Vous",
+      assistant: "Réponse",
+    },
     actions: {
       loadMore: "Charger plus",
       clearSearch: "Effacer la recherche",

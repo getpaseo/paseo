@@ -286,6 +286,10 @@ export const es: TranslationResources = {
     tooManyMatches: "Demasiadas coincidencias: acota la búsqueda",
     hostLoadFailed: "{{host}}: No se pudo cargar el historial",
     searchPlaceholder: "Buscar en el historial",
+    searchSnippet: {
+      user: "Tú",
+      assistant: "Respuesta",
+    },
     actions: {
       loadMore: "Cargar más",
       clearSearch: "Borrar búsqueda",

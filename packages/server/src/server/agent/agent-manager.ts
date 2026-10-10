@@ -1,4 +1,10 @@
 import { projectTimelineRows } from "./timeline-projection.js";
+import {
+  appendMessagePreview,
+  buildMessagePreview,
+  isMessageTimelineItem,
+  type AgentMessagePreview,
+} from "./message-preview.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
@@ -79,7 +85,7 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { projectAgentMessage } from "./agent-messages/index.js";
+import { isSystemInjectedEnvelope, projectAgentMessage } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
@@ -427,6 +433,8 @@ interface ManagedAgentBase {
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
+  /** Newest messages, bounded; History search matches them. */
+  previewMessages: AgentMessagePreview[];
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
@@ -764,6 +772,7 @@ export class AgentManager {
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
+  private readonly historyHydrateGeneration = new Map<string, number>();
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
@@ -1217,6 +1226,21 @@ export class AgentManager {
     return this.timelineStore.getItems(id);
   }
 
+  /**
+   * The live message previews, including agents with nothing to preview: an
+   * emptied preview has to mask the stored copy, or a rewind would keep the
+   * deleted turns searchable until the record write catches up. A recorded
+   * message also lands here before its queued write, so a search during that gap
+   * still finds what was just said.
+   */
+  listMessagePreviews(): Map<string, AgentMessagePreview[]> {
+    const byId = new Map<string, AgentMessagePreview[]>();
+    for (const [id, agent] of this.agents) {
+      byId.set(id, agent.previewMessages);
+    }
+    return byId;
+  }
+
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
     if (this.durableTimelineStore) {
@@ -1627,6 +1651,7 @@ export class AgentManager {
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
+        previewMessages: existing.previewMessages,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
@@ -2010,6 +2035,7 @@ export class AgentManager {
         persistence: record.persistence ?? null,
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
+        previewMessages: record.previewMessages ?? [],
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
         attention,
@@ -3551,6 +3577,7 @@ export class AgentManager {
       createdAt?: Date;
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
+      previewMessages?: AgentMessagePreview[];
       labels?: Record<string, string>;
       timeline?: AgentTimelineItem[];
       timelineRows?: AgentTimelineRow[];
@@ -3598,6 +3625,7 @@ export class AgentManager {
         config,
         now,
         durableTimelineHasRows,
+        previewMessages: options?.previewMessages ?? [],
         options,
       });
 
@@ -3733,6 +3761,7 @@ export class AgentManager {
     config: AgentSessionConfig;
     now: Date;
     durableTimelineHasRows: boolean;
+    previewMessages: AgentMessagePreview[];
     options:
       | {
           createdAt?: Date;
@@ -3749,7 +3778,15 @@ export class AgentManager {
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const {
+      resolvedAgentId,
+      session,
+      config,
+      now,
+      durableTimelineHasRows,
+      previewMessages,
+      options,
+    } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -3781,6 +3818,7 @@ export class AgentManager {
       ),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
+      previewMessages,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
@@ -3809,6 +3847,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.historyHydrateGeneration.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -4122,24 +4161,52 @@ export class AgentManager {
     broadcast: boolean,
     broadcastTimeline: boolean,
   ): Promise<void> {
+    // Hidden while this read is the newest one. A failed read puts the preview
+    // back only when no newer read has started. A newer read owns the preview, so
+    // an older failure must not restore turns that read is about to replace, and
+    // the newer replay must not append onto that restored copy.
+    const generation = (this.historyHydrateGeneration.get(agent.id) ?? 0) + 1;
+    this.historyHydrateGeneration.set(agent.id, generation);
+    const hiddenPreview: AgentMessagePreview[] = [];
+    agent.previewMessages = hiddenPreview;
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
-      if (event.type === "timeline") {
-        const item = projectAgentMessage(event.item);
-        if (!item) continue;
-        historyEvents.push({ ...event, item });
-      } else if (event.type === "provider_subagent") {
-        providerSubagentEvents.push(event);
+    try {
+      for await (const rawEvent of agent.session.streamHistory()) {
+        const event = limitAgentStreamEventContent(rawEvent);
+        if (event.type === "timeline") {
+          if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+            continue;
+          }
+          const item = projectAgentMessage(event.item);
+          if (!item) continue;
+          historyEvents.push({ ...event, item });
+        } else if (event.type === "provider_subagent") {
+          providerSubagentEvents.push(event);
+        }
       }
+    } catch (error) {
+      if (this.historyHydrateGeneration.get(agent.id) === generation) {
+        agent.previewMessages = this.timelineStore.has(agent.id)
+          ? buildMessagePreview(this.timelineStore.getItems(agent.id))
+          : [];
+      }
+      throw error;
+    }
+
+    if (this.historyHydrateGeneration.get(agent.id) !== generation) {
+      return;
     }
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
+    if (this.historyHydrateGeneration.get(agent.id) !== generation) {
+      return;
+    }
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
+    agent.previewMessages = hiddenPreview;
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
       if (broadcast) {
@@ -4932,8 +4999,22 @@ export class AgentManager {
     },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
+    const agent = this.agents.get(agentId);
+    const isMessage = isMessageTimelineItem(item);
+    // Read the item above this one before appending: it decides whether an
+    // assistant item continues the reply already in the preview.
+    const previousItem =
+      isMessage && agent && this.timelineStore.has(agentId)
+        ? this.timelineStore.getRecentItems(agentId, 1)[0]
+        : undefined;
     const row = this.timelineStore.append(agentId, item, options);
     this.enqueueDurableTimelineAppend(agentId, row);
+    if (agent && isMessageTimelineItem(item)) {
+      // Folded in, not rebuilt: providers can emit hundreds of tool or reasoning
+      // items between two messages, so a bounded rebuild would drop the question
+      // that is still the newest thing asked.
+      agent.previewMessages = appendMessagePreview(agent.previewMessages, item, previousItem);
+    }
     return row;
   }
 

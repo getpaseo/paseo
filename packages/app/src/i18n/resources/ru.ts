@@ -285,6 +285,10 @@ export const ru: TranslationResources = {
     tooManyMatches: "Слишком много совпадений — уточните запрос",
     hostLoadFailed: "{{host}}: не удалось загрузить историю",
     searchPlaceholder: "Поиск по истории",
+    searchSnippet: {
+      user: "Вы",
+      assistant: "Ответ",
+    },
     actions: {
       loadMore: "Загрузить ещё",
       clearSearch: "Очистить поиск",

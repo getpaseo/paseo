@@ -89,6 +89,12 @@ export async function fetchAgentHistoryPage(input: {
     serverId: input.serverId,
     entries: payload.entries,
   });
+  // Only a searched response carries these, and only for rows whose names missed.
+  const searchSnippetByAgentId = new Map(
+    payload.entries.flatMap((entry) =>
+      entry.searchSnippet ? [[entry.agent.id, entry.searchSnippet] as const] : [],
+    ),
+  );
   return {
     isSearchTruncated: payload.searchTruncated === true,
     agents: Array.from(agents.values(), (agent) => ({
@@ -110,6 +116,7 @@ export async function fetchAgentHistoryPage(input: {
       createdAt: agent.createdAt,
       labels: agent.labels,
       projectPlacement: agent.projectPlacement,
+      searchSnippet: searchSnippetByAgentId.get(agent.id) ?? null,
     })),
     pageInfo: payload.pageInfo,
   };

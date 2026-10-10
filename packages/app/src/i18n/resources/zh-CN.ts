@@ -281,6 +281,10 @@ export const zhCN: TranslationResources = {
     tooManyMatches: "匹配过多 — 请缩小搜索范围",
     hostLoadFailed: "{{host}}：无法加载历史",
     searchPlaceholder: "搜索历史",
+    searchSnippet: {
+      user: "你",
+      assistant: "回复",
+    },
     actions: {
       loadMore: "加载更多",
       clearSearch: "清除搜索",

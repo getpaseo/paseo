@@ -327,6 +327,12 @@ export class TimelineProjection {
     return this.rows.map((row) => ({ ...row }));
   }
 
+  /** The newest items only, so hot paths never copy the whole timeline. */
+  getRecentItems(limit: number): AgentTimelineItem[] {
+    const from = Math.max(0, this.rows.length - Math.max(0, limit));
+    return this.rows.slice(from).map((row) => row.item);
+  }
+
   enrichSubmittedUserMessage(
     clientMessageId: string,
     providerMessageId: string,
