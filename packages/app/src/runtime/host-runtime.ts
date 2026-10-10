@@ -2426,6 +2426,11 @@ export class HostRuntimeStore {
           }),
           encodeImages,
           submission: createMessageSubmissionWriter(serverId),
+          // The queue drains when the agent goes idle, but the agent can start a turn of its own
+          // in that same moment (a wake-up after background work). Steering folds the message
+          // into that turn instead of interrupting it; with no turn running, the daemon starts
+          // a normal one.
+          activeTurnBehavior: "steer",
         });
       },
     })

@@ -420,6 +420,10 @@ async function attachEncryptedSocket(
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
   metadata?: ExternalSocketMetadata,
 ): Promise<void> {
+  const handshakeTimeout = setTimeout(() => {
+    logger.warn("relay_e2ee_handshake_timeout_terminating");
+    socket.terminate();
+  }, 15_000);
   try {
     const relayTransport = createRelayTransportAdapter(socket, logger);
     const emitter = new EventEmitter();
@@ -440,6 +444,7 @@ async function attachEncryptedSocket(
         emitter.emit("error", error);
       },
     });
+    clearTimeout(handshakeTimeout);
     const encryptedSocket = createEncryptedRelaySocket({
       channel,
       emitter,
@@ -459,6 +464,8 @@ async function attachEncryptedSocket(
     } catch {
       // ignore
     }
+  } finally {
+    clearTimeout(handshakeTimeout);
   }
 }
 

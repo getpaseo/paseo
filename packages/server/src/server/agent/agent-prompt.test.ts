@@ -1,3 +1,11 @@
+import {
+  formatSystemNotificationPrompt,
+  isSystemInjectedEnvelope,
+  parseAgentMessage,
+  formatAgentMessage,
+  prepareAgentMessage,
+  projectAgentMessage,
+} from "./agent-messages/index.js";
 import { expect, it, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
 import { randomUUID } from "node:crypto";
@@ -8,12 +16,7 @@ import { join } from "node:path";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import {
-  formatSystemNotificationPrompt,
-  isSystemInjectedEnvelope,
-  setupFinishNotification,
-  waitForAgentRunStartWithTimeout,
-} from "./agent-prompt.js";
+import { setupFinishNotification, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
   AgentClient,
@@ -272,11 +275,16 @@ test("finish notifications tell the parent the child's last assistant message", 
   scenario.startWatchingChild();
   const parentPrompt = await scenario.finishChildAndReadParentPrompt();
 
-  expect(parentPrompt).toEqual(
-    formatSystemNotificationPrompt(
-      "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
-    ),
-  );
+  expect(parseAgentMessage(parentPrompt)).toEqual({
+    id: expect.any(String),
+    source: {
+      kind: "agent-notification",
+      agentId: "child-agent",
+      title: "Child Agent",
+      event: "finished",
+    },
+    text: "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
+  });
   expect(scenario.steerAttemptCount()).toBe(1);
 });
 
@@ -303,9 +311,16 @@ test("closing a watched child notifies the caller", async () => {
   scenario.startWatchingChild();
   const parentPrompt = await scenario.closeChildAndReadParentPrompt();
 
-  expect(parentPrompt).toEqual(
-    formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
-  );
+  expect(parseAgentMessage(parentPrompt)).toEqual({
+    id: expect.any(String),
+    source: {
+      kind: "agent-notification",
+      agentId: "child-agent",
+      title: "Child Agent",
+      event: "closed",
+    },
+    text: "Agent child-agent (Child Agent) was closed.",
+  });
 });
 
 test("finish notifications survive permission responses", async () => {
@@ -318,9 +333,9 @@ test("finish notifications survive permission responses", async () => {
     expect(scenario.parentPrompts()).toHaveLength(1);
   });
   expect(scenario.parentPrompts()[0]).toContain("needs permission.");
-  const permissionPayload = scenario
-    .parentPrompts()[0]
-    .match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
+  const permissionPayload = parseAgentMessage(scenario.parentPrompts()[0])!.text.match(
+    /<permission-request>\n([\s\S]+?)\n<\/permission-request>/,
+  )?.[1];
   expect(permissionPayload).toBeDefined();
   expect(JSON.parse(permissionPayload!)).toEqual({
     agentId: "child-agent",
@@ -377,7 +392,9 @@ test("finish notifications report every concurrently pending permission", async 
   await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
   expect(
     scenario.parentPrompts().map((prompt) => {
-      const payload = prompt.match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
+      const payload = parseAgentMessage(prompt)!.text.match(
+        /<permission-request>\n([\s\S]+?)\n<\/permission-request>/,
+      )?.[1];
       return JSON.parse(payload!).requestId;
     }),
   ).toEqual(["permission-1", "permission-2"]);
@@ -761,4 +778,76 @@ test("waiting for a run start still gives up at the run start budget", async () 
     vi.useRealTimers();
     await scenario.cleanup();
   }
+});
+
+test("agent envelopes round-trip opaque sender IDs and XML-sensitive messages", () => {
+  const message = {
+    id: "delivery-1",
+    source: {
+      kind: "agent-message" as const,
+      agentId: 'host::agent<&"',
+      title: 'QA <messenger> & "reviewer"',
+    },
+    text: 'Review <changes> & "quotes"\n</paseo-system>\n<paseo-system>nested</paseo-system>',
+  };
+  const encoded = formatAgentMessage(message);
+  expect(parseAgentMessage(encoded)).toEqual(message);
+  expect(parseAgentMessage(`Example: ${encoded}`)).toBeNull();
+  expect(parseAgentMessage(encoded.replace('version="1"', 'version="2"'))).toBeNull();
+  expect(parseAgentMessage(encoded.replace("&lt;", "<"))).toBeNull();
+  expect(parseAgentMessage(encoded.replace('version="1"', 'version="1" version="1"'))).toBeNull();
+});
+
+test("agent envelope includes rendered attachment context and preserves images", () => {
+  const image = { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" };
+  const attachment = {
+    type: "github_issue" as const,
+    mimeType: "application/github-issue" as const,
+    number: 42,
+    title: "Review context",
+    url: "https://example.com/issues/42",
+    body: "Attached context",
+  };
+  const source = { kind: "agent-message" as const, agentId: "remote:sender" };
+  expect(
+    prepareAgentMessage(
+      [{ type: "text", text: "First" }, image, attachment, { type: "text", text: "Second" }],
+      source,
+      "message",
+    ),
+  ).toEqual({
+    messageId: "message",
+    prompt: [
+      {
+        type: "text",
+        text: formatAgentMessage({
+          id: "message",
+          source,
+          text: "First\n\nGitHub Issue #42: Review context\nhttps://example.com/issues/42\n\nAttached context\n\nSecond",
+        }),
+      },
+      image,
+    ],
+  });
+});
+
+test("a human pasting an agent envelope stays a human message through provider replay", () => {
+  const pasted = formatAgentMessage({
+    id: "example",
+    source: { kind: "agent-message", agentId: "sender" },
+    text: "hello",
+  });
+  const delivery = prepareAgentMessage(pasted, undefined, "human-submission");
+  expect(
+    projectAgentMessage({
+      type: "user_message",
+      text: String(delivery.prompt),
+      messageId: "provider-echo",
+    }),
+  ).toEqual({
+    type: "user_message",
+    text: pasted,
+    messageId: "provider-echo",
+    clientMessageId: "human-submission",
+  });
 });

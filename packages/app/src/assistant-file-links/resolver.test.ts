@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import MarkdownIt from "markdown-it";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   classifyForResolution,
   fetchDaemonResolution,
@@ -13,6 +17,25 @@ import {
 const CONTEXT: AssistantFileLinkContext = {
   workspaceRoot: "/Users/test/project",
 };
+
+it("opens the existing non-ASCII file named by a rendered markdown link", async () => {
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "assistant-file-link-"));
+  try {
+    await mkdir(path.join(workspaceRoot, "docs/reports"), { recursive: true });
+    await writeFile(path.join(workspaceRoot, "docs/reports/开户赠金.md"), "report content");
+    const tokens = new MarkdownIt().parseInline("[报告](docs/reports/开户赠金.md)", {});
+    const href = tokens[0].children?.find((token) => token.type === "link_open")?.attrGet("href");
+    expect(href).toBe("docs/reports/%E5%BC%80%E6%88%B7%E8%B5%A0%E9%87%91.md");
+    const resolution = classifyForResolution({ href: href! }, { workspaceRoot });
+    expect(resolution.kind).toBe("resolved");
+    if (resolution.kind !== "resolved" || resolution.value.kind !== "file") {
+      throw new Error("Expected a directly resolved file link");
+    }
+    expect(await readFile(resolution.value.target.path, "utf8")).toBe("report content");
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
 
 function resolvedSuggestions(
   entries: DirectorySuggestionResult["entries"],
@@ -52,6 +75,27 @@ const unavailableSuggestions: GetDirectorySuggestions = async () => {
 };
 
 describe("classifyForResolution", () => {
+  it.each([
+    ["C:/repo/my%20file.md", undefined],
+    ["C:\\repo\\my%20file.md", undefined],
+    ["C:/repo/my%20file.md:12", 12],
+    ["C:\\repo\\my%20file.md:12", 12],
+  ])("keeps the literal filename in Windows inline code %s", (href, lineStart) => {
+    for (const text of [href, undefined]) {
+      const result = classifyForResolution(
+        { href, text, sourceType: "inline-code" },
+        { workspaceRoot: "C:/repo" },
+      );
+      expect(result).toMatchObject({
+        kind: "resolved",
+        value: { kind: "file", target: { path: "C:/repo/my%20file.md", lineStart } },
+      });
+    }
+    expect(classifyForResolution({ href }, { workspaceRoot: "C:/repo" })).toMatchObject({
+      kind: "resolved",
+      value: { kind: "file", target: { path: "C:/repo/my file.md", lineStart } },
+    });
+  });
   it("returns the directFile target synchronously", () => {
     const result = classifyForResolution({ href: "src/components/message.tsx#L33" }, CONTEXT);
 
@@ -164,6 +208,46 @@ describe("classifyForResolution", () => {
     const result = classifyForResolution({ href: "" }, CONTEXT);
 
     expect(result).toEqual({ kind: "resolved", value: { kind: "ignored" } });
+  });
+
+  it("decodes percent-encoded markdown hrefs", () => {
+    const result = classifyForResolution({ href: "docs/my%20file.md" }, CONTEXT);
+
+    expect(result).toEqual({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: {
+          raw: "docs/my%20file.md",
+          path: "/Users/test/project/docs/my file.md",
+          lineStart: undefined,
+          lineEnd: undefined,
+        },
+      },
+    });
+  });
+
+  it("keeps literal percent signs in inline-code paths", () => {
+    const result = classifyForResolution(
+      {
+        href: "docs/my%20file.md",
+        text: "docs/my%20file.md",
+        sourceType: "inline-code",
+      },
+      CONTEXT,
+    );
+
+    expect(result).toEqual({
+      kind: "needsLookup",
+      ambiguousQuery: "docs/my%20file.md",
+      token: "docs/my%20file.md",
+      target: {
+        raw: "docs/my%20file.md",
+        path: "/Users/test/project/docs/my%20file.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
   });
 });
 

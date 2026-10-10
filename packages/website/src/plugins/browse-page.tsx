@@ -3,6 +3,7 @@ import { SiteShell } from "~/components/site-shell";
 import { ContributeLinks } from "./contribute-links";
 import type { InstallCounts } from "./installs";
 import { type BrowseQuery, browseHref } from "./links";
+import { InstallCount } from "./install-count";
 import { PLUGIN_GRID_CLASS, PluginCard } from "./plugin-card";
 import { PluginSearch } from "./plugin-search";
 import { PluginSection } from "./section";
@@ -46,10 +47,11 @@ export function BrowsePage({
   query: BrowseQuery;
 }) {
   const category = query.category ? getCategory(query.category) : null;
-  const matches = query.q ? searchPlugins(plugins, query.q) : plugins;
-  const scoped = category ? getPluginsInCategory(matches, category.slug) : matches;
-  const results =
-    query.sort === "new" ? newestFirst(scoped) : mostInstalled(scoped, installs, query.window);
+  const ordered =
+    query.sort === "new" ? newestFirst(plugins) : mostInstalled(plugins, installs, query.window);
+  // Search ranks by relevance; the tab's order breaks ties.
+  const matches = query.q ? searchPlugins(ordered, query.q) : ordered;
+  const results = category ? getPluginsInCategory(matches, category.slug) : matches;
   const title = category?.label ?? "All plugins";
   const clearHref = browseHref({ ...query, q: undefined });
   return (
@@ -64,7 +66,7 @@ export function BrowsePage({
             <h1 className="text-3xl font-medium tracking-tight">
               {query.q ? `Results for “${query.q}”${category ? ` in ${title}` : ""}` : title}
               <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
-                {scoped.length}
+                {results.length}
               </span>
             </h1>
             {query.q && (
@@ -93,13 +95,13 @@ export function BrowsePage({
               <div className={PLUGIN_GRID_CLASS}>
                 {results.map((plugin) =>
                   query.sort === "new" ? (
-                    <PluginCard key={plugin.id} plugin={plugin} added={addedAgo(plugin, now)} />
+                    <PluginCard key={plugin.id} plugin={plugin}>
+                      {addedAgo(plugin, now)}
+                    </PluginCard>
                   ) : (
-                    <PluginCard
-                      key={plugin.id}
-                      plugin={plugin}
-                      installs={installs[plugin.id]?.[query.window] ?? 0}
-                    />
+                    <PluginCard key={plugin.id} plugin={plugin}>
+                      <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />
+                    </PluginCard>
                   ),
                 )}
               </div>

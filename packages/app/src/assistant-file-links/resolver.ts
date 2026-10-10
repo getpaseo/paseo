@@ -108,13 +108,15 @@ export function classifyForResolution(
   source: AssistantFileLinkSource,
   context: AssistantFileLinkContext,
 ): AssistantFileLinkResolution {
-  const token = getAssistantFileLinkToken(source).trim();
+  const tokenInfo = getAssistantFileLinkTokenInfo(source);
+  const token = tokenInfo.token.trim();
   if (!token) {
     return { kind: "resolved", value: { kind: "ignored" } };
   }
 
   const classification = classifyAssistantFileLink(token, {
     workspaceRoot: context.workspaceRoot,
+    decodeHref: tokenInfo.fromHref,
   });
   if (!classification) {
     return { kind: "resolved", value: { kind: "ignored" } };
@@ -148,14 +150,26 @@ export function classifyForResolution(
 }
 
 export function getAssistantFileLinkToken(source: AssistantFileLinkSource): string {
-  if (isLinkifiedSource(source) || source.sourceType === "inline-code") {
+  return getAssistantFileLinkTokenInfo(source).token;
+}
+
+// Markdown link hrefs are percent-encoded by the renderer; inline-code and
+// linkified text are raw file paths that must not be decoded.
+function getAssistantFileLinkTokenInfo(source: AssistantFileLinkSource): {
+  token: string;
+  fromHref: boolean;
+} {
+  if (source.sourceType === "inline-code") {
+    return { token: source.text?.trim() || source.href, fromHref: false };
+  }
+  if (isLinkifiedSource(source)) {
     const text = source.text?.trim();
     if (text && isFileLookingAssistantToken(text)) {
-      return text;
+      return { token: text, fromHref: false };
     }
   }
 
-  return source.href;
+  return { token: source.href, fromHref: true };
 }
 
 export function getAmbiguousSuggestionQuery(

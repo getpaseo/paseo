@@ -5394,6 +5394,7 @@ test("unions viewed timelines across socket sources and removes detached sources
   const session = createSessionForTest({
     messages,
     agentManager: {
+      getAgent: (id: string) => ({ id, internal: false }),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
         agentEventListeners.push(listener);
         return () => {};
@@ -5501,6 +5502,7 @@ test("keeps selective delivery scoped per socket when a retained session also ha
     messages,
     targetedMessages,
     agentManager: {
+      getAgent: (id: string) => ({ id, internal: false }),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
         agentEventListeners.push(listener);
         return () => {};

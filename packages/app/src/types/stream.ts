@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
   AgentProvider,
   AgentTimelineItem,
@@ -745,6 +746,7 @@ interface OrchestratorToolCallData {
 }
 
 export interface AgentToolCallData {
+  agentMessage?: AgentMessage;
   provider: AgentProvider;
   callId: string;
   name: string;
@@ -1446,6 +1448,7 @@ function reduceTimelineToolCall(
       error: item.error,
       detail: item.detail,
       metadata: item.metadata,
+      ...(item.agentMessage ? { agentMessage: item.agentMessage } : {}),
     },
     timestamp,
     timelineCursor,

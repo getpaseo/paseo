@@ -53,9 +53,15 @@ const MAINTAINER_LINK = (
 export function FounderNote() {
   return (
     <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+      <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
       <p>
-        I build Paseo on my own. There are no investors, no board and no company behind it, and I
-        have turned down funding offers to keep it that way.
+        It is maintained by one person, full time, and shaped by the community. There are no
+        investors, no board and no company behind it. I have turned down funding offers to keep it
+        that way.
+      </p>
+      <p>
+        The community helps Paseo grow through feedback, testing, bug reports, code contributions
+        and plugins. Your sponsorship helps me keep improving and maintaining it.
       </p>
       <p>
         A tool that sits between you and your code, your keys and your machines has to stay neutral,
@@ -67,7 +73,7 @@ export function FounderNote() {
         <a href="/hub" className="underline hover:text-white/90">
           Paseo Hub
         </a>
-        , an optional hosted service. Your support is what lets me work on Paseo full time.
+        , an optional hosted service. Your support is what lets me keep working on it.
       </p>
       <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
     </div>
@@ -79,7 +85,6 @@ interface BackingOption {
   name: string;
   icon: React.ComponentType<{ className?: string }>;
   external: boolean;
-  primary?: boolean;
 }
 
 const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
@@ -88,7 +93,6 @@ const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
     name: "GitHub Sponsors",
     icon: GitHubIcon,
     external: true,
-    primary: true,
   },
   {
     href: OPEN_COLLECTIVE_URL,
@@ -127,11 +131,7 @@ export function BackingOptions() {
           key={option.href}
           href={option.href}
           {...(option.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-          className={`flex items-center gap-4 rounded-xl border p-4 transition-colors ${
-            option.primary
-              ? "border-white/25 bg-white/[0.06] hover:border-white/40 hover:bg-white/[0.08]"
-              : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]"
-          }`}
+          className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
         >
           <option.icon className="h-6 w-6 shrink-0 text-white/60" />
           <p className="flex items-center gap-1.5 font-medium text-white">
@@ -237,18 +237,19 @@ export function SponsorSection() {
       <SectionHeading as="h2" title="Sponsor Paseo" />
       <div className="space-y-10">
         <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+          <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
           <p>
-            I build Paseo on my own, with no investors and no company behind it, and I have turned
-            down funding offers to keep it that way. A tool that sits between you and your code,
-            your keys and your machines has to stay neutral, and funding creates pressure to
-            monetize.
+            It is maintained by one person, full time, and shaped by the community. There are no
+            investors and no company behind it. I have turned down funding to keep it that way. A
+            tool that sits between you and your code, your keys and your machines has to stay
+            neutral, and funding creates pressure to monetize.
           </p>
           <p>
             Paseo is self-funded through sponsorship and{" "}
             <a href="/hub" className="underline hover:text-white/90">
               Paseo Hub
             </a>
-            , and your support is what lets me work on it full time.
+            . Your support is what lets me keep working on it.
           </p>
           <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
         </div>

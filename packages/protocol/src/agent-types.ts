@@ -1,3 +1,4 @@
+import type { AgentMessage } from "./agent-message.js";
 import type { AgentAttachment } from "./messages.js";
 
 export type AgentProvider = string;
@@ -311,6 +312,7 @@ export type ToolCallDetail =
     };
 
 interface ToolCallBase {
+  agentMessage?: AgentMessage;
   [key: string]: unknown;
   type: "tool_call";
   callId: string;

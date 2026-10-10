@@ -46,6 +46,12 @@ export function PluginSearch({
     },
     [live, show, term],
   );
+  // A term typed before the page hydrated is in the box but not in state; adopt it. Once hydrated,
+  // the box always matches state, so this does nothing.
+  useEffect(() => {
+    const typed = input.current?.value ?? "";
+    if (typed !== term) edit(typed);
+  }, [edit, term]);
   const handleChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => edit(event.target.value),
     [edit],

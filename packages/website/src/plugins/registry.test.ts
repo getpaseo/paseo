@@ -228,6 +228,32 @@ describe("plugin registry", () => {
     expect(searchPlugins(plugins, "  ")).toEqual(plugins);
     expect(searchPlugins(plugins, "nothing")).toEqual([]);
   });
+  it("ranks name, then author, then description matches, keeping the given order on ties", () => {
+    const named = (id: string, name: string, description: string, github = "acme"): Plugin => ({
+      ...plugin,
+      id,
+      name,
+      description,
+      author: { github },
+    });
+    // Given in install order: description-only matches first, the exact name last.
+    const plugins = [
+      named("acme/editor", "Remote Editor", "Composer pill to open a workspace"),
+      named("acme/kit", "PromptKit", "Rewrite prompts"),
+      named("omp/tools", "Tools", "Helpers", "omp"),
+      named("acme/history", "History", "Inspect raw composer records"),
+      named("acme/omp", "OMP", "Paseo integration for OMP"),
+    ];
+    expect(searchPlugins(plugins, "omp").map((p) => p.id)).toEqual([
+      "acme/omp",
+      "acme/kit",
+      "omp/tools",
+      "acme/editor",
+      "acme/history",
+    ]);
+    expect(searchPlugins(plugins, "prompt").map((p) => p.id)).toEqual(["acme/kit"]);
+    expect(searchPlugins(plugins, "tools omp").map((p) => p.id)).toEqual(["omp/tools"]);
+  });
 
   it("strips the README title and quoted description that the page already shows", () => {
     expect(readmeBody("# Example\n\n> An example\n> plugin\n\n## Usage\n")).toBe("## Usage\n");
@@ -237,7 +263,7 @@ describe("plugin registry", () => {
     );
   });
   it("offers a registry install command", () => {
-    expect(installCommand(plugin)).toBe("paseo plugin install acme/example");
+    expect(installCommand(plugin)).toBe("paseo plugin add acme/example");
     expect(formatInstalls(1250)).toBe("1.3k");
   });
 });

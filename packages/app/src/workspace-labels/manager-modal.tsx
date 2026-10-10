@@ -174,9 +174,6 @@ export function WorkspaceLabelManagerModal({
       onClose={onClose}
       header={header}
       footer={footer}
-      // Bound the compact scroller to the live snap height, so the edit view's footer stays on
-      // screen instead of being pushed past the bottom of the sheet.
-      sizeContentToCurrentSnapPoint
       testID="workspace-label-manager"
     >
       {draft && editing ? (

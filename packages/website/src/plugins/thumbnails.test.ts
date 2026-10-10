@@ -56,20 +56,20 @@ describe("plugin card thumbnails", () => {
     expect(html).not.toContain("/plugins/thumb/");
   });
 
-  it.each([PluginCard, NewPluginCard])(
-    "renders a thumbnail instead of downloading the original screenshot (%s)",
-    (Card) => {
-      const html = renderToStaticMarkup(createElement(Card, { plugin, added: "today" }));
-      expect(html).toContain(
-        `src="/plugins/thumb/592/${encodeURIComponent(source)}?plugin=acme%2Fexample"`,
-      );
-      expect(html).toContain(
-        `srcSet="/plugins/thumb/592/${encodeURIComponent(source)}?plugin=acme%2Fexample 1x, /plugins/thumb/1184/${encodeURIComponent(source)}?plugin=acme%2Fexample 2x"`,
-      );
-      expect(html).toContain('loading="lazy"');
-      expect(html).toContain('decoding="async"');
-    },
-  );
+  it.each([
+    ["PluginCard", () => createElement(PluginCard, { plugin }, "today")],
+    ["NewPluginCard", () => createElement(NewPluginCard, { plugin }, "today")],
+  ])("renders a thumbnail instead of downloading the original screenshot (%s)", (_name, card) => {
+    const html = renderToStaticMarkup(card());
+    expect(html).toContain(
+      `src="/plugins/thumb/592/${encodeURIComponent(source)}?plugin=acme%2Fexample"`,
+    );
+    expect(html).toContain(
+      `srcSet="/plugins/thumb/592/${encodeURIComponent(source)}?plugin=acme%2Fexample 1x, /plugins/thumb/1184/${encodeURIComponent(source)}?plugin=acme%2Fexample 2x"`,
+    );
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('decoding="async"');
+  });
 });
 
 function thumbnailRequest(
