@@ -83,6 +83,10 @@ import {
   encodeTerminalOutput,
   TerminalEmulatorRuntime,
 } from "./terminal-emulator-runtime";
+import {
+  installTerminalFontZoomBridge,
+  sharedTerminalFontZoomRegistry,
+} from "./terminal-font-zoom";
 
 interface StubTerminal {
   write: (data: string | Uint8Array, callback?: () => void) => void;
@@ -658,6 +662,94 @@ describe("terminal-emulator-runtime", () => {
       shouldClaim: false,
     });
     expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("keeps a zoomed terminal font when settings write a new size", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const fitAndEmitResize = vi.fn();
+    const textarea = {
+      classList: { contains: (token: string) => token === "xterm-helper-textarea" },
+    };
+    const terminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { fontFamily: "before", fontSize: 13 },
+      rows: 12,
+      cols: 40,
+      textarea,
+    };
+    (runtime as unknown as { terminal: typeof terminal }).terminal = terminal;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
+    const unregister = sharedTerminalFontZoomRegistry().register({
+      terminal,
+      fit: () => {},
+      baseFontSize: 13,
+    });
+
+    expect(sharedTerminalFontZoomRegistry().consume("in", textarea)).toBe(true);
+    runtime.setFont({ fontFamily: "  Menlo  ", fontSize: 18 });
+
+    expect(terminal.options?.fontFamily).toBe("Menlo");
+    expect(terminal.options?.fontSize).toBe(14);
+    expect(fitAndEmitResize).toHaveBeenCalledWith({
+      forceRefresh: true,
+      shouldClaim: false,
+    });
+    unregister();
+  });
+
+  it("grows the focused terminal from the zoom chord", () => {
+    const runtime = new TerminalEmulatorRuntime({ isMac: true });
+    const active = {
+      classList: { contains: (token: string) => token === "xterm-helper-textarea" },
+    };
+    const previousDocument = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: { activeElement: unknown } }).document = {
+      activeElement: active,
+    };
+    const terminal = { textarea: active, options: { fontSize: 12 } };
+    const unregister = sharedTerminalFontZoomRegistry().register({
+      terminal,
+      fit: () => {},
+      baseFontSize: 12,
+    });
+    installTerminalFontZoomBridge();
+    let passedToXterm: boolean | undefined;
+    let prevented = false;
+    const event = {
+      type: "keydown",
+      key: "=",
+      ctrlKey: false,
+      metaKey: true,
+      shiftKey: false,
+      altKey: false,
+      isComposing: false,
+      preventDefault: () => {
+        prevented = true;
+      },
+      stopPropagation: () => {},
+    } as KeyboardEvent;
+
+    runtime.attachKeyEventHandler({
+      attachCustomKeyEventHandler: (handler) => {
+        passedToXterm = handler(event);
+      },
+      hasSelection: () => false,
+      getSelection: () => "",
+      paste: () => {},
+      input: () => {},
+      scrollToBottom: () => {},
+    });
+
+    expect(passedToXterm).toBe(false);
+    expect(prevented).toBe(true);
+    expect(terminal.options.fontSize).toBe(13);
+    unregister();
+    (globalThis as { document?: unknown }).document = previousDocument;
+    delete (globalThis as { paseoConsumeTerminalZoom?: unknown }).paseoConsumeTerminalZoom;
   });
 
   it("passively refits when the page becomes visible again", () => {
