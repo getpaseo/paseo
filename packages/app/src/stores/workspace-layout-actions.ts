@@ -271,6 +271,7 @@ export interface WorkspaceTabSnapshot {
   terminalsHydrated: boolean;
   activeAgentIds: Iterable<string>;
   autoOpenAgentIds: Iterable<string>;
+  otherWorkspaceAgentIds?: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
   hasActivePendingTerminalCreate?: boolean;
@@ -2437,12 +2438,15 @@ export function reconcileWorkspaceTabs(
   const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
+  const otherWorkspaceAgentIds = normalizeStringSet(snapshot.otherWorkspaceAgentIds ?? []);
   // An explicit open owns the tab until the agent joins the active directory.
   // From then on it follows the normal server archive lifecycle. Detail/cache
-  // hydration never decides whether the user's target is allowed to stay open.
+  // hydration may reject a target explicitly owned by another workspace.
   const pinnedAgentIds = new Set(
     [...(state.pinnedAgentIds ?? [])].filter(
-      (agentId) => !snapshot.agentsHydrated || !activeAgentIds.has(agentId),
+      (agentId) =>
+        !otherWorkspaceAgentIds.has(agentId) &&
+        (!snapshot.agentsHydrated || !activeAgentIds.has(agentId)),
     ),
   );
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
