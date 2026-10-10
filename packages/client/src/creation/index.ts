@@ -63,10 +63,16 @@ export class CreationClient {
       if (request.workspaceId || request.agent?.agentId)
         throw new Error("Update the host to use caller-selected creation IDs.");
       const { agent, ...workspaceInput } = request;
-      const sourceCwd =
-        request.source.kind === "directory" ? request.source.path : request.source.cwd;
+      let sourceCwd: string | undefined;
+      if (request.source.kind === "directory") {
+        sourceCwd = request.source.path;
+      } else if (request.source.kind === "worktree") {
+        sourceCwd = request.source.cwd;
+      }
       const relativeCwd =
-        agent && sourceCwd ? relativeDirectory(agent.config!.cwd, sourceCwd) : undefined;
+        agent && sourceCwd && agent.config?.cwd
+          ? relativeDirectory(agent.config.cwd, sourceCwd)
+          : undefined;
       const workspace = await this.deps.legacyWorkspace(workspaceInput);
       if (workspace.error || !workspace.workspace) return workspace;
       this.receive({
@@ -81,9 +87,22 @@ export class CreationClient {
         error: null,
       });
       if (!agent) return workspace;
-      const cwd = `${workspace.workspace.workspaceDirectory!.replace(/[\\/]+$/, "")}${
-        relativeCwd ?? relativeDirectory(agent.config!.cwd, workspace.workspace.projectRootPath)
-      }`;
+      if (request.source.kind === "chat") {
+        const cwd = workspace.workspace.workspaceDirectory!;
+        const created = await this.legacyAgent({
+          ...agent,
+          config: { ...agent.config!, cwd },
+          workspaceId: workspace.workspace.id,
+          idempotencyKey: `${operation.key}:agent`,
+        });
+        return { ...workspace, agent: created.agent };
+      }
+      const subpath =
+        relativeCwd ??
+        (agent.config?.cwd && workspace.workspace.projectRootPath
+          ? relativeDirectory(agent.config.cwd, workspace.workspace.projectRootPath)
+          : "");
+      const cwd = `${workspace.workspace.workspaceDirectory!.replace(/[\\/]+$/, "")}${subpath}`;
       const created = await this.legacyAgent({
         ...agent,
         config: { ...agent.config!, cwd },

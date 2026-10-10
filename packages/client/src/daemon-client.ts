@@ -4592,14 +4592,23 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
     const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
-    if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
+    if (input.background !== undefined) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
+    const callerAgentId = this.lastServerInfoMessage?.features?.backgroundWorkspaces
+      ? input.callerAgentId
+      : undefined;
     const result = await this.creations.createWorkspace({
       ...input,
+      callerAgentId,
       requestId: resolvedRequestId,
       ...(input.agent
-        ? { agent: { ...input.agent, config: resolveAgentConfig(input.agent) } }
+        ? {
+            agent: {
+              ...input.agent,
+              config: resolveWorkspaceAgentConfig(input.agent, input.source),
+            },
+          }
         : {}),
     });
     return {
@@ -7005,5 +7014,64 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     ...merged,
     provider: merged.provider,
     cwd: merged.cwd,
+  };
+}
+
+function resolveWorkspaceAgentConfig(
+  options: CreateAgentRequestOptions,
+  source: CreateWorkspaceRequestOptions["source"],
+): AgentSessionConfig {
+  const {
+    config,
+    provider,
+    cwd,
+    agentId: _agentId,
+    onEvent: _onEvent,
+    idempotencyKey: _idempotencyKey,
+    clientMessageId: _clientMessageId,
+    callerAgentId: _callerAgentId,
+    outputSchema: _outputSchema,
+    attachments: _attachments,
+    worktree: _worktree,
+    autoArchive: _autoArchive,
+    env: _env,
+    workspaceId: _workspaceId,
+    initialPrompt: _initialPrompt,
+    images: _images,
+    git: _git,
+    worktreeName: _worktreeName,
+    requestId: _requestId,
+    labels: _labels,
+    ...overrides
+  } = options;
+
+  let fallbackCwd = "";
+  if (source.kind === "directory") {
+    fallbackCwd = source.path;
+  } else if (source.kind === "worktree") {
+    fallbackCwd = source.cwd ?? "";
+  }
+  const initialCwd = source.kind === "chat" ? "" : cwd || fallbackCwd;
+  const baseConfig: Partial<AgentSessionConfig> = {
+    ...(provider ? { provider } : {}),
+    ...(initialCwd ? { cwd: initialCwd } : {}),
+    ...overrides,
+  };
+
+  const merged = config ? { ...baseConfig, ...config } : baseConfig;
+  const effectiveCwd = source.kind === "chat" ? "" : merged.cwd || fallbackCwd;
+
+  if (!merged.provider) {
+    throw new Error("createAgent requires provider");
+  }
+
+  if (source.kind !== "chat" && !effectiveCwd) {
+    throw new Error("createAgent requires provider and cwd");
+  }
+
+  return {
+    ...merged,
+    provider: merged.provider,
+    cwd: effectiveCwd,
   };
 }

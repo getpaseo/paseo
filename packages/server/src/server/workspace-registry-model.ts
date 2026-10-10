@@ -7,7 +7,7 @@ import type {
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 export type PersistedProjectKind = "git" | "non_git";
-export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
+export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory" | "chat";
 
 export function generateWorkspaceId(): string {
   return `wks_${randomBytes(8).toString("hex")}`;
@@ -119,6 +119,9 @@ export function reconcileWorkspacePlacement(input: {
   checkout: ProjectCheckoutLitePayload | null;
   updatedAt: string;
 }): WorkspacePlacementUpdate | null {
+  if (input.workspace.kind === "chat") {
+    return null;
+  }
   if (!input.checkout) return null;
   const observed = initialWorkspacePlacement({
     source: "checkout",
@@ -149,7 +152,7 @@ export function checkoutFromPersistedWorkspacePlacement(input: {
   fallbackWorktreeRoot?: string | null;
 }): ProjectPlacementPayload["checkout"] {
   const { workspace } = input;
-  if (workspace.kind === "directory") {
+  if (workspace.kind === "directory" || workspace.kind === "chat") {
     return {
       cwd: workspace.cwd,
       isGit: false,

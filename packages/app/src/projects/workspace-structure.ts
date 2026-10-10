@@ -1,5 +1,6 @@
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import { isChatsProject } from "@/chats/model";
 
 export interface WorkspaceStructureHostPlacement {
   serverId: string;
@@ -103,13 +104,18 @@ export function buildWorkspaceStructureProjects(input: {
         .sort(compareWorkspaceStructureItems)
         .map((workspace) => workspace.workspaceKey),
     }))
-    .sort(
-      (left, right) =>
+    .sort((left, right) => {
+      const isLeftChats = isChatsProject(left);
+      const isRightChats = isChatsProject(right);
+      if (isLeftChats && !isRightChats) return -1;
+      if (!isLeftChats && isRightChats) return 1;
+      return (
         left.projectName.localeCompare(right.projectName, undefined, {
           numeric: true,
           sensitivity: "base",
-        }) || left.viewKey.localeCompare(right.viewKey),
-    );
+        }) || left.viewKey.localeCompare(right.viewKey)
+      );
+    });
 }
 
 export function createProjectViewKey(

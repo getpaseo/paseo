@@ -1,3 +1,4 @@
+import { isChatsProject, isChatWorkspace } from "@/chats/model";
 import type { TFunction } from "i18next";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import {
@@ -55,9 +56,12 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
     keys: input.pinnedKeys,
     pinnedWorkspaceOrder: input.pinnedWorkspaceOrder,
   });
+  const unpinnedProjects = pinnedGroups.unpinnedProjects.filter(
+    (project) => !isChatsProject(project),
+  );
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
-    (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
+    (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey) && !isChatWorkspace(workspace),
   );
   // One switch decides both what the list groups by and what the keyboard shortcuts walk, so the
   // two cannot disagree and a new grouping mode is a compile error here rather than a silent
@@ -70,7 +74,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   }
   if (input.groupMode === "project") {
     sections.push(
-      ...pinnedGroups.unpinnedProjects.map((project) => ({
+      ...unpinnedProjects.map((project) => ({
         workspaces: project.workspaces,
         collapsed: input.collapsedProjectKeys.has(project.viewKey),
       })),
@@ -85,9 +89,14 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   }
 
   return {
-    pinnedGroups,
+    pinnedGroups: {
+      pinnedChats: pinnedGroups.pinnedChats,
+      unpinnedProjects,
+    },
     workspaceGroups,
-    projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
+    projectIconTargets: resolveSidebarProjectIconTargets(
+      input.projects.filter((project) => !isChatsProject(project)),
+    ),
     shortcutModel: buildSidebarShortcutSections({ sections }),
   };
 }

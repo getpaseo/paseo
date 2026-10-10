@@ -4,6 +4,7 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
+import { isChatsProject } from "@/chats/model";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, ReactNode, RefObject } from "react";
@@ -14,7 +15,14 @@ import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+  MessageSquare,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -190,6 +198,7 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+  kind?: "workspace" | "chat";
 }
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
@@ -197,6 +206,13 @@ interface NewWorkspaceScreenProps {
 const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
 function noopChangeAttachments() {}
 function noopClearDraft() {}
+
+function resolveNewWorkspaceDraftKey(draftId: string | undefined, isChatKind: boolean): string {
+  if (draftId) {
+    return buildNewWorkspaceDraftKey(draftId);
+  }
+  return isChatKind ? "new-chat" : buildNewWorkspaceDraftKey();
+}
 
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -441,18 +457,15 @@ function IsolationOptionItem({
   iconColor: string;
   iconSize: number;
 }) {
-  const leadingSlot = useMemo(
-    () => (
-      <View style={styles.rowIconBox}>
-        {optionId === "worktree" ? (
-          <GitBranch size={iconSize} color={iconColor} />
-        ) : (
-          <Folder size={iconSize} color={iconColor} />
-        )}
-      </View>
-    ),
-    [optionId, iconSize, iconColor],
-  );
+  const leadingSlot = useMemo(() => {
+    let icon = <Folder size={iconSize} color={iconColor} />;
+    if (optionId === "chat") {
+      icon = <MessageSquare size={iconSize} color={iconColor} />;
+    } else if (optionId === "worktree") {
+      icon = <GitBranch size={iconSize} color={iconColor} />;
+    }
+    return <View style={styles.rowIconBox}>{icon}</View>;
+  }, [optionId, iconSize, iconColor]);
   return (
     <ComboboxItem
       testID={`workspace-create-isolation-${optionId}`}
@@ -648,7 +661,7 @@ function IsolationPickerTrigger({
   onPress: () => void;
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  isolation: "local" | "worktree";
+  isolation: "local" | "worktree" | "chat";
   label: string;
   tooltipLabel: string;
   iconColor: string;
@@ -668,11 +681,9 @@ function IsolationPickerTrigger({
           accessibilityLabel="Workspace isolation"
         >
           <View style={styles.badgeIconBox}>
-            {isolation === "worktree" ? (
-              <GitBranch size={iconSize} color={iconColor} />
-            ) : (
-              <Folder size={iconSize} color={iconColor} />
-            )}
+            {isolation === "chat" && <MessageSquare size={iconSize} color={iconColor} />}
+            {isolation === "worktree" && <GitBranch size={iconSize} color={iconColor} />}
+            {isolation === "local" && <Folder size={iconSize} color={iconColor} />}
           </View>
           <Text style={styles.badgeText} numberOfLines={1}>
             {label}
@@ -698,9 +709,9 @@ function FormRow({ children }: { children: React.ReactNode }) {
 }
 
 interface WorkspaceIsolationState {
-  isolation: "local" | "worktree";
+  isolation: "local" | "worktree" | "chat";
   setIsolation: (value: "local" | "worktree") => void;
-  effectiveIsolation: "local" | "worktree";
+  effectiveIsolation: "local" | "worktree" | "chat";
   canCreateWorktree: boolean;
   showRefPicker: boolean;
 }
@@ -710,35 +721,48 @@ interface WorkspaceIsolationState {
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
+  forcedIsolation?: "local" | "worktree" | "chat";
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, worktreeSupport } = input;
+  const { supportsMultiplicity, worktreeSupport, forcedIsolation } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
   const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
-  const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
+  const preferredIsolation = preferences.isolation === "worktree" ? "worktree" : "local";
+  const isolation = forcedIsolation ?? manualIsolation ?? preferredIsolation;
+  const canCreateWorktree =
+    !forcedIsolation && supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
+  const isChat = isolation === "chat";
 
   const setIsolation = useCallback(
     (value: "local" | "worktree") => {
+      if (forcedIsolation) return;
       setManualIsolation(value);
       void updatePreferences({ isolation: value });
     },
-    [updatePreferences],
+    [forcedIsolation, updatePreferences],
   );
+
+  let effectiveIsolation: "local" | "worktree" | "chat" = "local";
+  if (isChat) {
+    effectiveIsolation = "chat";
+  } else if (!supportsMultiplicity || isWorktree) {
+    effectiveIsolation = "worktree";
+  }
 
   return {
     isolation,
     setIsolation,
-    effectiveIsolation: isWorktree ? "worktree" : "local",
+    effectiveIsolation,
     canCreateWorktree,
-    showRefPicker: !supportsMultiplicity || isWorktree,
+    showRefPicker: !isChat && (!supportsMultiplicity || isWorktree),
   };
 }
 
-function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
+function isolationLabel(t: TFunction, isolation: "local" | "worktree" | "chat"): string {
+  if (isolation === "chat") return "Chat (No worktree)";
   return isolation === "worktree"
     ? t("newWorkspace.isolation.worktree")
     : t("newWorkspace.isolation.local");
@@ -805,9 +829,9 @@ async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
   worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
-  isolation: "local" | "worktree";
-  project: HostProjectListItem;
-  sourceDirectory: string;
+  isolation: "local" | "worktree" | "chat";
+  project?: HostProjectListItem | null;
+  sourceDirectory?: string | null;
   checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
   agent?: CreateWorkspaceRequestOptions["agent"];
@@ -821,30 +845,40 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<WorkspaceCreationResult> {
-  const projectId = getHostProjectId(input.project, input.serverId);
-  if (!projectId) throw new Error("Project is not available on the selected host");
+  const isChat = input.isolation === "chat";
+  const projectId =
+    isChat || !input.project ? undefined : getHostProjectId(input.project, input.serverId);
+  if (!isChat && !projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
   });
+  let source;
+  if (isChat) {
+    source = { kind: "chat" as const };
+  } else if (isWorktree) {
+    if (!input.sourceDirectory) throw new Error("Choose a host for this project");
+    source = {
+      kind: "worktree" as const,
+      cwd: input.sourceDirectory,
+      ...(projectId ? { projectId } : {}),
+      worktreeSlug: input.worktreeSlug,
+      ...input.checkoutRequest,
+    };
+  } else {
+    if (!input.sourceDirectory) throw new Error("Choose a host for this project");
+    source = {
+      kind: "directory" as const,
+      path: input.sourceDirectory,
+      ...(projectId ? { projectId } : {}),
+    };
+  }
   const payload = await input.client.createWorkspace({
     idempotencyKey: input.idempotencyKey,
     agent: input.agent,
     onEvent: input.onEvent,
-    source: isWorktree
-      ? {
-          kind: "worktree",
-          cwd: input.sourceDirectory,
-          projectId,
-          worktreeSlug: input.worktreeSlug,
-          ...input.checkoutRequest,
-        }
-      : {
-          kind: "directory",
-          path: input.sourceDirectory,
-          projectId,
-        },
+    source,
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
   if (payload.error || !payload.workspace) {
@@ -878,6 +912,7 @@ interface CreateChatAgentInput {
   supportsForgeSearch: boolean;
   resolveClient: () => DaemonClient;
   isStillOnCreateScreen: () => boolean;
+  isChat?: boolean;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -945,9 +980,10 @@ function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome>
 }
 
 async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
-  const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
+  const { payload, composerState, ensureWorkspace, serverId, clearDraft, isChat } = input;
   const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
   const { text, attachments, cwd } = payload;
+  const effectiveCwd = isChat ? "" : cwd;
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
   }
@@ -971,7 +1007,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
     config: {
       provider,
-      cwd,
+      cwd: effectiveCwd,
       modeId: composerState.selectedMode || undefined,
       model: composerState.effectiveModelId || undefined,
       thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
@@ -982,13 +1018,88 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     images: images?.length ? images : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
-  const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
+  let allocatedChatWorkspace: WorkspaceDescriptor | null = null;
+  const execute = async (
+    requestedAgent?: NonNullable<CreateWorkspaceRequestOptions["agent"]>,
+  ): Promise<AgentSnapshotPayload> => {
+    if (isChat) {
+      if (!allocatedChatWorkspace) {
+        const { workspace: createdWorkspace } = await ensureWorkspace({
+          cwd: "",
+          prompt: text,
+          attachments: workspaceNamingAttachments,
+          withInitialAgent: false,
+          onEvent: (snapshot) => {
+            if (!snapshot.workspace || navigated) return;
+            navigated = true;
+            if (!input.isStillOnCreateScreen()) return;
+            const workspace = normalizeWorkspaceDescriptor(snapshot.workspace);
+            getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [
+              { ...workspace, status: "running" },
+            ]);
+            const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
+              forkDraftSetup: input.forkDraftSetup,
+              workspaceDirectory: workspace.workspaceDirectory,
+              provider,
+              composerState,
+            });
+            outcome = submitWorkspaceDraft({
+              clearConsumedDraft,
+              draftKey: input.draftKey,
+              draftContextScopeKey: input.draftContextScopeKey,
+              resolveClient: input.resolveClient,
+              isStillOnCreateScreen: input.isStillOnCreateScreen,
+              serverId,
+              clearDraft,
+              draftId: input.draftId,
+              initialSetup,
+              workspaceId: workspace.id,
+              workspaceDirectory: workspace.workspaceDirectory,
+              text,
+              attachments,
+              provider,
+              composerState,
+              supportsForgeSearch: input.supportsForgeSearch,
+              agentCreation,
+            });
+          },
+        });
+
+        if (!createdWorkspace?.workspaceDirectory) {
+          throw new Error("Created workspace has no directory");
+        }
+        allocatedChatWorkspace = createdWorkspace;
+      }
+
+      const client = input.resolveClient();
+      const agentConfig = {
+        ...initialAgent.config,
+        ...requestedAgent?.config,
+      };
+      const createdAgent = await client.createAgent({
+        workspaceId: allocatedChatWorkspace.id,
+        config: {
+          ...agentConfig,
+          provider: agentConfig.provider || provider,
+          cwd: allocatedChatWorkspace.workspaceDirectory,
+        },
+        initialPrompt: requestedAgent?.initialPrompt ?? text,
+        clientMessageId: `${input.draftId}:initial-message`,
+        images: requestedAgent?.images ?? (images?.length ? images : undefined),
+        attachments:
+          requestedAgent?.attachments ??
+          (wirePayload.attachments?.length ? wirePayload.attachments : undefined),
+      });
+      return createdAgent;
+    }
+
+    const targetAgent = requestedAgent ?? initialAgent;
     const { agent } = await ensureWorkspace({
-      cwd,
+      cwd: effectiveCwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
-      agent: requestedAgent,
+      agent: targetAgent,
       onEvent: (snapshot) => {
         if (!snapshot.workspace || navigated) return;
         navigated = true;
@@ -1297,7 +1408,11 @@ function useNewWorkspaceInitialContext({
 }: NewWorkspaceScreenProps): NewWorkspaceInitialContextState {
   const allHosts = useHosts();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
-  const projects = useHostProjects(allServerIds);
+  const rawProjects = useHostProjects(allServerIds);
+  const projects = useMemo(
+    () => rawProjects.filter((project) => !isChatsProject(project)),
+    [rawProjects],
+  );
   const routeDisplayName = displayNameProp?.trim() ?? "";
   const routePlacement = useMemo(
     () =>
@@ -1395,7 +1510,7 @@ interface NewWorkspaceFormStackInput {
     onSelect: (id: string) => void;
   };
   isolation: FormPickerControl & {
-    effectiveIsolation: "local" | "worktree";
+    effectiveIsolation: "local" | "worktree" | "chat";
     options: ComboboxOptionType[];
     onSelect: (id: string) => void;
     renderOption: RefPickerRenderOption;
@@ -1420,12 +1535,14 @@ interface NewWorkspaceFormStackInput {
     profiles: readonly TerminalProfile[];
     disabled: boolean;
   };
+  isChat?: boolean;
 }
 
-function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
+// eslint-disable-next-line complexity
+function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement | null {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch } = input;
+  const { isCompact, isPending, isChat = false, project, host, isolation, base, launch } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
@@ -1528,32 +1645,33 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
-  const isolationControl = isolation.canCreateWorktree ? (
-    <View style={desktopControlStyle}>
-      <IsolationPickerTrigger
-        pickerAnchorRef={isolation.anchorRef}
-        onPress={isolation.open}
-        disabled={isPending}
-        badgePressableStyle={badgePressableStyle}
-        isolation={isolation.effectiveIsolation}
-        label={isolationTriggerLabel}
-        tooltipLabel={t("newWorkspace.tooltips.isolation")}
-        iconColor={theme.colors.foregroundMuted}
-        iconSize={theme.iconSize.sm}
-      />
-      <Combobox
-        options={isolation.options}
-        value={isolation.effectiveIsolation}
-        onSelect={isolation.onSelect}
-        title={t("newWorkspace.isolation.label")}
-        open={isolation.openState}
-        onOpenChange={isolation.onOpenChange}
-        desktopPlacement="bottom-start"
-        anchorRef={isolation.anchorRef}
-        renderOption={isolation.renderOption}
-      />
-    </View>
-  ) : null;
+  const isolationControl =
+    isolation.options.length > 1 ? (
+      <View style={desktopControlStyle}>
+        <IsolationPickerTrigger
+          pickerAnchorRef={isolation.anchorRef}
+          onPress={isolation.open}
+          disabled={isPending}
+          badgePressableStyle={badgePressableStyle}
+          isolation={isolation.effectiveIsolation}
+          label={isolationTriggerLabel}
+          tooltipLabel={t("newWorkspace.tooltips.isolation")}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+        <Combobox
+          options={isolation.options}
+          value={isolation.effectiveIsolation}
+          onSelect={isolation.onSelect}
+          title={t("newWorkspace.isolation.label")}
+          open={isolation.openState}
+          onOpenChange={isolation.onOpenChange}
+          desktopPlacement="bottom-start"
+          anchorRef={isolation.anchorRef}
+          renderOption={isolation.renderOption}
+        />
+      </View>
+    ) : null;
 
   const baseControl = base.showRefPicker ? (
     <View style={desktopControlStyle}>
@@ -1598,6 +1716,21 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     />
   );
 
+  if (isChat) {
+    if (!hostControl) {
+      return null;
+    }
+    return isCompact ? (
+      <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
+        <FormRow>{hostControl}</FormRow>
+      </View>
+    ) : (
+      <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
+        {hostControl}
+      </View>
+    );
+  }
+
   return isCompact ? (
     <View testID="new-workspace-ref-picker-row" style={styles.formStack} pointerEvents="box-none">
       <FormRow>{projectControl}</FormRow>
@@ -1625,13 +1758,16 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 }
 
+// eslint-disable-next-line complexity
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
   projectId,
   displayName: displayNameProp,
   draftId,
+  kind = "workspace",
 }: NewWorkspaceScreenProps) {
+  const isChatKind = kind === "chat";
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -1663,6 +1799,7 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  const supportsChatWorkspaces = useHostFeature(selectedServerId, "chatWorkspaces");
   const [creationIdentity] = useState(() => ({
     draftId: draftId ?? generateDraftId(),
     worktreeSlug: createNameId(),
@@ -1708,7 +1845,7 @@ export function NewWorkspaceScreen({
   );
   const [terminalPromptText, setTerminalPromptText] = useState("");
   const {
-    isTerminalLaunch,
+    isTerminalLaunch: rawTerminalLaunch,
     selectedTerminalProfile,
     terminalTakesPrompt,
     terminalComposerValue,
@@ -1716,6 +1853,7 @@ export function NewWorkspaceScreen({
     terminalSubmitLabel,
     launchFocusKey,
   } = useTerminalComposerState({ launchTarget, terminalProfiles, terminalPromptText });
+  const isTerminalLaunch = !isChatKind && rawTerminalLaunch;
   const terminalTextSource = useMemo(
     () => ({
       getSnapshot: () => terminalComposerValue,
@@ -1761,7 +1899,7 @@ export function NewWorkspaceScreen({
   const projectIconDataByProjectViewKey = useProjectIcons({
     projects: projectIconTargets,
   });
-  const draftKey = buildNewWorkspaceDraftKey(draftId);
+  const draftKey = resolveNewWorkspaceDraftKey(draftId, isChatKind);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
@@ -1773,7 +1911,7 @@ export function NewWorkspaceScreen({
     composer: buildComposerConfig({
       serverId: selectedServerId,
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
-      sourceDirectory: selectedSourceDirectory,
+      sourceDirectory: isChatKind ? null : selectedSourceDirectory,
       initialSetup: forkDraftSetup?.setup,
     }),
   });
@@ -1805,11 +1943,11 @@ export function NewWorkspaceScreen({
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
-  const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
+  const pickerQueryEnabled = !isChatKind && pickerOpen && clientReady && hasSelectedSourceDirectory;
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: isChatKind ? "" : (selectedSourceDirectory ?? ""),
   });
 
   const worktreeSupport = selectedProject
@@ -1820,6 +1958,7 @@ export function NewWorkspaceScreen({
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
+      forcedIsolation: isChatKind ? "chat" : undefined,
     });
 
   const branchSuggestionsQuery = useQuery({
@@ -1963,7 +2102,7 @@ export function NewWorkspaceScreen({
   useKeyboardActionHandler({
     handlerId: "new-workspace-project-pick",
     actions: PROJECT_PICK_ACTIONS,
-    enabled: projectPickerOptions.length > 0,
+    enabled: !isChatKind && projectPickerOptions.length > 0,
     priority: 0,
     handle: handleProjectPick,
   });
@@ -1980,13 +2119,17 @@ export function NewWorkspaceScreen({
   // git checkout, since worktree isolation is impossible there.
   const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
     const localOption = { id: "local", label: isolationLabel(t, "local") };
-    if (!canCreateWorktree) return [localOption];
-    return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }];
+    const opts: ComboboxOptionType[] = [localOption];
+    if (canCreateWorktree) {
+      opts.push({ id: "worktree", label: isolationLabel(t, "worktree") });
+    }
+    return opts;
   }, [canCreateWorktree, t]);
 
   const handleSelectIsolationOption = useCallback(
     (id: string) => {
-      setIsolation(id === "worktree" ? "worktree" : "local");
+      const nextIsolation: "local" | "worktree" = id === "worktree" ? "worktree" : "local";
+      setIsolation(nextIsolation);
       setIsolationPickerOpen(false);
     },
     [setIsolation],
@@ -2047,22 +2190,30 @@ export function NewWorkspaceScreen({
       if (creationResult.workspace) {
         return creationResult;
       }
-      if (!selectedProject) {
-        throw new Error("Choose a project");
+      if (effectiveIsolation === "chat" && !supportsChatWorkspaces) {
+        throw new Error(t("newWorkspace.errors.chatHostUpgradeRequired"));
       }
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+      if (effectiveIsolation !== "chat") {
+        if (!selectedProject) {
+          throw new Error("Choose a project");
+        }
+        if (!selectedSourceDirectory) {
+          throw new Error("Choose a host for this project");
+        }
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
-            queryClient,
-            client: connectedClient,
-            serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
-          })
-        : null;
+      const createsWorktree =
+        effectiveIsolation !== "chat" &&
+        (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");
+      const checkoutStatusForCreate =
+        createsWorktree && selectedSourceDirectory
+          ? await ensureCheckoutStatus({
+              queryClient,
+              client: connectedClient,
+              serverId: selectedServerId,
+              cwd: selectedSourceDirectory,
+            })
+          : null;
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
@@ -2072,7 +2223,7 @@ export function NewWorkspaceScreen({
         idempotencyKey: creationIdentity.draftId,
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
-        isolation: createsWorktree ? "worktree" : "local",
+        isolation: effectiveIsolation,
         project: selectedProject,
         sourceDirectory: selectedSourceDirectory,
         checkoutRequest,
@@ -2098,6 +2249,7 @@ export function NewWorkspaceScreen({
       selectedProject,
       selectedServerId,
       selectedSourceDirectory,
+      supportsChatWorkspaces,
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
@@ -2107,6 +2259,12 @@ export function NewWorkspaceScreen({
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
+        if (isChatKind && !supportsChatWorkspaces) {
+          const message = t("newWorkspace.errors.chatHostUpgradeRequired");
+          setErrorMessage(message);
+          toast.error(message);
+          return;
+        }
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
@@ -2147,6 +2305,7 @@ export function NewWorkspaceScreen({
           supportsForgeSearch,
           resolveClient: withConnectedClient,
           isStillOnCreateScreen,
+          isChat: effectiveIsolation === "chat",
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
@@ -2168,11 +2327,14 @@ export function NewWorkspaceScreen({
       creationIdentity,
       chatDraft.clear,
       draftKey,
+      effectiveIsolation,
       ensureWorkspace,
       forkDraftSetup,
+      isChatKind,
       isStillOnCreateScreen,
       launchTarget,
       selectedServerId,
+      supportsChatWorkspaces,
       supportsForgeSearch,
       t,
       toast,
@@ -2309,6 +2471,7 @@ export function NewWorkspaceScreen({
   const formStack = useNewWorkspaceFormStack({
     isCompact,
     isPending,
+    isChat: isChatKind,
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
@@ -2406,7 +2569,9 @@ export function NewWorkspaceScreen({
       isPaneFocused={true}
       onSubmitMessage={handleSubmitNewWorkspace}
       allowEmptySubmit={true}
-      submitButtonAccessibilityLabel={t("newWorkspace.create")}
+      submitButtonAccessibilityLabel={
+        isChatKind ? t("newWorkspace.startChat") : t("newWorkspace.create")
+      }
       submitButtonTestID="workspace-create-submit"
       submitIcon="return"
       isSubmitLoading={isPending}
@@ -2421,7 +2586,7 @@ export function NewWorkspaceScreen({
       onChangeAttachments={chatDraft.setAttachments}
       onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
       onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-      cwd={selectedSourceDirectory ?? ""}
+      cwd={isChatKind ? "" : (selectedSourceDirectory ?? "")}
       clearDraft={handleClearDraft}
       autoFocus
       autoFocusKey={launchFocusKey}
@@ -2436,12 +2601,16 @@ export function NewWorkspaceScreen({
         <TitlebarDragRegion />
         <NewWorkspaceLayout
           isCompact={isCompact}
-          title={t("newWorkspace.title")}
+          title={isChatKind ? t("newWorkspace.chatTitle") : t("newWorkspace.title")}
           formStack={formStack}
           onImportSession={importSession.open}
         >
           {composer}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {errorMessage || (isChatKind && isConnected && !supportsChatWorkspaces) ? (
+            <Text style={styles.errorText} testID="new-workspace-error-banner">
+              {errorMessage ?? t("newWorkspace.errors.chatHostUpgradeRequired")}
+            </Text>
+          ) : null}
         </NewWorkspaceLayout>
       </View>
       {importSession.sheet}

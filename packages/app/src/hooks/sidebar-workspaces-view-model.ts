@@ -291,11 +291,19 @@ export function buildSidebarWorkspacePlacementModel(input: {
   projects: readonly HostProjectListItem[];
 }): SidebarWorkspacePlacementModel {
   const projects = buildSidebarProjectsFromHostProjects({ projects: input.projects });
+  const allWorkspacePlacements = input.projects.flatMap((project) =>
+    project.workspaceKeys.map((workspaceKey) =>
+      createStructuralWorkspaceEntry({
+        project,
+        workspaceKey,
+      }),
+    ),
+  );
   return {
     projects,
-    workspaces: projects.flatMap((project) => project.workspaces),
+    workspaces: allWorkspacePlacements,
     projectNamesByViewKey: new Map(
-      projects.map((project) => [project.viewKey, project.projectName]),
+      input.projects.map((project) => [project.viewKey, project.projectName]),
     ),
   };
 }

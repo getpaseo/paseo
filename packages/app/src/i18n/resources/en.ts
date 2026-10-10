@@ -1204,6 +1204,16 @@ export const en = {
     pinned: {
       title: "Pinned",
     },
+    chats: {
+      title: "Chats",
+      newChat: "New chat",
+      archiveAll: "Archive all chats",
+      archiveAllConfirmTitle: "Archive all chats?",
+      archiveAllConfirmMessage:
+        "Are you sure you want to archive all chats? They can be restored from history later.",
+      archiveAllConfirmAction: "Archive all",
+      archiveAllFailed: "Failed to archive some chats",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",
@@ -1324,7 +1334,9 @@ export const en = {
   },
   newWorkspace: {
     title: "New workspace",
+    chatTitle: "New chat",
     create: "Create",
+    startChat: "Start chat",
     isolation: {
       local: "Local",
       worktree: "New worktree",
@@ -1338,6 +1350,7 @@ export const en = {
     titlePlaceholder: "Title (optional)",
     errors: {
       hostDisconnected: "Host is not connected",
+      chatHostUpgradeRequired: "Update the host to create chat sessions",
       createWorktreeFailed: "Failed to create worktree",
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",

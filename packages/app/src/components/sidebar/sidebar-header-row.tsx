@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { ICON_SIZE } from "@/styles/theme";
@@ -40,6 +40,8 @@ interface SidebarHeaderRowProps {
   variant?: SidebarHeaderRowVariant;
   /** Shown in the right slot while the row is hovered, when `trailing` is not set. */
   shortcutKeys?: ShortcutKey[][] | null;
+  containerStyle?: StyleProp<ViewStyle>;
+  disabled?: boolean;
   /**
    * The right slot. A sibling of the row's button, never inside it (web cannot nest buttons). A
    * press on the slot presses the row; a button inside it presses on its own.
@@ -58,6 +60,8 @@ export function SidebarHeaderRow({
   accessibilityLabel,
   variant = "header",
   shortcutKeys = null,
+  containerStyle: customContainerStyle,
+  disabled = false,
   trailing,
   rowRef,
 }: SidebarHeaderRowProps) {
@@ -74,7 +78,11 @@ export function SidebarHeaderRow({
   }
 
   return (
-    <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
+    <View
+      ref={rowRef}
+      collapsable={false}
+      style={[getContainerStyle(variant), customContainerStyle]}
+    >
       <View
         style={[styles.row, isHighlighted && styles.rowHighlighted]}
         onPointerEnter={handlePointerEnter}
@@ -82,6 +90,7 @@ export function SidebarHeaderRow({
       >
         <Pressable
           onPress={onPress}
+          disabled={disabled}
           testID={testID}
           nativeID={nativeID}
           accessible

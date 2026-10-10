@@ -56,6 +56,14 @@ export interface CreateWorktreeWorkspaceInput {
   callerWorkspaceId?: string;
 }
 
+export interface CreateChatWorkspaceInput {
+  cwd: string;
+  sessionId: string;
+  title?: string | null;
+  expectsInitialAgent?: boolean;
+  workspaceId?: string;
+}
+
 export interface WorkspaceProvisioningService {
   runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -77,6 +85,7 @@ export interface WorkspaceProvisioningService {
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
   ): Promise<PersistedWorkspaceRecord>;
+  createWorkspaceForChat(input: CreateChatWorkspaceInput): Promise<PersistedWorkspaceRecord>;
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
   ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
@@ -310,6 +319,41 @@ export function createWorkspaceProvisioningService(deps: {
     deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
   }
 
+  async function createWorkspaceForChat(
+    input: CreateChatWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord> {
+    const normalizedCwd = resolve(input.cwd);
+    const parentDir = resolve(normalizedCwd, "..");
+    const timestamp = new Date().toISOString();
+    const project = await projectRegistry.getOrCreateActiveByRoot({
+      rootPath: parentDir,
+      kind: "non_git",
+      displayName: "Chats",
+      projectKey: "__chats__",
+      timestamp,
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: input.workspaceId ?? generateWorkspaceId(),
+      projectId: project.projectId,
+      cwd: normalizedCwd,
+      kind: "chat",
+      displayName: input.title?.trim() || input.sessionId,
+      branch: null,
+      worktreeRoot: null,
+      baseBranch: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+      title: input.title?.trim() || null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await workspaceRegistry.upsert(workspace, {
+      expectsInitialAgent: input.expectsInitialAgent,
+    });
+    emitWorkspaceCreated(workspace);
+    return workspace;
+  }
+
   async function resolveSourceProjectForWorktree(input: {
     sourceCwd: string;
     projectId?: string;
@@ -509,6 +553,7 @@ export function createWorkspaceProvisioningService(deps: {
     resolveOrCreateWorkspaceIdForCreateAgent,
     createWorkspaceForDirectory,
     createWorkspaceForWorktree,
+    createWorkspaceForChat,
     findOrCreateProjectForDirectory,
     ensureWorkspaceRecordUnarchived,
   };

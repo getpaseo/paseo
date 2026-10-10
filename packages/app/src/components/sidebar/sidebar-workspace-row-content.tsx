@@ -135,27 +135,34 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     [isHovered, isCreating],
   );
 
+  let leadingVisual: ReactNode = null;
+  if (leadingProjectName) {
+    leadingVisual = (
+      <ProjectStatusIndicator
+        iconDataUri={leadingProjectIconDataUri}
+        displayName={leadingProjectName}
+        projectViewKey={workspace.projectViewKey}
+        statusBucket={workspace.statusBucket}
+        backdrop={backdrop}
+        loading={isLoading}
+        testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+      />
+    );
+  } else {
+    leadingVisual = (
+      <WorkspaceStatusIndicator
+        bucket={workspace.statusBucket}
+        workspaceKind={workspace.workspaceKind}
+        loading={isLoading}
+        reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+      />
+    );
+  }
+
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
+        {leadingVisual}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
@@ -230,6 +237,11 @@ function WorkspaceStatusIndicator({
   }
 
   if (bucket === "done") {
+    if (workspaceKind === "chat") {
+      return reserveIdleSpace ? (
+        <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />
+      ) : null;
+    }
     // An idle row still gets a dot rather than an empty slot. Nested rows are marked as
     // workspaces by indentation alone, and with nothing in the leading slot the rail has no
     // edge to read against — a workspace carrying its own glyph starts looking like a project
@@ -247,10 +259,24 @@ function WorkspaceStatusIndicator({
   else KindIcon = ThemedFolder;
 
   const dotColorStyle = getStatusDotColorStyle(bucket);
+  let indicatorContent: ReactNode = null;
+  if (workspaceKind === "chat") {
+    if (dotColorStyle) {
+      indicatorContent = <View style={[styles.standaloneStatusDot, dotColorStyle]} />;
+    }
+  } else if (reserveIdleSpace) {
+    indicatorContent = (
+      <>
+        <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
+        {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
+      </>
+    );
+  } else if (dotColorStyle) {
+    indicatorContent = <View style={[styles.standaloneStatusDot, dotColorStyle]} />;
+  }
   return (
     <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
-      <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
-      {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
+      {indicatorContent}
     </View>
   );
 }

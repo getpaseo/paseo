@@ -432,12 +432,13 @@ export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }
 
-interface NewWorkspaceRouteOptions {
+export interface NewWorkspaceRouteOptions {
   serverId?: string;
   sourceDirectory?: string;
   displayName?: string;
   projectId?: string;
   draftId?: string;
+  kind?: "workspace" | "chat";
 }
 
 function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
@@ -457,6 +458,9 @@ function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
   }
   if (options.draftId) {
     params.set("draftId", options.draftId);
+  }
+  if (options.kind && options.kind !== "workspace") {
+    params.set("kind", options.kind);
   }
   return params.toString();
 }

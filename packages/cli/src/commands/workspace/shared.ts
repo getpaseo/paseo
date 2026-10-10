@@ -5,7 +5,7 @@ export interface WorkspaceRow {
   workspaceId: string;
   project: string;
   name: string;
-  isolation: "local" | "worktree";
+  isolation: "local" | "worktree" | "chat";
   cwd: string;
   background: boolean;
 }
@@ -21,6 +21,14 @@ export const workspaceSchema: OutputSchema<WorkspaceRow> = {
   ],
 };
 
+function resolveWorkspaceRowIsolation(
+  kind: WorkspaceDescriptorPayload["workspaceKind"],
+): "local" | "worktree" | "chat" {
+  if (kind === "worktree") return "worktree";
+  if (kind === "chat") return "chat";
+  return "local";
+}
+
 /** `--background` listings add a column so hidden workspaces stand out. */
 export const workspaceWithBackgroundSchema: OutputSchema<WorkspaceRow> = {
   ...workspaceSchema,
@@ -35,7 +43,7 @@ export function toWorkspaceRow(workspace: WorkspaceDescriptorPayload): Workspace
     workspaceId: workspace.id,
     project: workspace.projectDisplayName,
     name: workspace.name,
-    isolation: workspace.workspaceKind === "worktree" ? "worktree" : "local",
+    isolation: resolveWorkspaceRowIsolation(workspace.workspaceKind),
     cwd: workspace.workspaceDirectory,
     background: workspace.background === true,
   };
