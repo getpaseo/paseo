@@ -185,7 +185,9 @@ export interface AgentManagerProviderState {
   providerDefinitions: Partial<
     Record<
       AgentProvider,
-      Pick<ProviderDefinition, "enabled" | "derivedFromProviderId" | "applyToolPolicy">
+      Pick<ProviderDefinition, "enabled" | "derivedFromProviderId" | "applyToolPolicy"> & {
+        defaultResumeProvider?: string;
+      }
     >
   >;
   clients: Partial<Record<AgentProvider, AgentClient>>;
@@ -365,6 +367,9 @@ export class ProviderSnapshotManager {
     for (const [provider, definition] of Object.entries(definitions)) {
       providerDefinitions[provider] = {
         enabled: definition.enabled,
+        defaultResumeProvider: resolveCanUseDefaultResumeCommand(definition)
+          ? (definition.derivedFromProviderId ?? provider)
+          : undefined,
         derivedFromProviderId: definition.derivedFromProviderId,
         applyToolPolicy: definition.applyToolPolicy,
       };
@@ -842,6 +847,7 @@ export class ProviderSnapshotManager {
       const custom =
         this.pluginProviders.has(provider) ||
         (!BUILTIN_PROVIDER_IDS.includes(provider) && !!overrides?.[provider]?.extends);
+      const canUseDefaultResumeCommand = resolveCanUseDefaultResumeCommand(definition);
       providerStates.set(provider, {
         discoveryLimit: previous?.discoveryLimit ?? pLimit({ concurrency: 4, rejectOnClear: true }),
         initial: identifyEntry({
@@ -849,6 +855,8 @@ export class ProviderSnapshotManager {
           status: definition.enabled ? "loading" : "unavailable",
           enabled: definition.enabled,
           source: custom ? "custom" : "builtin",
+          derivedFromProviderId: definition.derivedFromProviderId,
+          canUseDefaultResumeCommand,
           label: definition.label,
           description: definition.description,
           iconSvg: definition.iconSvg,
@@ -1181,6 +1189,24 @@ function createFetchCatalogOptions(
 
 export function isGlobalProviderSnapshotKey(cwd: string): boolean {
   return cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY;
+}
+
+function resolveCanUseDefaultResumeCommand(definition: ProviderDefinition): boolean {
+  if (
+    !definition.configuration ||
+    Object.keys(definition.configuration.providerOptions ?? {}).length > 0
+  )
+    return false;
+  const runtimeSettings = definition.configuration?.runtimeSettings;
+  const command = runtimeSettings?.command;
+  if (command != null && command.mode !== "default") {
+    return false;
+  }
+  const env = runtimeSettings?.env;
+  if (env != null && Object.keys(env).length > 0) {
+    return false;
+  }
+  return true;
 }
 
 function identifyEntry(entry: ProviderSnapshotEntry): ProviderSnapshotRecord {

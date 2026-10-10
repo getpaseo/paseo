@@ -297,6 +297,7 @@ interface AgentManagerRescueTimeouts {
 
 interface ProviderEnabledFlag {
   enabled: boolean;
+  defaultResumeProvider?: string;
   derivedFromProviderId?: string | null;
   applyToolPolicy?: (
     config: AgentSessionConfig,
@@ -400,6 +401,8 @@ interface HandleStreamEventOptions {
 
 interface ManagedAgentBase {
   id: string;
+  /** Stock ancestor certified at launch; absent for historical or customized sessions. */
+  defaultResumeProvider?: string;
   provider: AgentProvider;
   cwd: string;
   /**
@@ -1296,6 +1299,7 @@ export class AgentManager {
       { env: options?.env },
     );
     this.requireEnabledProvider(storedConfig.provider);
+    const resumeProvider = this.getDefaultResumeProvider(storedConfig.provider);
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
@@ -1313,6 +1317,11 @@ export class AgentManager {
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, storedConfig);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
+      defaultResumeProvider: certifyDefaultResumeProvider(
+        resumeProvider,
+        providerLaunchConfig,
+        launchContext,
+      ),
       labels: options.labels,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
@@ -1410,6 +1419,7 @@ export class AgentManager {
       resolvedAgentId,
       { purpose },
     );
+    const resumeProvider = this.getDefaultResumeProvider(handle.provider);
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -1440,6 +1450,12 @@ export class AgentManager {
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
+      defaultResumeProvider: retainDefaultResumeProvider(
+        record?.defaultResumeProvider,
+        resumeProvider,
+        providerLaunchConfig,
+        launchContext,
+      ),
       persistence: handle,
       restoring: true,
     });
@@ -1562,6 +1578,7 @@ export class AgentManager {
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
+    const resumeProvider = this.getDefaultResumeProvider(provider);
     const client = this.requireClient(provider);
     const refreshConfig = {
       ...existing.config,
@@ -1627,6 +1644,12 @@ export class AgentManager {
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
+        defaultResumeProvider: retainDefaultResumeProvider(
+          existing.defaultResumeProvider,
+          resumeProvider,
+          providerLaunchConfig,
+          launchContext,
+        ),
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
@@ -1982,6 +2005,7 @@ export class AgentManager {
     this.dispatch({
       type: "agent_state",
       agent: {
+        defaultResumeProvider: record.defaultResumeProvider,
         id: record.id,
         provider: record.provider,
         cwd: record.cwd,
@@ -3548,6 +3572,7 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     options?: {
+      defaultResumeProvider?: string;
       createdAt?: Date;
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
@@ -3735,6 +3760,7 @@ export class AgentManager {
     durableTimelineHasRows: boolean;
     options:
       | {
+          defaultResumeProvider?: string;
           createdAt?: Date;
           updatedAt?: Date;
           lastUserMessageAt?: Date | null;
@@ -3751,6 +3777,7 @@ export class AgentManager {
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
     return {
+      defaultResumeProvider: options?.defaultResumeProvider,
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
@@ -5244,6 +5271,10 @@ export class AgentManager {
     return this.applyProviderConfiguration(normalized);
   }
 
+  private getDefaultResumeProvider(provider: AgentProvider): string | undefined {
+    return this.providerDefinitions.get(provider)?.defaultResumeProvider;
+  }
+
   private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
     const definition = this.providerDefinitions.get(config.provider);
     this.validateToolPolicyServers(config);
@@ -5506,4 +5537,31 @@ export function commandMayHaveChangedExternalState(command: string): boolean {
     // ahead/behind counts can drift stale until the next refresh.
     /\bgit\s+fetch\b/.test(normalized)
   );
+}
+
+function certifyDefaultResumeProvider(
+  provider: string | undefined,
+  config: AgentSessionConfig,
+  context: AgentLaunchContext,
+): string | undefined {
+  if (Object.keys(config.providerOptions ?? {}).length > 0) return undefined;
+  // These two values locate Paseo tools; every other per-launch env override
+  // can change the provider's endpoint or native session store.
+  if (
+    Object.keys(context.env ?? {}).some(
+      (key) => key !== "PASEO_AGENT_ID" && key !== "PASEO_AGENT_CWD",
+    )
+  ) {
+    return undefined;
+  }
+  return provider;
+}
+
+function retainDefaultResumeProvider(
+  original: string | undefined,
+  current: string | undefined,
+  config: AgentSessionConfig,
+  context: AgentLaunchContext,
+): string | undefined {
+  return original === current ? certifyDefaultResumeProvider(current, config, context) : undefined;
 }

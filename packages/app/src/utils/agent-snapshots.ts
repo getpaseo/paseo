@@ -60,6 +60,7 @@ export function derivePendingPermissionKey(
 export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   return {
     id: agent.id,
+    defaultResumeProvider: agent.defaultResumeProvider,
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
@@ -107,6 +108,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
   return {
     serverId,
     id: snapshot.id,
+    defaultResumeProvider: snapshot.defaultResumeProvider,
     provider: snapshot.provider,
     status: snapshot.status,
     turn,

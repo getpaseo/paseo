@@ -75,6 +75,7 @@ export function toStoredAgentRecord(
 
   return {
     id: agent.id,
+    defaultResumeProvider: agent.defaultResumeProvider,
     provider: agent.provider,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
@@ -114,6 +115,7 @@ export function toAgentPayload(
 
   const payload: AgentSnapshotPayload = {
     id: agent.id,
+    defaultResumeProvider: agent.defaultResumeProvider,
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
@@ -224,6 +226,7 @@ export function buildStoredAgentPayload(
 
   return {
     id: record.id,
+    defaultResumeProvider: record.defaultResumeProvider,
     provider: record.provider,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),

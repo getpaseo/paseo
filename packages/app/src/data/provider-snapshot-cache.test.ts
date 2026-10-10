@@ -4,8 +4,8 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 import { createProviderSnapshotCache, type ProviderSnapshotCache } from "./provider-snapshot-cache";
 
-const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v2:";
-const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v2";
+const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v3:";
+const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v3";
 function createStorage(maxSnapshotBytes = Number.POSITIVE_INFINITY) {
   const values = new Map<string, string>();
   const stats = { getAllKeysCalls: 0 };
@@ -130,6 +130,53 @@ function writeSnapshot(
 }
 
 describe("provider snapshot cache", () => {
+  it("round-trips a v3 body carrying derivedFromProviderId and canUseDefaultResumeCommand", async () => {
+    const storage = createStorage();
+    const cache = createProviderSnapshotCache(storage);
+
+    await cache.write({
+      serverId: "server-1",
+      cwd: "/ancestry",
+      hash: "v3-hash",
+      generatedAt: "2026-09-01T00:00:00.000Z",
+      compactSnapshot: compactProviderSnapshot([
+        {
+          provider: "my-codex",
+          status: "ready",
+          enabled: true,
+          derivedFromProviderId: "codex",
+          canUseDefaultResumeCommand: true,
+        },
+      ]),
+    });
+
+    await expect(cache.read("server-1", "/ancestry")).resolves.toMatchObject({
+      entries: [
+        {
+          provider: "my-codex",
+          derivedFromProviderId: "codex",
+          canUseDefaultResumeCommand: true,
+        },
+      ],
+    });
+  });
+
+  it("rejects a pre-v3 cache body and does not reuse it as v3", async () => {
+    const storage = createStorage();
+    storage.values.set(
+      '@paseo/provider-snapshot/v2:["server-1","hash","v2"]',
+      JSON.stringify({
+        version: 2,
+        hash: "v2",
+        generatedAt: "2026-09-01T00:00:00.000Z",
+        compactSnapshot: { entries: [], thinkingSets: [] },
+      }),
+    );
+
+    const cache = createProviderSnapshotCache(storage);
+    await expect(cache.readHash("server-1", "v2")).resolves.toBeNull();
+  });
+
   it("normalizes duplicate model identities in live, legacy and persisted catalogs", async () => {
     const storage = createStorage();
     const entries = snapshotEntries("shared");

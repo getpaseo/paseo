@@ -105,6 +105,13 @@ Required fields for custom providers:
 
 See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
 
+**Copy resume command** can use a built-in CLI for a label-only inherited provider.
+It requires a daemon advertising `providerAncestry` and an agent launched with stock
+provider defaults, no per-agent options, and no extra environment from launch hooks.
+Sessions created before that daemon recorded launch eligibility, and imported sessions,
+remain unavailable; changing the current provider settings cannot certify their original
+launch. Existing built-in resume actions keep their local templates.
+
 ---
 
 ## Z.AI (Zhipu) coding plan

@@ -1,4 +1,45 @@
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+
 export type ProviderCommandId = "resume";
+
+type ResumeSnapshot = Pick<
+  ProviderSnapshotEntry,
+  "provider" | "derivedFromProviderId" | "canUseDefaultResumeCommand"
+>;
+
+export interface ResolveProviderCommandTemplateInput {
+  provider: string;
+  id: ProviderCommandId;
+  providerSnapshot?: readonly ResumeSnapshot[];
+}
+
+export interface BuildProviderCommandInput extends ResolveProviderCommandTemplateInput {
+  sessionId: string;
+}
+
+export interface ResolveProviderResumeCommandInput {
+  provider: string;
+  defaultResumeProvider?: string;
+  sessionId: string;
+  supportsProviderAncestry: boolean;
+  getProviderSnapshot: () => Promise<readonly ResumeSnapshot[] | undefined>;
+}
+
+export type ResolveProviderResumeCommandOutcome =
+  | { status: "ready"; command: string }
+  | { status: "unavailable" }
+  | { status: "failed"; error: unknown };
+
+/**
+ * Thrown when a resume command cannot be generated for the provider because it
+ * is overridden, unsupported, or ancestry metadata is unavailable.
+ */
+export class ProviderResumeCommandUnavailableError extends Error {
+  constructor(message = "Resume command not available") {
+    super(message);
+    this.name = "ProviderResumeCommandUnavailableError";
+  }
+}
 
 /**
  * Declarative command templates for provider-native CLIs.
@@ -35,14 +76,85 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
   return template.replace(/\{(\w+)\}/g, (_match, key: string) => vars[key] ?? "");
 }
 
-export function buildProviderCommand(input: {
-  provider: string;
-  id: ProviderCommandId;
-  sessionId: string;
-}): string | null {
-  const template = PROVIDER_COMMAND_TEMPLATES[input.provider]?.[input.id] ?? null;
+function isDefaultLaunch(entry: ResumeSnapshot | undefined): boolean {
+  return entry?.canUseDefaultResumeCommand === true;
+}
+
+function resolveProviderCommandTemplate(
+  input: ResolveProviderCommandTemplateInput,
+): string | undefined {
+  const entry = input.providerSnapshot?.find((candidate) => candidate.provider === input.provider);
+
+  const providerTemplate = PROVIDER_COMMAND_TEMPLATES[input.provider]?.[input.id];
+  if (providerTemplate) {
+    return input.providerSnapshot === undefined || isDefaultLaunch(entry)
+      ? providerTemplate
+      : undefined;
+  }
+
+  // Custom providers that extend a built-in can only use the inherited template
+  // when the snapshot explicitly identifies the ancestor and reports that the
+  // default resume command is safe to use.
+  if (entry?.derivedFromProviderId && entry.canUseDefaultResumeCommand === true) {
+    return PROVIDER_COMMAND_TEMPLATES[entry.derivedFromProviderId]?.[input.id];
+  }
+
+  return undefined;
+}
+
+export function buildProviderCommand(input: BuildProviderCommandInput): string | null {
+  const template = resolveProviderCommandTemplate(input) ?? null;
   if (!template) {
     return null;
   }
   return renderTemplate(template, { sessionId: input.sessionId });
+}
+
+/** Existing built-in commands resolve locally. Inheritance needs current safety and launch provenance. */
+export async function resolveProviderResumeCommand(
+  input: ResolveProviderResumeCommandInput,
+): Promise<string> {
+  // Existing built-in actions remain local, including ACP-backed Hermes.
+  const localCommand = buildProviderCommand({
+    provider: input.provider,
+    id: "resume",
+    sessionId: input.sessionId,
+  });
+  if (localCommand) return localCommand;
+  if (!input.supportsProviderAncestry || !input.defaultResumeProvider) {
+    throw new ProviderResumeCommandUnavailableError();
+  }
+
+  const providerSnapshot = await input.getProviderSnapshot();
+  if (!providerSnapshot) {
+    throw new ProviderResumeCommandUnavailableError();
+  }
+  const entry = providerSnapshot.find((candidate) => candidate.provider === input.provider);
+  if (entry?.derivedFromProviderId !== input.defaultResumeProvider) {
+    throw new ProviderResumeCommandUnavailableError();
+  }
+  const command = buildProviderCommand({
+    provider: input.provider,
+    id: "resume",
+    sessionId: input.sessionId,
+    providerSnapshot,
+  });
+  if (!command) {
+    throw new ProviderResumeCommandUnavailableError();
+  }
+  return command;
+}
+
+export async function resolveProviderResumeCommandOutcome(
+  input: ResolveProviderResumeCommandInput,
+): Promise<ResolveProviderResumeCommandOutcome> {
+  try {
+    const command = await resolveProviderResumeCommand(input);
+    return { status: "ready", command };
+  } catch (error) {
+    if (error instanceof ProviderResumeCommandUnavailableError) {
+      return { status: "unavailable" };
+    }
+    return { status: "failed", error };
+  }
 }
