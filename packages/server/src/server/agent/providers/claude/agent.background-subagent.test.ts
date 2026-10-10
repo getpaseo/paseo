@@ -431,6 +431,142 @@ describe("background Claude subagents", () => {
         type: "sub_agent",
         subAgentType: "general-purpose",
         description: "Count files here",
+        log: "[Bash] ls -1",
+      },
+    });
+  });
+
+  test("keeps one logged Task card when the child streams on after the parent's turn ends", async () => {
+    // Claude Code usually ends the launching turn before a background child finishes, so the
+    // child's later frames land in the next turn.
+    queryFactory.mockImplementation(() =>
+      buildQueryMock([
+        { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
+        {
+          type: "assistant",
+          message: {
+            model: "claude-haiku-4-5",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_background",
+                name: "Agent",
+                input: {
+                  subagent_type: "general-purpose",
+                  description: "Count files here",
+                  prompt: "Run ls and reply with the number of entries.",
+                  run_in_background: true,
+                },
+              },
+            ],
+          },
+        },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: "bg-task",
+          tool_use_id: "toolu_background",
+          task_type: "local_agent",
+          subagent_type: "general-purpose",
+          description: "Count files here",
+          prompt: "Run ls and reply with the number of entries.",
+        },
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_background",
+                content: "Async agent launched successfully.",
+              },
+            ],
+          },
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: "toolu_background",
+          message: {
+            model: "claude-haiku-4-5",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_ls",
+                name: "Bash",
+                input: { command: "ls -1", description: "List files" },
+              },
+            ],
+          },
+        },
+        { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+        {
+          type: "user",
+          parent_tool_use_id: "toolu_background",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_ls", content: "a\nb\nc" }],
+          },
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: "toolu_background",
+          message: { model: "claude-haiku-4-5", content: [{ type: "text", text: "3" }] },
+        },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "bg-task",
+          patch: { status: "completed" },
+        },
+        {
+          type: "system",
+          subtype: "task_notification",
+          task_id: "bg-task",
+          tool_use_id: "toolu_background",
+          status: "completed",
+        },
+        { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+    const rows: AgentTimelineRow[] = [];
+    let currentTurnId: string | undefined;
+    let completedTurns = 0;
+    const bothTurnsCompleted = new Promise<void>((resolve) => {
+      session.subscribe((event) => {
+        if (event.type === "turn_started") currentTurnId = event.turnId;
+        if (event.type === "timeline") {
+          rows.push({
+            seq: rows.length + 1,
+            timestamp: new Date(Date.UTC(2026, 9, 4, 0, 0, rows.length)).toISOString(),
+            item: event.item,
+            ...(currentTurnId ? { turnId: currentTurnId } : {}),
+          });
+        }
+        if (event.type === "turn_completed" && ++completedTurns === 2) resolve();
+      });
+    });
+    await session.startTurn("delegate work");
+    await bothTurnsCompleted;
+    await session.close();
+
+    const cards = projectTimelineRows({ rows, mode: "projected" })
+      .map((entry) => entry.item)
+      .filter((item) => item.type === "tool_call" && item.callId === "toolu_background");
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      status: "completed",
+      detail: {
+        type: "sub_agent",
+        subAgentType: "general-purpose",
+        description: "Count files here",
+        log: "[Bash] ls -1",
       },
     });
   });

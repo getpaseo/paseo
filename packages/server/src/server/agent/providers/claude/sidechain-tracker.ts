@@ -18,6 +18,8 @@ interface ClaudeContentChunk {
   [key: string]: unknown;
 }
 
+type ClaudeToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
 interface SubAgentActionEntry {
   index: number;
   toolName: string;
@@ -64,6 +66,7 @@ export class ClaudeSidechainTracker {
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
   private readonly isDescriptorOwnedElsewhere: () => boolean;
   private readonly needsSyntheticParentToolCard: (toolUseId: string) => boolean;
+  private readonly getSettledParentToolCall: (toolUseId: string) => ClaudeToolCallItem | undefined;
 
   constructor(input: {
     getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
@@ -74,10 +77,17 @@ export class ClaudeSidechainTracker {
      */
     isDescriptorOwnedElsewhere?: () => boolean;
     needsSyntheticParentToolCard?: (toolUseId: string) => boolean;
+    /**
+     * The parent's tool call once Claude has answered it. A background child streams its frames
+     * after that answer, so its card keeps the settled status and output and gains the child's
+     * action log.
+     */
+    getSettledParentToolCall?: (toolUseId: string) => ClaudeToolCallItem | undefined;
   }) {
     this.getToolInput = input.getToolInput;
     this.isDescriptorOwnedElsewhere = input.isDescriptorOwnedElsewhere ?? (() => false);
     this.needsSyntheticParentToolCard = input.needsSyntheticParentToolCard ?? (() => true);
+    this.getSettledParentToolCall = input.getSettledParentToolCall ?? (() => undefined);
   }
 
   handleMessage(message: SDKMessage, parentToolUseId: string): AgentStreamEvent[] {
@@ -119,17 +129,19 @@ export class ClaudeSidechainTracker {
       return [];
     }
 
-    const toolCall = mapClaudeRunningToolCall({
-      name: "Task",
-      callId: parentToolUseId,
-      input: null,
-      output: null,
-    });
+    const toolCall =
+      this.getSettledParentToolCall(parentToolUseId) ??
+      mapClaudeRunningToolCall({
+        name: "Task",
+        callId: parentToolUseId,
+        input: null,
+        output: null,
+      });
     if (!toolCall) {
       return [];
     }
 
-    const detail: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"] = {
+    const detail: ClaudeToolCallItem["detail"] = {
       type: "sub_agent",
       ...(state.subAgentType ? { subAgentType: state.subAgentType } : {}),
       ...(state.description ? { description: state.description } : {}),
