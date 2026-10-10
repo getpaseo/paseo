@@ -4,3 +4,4 @@ export * from "./terminal.js";
 export * from "./host-route.js";
 export * from "./plugin.js";
 export * from "./diff.js";
+export * from "./tunnel.js";
