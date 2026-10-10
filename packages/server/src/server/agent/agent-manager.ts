@@ -77,6 +77,7 @@ import {
   AgentRunState,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { projectAgentMessage } from "./agent-messages/index.js";
@@ -109,6 +110,22 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 type TimeoutResult = "completed" | "timed_out";
+
+interface ReloadAgentSessionOptions {
+  rehydrateFromDisk?: boolean;
+  /**
+   * The caller already released the in-flight run (forced interrupt recovery).
+   * Skips the usual cancel-first step, which would re-interrupt the dead session.
+   */
+  skipCancellation?: boolean;
+  /**
+   * When set and the reload fails, the agent is kept registered in the `error`
+   * lifecycle with `lastError` prefixed by this message instead of being
+   * emitted as a closed tombstone. Forced-interrupt recovery uses this because
+   * the durable provider session may still be resumable on a later attempt.
+   */
+  recoveryErrorPrefix?: string;
+}
 
 function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
@@ -1547,11 +1564,11 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
-    if (this.hasInFlightRun(agentId)) {
+    if (this.hasInFlightRun(agentId) && !options?.skipCancellation) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
@@ -1634,13 +1651,7 @@ export class AgentManager {
         restoring: true,
       });
     } catch (error) {
-      if (closedExisting) {
-        this.emitClosedAgent(closedExisting, { persist: false });
-      } else if (this.agents.get(agentId) === existing) {
-        existing.lifecycle = "error";
-        existing.lastError = error instanceof Error ? error.message : String(error);
-        this.emitState(existing);
-      }
+      this.handleReloadFailure({ agentId, existing, closedExisting, error, options });
       throw error;
     } finally {
       if (!handedToRegistration) {
@@ -1653,6 +1664,73 @@ export class AgentManager {
           await this.closeUnregisteredSession(session);
         }
       }
+    }
+  }
+
+  /**
+   * Surface a failed reload. Standard reloads emit the closed snapshot so the
+   * durable agent stays resumable through a later explicit reload. Forced
+   * interrupt recovery instead keeps the agent registered in `error` holding
+   * the dead session object, so the foreground lane reports an attention state
+   * rather than a permanently running agent.
+   */
+  private handleReloadFailure(args: {
+    agentId: string;
+    existing: ActiveManagedAgent;
+    closedExisting: ManagedAgentClosed | undefined;
+    error: unknown;
+    options?: ReloadAgentSessionOptions;
+  }): void {
+    const { agentId, existing, closedExisting, error, options } = args;
+    const message = error instanceof Error ? error.message : String(error);
+    const lastError = options?.recoveryErrorPrefix
+      ? `${options.recoveryErrorPrefix}: ${message}`
+      : message;
+    if (closedExisting) {
+      if (!options?.recoveryErrorPrefix) {
+        this.emitClosedAgent(closedExisting, { persist: false });
+        return;
+      }
+      // Keep the agent registered in an actionable error state (holding the
+      // dead session object) rather than dropping it behind a closed
+      // tombstone, so a later reload can still resume the durable session.
+      const retained: ManagedAgentError = {
+        ...existing,
+        lifecycle: "error",
+        activeForegroundTurnId: null,
+        activeTurnId: null,
+        activeTurnStartedAt: null,
+        pendingReplacement: false,
+        pendingPermissions: new Map(),
+        bufferedPermissionResolutions: new Map(),
+        inFlightPermissionResponses: new Set(),
+        foregroundTurnWaiters: new Set(),
+        unsubscribeSession: null,
+        attention: {
+          requiresAttention: true,
+          attentionReason: "error",
+          attentionTimestamp: new Date(),
+        },
+        lastError,
+      };
+      this.agents.set(agentId, retained);
+      this.touchUpdatedAt(retained);
+      this.emitState(retained);
+      return;
+    }
+    if (this.agents.get(agentId) === existing) {
+      existing.lifecycle = "error";
+      existing.lastError = lastError;
+      if (options?.recoveryErrorPrefix) {
+        existing.pendingReplacement = false;
+        existing.activeForegroundTurnId = null;
+        existing.attention = {
+          requiresAttention: true,
+          attentionReason: "error",
+          attentionTimestamp: new Date(),
+        };
+      }
+      this.emitState(existing);
     }
   }
 
@@ -3142,43 +3220,14 @@ export class AgentManager {
     });
 
     if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
+      if (settlement === "completed") {
+        return { status: "settled" };
+      }
+      return this.recoverAfterRefusedInterrupt(agent, run);
     }
 
-    const runTurnId = this.runs.getTurnId(agentId);
-    if (settlement === "timed_out" && runTurnId) {
-      this.logger.warn(
-        { agentId, turnId: runTurnId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-        turnId: runTurnId,
-      });
-      await run.settledPromise;
-    } else if (settlement === "timed_out" && run.kind === "foreground") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
-      );
-      this.runs.settleForegroundRun(agentId, run.token);
-      if (!agent.pendingReplacement) {
-        agent.lifecycle = "idle";
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-      });
+    if (settlement === "timed_out") {
+      await this.forceCancelTrackedRun(agent, run);
     }
 
     if (agent.pendingPermissions.size > 0) {
@@ -3187,6 +3236,143 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  /**
+   * The provider's graceful interrupt rejected or timed out, so foreground
+   * ownership is ambiguous. When the session can escalate at the process level,
+   * signal the runtime, release daemon-side run ownership, then swap the
+   * compromised runtime for a fresh resume of the durable session. Sessions
+   * without an escalation path keep refusal semantics: pretending to cancel
+   * while the provider still owns the turn would split-brain the session.
+   */
+  private async recoverAfterRefusedInterrupt(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<AgentRunCancellationResult> {
+    const agentId = agent.id;
+    const session = agent.session;
+    if (typeof session.forceInterrupt !== "function") {
+      return { status: "refused" };
+    }
+
+    this.logger.warn(
+      { agentId, kind: run.kind },
+      "cancelAgentRun: provider interrupt unacknowledged, escalating to forced interrupt",
+    );
+    await this.forceInterruptSession(session, agentId);
+    await this.forceCancelTrackedRun(agent, run);
+    const finalizedTurnIds = agent.finalizedForegroundTurnIds;
+
+    try {
+      await this.trackAgentRegistrationOperation(
+        this.reloadAgentSessionInternal(agentId, undefined, {
+          skipCancellation: true,
+          recoveryErrorPrefix:
+            "Paseo stopped the unresponsive runtime but could not restore its session",
+        }),
+      );
+    } catch (error) {
+      // reloadAgentSessionInternal already surfaced the truthful state (an
+      // attention error when recoveryErrorPrefix is set); the run is settled.
+      this.logger.error(
+        { err: error, agentId },
+        "Forced interrupt recovery could not restore the agent session",
+      );
+    }
+
+    // The reloaded agent owns a fresh finalized-turn set; carry over the turns
+    // this agent already closed so a late terminal event from the killed
+    // runtime cannot reopen them.
+    const restored = this.agents.get(agentId);
+    if (restored && restored.finalizedForegroundTurnIds !== finalizedTurnIds) {
+      for (const turnId of finalizedTurnIds) {
+        restored.finalizedForegroundTurnIds.add(turnId);
+      }
+    }
+    return { status: "settled" };
+  }
+
+  private async forceCancelTrackedRun(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<void> {
+    const agentId = agent.id;
+    let runTurnId: string | null = null;
+    if (run.kind === "autonomous") {
+      runTurnId = run.turnId;
+    } else if (run.start.status === "started") {
+      runTurnId = run.start.turnId;
+    }
+    if (runTurnId) {
+      this.logger.warn(
+        { agentId, turnId: runTurnId, kind: run.kind },
+        "cancelAgentRun: turn still active after interrupt timeout, force-canceling",
+      );
+      await this.dispatchSessionEvent(agent, {
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: "interrupted",
+        turnId: runTurnId,
+      });
+      if (this.runs.getRun(agentId) === run) {
+        this.runs.clearAgentRun(agentId);
+      }
+      await run.settledPromise;
+      return;
+    }
+    if (run.kind === "foreground") {
+      this.logger.warn(
+        { agentId, kind: run.kind },
+        "cancelAgentRun: pending turn still active after interrupt timeout, clearing it",
+      );
+      this.runs.settleForegroundRun(agentId, run.token);
+      if (!agent.pendingReplacement) {
+        agent.lifecycle = "idle";
+        this.touchUpdatedAt(agent);
+        this.emitState(agent);
+      }
+      return;
+    }
+    this.logger.warn(
+      { agentId, kind: run.kind },
+      "cancelAgentRun: autonomous turn still active after interrupt timeout, force-canceling",
+    );
+    await this.dispatchSessionEvent(agent, {
+      type: "turn_canceled",
+      provider: agent.provider,
+      reason: "interrupted",
+    });
+    if (this.runs.getRun(agentId) === run) {
+      this.runs.clearAgentRun(agentId);
+    }
+    await run.settledPromise;
+  }
+
+  private async forceInterruptSession(session: AgentSession, agentId: string): Promise<void> {
+    if (!session.forceInterrupt) {
+      return;
+    }
+    try {
+      const result = await this.waitWithTimeout({
+        operation: session.forceInterrupt(),
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+        onLateError: (error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Forced session interrupt failed after timeout during cancel",
+          );
+        },
+      });
+      if (result === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+          "Timed out force-interrupting session during cancel",
+        );
+      }
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Failed to force-interrupt session during cancel");
+    }
   }
 
   private async cancelAgentRunBefore(

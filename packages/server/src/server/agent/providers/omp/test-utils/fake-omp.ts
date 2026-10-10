@@ -149,6 +149,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly hostToolUpdates: OmpRpcHostToolUpdate[] = [];
   getStateRequestCount = 0;
   abortRequested = false;
+  forceInterruptRequested = false;
   abortError: Error | null = null;
   onAbort: (() => void) | null = null;
   private heldStateRequests: Array<() => void> | null = null;
@@ -291,6 +292,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.abortRequested = true;
     // OMP can stream a turn's teardown before it answers the abort request.
     this.onAbort?.();
+  }
+
+  async forceInterrupt(): Promise<void> {
+    this.forceInterruptRequested = true;
   }
 
   async getState(): Promise<OmpSessionState> {

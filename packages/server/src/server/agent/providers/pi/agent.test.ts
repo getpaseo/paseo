@@ -1348,6 +1348,14 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("forceInterrupt escalates to the wedged Pi runtime process", async () => {
+    const { pi, session } = await createSession();
+
+    await session.forceInterrupt();
+
+    expect(pi.latestSession().forceInterruptRequested).toBe(true);
+  });
+
   test("suppresses late aborted terminal response arriving after interrupt resolves", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

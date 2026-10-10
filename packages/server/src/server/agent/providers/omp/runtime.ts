@@ -52,6 +52,12 @@ export interface OmpRuntimeSession {
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
+  /**
+   * Escalate process termination after a hung abort(). Implementations owning a
+   * subprocess signal it; the resulting exit is reported through onEvent as
+   * process_exit so the durable session can be resumed by a replacement runtime.
+   */
+  forceInterrupt?(): Promise<void>;
   getState(): Promise<OmpSessionState>;
   setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }>;
   getMessages(): Promise<OmpAgentMessage[]>;
