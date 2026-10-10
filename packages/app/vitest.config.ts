@@ -17,6 +17,17 @@ const resolvePackageEntry = (packageName: string) => {
     : path.resolve(rootNodeModules, packageName);
 };
 
+// Points Reanimated's `./webUtils` at a stub that imports react-native-web's style helpers as
+// ES modules (see test-stubs/reanimated-web-utils.ts). Browser project only.
+const reanimatedWebUtils = {
+  name: "paseo-test:reanimated-web-utils",
+  enforce: "pre" as const,
+  resolveId(source: string, importer?: string) {
+    if (source !== "./webUtils" || !importer?.includes("/react-native-reanimated/")) return null;
+    return path.resolve(__dirname, "test-stubs/reanimated-web-utils.ts");
+  },
+};
+
 export default defineConfig({
   plugins: [
     {
@@ -108,6 +119,7 @@ export default defineConfig({
             },
           ],
         },
+        plugins: [reanimatedWebUtils],
         test: {
           name: "browser",
           fileParallelism: false,
