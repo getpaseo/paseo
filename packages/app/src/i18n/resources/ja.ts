@@ -2460,6 +2460,21 @@ export const ja: TranslationResources = {
             blue: "ブルー",
           },
         },
+        icon: {
+          label: "アイコン",
+          accessibilityLabel: "アイコン、{{value}}",
+          options: {
+            server: "サーバー",
+            cloud: "クラウド VM",
+            desktop: "デスクトップ",
+            laptop: "ノート PC",
+            workstation: "ワークステーション",
+            board: "シングルボード PC",
+            container: "コンテナ",
+            home: "ホームサーバー",
+            office: "オフィス",
+          },
+        },
         badge: {
           label: "サイドバーのバッジ",
           accessibilityLabel: "サイドバーのバッジ、{{value}}",
