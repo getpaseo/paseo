@@ -4689,7 +4689,11 @@ export class Session {
 
     try {
       await cancelAgentRunCommand(
-        { agentManager: this.agentManager, logger: this.sessionLogger },
+        {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        },
         agentId,
       );
       if (requestId) {
