@@ -409,6 +409,8 @@ export const en = {
       loading: "Loading recent sessions...",
       failedProvider: "Could not load {{provider}} sessions",
       failedImport: "Could not import selected session.",
+      codexSessionInUse:
+        "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
     },
     actions: {
       refresh: "Refresh sessions",

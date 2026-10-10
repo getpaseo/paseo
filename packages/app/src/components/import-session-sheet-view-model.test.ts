@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
 import {
   aggregateSessionEntries,
+  filterSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
   collectProviderErrorRows,
   computeEmptyState,
   formatDirectoryLabel,
+  getImportErrorMessage,
   getPromptPreview,
   getSessionTitle,
   hasMoreSessions,
@@ -464,5 +466,48 @@ describe("computeEmptyState", () => {
       aggregatedCount: 1,
     });
     expect(result.emptyStateTitle).toBe("No z-ai sessions found.");
+  });
+});
+
+describe("filterSessionEntries", () => {
+  it("filters cached titles, prompt previews, and directory names with the active provider", () => {
+    const entries = [
+      entry({ providerHandleId: "title", title: "Invoice workflow" }),
+      entry({ providerHandleId: "prompt", lastPromptPreview: "Update INVOICE status" }),
+      entry({ providerHandleId: "directory", cwd: "C:\\repo\\invoice" }),
+      entry({ providerHandleId: "other", title: "Unrelated" }),
+      entry({ providerHandleId: "codex", providerId: "codex", title: "Invoice" }),
+    ];
+    expect(
+      filterSessionEntries(entries, " invoice ", "claude").map((item) => item.providerHandleId),
+    ).toEqual(["title", "prompt", "directory"]);
+    expect(filterSessionEntries(entries, "missing", ALL_FILTER_VALUE)).toEqual([]);
+    expect(filterSessionEntries(entries, "", ALL_FILTER_VALUE)).toEqual(entries);
+  });
+});
+
+describe("getImportErrorMessage", () => {
+  it("explains how to release a Codex session with an active writer", () => {
+    expect(
+      getImportErrorMessage(
+        new Error("Failed to resume Codex thread abc: thread abc already has an active writer"),
+      ),
+    ).toBe(
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    );
+  });
+
+  it("keeps unrecognized provider diagnostics out of user-facing copy", () => {
+    expect(getImportErrorMessage(new Error("Session not found"))).toBe(
+      "Could not import selected session.",
+    );
+    expect(getImportErrorMessage(new Error("another provider already has an active writer"))).toBe(
+      "Could not import selected session.",
+    );
+  });
+
+  it("uses the generic message when no error details are available", () => {
+    expect(getImportErrorMessage(new Error("  "))).toBe("Could not import selected session.");
+    expect(getImportErrorMessage(null)).toBe("Could not import selected session.");
   });
 });

@@ -1847,6 +1847,112 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("imports a Codex session read-only until its active writer is released", async () => {
+    let writerActive = true;
+    let threadLoaded = false;
+    const threadId = "externally-owned-thread";
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: threadLoaded ? [threadId] : [] }),
+      "thread/resume": () => {
+        if (writerActive) {
+          return Promise.reject(new Error(`thread ${threadId} already has an active writer`));
+        }
+        threadLoaded = true;
+        return { thread: { id: threadId } };
+      },
+      "thread/read": () => ({
+        thread: {
+          id: threadId,
+          turns: [
+            {
+              id: "original-turn",
+              status: "completed",
+              items: [
+                {
+                  type: "userMessage",
+                  id: "original-user-message",
+                  content: [{ type: "text", text: "Original question" }],
+                },
+                { type: "agentMessage", id: "original-answer", text: "Original answer" },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const config = createConfig();
+    const imported = await provider.importSession(
+      { providerHandleId: threadId, cwd: config.cwd },
+      { config, storedConfig: config },
+    );
+    const session = imported.session;
+
+    try {
+      expect(imported.persistence.sessionId).toBe(threadId);
+      expect(imported.timeline.map((entry) => entry.item)).toEqual([
+        expect.objectContaining({ type: "user_message", text: "Original question" }),
+        expect.objectContaining({ type: "assistant_message", text: "Original answer" }),
+      ]);
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+        sessionId: threadId,
+        extra: { readOnly: true },
+      });
+      await expect(session.startTurn("Continue here")).rejects.toThrow(
+        "Exit the Codex terminal or client",
+      );
+      await expect(
+        session.revertConversation?.({ messageId: "original-user-message" }),
+      ).rejects.toThrow("Exit the Codex terminal or client");
+      expect(
+        appServer
+          .requests()
+          .filter((request) =>
+            [
+              "turn/start",
+              "thread/start",
+              "thread/fork",
+              "thread/rollback",
+              "thread/unarchive",
+            ].includes(String(request.method)),
+          ),
+      ).toEqual([]);
+
+      writerActive = false;
+      await session.startTurn("Continue here");
+      const turnStart = await appServer.waitForTurnStart();
+      expect(turnStart).toMatchObject({ threadId });
+      expect((await session.getRuntimeInfo()).extra?.readOnly).not.toBe(true);
+      expect(session.describePersistence()?.sessionId).toBe(threadId);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("closes the read-only Codex client when imported history cannot be read", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/resume": () =>
+        Promise.reject(new Error("thread external-thread already has an active writer")),
+      "thread/read": () => Promise.reject(new Error("thread history is unavailable")),
+    });
+    const exitSignals: Array<NodeJS.Signals | null> = [];
+    appServer.child.once("exit", (_code, signal) => {
+      exitSignals.push(signal);
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const config = createConfig();
+
+    await expect(
+      provider.importSession(
+        { providerHandleId: "external-thread", cwd: config.cwd },
+        { config, storedConfig: config },
+      ),
+    ).rejects.toThrow("thread history is unavailable");
+    expect(exitSignals).toEqual(["SIGTERM"]);
+    appServer.assertNoErrors();
+  });
+
   test("unarchives Codex when an active Paseo agent resumes an archived thread", async () => {
     const threadRequests: string[] = [];
     let resumeAttempts = 0;

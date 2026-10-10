@@ -417,6 +417,8 @@ export const es: TranslationResources = {
       loading: "Cargando sesiones recientes...",
       failedProvider: "No se pudieron cargar las sesiones de {{provider}}",
       failedImport: "No se pudo importar la sesión seleccionada.",
+      codexSessionInUse:
+        "Esta sesión de Codex está en uso. Sal del terminal o cliente de Codex que tiene abierta esta sesión y vuelve a intentar importarla.",
     },
     actions: {
       refresh: "Actualizar sesiones",
