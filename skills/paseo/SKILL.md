@@ -123,6 +123,8 @@ paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x
 paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
 paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
+paseo run --provider codex/gpt-5.4 --feature service_tier=priority --workspace <workspace-id> "<prompt>"
+paseo agent update <agent-id> --feature service_tier=default
 paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
 paseo send <agent-id> "<follow-up>"
 paseo ls
