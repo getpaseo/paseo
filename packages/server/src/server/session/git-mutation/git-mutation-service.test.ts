@@ -260,6 +260,30 @@ describe("createBranchFromBase", () => {
     expect(headBranch(dir)).toBe("feature-inherited");
     expect(upstreamOf(dir, "feature-inherited")).toBe("");
   });
+
+  test("leaves no upstream when the base is a fully qualified remote-tracking ref (real repo)", async () => {
+    const dir = initRepo();
+    const remoteDir = join(tmpdir(), `git-mutation-remote-${Date.now()}`);
+    tempRepos.push(remoteDir);
+    execFileSync("git", ["init", "--bare", remoteDir], { stdio: "pipe" });
+    execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: dir, stdio: "pipe" });
+    execFileSync("git", ["push", "-u", "origin", "main"], { cwd: dir, stdio: "pipe" });
+    const { service } = buildService({
+      resolution: { kind: "local", name: "refs/remotes/origin/main" },
+    });
+
+    // A qualified base like this is exactly what resolveGitCreateBaseBranch now returns for a
+    // branch with a configured upstream — without --no-track, git's checkout -b DWIM would set
+    // the new branch's own upstream to it, so a later push would land straight on origin/main.
+    await service.createBranchFromBase({
+      cwd: dir,
+      baseBranch: "refs/remotes/origin/main",
+      newBranchName: "feature3",
+    });
+
+    expect(headBranch(dir)).toBe("feature3");
+    expect(upstreamOf(dir, "feature3")).toBe("");
+  });
 });
 
 describe("notifyGitMutation", () => {

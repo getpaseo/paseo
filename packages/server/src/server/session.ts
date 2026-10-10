@@ -258,6 +258,7 @@ import {
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
   handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
+  resolveGitCreateBaseBranch,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
@@ -5926,9 +5927,9 @@ export class Session {
   ): Promise<CreatePaseoWorktreeResult> {
     const result = await createPaseoWorktree(input, {
       github: this.github,
-      ...(options?.resolveDefaultBranch
-        ? { resolveDefaultBranch: options.resolveDefaultBranch }
-        : {}),
+      resolveDefaultBranch:
+        options?.resolveDefaultBranch ??
+        ((repoRoot) => resolveGitCreateBaseBranch(repoRoot, this.workspaceGitService)),
       workspaceGitService: this.workspaceGitService,
       workspaceProvisioning: this.workspaceProvisioning,
     });
