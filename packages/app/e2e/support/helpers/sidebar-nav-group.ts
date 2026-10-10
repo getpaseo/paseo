@@ -1,7 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
-const PANEL_STATE_KEY = "panel-state";
-
 // The shell keeps a compact copy of the sidebar mounted, so every lookup takes the
 // visible group and reads the control by its role and name, as a person would.
 function navGroup(page: Page): Locator {
@@ -91,14 +89,16 @@ async function navDividerCentre(page: Page): Promise<{ x: number; y: number }> {
 
 /** Drags the divider by `offset` points and answers the height the group ends up at. */
 export async function dragNavigationDivider(page: Page, offset: number): Promise<number> {
+  const startHeight = await navigationGroupHeight(page);
   const { x, y } = await navDividerCentre(page);
   await page.mouse.move(x, y);
   await page.mouse.down();
   // Several steps: a single jump is one pointermove, which some drag implementations drop.
   await page.mouse.move(x, y + offset, { steps: 10 });
   await page.mouse.up();
-  // The release is observable in the store, so wait for that instead of for a delay.
-  await expect.poll(() => storedNavigationHeight(page)).not.toBeNull();
+  if (offset !== 0) {
+    await expect.poll(() => navigationGroupHeight(page)).not.toBe(startHeight);
+  }
   return navigationGroupHeight(page);
 }
 
@@ -126,22 +126,6 @@ export async function expectNavigationGroupTaller(
   previousHeight: number,
 ): Promise<void> {
   await expect.poll(() => navigationGroupHeight(page)).toBeGreaterThan(previousHeight);
-}
-
-function storedNavigationHeight(page: Page): Promise<number | null> {
-  return page.evaluate((key) => {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    return (
-      (JSON.parse(raw) as { state?: { sidebarNavHeight?: number | null } }).state
-        ?.sidebarNavHeight ?? null
-    );
-  }, PANEL_STATE_KEY);
-}
-
-export async function expectStoredNavigationHeight(page: Page): Promise<number> {
-  await expect.poll(() => storedNavigationHeight(page)).not.toBeNull();
-  return (await storedNavigationHeight(page)) as number;
 }
 
 export async function expectNavigationGroupHeight(page: Page, height: number): Promise<void> {

@@ -38,7 +38,6 @@ import {
   expectNavigationGroupScrollsWithinItsShare,
   expectNavigationGroupShowsItems,
   expectNavigationGroupTaller,
-  expectStoredNavigationHeight,
   expectTouchNavigationDivider,
   navigationGroupHeight,
   toggleNavigationGroup,
@@ -219,13 +218,12 @@ test.describe("The sidebar items group", () => {
     await gotoAppShell(page);
     await expectNavigationGroupShowsItems(page);
 
-    const startHeight = await dragNavigationDivider(page, 0);
-    await dragNavigationDivider(page, 80);
+    const startHeight = await navigationGroupHeight(page);
+    const resizedHeight = await dragNavigationDivider(page, 80);
     await expectNavigationGroupTaller(page, startHeight);
 
-    const stored = await expectStoredNavigationHeight(page);
     await page.reload();
-    await expectNavigationGroupHeight(page, stored);
+    await expectNavigationGroupHeight(page, resizedHeight);
   });
 
   // A wide window with a coarse pointer: the desktop sidebar, driven by a finger.
@@ -241,9 +239,9 @@ test.describe("The sidebar items group", () => {
       await touchDragNavigationDivider(page, 80);
       await expectNavigationGroupTaller(page, startHeight);
 
-      const stored = await expectStoredNavigationHeight(page);
+      const resizedHeight = await navigationGroupHeight(page);
       await page.reload();
-      await expectNavigationGroupHeight(page, stored);
+      await expectNavigationGroupHeight(page, resizedHeight);
     });
   });
 });
