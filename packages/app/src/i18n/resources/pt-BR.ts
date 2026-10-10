@@ -285,6 +285,14 @@ export const ptBR: TranslationResources = {
     tooManyMatches: "Muitos resultados — refine a busca",
     hostLoadFailed: "{{host}}: Não foi possível carregar o histórico",
     searchPlaceholder: "Buscar no histórico",
+    archivedFilter: {
+      all: "Todas",
+      active: "Não arquivadas",
+      archived: "Arquivadas",
+      emptyArchived: "Nenhuma sessão arquivada",
+      emptyActive: "Nenhuma sessão não arquivada",
+      emptyLoaded: "Nenhuma correspondência nas páginas carregadas",
+    },
     actions: {
       loadMore: "Carregar mais",
       clearSearch: "Limpar busca",

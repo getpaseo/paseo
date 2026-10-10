@@ -281,6 +281,14 @@ export const ar: TranslationResources = {
     tooManyMatches: "نتائج كثيرة جدًا — ضيّق نطاق البحث",
     hostLoadFailed: "{{host}}: تعذر تحميل السجل",
     searchPlaceholder: "البحث في السجل",
+    archivedFilter: {
+      all: "الكل",
+      active: "غير المؤرشفة",
+      archived: "المؤرشفة",
+      emptyArchived: "لا توجد جلسات مؤرشفة",
+      emptyActive: "لا توجد جلسات غير مؤرشفة",
+      emptyLoaded: "لا توجد نتائج في الصفحات المحمّلة",
+    },
     actions: {
       loadMore: "تحميل المزيد",
       clearSearch: "مسح البحث",

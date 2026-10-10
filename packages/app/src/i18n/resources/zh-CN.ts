@@ -281,6 +281,14 @@ export const zhCN: TranslationResources = {
     tooManyMatches: "匹配过多 — 请缩小搜索范围",
     hostLoadFailed: "{{host}}：无法加载历史",
     searchPlaceholder: "搜索历史",
+    archivedFilter: {
+      all: "全部",
+      active: "未归档",
+      archived: "已归档",
+      emptyArchived: "没有已归档的会话",
+      emptyActive: "没有未归档的会话",
+      emptyLoaded: "已加载的页面里没有匹配项",
+    },
     actions: {
       loadMore: "加载更多",
       clearSearch: "清除搜索",

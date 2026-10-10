@@ -282,6 +282,14 @@ export const ko: TranslationResources = {
     tooManyMatches: "일치 항목이 너무 많습니다 — 검색 범위를 좁히세요",
     hostLoadFailed: "{{host}}: 기록을 불러오지 못했습니다",
     searchPlaceholder: "기록 검색",
+    archivedFilter: {
+      all: "전체",
+      active: "보관되지 않음",
+      archived: "보관됨",
+      emptyArchived: "보관된 세션이 없습니다",
+      emptyActive: "보관되지 않은 세션이 없습니다",
+      emptyLoaded: "불러온 페이지에 일치 항목이 없습니다",
+    },
     actions: {
       loadMore: "더 불러오기",
       clearSearch: "검색 지우기",
