@@ -272,6 +272,23 @@ export function resolveEffectiveComposerModelId(selection: ProviderSelectionStat
   );
 }
 
+// The mode picker shows the first offered mode when the selected one isn't
+// offered (e.g. a remembered mode the provider no longer advertises), so the
+// submitted mode must match that display. A provider with no modes gets none.
+// While the provider is still loading its modes aren't known yet, so the
+// selected mode is kept.
+export function resolveEffectiveComposerModeId(
+  selection: ProviderSelectionState,
+  isModelLoading: boolean,
+): string {
+  const selectedModeId = selection.modeId.trim();
+  if (isModelLoading) {
+    return selectedModeId;
+  }
+  const modeIds = selection.modeOptions.map((mode) => mode.id);
+  return modeIds.includes(selectedModeId) ? selectedModeId : (modeIds[0] ?? "");
+}
+
 export function resolveEffectiveComposerThinkingOptionId(
   selection: ProviderSelectionState,
   effectiveModelId: string,

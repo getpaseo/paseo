@@ -17,6 +17,7 @@ import {
 } from "@/composer/draft/input-draft-core";
 import {
   buildDraftCommandTarget,
+  resolveEffectiveComposerModeId,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
   type ProviderSelectionState,
@@ -46,6 +47,7 @@ interface UseAgentInputDraftInput {
 
 type DraftComposerState = UseAgentFormStateResult & {
   workingDir: string;
+  effectiveModeId: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
@@ -254,6 +256,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     ],
   );
 
+  const effectiveModeId = useMemo(
+    () => resolveEffectiveComposerModeId(providerSelection, formState.isModelLoading),
+    [formState.isModelLoading, providerSelection],
+  );
+
   const effectiveModelId = useMemo(
     () => resolveEffectiveComposerModelId(providerSelection),
     [providerSelection],
@@ -313,6 +320,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     return {
       ...formState,
       workingDir,
+      effectiveModeId,
       effectiveModelId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
@@ -327,6 +335,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   }, [
     commandDraft,
     composerOptions,
+    effectiveModeId,
     effectiveModelId,
     effectiveThinkingOptionId,
     draftFeatures,
@@ -353,6 +362,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
 export const __private__ = {
   resolveDraftKey,
+  resolveEffectiveComposerModeId,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
   buildDraftCommandTarget,
