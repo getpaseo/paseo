@@ -887,17 +887,6 @@ function buildGitLabListArgs(
   input: ListPullRequestsOptions | ListIssuesOptions,
 ): string[] {
   const query = input.query?.trim();
-  if (query && /^\d+$/.test(query)) {
-    // GitLab text search only searches title/description. IID filtering keeps
-    // number lookup scoped to this repository and to the same open items.
-    const resource = kind === "mr" ? "merge_requests" : "issues";
-    let endpoint = `projects/:id/${resource}?state=opened&iids[]=${query}`;
-    if (typeof input.limit === "number") {
-      endpoint += `&per_page=${input.limit}`;
-    }
-    return ["api", endpoint];
-  }
-
   // issue list uses -O for JSON; its -F flag controls details/ids/urls.
   // mr list uses -F for JSON instead.
   const args = [kind, "list", kind === "mr" ? "-F" : "-O", "json"];
@@ -908,6 +897,11 @@ function buildGitLabListArgs(
     args.push("-P", String(input.limit));
   }
   return args;
+}
+
+function gitLabNumberQuery(query: string | undefined): string | null {
+  const trimmed = query?.trim();
+  return trimmed && /^\d+$/.test(trimmed) ? trimmed : null;
 }
 
 export function createGitLabService(options: CreateGitLabServiceOptions = {}): ForgeService {
@@ -1085,21 +1079,43 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     }
   }
 
+  async function runList<T extends { iid: number }>(
+    kind: "mr" | "issue",
+    input: ListPullRequestsOptions | ListIssuesOptions,
+    schema: z.ZodType<T[]>,
+  ): Promise<T[]> {
+    const textSearch = runJson(buildGitLabListArgs(kind, input), { cwd: input.cwd }, schema);
+    const numberQuery = gitLabNumberQuery(input.query);
+    if (!numberQuery) return textSearch;
+
+    // GitLab text search omits IIDs, so supplement it with an open-item lookup.
+    const resource = kind === "mr" ? "merge_requests" : "issues";
+    const [numberMatches, textMatches] = await Promise.all([
+      runJson(
+        ["api", `projects/:id/${resource}?state=opened&iids[]=${numberQuery}`],
+        { cwd: input.cwd },
+        schema,
+      ),
+      textSearch,
+    ]);
+    const seen = new Set<number>();
+    const items = [...numberMatches, ...textMatches].filter((item) => {
+      if (seen.has(item.iid)) return false;
+      seen.add(item.iid);
+      return true;
+    });
+    return typeof input.limit === "number" ? items.slice(0, input.limit) : items;
+  }
+
   async function runMergeRequestList(
     input: ListPullRequestsOptions,
   ): Promise<PullRequestSummary[]> {
-    const args = buildGitLabListArgs("mr", input);
-    const mergeRequests = await runJson(
-      args,
-      { cwd: input.cwd },
-      z.array(GitLabMergeRequestSchema),
-    );
+    const mergeRequests = await runList("mr", input, z.array(GitLabMergeRequestSchema));
     return mergeRequests.map(toPullRequestSummary);
   }
 
   async function runIssueList(input: ListIssuesOptions): Promise<IssueSummary[]> {
-    const args = buildGitLabListArgs("issue", input);
-    const issues = await runJson(args, { cwd: input.cwd }, z.array(GitLabIssueSchema));
+    const issues = await runList("issue", input, z.array(GitLabIssueSchema));
     return issues.map(toIssueSummary);
   }
 
@@ -1366,9 +1382,16 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           });
         }
       }
-      items.sort(
-        (left, right) => parseOptionalTime(right.updatedAt) - parseOptionalTime(left.updatedAt),
-      );
+      const numberQuery = gitLabNumberQuery(input.query);
+      items.sort((left, right) => {
+        if (numberQuery) {
+          const numberMatchOrder =
+            Number(right.number === Number(numberQuery)) -
+            Number(left.number === Number(numberQuery));
+          if (numberMatchOrder !== 0) return numberMatchOrder;
+        }
+        return parseOptionalTime(right.updatedAt) - parseOptionalTime(left.updatedAt);
+      });
 
       return {
         items,

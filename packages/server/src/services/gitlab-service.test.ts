@@ -1371,9 +1371,70 @@ describe("createGitLabService", () => {
     ]);
   });
 
+  it.each([
+    { kind: "change_request" as const, item: OPEN_MR },
+    { kind: "issue" as const, item: OPEN_ISSUE },
+  ])(
+    "preserves numeric text matches after the exact $kind number, without duplicates",
+    async ({ kind, item }) => {
+      const textMatches = [
+        {
+          ...item,
+          iid: 90,
+          title: `References ${item.iid}`,
+          updated_at: "2026-07-01T00:00:00.000Z",
+        },
+        item,
+        {
+          ...item,
+          iid: 91,
+          description: `References ${item.iid}`,
+          updated_at: "2026-06-30T00:00:00.000Z",
+        },
+      ];
+      const { service } = makeService((args) => {
+        if (args.includes("--search")) return ok(JSON.stringify(textMatches));
+        if (args[0] === "api") return ok(JSON.stringify([item]));
+        throw new Error(`unexpected glab args: ${args.join(" ")}`);
+      });
+      const result = await service.searchIssuesAndPrs({
+        cwd: "/repo",
+        query: String(item.iid),
+        limit: 2,
+        kinds: [kind],
+      });
+      expect(
+        result.items.map((resultItem) => ({ kind: resultItem.kind, number: resultItem.number })),
+      ).toEqual([
+        { kind, number: item.iid },
+        { kind, number: 90 },
+      ]);
+    },
+  );
+
+  it.each([
+    { kind: "change_request" as const, item: OPEN_MR },
+    { kind: "issue" as const, item: OPEN_ISSUE },
+  ])("keeps $kind text matches when the queried number is not open", async ({ kind, item }) => {
+    const { service } = makeService((args) => {
+      if (args.includes("--search")) {
+        return ok(JSON.stringify([{ ...item, description: "References 2024" }]));
+      }
+      if (args[0] === "api") return ok("[]");
+      throw new Error(`unexpected glab args: ${args.join(" ")}`);
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "2024",
+      kinds: [kind],
+    });
+    expect(result.items.map(({ number }) => number)).toEqual([item.iid]);
+  });
+
   it("keeps closed and missing merge requests out of number search results", async () => {
     const closedMr = { ...OPEN_MR, state: "closed" };
     const { service } = makeService((args) => {
+      if (args.includes("--search")) return ok("[]");
       if (args[0] !== "api") throw new Error(`unexpected glab args: ${args.join(" ")}`);
       const endpoint = new URL(args[1], "https://gitlab.example.com/api/v4/");
       const matches =
