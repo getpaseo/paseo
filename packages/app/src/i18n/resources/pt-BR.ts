@@ -1222,6 +1222,10 @@ export const ptBR: TranslationResources = {
     pinned: {
       title: "Fixados",
     },
+    nav: {
+      title: "Navegação",
+      resize: "Redimensionar navegação",
+    },
     host: {
       noHost: "Nenhum host",
       switchTitle: "Trocar host",
