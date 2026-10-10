@@ -104,6 +104,7 @@ export function publishAgentStream(
       turnId: event.turnId ?? null,
       timeline,
       outcome: { kind: "completed" },
+      nativeDiff: event.nativeDiff,
     });
   } else if (event.type === "turn_failed") {
     lifecycle.emit("agent.turn_ended", {
@@ -111,6 +112,7 @@ export function publishAgentStream(
       turnId: event.turnId ?? null,
       timeline,
       outcome: { kind: "failed", error: { message: event.error, code: event.code } },
+      nativeDiff: event.nativeDiff,
     });
   } else if (event.type === "turn_canceled") {
     lifecycle.emit("agent.turn_ended", {
@@ -118,6 +120,7 @@ export function publishAgentStream(
       turnId: event.turnId ?? null,
       timeline,
       outcome: { kind: "canceled", reason: event.reason },
+      nativeDiff: event.nativeDiff,
     });
   } else if (event.type === "permission_requested") {
     lifecycle.emit("agent.permission_requested", { agent, request: event.request });
