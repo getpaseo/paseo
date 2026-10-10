@@ -838,23 +838,36 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             onExpandedChange={setToolCallGroupExpanded}
           >
             {expanded
-              ? group.run.calls.map((call, index) => (
-                  <React.Fragment key={call.id}>
-                    {renderSingleToolCallItem(
-                      call,
-                      index === group.run.calls.length - 1,
-                      GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT,
-                    )}
-                  </React.Fragment>
-                ))
+              ? group.run.entries.map((entry, index) => {
+                  const isLast = index === group.run.entries.length - 1;
+                  return (
+                    <React.Fragment key={entry.id}>
+                      {entry.kind === "thought" ? (
+                        <ThoughtSlot
+                          itemId={entry.id}
+                          onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+                          text={entry.text}
+                          status={entry.status}
+                          isLastInSequence={isLast}
+                          defaultExpanded={autoExpandReasoning}
+                          maxDetailHeight={GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT}
+                        />
+                      ) : (
+                        renderSingleToolCallItem(entry, isLast, GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT)
+                      )}
+                    </React.Fragment>
+                  );
+                })
               : null}
           </OverviewToolCallGroupView>
         );
       },
       [
+        autoExpandReasoning,
         expandedToolCallGroupIds,
         getToolCallGroup,
         renderSingleToolCallItem,
+        setInlineDetailsExpanded,
         setToolCallGroupExpanded,
       ],
     );
@@ -1300,6 +1313,7 @@ interface ThoughtSlotProps {
   status: Extract<StreamItem, { kind: "thought" }>["status"];
   isLastInSequence: boolean;
   defaultExpanded: boolean;
+  maxDetailHeight?: number;
 }
 
 // Reasoning text is paced the same way assistant text is; see @/hooks/use-revealed-text.
@@ -1310,6 +1324,7 @@ function ThoughtSlot({
   status,
   isLastInSequence,
   defaultExpanded,
+  maxDetailHeight,
 }: ThoughtSlotProps) {
   const revealedText = useRevealedText(text, status === "ready" ? "complete" : "streaming");
   return (
@@ -1322,6 +1337,7 @@ function ThoughtSlot({
       isLastInSequence={isLastInSequence}
       defaultExpanded={defaultExpanded}
       forceInline={defaultExpanded}
+      maxDetailHeight={maxDetailHeight}
     />
   );
 }

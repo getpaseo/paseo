@@ -9,6 +9,7 @@ import {
 } from "./projection";
 
 type AssistantMessageItem = Extract<StreamItem, { kind: "assistant_message" }>;
+type ThoughtItem = Extract<StreamItem, { kind: "thought" }>;
 
 function toolCall(
   id: string,
@@ -42,6 +43,16 @@ function assistant(id: string): AssistantMessageItem {
     id,
     text: id,
     timestamp: new Date("2026-01-01T00:01:00.000Z"),
+  };
+}
+
+function thought(id: string, status: "loading" | "ready" = "ready"): ThoughtItem {
+  return {
+    kind: "thought",
+    id,
+    text: id,
+    timestamp: new Date("2026-01-01T00:00:30.000Z"),
+    status,
   };
 }
 
@@ -478,5 +489,104 @@ describe("tool call detail-level projection", () => {
     expect(result.head).toEqual([singleCall, plan, speak]);
     expect(result.groupsByHostId.get(singleCall.id)?.run.calls).toEqual([singleCall]);
     expect(result.groupsByHostId.size).toBe(1);
+  });
+  it("keeps thoughts between tool calls inside one group", () => {
+    const calls = [
+      toolCall("1", { type: "shell", command: "one" }),
+      toolCall("2", { type: "edit", filePath: "/repo/a.ts" }),
+      toolCall("3", { type: "read", filePath: "/repo/b.ts" }),
+    ];
+    const leading = thought("leading");
+    const between = [thought("between-1"), thought("between-2")];
+    const trailing = thought("trailing");
+    const tail = [
+      assistant("before"),
+      leading,
+      calls[0],
+      between[0],
+      calls[1],
+      between[1],
+      calls[2],
+      trailing,
+      assistant("after"),
+    ];
+
+    const result = project({ level: "overview", tail });
+
+    expect(result.tail).toEqual([
+      tail[0],
+      expect.objectContaining({ id: "1", timestamp: calls[2]?.timestamp }),
+      trailing,
+      tail[8],
+    ]);
+    expect(result.groupsByHostId.size).toBe(1);
+    expect(result.groupsByHostId.get("1")).toMatchObject({
+      run: {
+        entries: [leading, calls[0], between[0], calls[1], between[1], calls[2]],
+        calls,
+        latest: calls[2],
+      },
+      summary: { editedFileCount: 1, commandCount: 1, readFileCount: 1, otherToolCount: 0 },
+    });
+  });
+
+  it("still ends a group at an assistant message between tool calls", () => {
+    const calls = [
+      toolCall("1", { type: "shell", command: "one" }),
+      toolCall("2", { type: "shell", command: "two" }),
+    ];
+    const tail = [calls[0], thought("t1"), assistant("middle"), thought("t2"), calls[1]];
+
+    const result = project({ level: "overview", tail });
+
+    expect(result.tail).toEqual([calls[0], tail[1], tail[2], calls[1]]);
+    expect(result.groupsByHostId.get("1")?.run.entries).toEqual([calls[0]]);
+    expect(result.groupsByHostId.get("2")?.run.entries).toEqual([tail[3], calls[1]]);
+  });
+
+  it("shows a streaming thought after a group and pulls it in when the next call arrives", () => {
+    const calls = [
+      toolCall("1", { type: "shell", command: "one" }),
+      toolCall("2", { type: "shell", command: "two" }),
+    ];
+    const tail = [assistant("before"), ...calls];
+    const prepared = prepareToolCallHistory("overview", tail);
+    const streaming = thought("thinking", "loading");
+
+    const thinking = project({
+      level: "overview",
+      tail,
+      head: [streaming],
+      isTurnActive: true,
+      preparedHistory: prepared,
+    });
+    expect(thinking.head).toEqual([streaming]);
+    expect(thinking.tail).toBe(prepared?.grouped.tail);
+    expect(thinking.historyGroupUpdatesByHostId.size).toBe(0);
+
+    const nextCall = toolCall("3", { type: "read", filePath: "/repo/a.ts" });
+    const continued = project({
+      level: "overview",
+      tail,
+      head: [streaming, nextCall],
+      isTurnActive: true,
+      preparedHistory: prepared,
+    });
+    expect(continued.head).toEqual([]);
+    expect(continued.groupsByHostId.get("1")?.run).toMatchObject({
+      entries: [...calls, streaming, nextCall],
+      latest: nextCall,
+      isSealed: false,
+    });
+    expect(continued.historyGroupUpdatesByHostId.get("1")).toBe(continued.groupsByHostId.get("1"));
+  });
+
+  it("leaves thoughts without tool calls as standalone rows", () => {
+    const tail = [assistant("before"), thought("t1"), thought("t2"), assistant("after")];
+
+    const result = project({ level: "overview", tail });
+
+    expect(result.tail).toEqual(tail);
+    expect(result.groupsByHostId.size).toBe(0);
   });
 });
