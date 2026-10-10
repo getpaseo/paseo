@@ -2300,6 +2300,12 @@ export const ptBR: TranslationResources = {
         header: {
           title: "Cabeçalho",
           description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
+          layout: {
+            title: "Layout",
+            hint: "Compacto coloca o primeiro item em uma linha com os demais como ícones",
+            list: "Lista",
+            compact: "Compacto",
+          },
         },
         footer: {
           title: "Rodapé",

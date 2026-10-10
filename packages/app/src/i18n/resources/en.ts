@@ -2389,6 +2389,12 @@ export const en = {
         header: {
           title: "Header",
           description: "Choose which items appear at the top of the sidebar and in what order",
+          layout: {
+            title: "Layout",
+            hint: "Compact puts the first item in one row with the rest as icons",
+            list: "List",
+            compact: "Compact",
+          },
         },
         footer: {
           title: "Footer",

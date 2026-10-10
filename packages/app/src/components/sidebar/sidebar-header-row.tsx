@@ -45,6 +45,11 @@ interface SidebarHeaderRowProps {
    * press on the slot presses the row; a button inside it presses on its own.
    */
   trailing?: ReactNode;
+  /**
+   * Buttons beside the row rather than part of it. They keep their own hover and press, so the
+   * row's highlight and press area stop where they begin.
+   */
+  actions?: ReactNode;
   rowRef?: Ref<View>;
 }
 
@@ -59,6 +64,7 @@ export function SidebarHeaderRow({
   variant = "header",
   shortcutKeys = null,
   trailing,
+  actions,
   rowRef,
 }: SidebarHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
@@ -73,40 +79,55 @@ export function SidebarHeaderRow({
     right = <Shortcut chord={shortcutKeys} />;
   }
 
+  const row = (
+    <View
+      style={[
+        styles.row,
+        actions ? styles.rowBesideActions : null,
+        isHighlighted && styles.rowHighlighted,
+      ]}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+    >
+      <Pressable
+        onPress={onPress}
+        testID={testID}
+        nativeID={nativeID}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+        accessibilityState={isActive ? SELECTED_STATE : undefined}
+        aria-selected={isActive}
+        style={styles.button}
+      >
+        {ThemedIcon ? (
+          <ThemedIcon
+            size={iconSize}
+            uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
+          />
+        ) : (
+          <View style={variant === "header" ? styles.iconSpacer : styles.iconSpacerCompact} />
+        )}
+        <Text style={[styles.label, isHighlighted && styles.labelHighlighted]}>{label}</Text>
+      </Pressable>
+      {right === null ? null : (
+        <Pressable onPress={onPress} accessible={false} focusable={false} style={styles.trailing}>
+          {right}
+        </Pressable>
+      )}
+    </View>
+  );
+
   return (
     <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
-      <View
-        style={[styles.row, isHighlighted && styles.rowHighlighted]}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
-      >
-        <Pressable
-          onPress={onPress}
-          testID={testID}
-          nativeID={nativeID}
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel ?? label}
-          accessibilityState={isActive ? SELECTED_STATE : undefined}
-          aria-selected={isActive}
-          style={styles.button}
-        >
-          {ThemedIcon ? (
-            <ThemedIcon
-              size={iconSize}
-              uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
-            />
-          ) : (
-            <View style={variant === "header" ? styles.iconSpacer : styles.iconSpacerCompact} />
-          )}
-          <Text style={[styles.label, isHighlighted && styles.labelHighlighted]}>{label}</Text>
-        </Pressable>
-        {right === null ? null : (
-          <Pressable onPress={onPress} accessible={false} focusable={false} style={styles.trailing}>
-            {right}
-          </Pressable>
-        )}
-      </View>
+      {actions ? (
+        <View style={styles.rowWithActions}>
+          {row}
+          <View style={styles.actions}>{actions}</View>
+        </View>
+      ) : (
+        row
+      )}
     </View>
   );
 }
@@ -145,6 +166,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowHighlighted: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  rowBesideActions: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowWithActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingRight: theme.spacing[2],
   },
   button: {
     flex: 1,

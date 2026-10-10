@@ -2240,6 +2240,12 @@ export const zhCN: TranslationResources = {
         header: {
           title: "顶部",
           description: "选择侧边栏顶部显示的项目及其顺序",
+          layout: {
+            title: "布局",
+            hint: "紧凑模式将第一项放在一行，其余显示为图标",
+            list: "列表",
+            compact: "紧凑",
+          },
         },
         footer: {
           title: "底部",

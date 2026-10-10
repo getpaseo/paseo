@@ -2285,6 +2285,12 @@ export const ja: TranslationResources = {
         header: {
           title: "ヘッダー",
           description: "サイドバー上部に表示する項目とその順序を選択します",
+          layout: {
+            title: "レイアウト",
+            hint: "コンパクトでは最初の項目を1行に表示し、残りをアイコンにします",
+            list: "リスト",
+            compact: "コンパクト",
+          },
         },
         footer: {
           title: "フッター",

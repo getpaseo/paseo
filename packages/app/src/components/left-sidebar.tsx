@@ -23,6 +23,7 @@ import {
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
+import { useAppSettings } from "@/hooks/use-settings";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
@@ -62,6 +63,12 @@ import {
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+
+/** The close button sits over the right end of the first header row. */
+const MOBILE_CLOSE_BUTTON_SIZE = 32;
+// The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
+// This optical inset puts their painted right edges on the same sidebar rail.
+const MOBILE_CLOSE_BUTTON_OPTICAL_INSET = 1.5;
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -538,6 +545,16 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
+  const { settings } = useAppSettings();
+  const compactHeader = settings.sidebarHeaderLayout === "compact";
+  const closeButtonRowStyle = useMemo(
+    () => [styles.mobileCloseButtonRow, compactHeader ? styles.mobileCloseButtonRowCompact : null],
+    [compactHeader],
+  );
+  const headerGroupStyle = useMemo(
+    () => [styles.sidebarHeaderGroup, compactHeader ? styles.sidebarHeaderGroupCompact : null],
+    [compactHeader],
+  );
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -560,11 +577,17 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
+        <SidebarNavRows
+          style={headerGroupStyle}
+          onBeforeNavigate={closeSidebar}
+          trailingInset={
+            MOBILE_CLOSE_BUTTON_SIZE + theme.spacing[2] + MOBILE_CLOSE_BUTTON_OPTICAL_INSET
+          }
+        />
         <WindowChromeSafeArea
           placement="inline"
           pointerEvents="box-none"
-          style={styles.mobileCloseButtonRow}
+          style={closeButtonRowStyle}
         >
           <Pressable
             style={styles.mobileCloseButton}
@@ -727,9 +750,15 @@ function DesktopSidebar({
     () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
     [insetsTop],
   );
+  const { settings } = useAppSettings();
+  const compactHeader = settings.sidebarHeaderLayout === "compact";
   const sidebarHeaderGroupStyle = useMemo(
-    () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
-    [ownsTopLeft],
+    () => [
+      styles.sidebarHeaderGroup,
+      ownsTopLeft && styles.sidebarHeaderGroupBelowChrome,
+      compactHeader && styles.sidebarHeaderGroupCompact,
+    ],
+    [compactHeader, ownsTopLeft],
   );
   return (
     <Animated.View
@@ -855,6 +884,10 @@ const styles = StyleSheet.create((theme) => ({
   sidebarHeaderGroupBelowChrome: {
     paddingTop: 0,
   },
+  // A single row needs no divider from the project list below it.
+  sidebarHeaderGroupCompact: {
+    borderBottomWidth: 0,
+  },
   workspacesSectionHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -890,12 +923,14 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: 2,
     alignItems: "flex-end",
   },
+  // Centers the button on the compact header row's icon buttons.
+  mobileCloseButtonRowCompact: {
+    top: theme.spacing[2],
+  },
   mobileCloseButton: {
-    // The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
-    // This optical inset puts their painted right edges on the same sidebar rail.
-    marginRight: theme.spacing[2] + 1.5,
-    width: 32,
-    height: 32,
+    marginRight: theme.spacing[2] + MOBILE_CLOSE_BUTTON_OPTICAL_INSET,
+    width: MOBILE_CLOSE_BUTTON_SIZE,
+    height: MOBILE_CLOSE_BUTTON_SIZE,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.lg,

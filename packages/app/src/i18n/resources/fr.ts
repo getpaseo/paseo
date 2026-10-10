@@ -2316,6 +2316,12 @@ export const fr: TranslationResources = {
           title: "En-tête",
           description:
             "Choisissez les éléments affichés en haut de la barre latérale et leur ordre",
+          layout: {
+            title: "Disposition",
+            hint: "Compact affiche le premier élément sur une ligne et les autres en icônes",
+            list: "Liste",
+            compact: "Compact",
+          },
         },
         footer: {
           title: "Pied de page",
