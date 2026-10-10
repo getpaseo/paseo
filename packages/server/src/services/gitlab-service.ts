@@ -882,6 +882,34 @@ function throwFirstNonGlabAuthSearchRejection(results: PromiseSettledResult<unkn
   }
 }
 
+function buildGitLabListArgs(
+  kind: "mr" | "issue",
+  input: ListPullRequestsOptions | ListIssuesOptions,
+): string[] {
+  const query = input.query?.trim();
+  if (query && /^\d+$/.test(query)) {
+    // GitLab text search only searches title/description. IID filtering keeps
+    // number lookup scoped to this repository and to the same open items.
+    const resource = kind === "mr" ? "merge_requests" : "issues";
+    let endpoint = `projects/:id/${resource}?state=opened&iids[]=${query}`;
+    if (typeof input.limit === "number") {
+      endpoint += `&per_page=${input.limit}`;
+    }
+    return ["api", endpoint];
+  }
+
+  // issue list uses -O for JSON; its -F flag controls details/ids/urls.
+  // mr list uses -F for JSON instead.
+  const args = [kind, "list", kind === "mr" ? "-F" : "-O", "json"];
+  if (query) {
+    args.push("--search", query);
+  }
+  if (typeof input.limit === "number") {
+    args.push("-P", String(input.limit));
+  }
+  return args;
+}
+
 export function createGitLabService(options: CreateGitLabServiceOptions = {}): ForgeService {
   const runner = options.runner ?? runGlabCommand;
   const resolveGlab = createCachedCliPathResolver(options.resolveGlabPath ?? resolveGlabPath);
@@ -1060,14 +1088,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
   async function runMergeRequestList(
     input: ListPullRequestsOptions,
   ): Promise<PullRequestSummary[]> {
-    const args = ["mr", "list", "-F", "json"];
-    const query = input.query?.trim();
-    if (query) {
-      args.push("--search", query);
-    }
-    if (typeof input.limit === "number") {
-      args.push("-P", String(input.limit));
-    }
+    const args = buildGitLabListArgs("mr", input);
     const mergeRequests = await runJson(
       args,
       { cwd: input.cwd },
@@ -1076,22 +1097,8 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     return mergeRequests.map(toPullRequestSummary);
   }
 
-  /**
-   * `glab issue list` toggles JSON output with `-O/--output` (text|json); its
-   * `-F/--output-format` flag means something else (details|ids|urls) and
-   * silently falls back to the human-readable table for an unknown value. This
-   * differs from `glab mr list`, where `-F/--output` is the JSON toggle. Using
-   * the wrong flag here would emit a text table that fails JSON parsing.
-   */
   async function runIssueList(input: ListIssuesOptions): Promise<IssueSummary[]> {
-    const args = ["issue", "list", "-O", "json"];
-    const query = input.query?.trim();
-    if (query) {
-      args.push("--search", query);
-    }
-    if (typeof input.limit === "number") {
-      args.push("-P", String(input.limit));
-    }
+    const args = buildGitLabListArgs("issue", input);
     const issues = await runJson(args, { cwd: input.cwd }, z.array(GitLabIssueSchema));
     return issues.map(toIssueSummary);
   }

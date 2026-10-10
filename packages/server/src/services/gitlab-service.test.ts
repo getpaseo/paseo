@@ -1328,6 +1328,71 @@ describe("createGitLabService", () => {
     );
   });
 
+  it("finds a merge request by number even when its title and description omit it", async () => {
+    const { service } = makeService((args) => {
+      // GitLab text search does not search the IID. Model both API behaviors.
+      if (args.includes("--search")) return ok("[]");
+      if (args[0] === "api" && args[1].includes("iids[]=14")) {
+        return ok(JSON.stringify([OPEN_MR]));
+      }
+      throw new Error(`unexpected glab args: ${args.join(" ")}`);
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: " 14 ",
+      kinds: ["change_request"],
+    });
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        kind: "change_request",
+        number: 14,
+        title: OPEN_MR.title,
+        headRefName: OPEN_MR.source_branch,
+        baseRefName: OPEN_MR.target_branch,
+      }),
+    ]);
+  });
+
+  it("finds issues by number through the same search interface", async () => {
+    const { service } = makeService((args) => {
+      if (args.includes("--search")) return ok("[]");
+      if (args[0] === "api" && args[1].includes("iids[]=7")) {
+        return ok(JSON.stringify([OPEN_ISSUE]));
+      }
+      throw new Error(`unexpected glab args: ${args.join(" ")}`);
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "7",
+      kinds: ["issue"],
+    });
+    expect(result.items).toEqual([
+      expect.objectContaining({ kind: "issue", number: 7, title: OPEN_ISSUE.title }),
+    ]);
+  });
+
+  it("keeps closed and missing merge requests out of number search results", async () => {
+    const closedMr = { ...OPEN_MR, state: "closed" };
+    const { service } = makeService((args) => {
+      if (args[0] !== "api") throw new Error(`unexpected glab args: ${args.join(" ")}`);
+      const endpoint = new URL(args[1], "https://gitlab.example.com/api/v4/");
+      const matches =
+        endpoint.searchParams.get("iids[]") === String(closedMr.iid) &&
+        endpoint.searchParams.get("state") !== "opened";
+      return ok(JSON.stringify(matches ? [closedMr] : []));
+    });
+    for (const query of ["14", "999999"]) {
+      const result = await service.searchIssuesAndPrs({
+        cwd: "/repo",
+        query,
+        limit: 10,
+        kinds: ["change_request"],
+      });
+      expect(result.authState).toBe("authenticated");
+      expect(result.items).toEqual([]);
+    }
+  });
+
   it("searches issues and merge requests and maps them to neutral results", async () => {
     const { service, calls } = makeService((args) => {
       if (args[0] === "issue") return ok(JSON.stringify([OPEN_ISSUE]));
