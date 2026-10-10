@@ -1,3 +1,4 @@
+import { terminalFileKey } from "./terminal-file-lifecycle.js";
 import { it, expect, afterEach } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
@@ -305,11 +306,13 @@ it("auto-removes terminal when shell exits", async () => {
   const cwd = realpathSync(tmpdir());
   const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   const exitedId = session.id;
+  expect(manager.fileLifecycle?.owner(terminalFileKey(exitedId))).toBe(exitedId);
   session.kill();
 
   await waitForCondition(() => manager.getTerminal(exitedId) === undefined, 10000);
 
   expect(manager.getTerminal(exitedId)).toBeUndefined();
+  expect(manager.fileLifecycle?.owner(terminalFileKey(exitedId))).toBeNull();
 
   const remaining = await manager.getTerminals(cwd);
   expect(remaining).toHaveLength(0);

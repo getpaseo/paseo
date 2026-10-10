@@ -1,3 +1,4 @@
+import { getTerminalImageStore } from "./host-clipboard.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -670,6 +671,9 @@ export async function createPaseoDaemon(
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+  });
+  const terminalImages = getTerminalImageStore(config.paseoHome, terminalManager, (error) => {
+    logger.warn({ err: error }, "Terminal image maintenance failed; retaining images");
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
@@ -1819,6 +1823,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    await terminalImages.stop();
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),

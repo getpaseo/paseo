@@ -1,3 +1,4 @@
+import { TerminalFileLifecycle } from "./terminal-file-lifecycle.js";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -85,6 +86,7 @@ interface TerminalWorkerProcess {
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
   disconnect(): void;
   kill(): boolean;
+  on(event: "disconnect", listener: () => void): this;
   on(event: "message", listener: (message: TerminalWorkerToParentMessage) => void): this;
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
 }
@@ -150,6 +152,7 @@ function forkTerminalWorker(): TerminalWorkerProcess {
 export function createWorkerTerminalManager(
   managerOptions: WorkerTerminalManagerOptions = {},
 ): TerminalManager {
+  const fileLifecycle = new TerminalFileLifecycle();
   const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
@@ -405,6 +408,7 @@ export function createWorkerTerminalManager(
       return undefined;
     }
     recordsById.delete(terminalId);
+    fileLifecycle.end(terminalId);
     terminalActivityTokenById.delete(terminalId);
     const terminalIds = terminalIdsByCwd.get(record.info.cwd);
     if (terminalIds) {
@@ -542,6 +546,7 @@ export function createWorkerTerminalManager(
   function handleWorkerEvent(message: TerminalWorkerToParentMessage): void {
     switch (message.type) {
       case "terminalCreated": {
+        fileLifecycle.created(message.terminal.id);
         registerRecord({
           info: asRequiredWorkerTerminalInfo(message.terminal),
           state: message.state,
@@ -606,8 +611,11 @@ export function createWorkerTerminalManager(
     handleWorkerEvent(message);
   });
 
+  worker.on("disconnect", () => fileLifecycle.unavailable());
+
   worker.on("exit", (code, signal) => {
     workerExited = true;
+    fileLifecycle.unavailable();
     if (workerShutdownTimer) {
       clearTimeout(workerShutdownTimer);
       workerShutdownTimer = null;
@@ -647,6 +655,7 @@ export function createWorkerTerminalManager(
   }
 
   return {
+    fileLifecycle,
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -683,6 +692,8 @@ export function createWorkerTerminalManager(
       options: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
       const terminalId = options.id ?? randomUUID();
+      const retiring = fileLifecycle.begin(terminalId);
+      if (retiring) await retiring;
       const activityToken = createActivityToken();
       const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
       terminalActivityTokenById.set(terminalId, activityToken);
@@ -705,6 +716,7 @@ export function createWorkerTerminalManager(
         };
       } catch (error) {
         terminalActivityTokenById.delete(terminalId);
+        // Keep this pending ID protected: a timed-out create can finish in the worker.
         throw error;
       }
       const session = registerRecord({ info: result.terminal, state: result.state });
@@ -814,6 +826,7 @@ export function createWorkerTerminalManager(
     },
 
     killAll(): void {
+      fileLifecycle.unavailable();
       void sendRequest({ type: "killAll" })
         .catch(() => {
           // no-op

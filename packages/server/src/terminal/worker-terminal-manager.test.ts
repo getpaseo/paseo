@@ -1,3 +1,4 @@
+import { terminalFileKey } from "./terminal-file-lifecycle.js";
 import { afterEach, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
@@ -939,7 +940,9 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
     contributions.push(event);
   });
 
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBe("terminal-a");
   manager.killTerminal("terminal-a");
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBe("terminal-a");
   const request = worker.sentMessages.find(
     (message) => message.type === "killTerminal" && message.terminalId === "terminal-a",
   );
@@ -959,6 +962,7 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
   });
 
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBeNull();
   expect(snapshots).toEqual([{ cwd: "/workspace", terminalIds: [] }]);
   expect(contributions).toEqual([
     {
@@ -967,4 +971,23 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
       workspaceId: "ws-test",
     },
   ]);
+});
+
+it("protects pending and timed-out creates, and treats worker disconnect as unknown inventory", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 5, forkWorker: () => worker });
+  const creation = manager.createTerminal({
+    id: "pending-image-owner",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+  });
+  const key = terminalFileKey("pending-image-owner");
+  expect(manager.fileLifecycle?.owner(key)).toBe("pending-image-owner");
+  expect(manager.fileLifecycle?.claimInactive(key)).toBeUndefined();
+  await expect(creation).rejects.toThrow("timed out");
+  expect(manager.fileLifecycle?.owner(key)).toBe("pending-image-owner");
+  worker.connected = false;
+  worker.emit("disconnect");
+  expect(manager.fileLifecycle?.owner(terminalFileKey("absent"))).toBeUndefined();
+  expect(manager.fileLifecycle?.claimInactive(terminalFileKey("absent"))).toBeUndefined();
 });
