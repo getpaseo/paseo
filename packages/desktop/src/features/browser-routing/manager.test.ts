@@ -9,6 +9,7 @@ import { createDesktopSettingsStore } from "../../settings/desktop-settings.js";
 import { startLocalBrowserProxy, type ProxyCredential } from "./local-proxy.js";
 import {
   BROWSER_ROUTING_CHANGED_EVENT,
+  BROWSER_ROUTING_PROVIDER_READY_EVENT,
   BrowserRoutingManager,
   browserRoutingPartitionForServer,
   type RoutedBrowserSession,
@@ -602,5 +603,77 @@ describe("BrowserRoutingManager", () => {
     expect(manager.bridge.hasProvider("server-a")).toBe(false);
     expect(registration.ok).toBe(true);
     expect(events).toHaveLength(eventCount);
+  });
+
+  const providerInput = {
+    serverId: "server-a",
+    subscriptionId: "sub",
+    initialWindowBytes: 1024,
+    maxDataBytes: 256,
+    maxStreams: 4,
+    connectTimeoutMs: 1000,
+  };
+
+  test("registering and unregistering a provider is announced to the other windows only", async () => {
+    const { manager, events } = await createHarness();
+    await manager.setEnabled("server-a", true);
+    manager.noteTrustedRenderer(9);
+    manager.noteTrustedRenderer(10);
+    const eventCount = events.length;
+
+    const registration = manager.bridge.register(9, providerInput);
+    if (!registration.ok) throw new Error("registration failed");
+    expect(events.slice(eventCount)).toEqual([
+      {
+        senderId: 10,
+        event: BROWSER_ROUTING_PROVIDER_READY_EVENT,
+        payload: { serverId: "server-a" },
+      },
+    ]);
+
+    // The owner lost its host connection but its window stays open.
+    expect(
+      manager.bridge.unregister(9, { serverId: "server-a", providerId: registration.providerId }),
+    ).toEqual({ ok: true });
+    expect(events.slice(eventCount + 1)).toEqual([
+      {
+        senderId: 10,
+        event: BROWSER_ROUTING_CHANGED_EVENT,
+        payload: { serverId: "server-a", enabled: true },
+      },
+    ]);
+  });
+
+  test("a renderer going away hands its hosts over exactly once", async () => {
+    const { manager, events } = await createHarness();
+    await manager.setEnabled("server-a", true);
+    manager.noteTrustedRenderer(9);
+    manager.noteTrustedRenderer(10);
+    manager.bridge.register(9, providerInput);
+    const eventCount = events.length;
+
+    manager.handleRendererGone(9);
+
+    expect(events.slice(eventCount)).toEqual([
+      {
+        senderId: 10,
+        event: BROWSER_ROUTING_CHANGED_EVENT,
+        payload: { serverId: "server-a", enabled: true },
+      },
+    ]);
+  });
+
+  test("disabling a host closes its provider without announcing a handoff", async () => {
+    const { manager, events } = await createHarness();
+    await manager.setEnabled("server-a", true);
+    manager.noteTrustedRenderer(9);
+    manager.noteTrustedRenderer(10);
+    manager.bridge.register(9, providerInput);
+    const eventCount = events.length;
+
+    await manager.setEnabled("server-a", false);
+
+    expect(manager.bridge.hasProvider("server-a")).toBe(false);
+    expect(events.slice(eventCount).filter((event) => event.senderId === 10)).toEqual([]);
   });
 });

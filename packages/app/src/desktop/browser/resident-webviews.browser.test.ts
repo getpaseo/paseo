@@ -6,6 +6,7 @@ import {
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
   getResidentBrowserWebview,
+  markRemoteProviderReady,
   recreateHostBrowserWebviews,
   reloadFailedHostBrowserWebviews,
   subscribeBrowserWebviewReplacement,
@@ -450,6 +451,25 @@ describe("resident browser webviews", () => {
 
 describe("host browser partitions", () => {
   afterEach(() => clearResidentBrowserWebviewsForTests());
+  it("loads the latest URL asked for while the host session is prepared", async () => {
+    let ready!: (partition: string) => void;
+    const partition = new Promise<string>((resolve) => {
+      ready = resolve;
+    });
+    const host = { ...profileHost, resolvePartition: () => partition };
+    const input = {
+      browserId: "navigate-while-preparing",
+      serverId: "remote",
+      workspaceId: "workspace",
+      profileHost: host,
+    };
+    const first = ensureResidentBrowserWebview({ ...input, url: "http://localhost:3000/old" });
+    const second = ensureResidentBrowserWebview({ ...input, url: "http://localhost:3000/new" });
+    ready("persist:paseo-browser-via-remote");
+    const [firstWebview, secondWebview] = await Promise.all([first, second]);
+    expect(secondWebview).toBe(firstWebview);
+    expect((secondWebview as HTMLElement & { src: string }).src).toBe("http://localhost:3000/new");
+  });
   it("waits for the host session and never creates a webview on preparation failure", async () => {
     let ready!: (partition: string) => void;
     const partition = new Promise<string>((resolve) => {
@@ -883,6 +903,24 @@ describe("failed navigation recovery after provider registration", () => {
       expect(failed.reload).toHaveBeenCalledTimes(2);
     },
   );
+  it("reloads failed routed tabs when another window registers the provider", async () => {
+    const tab = await routedTab("remote-owner");
+    fail(tab.webview, { errorCode: -111 });
+    // This window waits for another one (`provider_exists`), so its own status is not ready.
+    useNetworkRoutingStatus.getState().setStatus("remote", "idle");
+    reloadFailedHostBrowserWebviews("remote");
+    await Promise.resolve();
+    expect(tab.reload).not.toHaveBeenCalled();
+    markRemoteProviderReady("remote");
+    await Promise.resolve();
+    expect(tab.reload).toHaveBeenCalledOnce();
+    fail(tab.webview, { errorCode: -111 });
+    await Promise.resolve();
+    expect(tab.reload).toHaveBeenCalledOnce();
+    markRemoteProviderReady("remote");
+    await Promise.resolve();
+    expect(tab.reload).toHaveBeenCalledTimes(2);
+  });
   it("recovers a late 503 after registration but never loops within the same registration", async () => {
     const tab = await routedTab("late");
     useNetworkRoutingStatus.getState().setStatus("remote", "ready");

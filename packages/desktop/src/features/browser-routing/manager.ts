@@ -13,9 +13,14 @@ import {
   type LocalBrowserProxyOptions,
   type ProxyCredential,
 } from "./local-proxy.js";
-import { TunnelBridge, type TunnelBridgeEvent } from "./tunnel-bridge.js";
+import {
+  TunnelBridge,
+  type TunnelBridgeEvent,
+  type TunnelProviderChange,
+} from "./tunnel-bridge.js";
 
 export const BROWSER_ROUTING_CHANGED_EVENT = "browser_routing_changed";
+export const BROWSER_ROUTING_PROVIDER_READY_EVENT = "browser_routing_provider_ready";
 // A second `login` for the same request within this window means the proxy
 // refused what we answered; Chromium would otherwise retry 32 times.
 const LOGIN_RETRY_WINDOW_MS = 10_000;
@@ -108,6 +113,7 @@ export class BrowserRoutingManager {
     this.bridge = new TunnelBridge({
       emit: (senderId, event: TunnelBridgeEvent) => deps.emit(senderId, event.name, event.payload),
       log: (event, details) => this.log("info", `tunnel.${event}`, details),
+      onProviderChange: (change) => this.announceProviderChange(change),
     });
   }
 
@@ -291,18 +297,30 @@ export class BrowserRoutingManager {
 
   public handleRendererGone(senderId: number): void {
     this.trustedRendererIds.delete(senderId);
-    const releasedServerIds = this.bridge.closeProvidersForSender(senderId, "disconnected", {
-      notifyRenderer: false,
-    });
-    for (const serverId of releasedServerIds) {
-      if (this.hosts[serverId]?.enabled !== true) continue;
-      for (const rendererId of this.trustedRendererIds) {
-        const delivered = this.deps.emit(rendererId, BROWSER_ROUTING_CHANGED_EVENT, {
-          serverId,
-          enabled: true,
-        });
-        if (!delivered) this.trustedRendererIds.delete(rendererId);
-      }
+    // Releasing the providers announces the handoff to the remaining windows.
+    this.bridge.closeProvidersForSender(senderId, "disconnected", { notifyRenderer: false });
+  }
+
+  /**
+   * Only one window serves a host's tunnel; the others wait. A release re-emits the
+   * current routing value, which waiting windows treat as a handoff signal, whether the
+   * owner closed, crashed, or only lost its host connection. A registration tells the
+   * other windows to reload routed tabs that failed while no provider was serving.
+   */
+  private announceProviderChange(change: TunnelProviderChange): void {
+    if (change.kind === "released" && change.reason === "disabled") return;
+    if (this.hosts[change.serverId]?.enabled !== true) return;
+    const event =
+      change.kind === "released"
+        ? BROWSER_ROUTING_CHANGED_EVENT
+        : BROWSER_ROUTING_PROVIDER_READY_EVENT;
+    const payload =
+      change.kind === "released"
+        ? { serverId: change.serverId, enabled: true }
+        : { serverId: change.serverId };
+    for (const rendererId of this.trustedRendererIds) {
+      if (rendererId === change.senderId) continue;
+      if (!this.deps.emit(rendererId, event, payload)) this.trustedRendererIds.delete(rendererId);
     }
   }
 

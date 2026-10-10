@@ -3,6 +3,7 @@ import { isWeb } from "@/constants/platform";
 import {
   ROUTED_BROWSER_PARTITION_PREFIX,
   resolveBrowserPartition,
+  providerReadySchema,
   routingChangedSchema,
   routingDesktop,
 } from "./network-routing/contract";
@@ -404,7 +405,17 @@ interface ResidentBrowserInput extends BrowserWebviewIdentity {
   profileHost?: BrowserWebviewProfileHost;
 }
 const residentInputs = new Map<string, ResidentBrowserInput>();
-const pendingWebviews = new Map<string, Promise<HTMLElement | null>>();
+interface PendingWebview {
+  creation: Promise<HTMLElement | null>;
+  /** The latest URL asked for while the partition is prepared; the new guest loads it. */
+  url: string;
+}
+const pendingWebviews = new Map<string, PendingWebview>();
+/**
+ * Only one window serves a host's tunnel. Main tells the other windows when a provider
+ * registers, so their failed routed tabs recover too, once per registration.
+ */
+const remoteProviders = new Map<string, { generation: number; ready: boolean }>();
 const replacementListeners = new Map<string, Set<() => void>>();
 
 export function subscribeBrowserWebviewReplacement(
@@ -445,15 +456,21 @@ export function ensureResidentBrowserWebview(
 ): Promise<HTMLElement | null> {
   if (!input.profileHost) ensureBrowserRoutingListener();
   const pending = pendingWebviews.get(input.browserId);
-  if (pending) return pending;
-  const creation = createResidentBrowserWebview(input).finally(() => {
-    if (pendingWebviews.get(input.browserId) === creation) pendingWebviews.delete(input.browserId);
+  if (pending) {
+    // A navigation submitted while the partition is prepared must not be lost.
+    pending.url = input.url;
+    return pending.creation;
+  }
+  const entry: PendingWebview = { creation: Promise.resolve(null), url: input.url };
+  entry.creation = createResidentBrowserWebview(input, () => entry.url).finally(() => {
+    if (pendingWebviews.get(input.browserId) === entry) pendingWebviews.delete(input.browserId);
   });
-  pendingWebviews.set(input.browserId, creation);
-  return creation;
+  pendingWebviews.set(input.browserId, entry);
+  return entry.creation;
 }
 async function createResidentBrowserWebview(
   input: ResidentBrowserInput,
+  latestUrl: () => string,
 ): Promise<HTMLElement | null> {
   const browserId = trimNonEmpty(input.browserId);
   const ownerDocument = readDocument();
@@ -466,6 +483,7 @@ async function createResidentBrowserWebview(
   );
   // Closing a tab or changing routing while preparation was pending cancels that attach.
   if (residentInputs.get(browserId) !== input) return null;
+  const requestedUrl = latestUrl();
   const existing = getResidentBrowserWebview(browserId);
   if (existing?.getAttribute("partition") === partition) {
     if (
@@ -473,11 +491,13 @@ async function createResidentBrowserWebview(
       existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID
     )
       releaseResidentBrowserWebview(browserId, existing);
+    if (requestedUrl !== input.url) (existing as BrowserWebviewElement).src = requestedUrl;
     return existing;
   }
-  let url = input.url;
+  let url = requestedUrl;
   if (existing) {
-    url = readWebviewUrl(existing, url);
+    // A routing change keeps the page the old guest was on, unless a newer URL was asked for.
+    url = requestedUrl === input.url ? readWebviewUrl(existing, url) : requestedUrl;
     retireBrowserWebview(existing);
     residentWebviewsByBrowserId.delete(browserId);
   }
@@ -522,12 +542,22 @@ export async function recreateHostBrowserWebviews(
 let routingListener: Promise<() => void> | null = null;
 function ensureBrowserRoutingListener(): void {
   if (routingListener) return;
-  // Resident tabs outlive their host connection, so this listener follows the tabs.
-  routingListener = routingDesktop.listen("browser_routing_changed", (raw) => {
-    const event = routingChangedSchema.parse(raw);
-    void recreateHostBrowserWebviews(event.serverId, event.enabled).catch((error) =>
-      console.error("[browser-routing] webview preparation failed", error),
-    );
+  // Resident tabs outlive their host connection, so these listeners follow the tabs.
+  routingListener = Promise.all([
+    routingDesktop.listen("browser_routing_changed", (raw) => {
+      const event = routingChangedSchema.parse(raw);
+      // A routing change or a provider handoff: no window is known to be serving yet.
+      const remote = remoteProviders.get(event.serverId);
+      if (remote) remote.ready = false;
+      void recreateHostBrowserWebviews(event.serverId, event.enabled).catch((error) =>
+        console.error("[browser-routing] webview preparation failed", error),
+      );
+    }),
+    routingDesktop.listen("browser_routing_provider_ready", (raw) => {
+      markRemoteProviderReady(providerReadySchema.parse(raw).serverId);
+    }),
+  ]).then((disposers) => () => {
+    for (const dispose of disposers) dispose();
   });
   void routingListener.catch((error) =>
     console.error("[browser-routing] event listener failed", error),
@@ -618,6 +648,7 @@ export function clearResidentBrowserWebviewsForTests(): void {
   stopBrowserRoutingListener();
   residentInputs.clear();
   pendingWebviews.clear();
+  remoteProviders.clear();
   replacementListeners.clear();
   for (const webview of residentWebviewsByBrowserId.values()) {
     webview.remove();
@@ -630,11 +661,14 @@ export function clearResidentBrowserWebviewsForTests(): void {
 
 interface FailedHostNavigation {
   failed: boolean;
+  /** Last provider generation of this window's own status that reloaded the tab. */
   recoveredGeneration: number;
+  /** Last generation of a provider served by another window that reloaded the tab. */
+  recoveredRemoteGeneration: number;
 }
 const failedHostNavigations = new WeakMap<HTMLElement, FailedHostNavigation>();
 function observeHostNetworkFailures(webview: HTMLElement, serverId: string): void {
-  const navigation = { failed: false, recoveredGeneration: 0 };
+  const navigation = { failed: false, recoveredGeneration: 0, recoveredRemoteGeneration: 0 };
   failedHostNavigations.set(webview, navigation);
   const signal = listenerSignal(webview);
   webview.addEventListener(
@@ -674,21 +708,28 @@ function retryFailedHostNavigation(
   navigation: FailedHostNavigation,
 ): void {
   const host = useNetworkRoutingStatus.getState().hosts[serverId];
+  const remote = remoteProviders.get(serverId);
   const routed = webview.getAttribute("partition")?.startsWith(ROUTED_BROWSER_PARTITION_PREFIX);
-  if (
-    !routed ||
-    !navigation.failed ||
-    host?.status !== "ready" ||
-    navigation.recoveredGeneration >= host.generation
-  )
-    return;
-  navigation.recoveredGeneration = host.generation;
+  const ownReady = host?.status === "ready" && navigation.recoveredGeneration < host.generation;
+  const remoteReady =
+    remote?.ready === true && navigation.recoveredRemoteGeneration < remote.generation;
+  if (!routed || !navigation.failed || (!ownReady && !remoteReady)) return;
+  if (ownReady && host) navigation.recoveredGeneration = host.generation;
+  if (remoteReady && remote) navigation.recoveredRemoteGeneration = remote.generation;
   // A 503/-111 can arrive after the registration callback. Defer until the load event finishes.
   queueMicrotask(() => {
     if (retiredWebviews.has(webview) || !webview.isConnected) return;
     const guest = webview as HTMLElement & { reload(): void };
     guest.reload();
   });
+}
+/** Another window registered the host's provider: reload this window's failed routed tabs. */
+export function markRemoteProviderReady(serverId: string): void {
+  const remote = remoteProviders.get(serverId) ?? { generation: 0, ready: false };
+  remote.generation += 1;
+  remote.ready = true;
+  remoteProviders.set(serverId, remote);
+  reloadFailedHostBrowserWebviews(serverId);
 }
 export function reloadFailedHostBrowserWebviews(serverId: string): void {
   for (const [browserId, input] of residentInputs) {

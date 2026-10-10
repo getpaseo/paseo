@@ -20,6 +20,7 @@ export const ipcFailureSchema = z.object({
 });
 export const ipcAckSchema = z.union([z.object({ ok: z.literal(true) }), ipcFailureSchema]);
 export const routingChangedSchema = z.object({ serverId: z.string().min(1), enabled: z.boolean() });
+export const providerReadySchema = z.object({ serverId: z.string().min(1) });
 export class RoutingIpcError extends Error {
   constructor(
     readonly code: string,
