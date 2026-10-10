@@ -375,18 +375,22 @@ describe("file explorer service", () => {
     }
   });
 
-  it("rejects ~-prefixed paths that resolve outside the workspace", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-file-explorer-outside-home-"));
+  it("reads ~-prefixed paths outside the workspace", async () => {
+    const root = await createTempDir("paseo-file-explorer-outside-home-");
+    const homeRoot = await createHomeTempDir(".paseo-file-explorer-home-");
 
     try {
-      await expect(
-        readExplorerFile({
-          root,
-          relativePath: "~/some/file.txt",
-        }),
-      ).rejects.toThrow("Access outside of workspace is not allowed");
+      const filePath = path.join(homeRoot, "sample.txt");
+      await writeFile(filePath, "hello from home\n", "utf-8");
+
+      const result = await readExplorerFile({
+        root,
+        relativePath: `~/${path.relative(os.homedir(), filePath)}`,
+      });
+      expect(result.content).toBe("hello from home\n");
     } finally {
       await rm(root, { recursive: true, force: true });
+      await rm(homeRoot, { recursive: true, force: true });
     }
   });
 
