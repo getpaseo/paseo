@@ -1,3 +1,5 @@
+import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
+import { seedWorkspace } from "../support/helpers/seed-client";
 import { expect, test, type Page } from "../support/fixtures";
 import {
   expectNearBottom,
@@ -5,7 +7,27 @@ import {
   waitForScrollableChat,
 } from "../support/helpers/agent-bottom-anchor";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
-import { composerLocator, expectComposerVisible } from "../support/helpers/composer";
+import {
+  attachComposerTestImage,
+  pasteComposerTestImage,
+  enterComposerFullscreen,
+  exitComposerFullscreen,
+  resizeComposerViewport,
+  selectComposerDraftRange,
+  expectComposerDraftSelection,
+  expectComposerFullscreenControls,
+  sendComposerWithButton,
+  queueComposerWithButton,
+  configureComposerQueueSend,
+  activateRetainedComposerTab,
+  recordVisibleComposerGeometry,
+  expectNoCollapsedVisibleComposer,
+  expectAttachmentPill,
+  expectQueuedMessageButton,
+  startRunningMockAgent,
+  composerLocator,
+  expectComposerVisible,
+} from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 async function composerHeight(page: Page): Promise<number> {
@@ -129,6 +151,303 @@ test("composer growth keeps a bottom-pinned chat at the bottom", async ({ page }
     }
 
     await expectNearBottom(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+async function writeCompactDraft(page: Page, text: string): Promise<void> {
+  await composerLocator(page).fill(text);
+  await expect(composerLocator(page)).toHaveValue(text);
+}
+
+test("compact long drafts stop growing before the header", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-cap-",
+    title: "Composer cap",
+  });
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await writeCompactDraft(page, "A long draft line\n".repeat(40));
+    await expect.poll(() => composerHeight(page)).toBeLessThanOrEqual(160);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("compact fullscreen editing preserves the live draft and selection and stays open after send", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-fullscreen-",
+    title: "Fullscreen composer",
+  });
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await attachComposerTestImage(page);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await writeCompactDraft(page, "First line\nSecond line");
+    await expect(page.getByRole("button", { name: "Fullscreen", exact: true })).toHaveCount(0);
+    await writeCompactDraft(page, "First line\nSecond line\nThird line");
+    await expect(page.getByRole("button", { name: "Fullscreen", exact: true })).toBeVisible();
+    await writeCompactDraft(
+      page,
+      "A sentence with enough words to wrap across several rendered lines in a narrow input. ".repeat(
+        4,
+      ),
+    );
+    await expect(page.getByRole("button", { name: "Fullscreen", exact: true })).toBeVisible();
+    await selectComposerDraftRange(page, 4, 17);
+    await enterComposerFullscreen(page);
+    await expectComposerFullscreenControls(page);
+    await expectComposerDraftSelection(page, 4, 17);
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+    await writeCompactDraft(page, "Edited fullscreen draft\nSecond line\nThird line");
+    await selectComposerDraftRange(page, 3, 12);
+    await exitComposerFullscreen(page);
+    await expect(composerLocator(page)).toHaveValue(
+      "Edited fullscreen draft\nSecond line\nThird line",
+    );
+    await expectComposerDraftSelection(page, 3, 12);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await expect(composerLocator(page)).toBeFocused();
+    await enterComposerFullscreen(page);
+    await writeCompactDraft(page, "Short draft");
+    await expectComposerFullscreenControls(page);
+    await selectComposerDraftRange(page, 0, 5);
+    await resizeComposerViewport(page, "landscape");
+    await expectComposerFullscreenControls(page);
+    await expectComposerDraftSelection(page, 0, 5);
+    await expect(composerLocator(page)).toHaveValue("Short draft");
+    await expect(composerLocator(page)).toBeFocused();
+    await resizeComposerViewport(page, "portrait");
+    await sendComposerWithButton(page);
+    await expect(composerLocator(page)).toHaveValue("");
+    await expectComposerFullscreenControls(page);
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("fullscreen submit rejection retains the editable draft and supports retry", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-fullscreen-retry-",
+    title: "Fullscreen retry",
+    featureValues: { mockPromptRejections: 1 },
+  });
+  const draft = "First line\nSecond line\nThird line";
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await writeCompactDraft(page, draft);
+    await enterComposerFullscreen(page);
+    await sendComposerWithButton(page);
+    await expect(page.getByTestId("composer-fullscreen").getByRole("alert")).toHaveText(
+      "Requested mock prompt rejection",
+    );
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await expect(composerLocator(page)).toBeEditable();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    await sendComposerWithButton(page);
+    await expect(composerLocator(page)).toHaveValue("");
+    await expectComposerFullscreenControls(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("fullscreen Send keeps the configured queue behavior while an agent runs", async ({
+  page,
+}) => {
+  await configureComposerQueueSend(page);
+  await resizeComposerViewport(page, "portrait");
+  const agent = await startRunningMockAgent(page, {
+    prefix: "composer-fullscreen-queue-",
+    model: "one-minute-stream",
+    prompt: "Stay running for fullscreen queue test.",
+  });
+  try {
+    await writeCompactDraft(page, "Queued first line\nSecond line\nThird line");
+    await enterComposerFullscreen(page);
+    await expectComposerFullscreenControls(page);
+    await queueComposerWithButton(page);
+    await expect(composerLocator(page)).toHaveValue("");
+    await expectComposerFullscreenControls(page);
+    await exitComposerFullscreen(page);
+    await expectQueuedMessageButton(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("image paste stays attached to the active editor across fullscreen entry and exit", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-paste-remount-",
+    title: "Composer paste",
+  });
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await writeCompactDraft(page, "First line\nSecond line\nThird line");
+    expect(await pasteComposerTestImage(page)).toBe(true);
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(1);
+    await enterComposerFullscreen(page);
+    expect(await pasteComposerTestImage(page)).toBe(true);
+    await exitComposerFullscreen(page);
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(2);
+    expect(await pasteComposerTestImage(page)).toBe(true);
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(3);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("retained agent tabs preserve fullscreen editing and paste when switched away and back", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "composer-retained-fullscreen-" });
+  try {
+    const first = await createMockIdleAgent(workspace.client, {
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "First retained chat",
+    });
+    const second = await createMockIdleAgent(workspace.client, {
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "Second retained chat",
+    });
+    await openWorkspaceWithAgents(page, [first, second]);
+    await resizeComposerViewport(page, "portrait");
+    const draft = "Live first line\nLive second line\nLive third line";
+    await writeCompactDraft(page, draft);
+    await enterComposerFullscreen(page);
+    await selectComposerDraftRange(page, 4, 17);
+    await activateRetainedComposerTab(page, first.title);
+    await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveCount(0);
+    await writeCompactDraft(page, "Other tab draft");
+    await shrinkVisibleViewport(page);
+    await activateRetainedComposerTab(page, second.title);
+    await expectComposerFullscreenControls(page);
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await expectFullscreenInsideVisibleViewport(page);
+    await expectComposerDraftSelection(page, 4, 17);
+    await expect(composerLocator(page)).toBeFocused();
+    expect(await pasteComposerTestImage(page)).toBe(true);
+    await exitComposerFullscreen(page);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("retained inline composers keep usable capacity through hidden tab geometry", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "composer-retained-capacity-" });
+  try {
+    const first = await createMockIdleAgent(workspace.client, {
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "First capacity chat",
+    });
+    const second = await createMockIdleAgent(workspace.client, {
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "Second capacity chat",
+    });
+    await openWorkspaceWithAgents(page, [first, second]);
+    await resizeComposerViewport(page, "portrait");
+    const draft = "Retained long line\n".repeat(40);
+    await writeCompactDraft(page, draft);
+    await recordVisibleComposerGeometry(page);
+    await activateRetainedComposerTab(page, first.title);
+    await writeCompactDraft(page, "Other visible draft");
+    await activateRetainedComposerTab(page, second.title);
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await expect.poll(() => composerHeight(page)).toBeLessThanOrEqual(160);
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
+    await expectNoCollapsedVisibleComposer(page);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+async function shrinkVisibleViewport(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+  await expect.poll(() => page.evaluate(() => window.visualViewport!.height)).toBe(422);
+  await cdp.detach();
+}
+
+async function panVisibleViewport(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: 4, y: 300 }],
+  });
+  for (let y = 290; y >= 100; y -= 10) {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: 4, y }],
+    });
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await expect.poll(() => page.evaluate(() => window.visualViewport!.offsetTop)).toBeGreaterThan(0);
+  await cdp.detach();
+}
+
+async function expectFullscreenInsideVisibleViewport(page: Page): Promise<void> {
+  await expect
+    .poll(() =>
+      page.getByTestId("composer-fullscreen").evaluate((element) => {
+        const viewport = window.visualViewport!;
+        const frame = element.getBoundingClientRect();
+        const send = element.querySelector('[aria-label="Send message"]')!.getBoundingClientRect();
+        return {
+          frameFits:
+            Math.abs(frame.top - viewport.offsetTop) < 1 &&
+            Math.abs(frame.left - viewport.offsetLeft) < 1 &&
+            Math.abs(frame.height - viewport.height) < 1 &&
+            Math.abs(frame.width - viewport.width) < 1,
+          sendFits:
+            send.top >= viewport.offsetTop &&
+            send.bottom <= viewport.offsetTop + viewport.height &&
+            send.left >= viewport.offsetLeft &&
+            send.right <= viewport.offsetLeft + viewport.width,
+        };
+      }),
+    )
+    .toEqual({ frameFits: true, sendFits: true });
+}
+
+test("fullscreen Send follows the visible viewport when it shrinks and pans", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-visible-viewport-",
+    title: "Visible viewport composer",
+  });
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await writeCompactDraft(page, "First line\nSecond line\nThird line");
+    await enterComposerFullscreen(page);
+    await expectFullscreenInsideVisibleViewport(page);
+    await shrinkVisibleViewport(page);
+    await expectFullscreenInsideVisibleViewport(page);
+    await panVisibleViewport(page);
+    await expectFullscreenInsideVisibleViewport(page);
   } finally {
     await agent.cleanup();
   }

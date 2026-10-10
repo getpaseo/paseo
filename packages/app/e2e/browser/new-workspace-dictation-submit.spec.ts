@@ -6,6 +6,15 @@ import {
   selectWorkspaceIsolation,
 } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  composerLocator,
+  expectComposerVisible,
+  fillComposerDraft,
+  enterComposerFullscreen,
+  resizeComposerViewport,
+  expectComposerFullscreenControls,
+} from "../support/helpers/composer";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 type WebSocketMessage = string | Buffer;
@@ -195,4 +204,53 @@ test.describe("New Workspace dictation submit", () => {
       await seeded.cleanup();
     }
   });
+});
+
+async function startDictationWithShortcut(page: Page): Promise<void> {
+  await composerLocator(page).press("Control+d");
+}
+
+test("dictation shortcut leaves retained fullscreen and exposes recording controls", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "fullscreen-dictation-",
+    title: "Fullscreen dictation shortcut",
+  });
+  await installSyntheticMicrophone(page);
+  const harness = await installDictationFailureHarness(page);
+  const draft = "First line\nSecond line\nThird line";
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await fillComposerDraft(page, draft);
+    await enterComposerFullscreen(page);
+    await resizeComposerViewport(page, "landscape");
+    await expectComposerFullscreenControls(page);
+    await startDictationWithShortcut(page);
+    await harness.waitForAudio();
+    await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cancel dictation", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Insert transcription", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Insert transcription and send", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+    await expect(composerLocator(page)).toBeEditable();
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await resizeComposerViewport(page, "portrait");
+    await enterComposerFullscreen(page);
+    await resizeComposerViewport(page, "landscape");
+    await composerLocator(page).press("Control+Shift+d");
+    await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveCount(0);
+    await expect(
+      page.getByText("Realtime voice is disabled in this test.", { exact: true }),
+    ).toBeVisible();
+    await expect(composerLocator(page)).toHaveValue(draft);
+  } finally {
+    await agent.cleanup();
+  }
 });

@@ -10,6 +10,7 @@ export interface MessagePayload {
 }
 
 export interface TextReplacement {
+  kind: "initial" | "replace";
   key: string;
   text: string;
 }

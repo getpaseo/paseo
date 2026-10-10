@@ -1,6 +1,6 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
-import type { MessagePayload } from "@/composer/types";
+import type { MessagePayload, TextReplacement } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
@@ -191,4 +191,12 @@ export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<
   }
 
   await ctx.voice.stopVoice();
+}
+
+export function resolveComposerSurfaceText(
+  liveText: string,
+  replacement: TextReplacement,
+  appliedReplacementKey: string,
+): string {
+  return replacement.key === appliedReplacementKey ? liveText : replacement.text;
 }

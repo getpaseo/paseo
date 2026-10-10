@@ -1,6 +1,7 @@
 import type { TextInputProps } from "react-native";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 
+/** Stable for the mounted editor lifetime; reset() owns any inner input replacement. */
 export interface EditingTextInputHandle {
   focus(): void;
   blur(): void;

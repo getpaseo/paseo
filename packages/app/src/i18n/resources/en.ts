@@ -120,6 +120,8 @@ export const en = {
     input: {
       accessibilityLabel: "Message agent...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "Fullscreen",
+      exitFullscreen: "Exit fullscreen",
       focusHint: "{{shortcut}} to focus",
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",

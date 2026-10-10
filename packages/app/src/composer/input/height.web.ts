@@ -7,6 +7,8 @@ interface ComposerHeightArgs {
   textareaRef: RefObject<HTMLElement | null>;
   minHeight: number;
   maxHeight: number;
+  onRenderedLinesChange?: (lines: number) => void;
+  presentationKey?: boolean;
 }
 
 const COPIED_STYLES = [
@@ -36,11 +38,13 @@ export function useComposerHeight({
   textareaRef,
   minHeight,
   maxHeight,
+  onRenderedLinesChange,
+  presentationKey,
 }: ComposerHeightArgs): ComposerHeightResult {
   const [height, setHeight] = useState(minHeight);
   const heightRef = useRef(minHeight);
-  const paramsRef = useRef({ getText, minHeight, maxHeight });
-  paramsRef.current = { getText, minHeight, maxHeight };
+  const paramsRef = useRef({ getText, minHeight, maxHeight, onRenderedLinesChange });
+  paramsRef.current = { getText, minHeight, maxHeight, onRenderedLinesChange };
   const mirrorRef = useRef<HTMLTextAreaElement | null>(null);
 
   const setBoundedHeight = useCallback((nextHeight: number) => {
@@ -65,6 +69,13 @@ export function useComposerHeight({
       }
       mirror.style.width = `${sourceWidth}px`;
       mirror.value = text.endsWith("\n") ? `${text} ` : text;
+      const padding =
+        parseFloat(computedStyle.paddingTop) + parseFloat(computedStyle.paddingBottom);
+      const lineHeight = parseFloat(computedStyle.lineHeight);
+      if (lineHeight > 0)
+        paramsRef.current.onRenderedLinesChange?.(
+          Math.round((mirror.scrollHeight - padding) / lineHeight),
+        );
       setBoundedHeight(mirror.scrollHeight);
     },
     [setBoundedHeight, textareaRef],
@@ -101,7 +112,7 @@ export function useComposerHeight({
 
   useLayoutEffect(() => {
     measure(getText());
-  }, [maxHeight, minHeight, getText, measure]);
+  }, [maxHeight, minHeight, getText, measure, presentationKey]);
 
   useEffect(() => {
     const source = textareaRef.current;
@@ -115,7 +126,7 @@ export function useComposerHeight({
     });
     observer.observe(source);
     return () => observer.disconnect();
-  }, [measure, textareaRef]);
+  }, [measure, textareaRef, presentationKey]);
 
   const onTextChange = useCallback(
     (_previousText: string, nextText: string) => measure(nextText),
