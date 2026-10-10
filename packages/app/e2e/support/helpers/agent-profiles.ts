@@ -3,6 +3,7 @@ import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { gotoAppShell, openSettings } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
+import { answerConfirmDialog } from "./confirm-dialog";
 import { getServerId } from "./server-id";
 import { expectAppRoute } from "./route-assertions";
 import { openSettingsHost } from "./settings";
@@ -205,18 +206,12 @@ export async function moveAgentProfileDown(page: Page, name: string): Promise<vo
 }
 
 /**
- * The remove confirmation is `window.confirm` on browser web, so the dialog is
- * consumed here — and its text is asserted, since naming the profile is the
- * whole point of confirming.
+ * Answers the remove confirmation here and asserts its text, since naming the
+ * profile is the whole point of confirming.
  */
 export async function removeAgentProfile(page: Page, name: string): Promise<void> {
-  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
-    const message = dialog.message();
-    await dialog.accept();
-    return message;
-  });
   await agentProfileRow(page, name).getByRole("button", { name: "Remove", exact: true }).click();
-  expect(await dialogMessage).toContain(`Remove "${name}"?`);
+  expect(await answerConfirmDialog(page, "accept")).toContain(`Remove "${name}"?`);
   await expect(agentProfileRow(page, name)).toHaveCount(0, { timeout: 30_000 });
 }
 

@@ -13,6 +13,7 @@ import { getServerId } from "../support/helpers/server-id";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -42,13 +43,10 @@ async function removeProjectFromSidebar(page: Page, projectViewKey: string): Pro
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
 
-  // Removing a project raises a browser confirm; accept it so the
-  // user-confirmed removal proceeds deterministically.
-  page.once("dialog", (dialog) => void dialog.accept());
-
   const removeItem = page.getByTestId(`sidebar-project-menu-remove-${projectViewKey}`);
   await expect(removeItem).toBeVisible({ timeout: 10_000 });
   await removeItem.click();
+  await answerConfirmDialog(page, "accept");
 }
 
 async function addProjectFromPicker(page: Page, projectPath: string): Promise<string> {

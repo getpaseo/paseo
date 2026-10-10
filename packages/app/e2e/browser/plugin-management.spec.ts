@@ -9,6 +9,7 @@ import type { TestInfo } from "@playwright/test";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { expect, test as base, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
@@ -507,8 +508,8 @@ async function toggleRemoveAndReinstallLocalPlugin(page: Page, directory: string
   await openContributionFromSettings(page, "Plugin v3", "Plugin v3 cleanup 6");
 
   await openPluginSettings(page);
-  page.once("dialog", (dialog) => dialog.accept());
   await selectPluginAction(page, "e2e-plugin", "Remove");
+  await answerConfirmDialog(page, "accept");
   await expect(page.getByTestId("plugin-row-e2e-plugin")).toHaveCount(0);
 
   await installPlugin(page, directory);
@@ -651,8 +652,8 @@ async function retryNpmInstallAndInspectRow(page: Page, width: number, testInfo:
 async function reloadAndRemoveNpmPlugin(page: Page) {
   await selectPluginAction(page, "npm-review", "Reload");
   await expect(page.getByText("Reloaded npm-review", { exact: true })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await selectPluginAction(page, "npm-review", "Remove");
+  await answerConfirmDialog(page, "accept");
   await expect(page.getByText("Removed npm-review", { exact: true })).toBeVisible();
   await expect(page.getByLabel("npm-review running")).toHaveCount(0);
 }

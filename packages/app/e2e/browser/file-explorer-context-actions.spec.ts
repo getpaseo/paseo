@@ -7,6 +7,7 @@ import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 
 let workspace: SeededWorkspace;
 
@@ -298,39 +299,21 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
     .getByText("Delete", { exact: true })
     .evaluate((element) => getComputedStyle(element).color);
   await expect(deleteAction.locator("svg")).toHaveCSS("stroke", deleteLabelColor);
-  const cancelledConfirmation = new Promise<string>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      const message = dialog.message();
-      await dialog.dismiss();
-      resolve(message);
-    });
-  });
   await page.getByText("Delete", { exact: true }).click();
-  expect(await cancelledConfirmation).toContain("renamed.txt");
+  const cancelledConfirmation = await answerConfirmDialog(page, "dismiss");
+  expect(cancelledConfirmation).toContain("renamed.txt");
   await expect(entry("renamed.txt")).toBeVisible();
 
   await entry("renamed.txt").click({ button: "right" });
-  const confirmation = new Promise<string>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      const message = dialog.message();
-      await dialog.accept();
-      resolve(message);
-    });
-  });
   await page.getByText("Delete", { exact: true }).click();
-  expect(await confirmation).toContain("renamed.txt");
+  const confirmation = await answerConfirmDialog(page, "accept");
+  expect(confirmation).toContain("renamed.txt");
   await expect(entry("renamed.txt")).toBeHidden();
 
   await entry("renamed-folder").click({ button: "right" });
-  const folderConfirmation = new Promise<string>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      const message = dialog.message();
-      await dialog.accept();
-      resolve(message);
-    });
-  });
   await page.getByText("Delete", { exact: true }).click();
-  expect(await folderConfirmation).toContain("renamed-folder");
+  const folderConfirmation = await answerConfirmDialog(page, "accept");
+  expect(folderConfirmation).toContain("renamed-folder");
   await expect(entry("renamed-folder")).toBeHidden();
   await expect(entry("child.txt")).toBeHidden();
 });
@@ -407,14 +390,8 @@ test("keeps an entry visible when deletion fails", async ({ page }) => {
     .getByTestId("file-explorer-tree-scroll")
     .getByText("README.md", { exact: true });
   await readme.click({ button: "right" });
-  const confirmation = new Promise<void>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      await dialog.accept();
-      resolve();
-    });
-  });
   await page.getByText("Delete", { exact: true }).click();
-  await confirmation;
+  await answerConfirmDialog(page, "accept");
 
   await expect(page.getByText("Injected delete failure", { exact: true })).toBeVisible();
   await expect(readme).toBeVisible();

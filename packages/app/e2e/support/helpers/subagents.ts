@@ -1,5 +1,6 @@
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { expect, type Page } from "@playwright/test";
+import { answerConfirmDialog } from "./confirm-dialog";
 import { daemonWsRoutePattern } from "./daemon-port";
 import type { SeededWorkspace } from "./seed-client";
 
@@ -299,12 +300,8 @@ export async function detachSubagentFromTrack(page: Page, childId: string): Prom
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.hover();
 
-  page.once("dialog", (dialog) => {
-    expect(dialog.message()).toContain("Detach subagent?");
-    void dialog.accept();
-  });
-
   const detachButton = page.getByTestId(`subagents-track-detach-${childId}`);
   await expect(detachButton).toBeVisible({ timeout: 30_000 });
   await detachButton.click();
+  expect(await answerConfirmDialog(page, "accept")).toContain("Detach subagent?");
 }
