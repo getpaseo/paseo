@@ -189,8 +189,19 @@ export async function runLsCommand(
     }
 
     const labelFilters = parseLabelFilters(options.label);
-    const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    const fetchOptions = buildAgentLsFetchOptions(options);
+    let agents: AgentSnapshotPayload[] = [];
+    let cursor: string | undefined;
+    // createdAt never changes, so agents cannot move past the cursor while the pages are read.
+    do {
+      const payload = await client.fetchAgents({
+        ...fetchOptions,
+        sort: [{ key: "created_at", direction: "desc" }],
+        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+      });
+      agents.push(...payload.entries.map((entry) => entry.agent));
+      cursor = payload.pageInfo.nextCursor ?? undefined;
+    } while (cursor);
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {
