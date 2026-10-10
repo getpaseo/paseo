@@ -42,6 +42,7 @@ import {
   type ProviderRefreshContext,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
@@ -1150,7 +1151,32 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
   };
 }
 
-function createRuntime(
+let cachedPiBinaryPath: string | null = null;
+
+/**
+ * Resolve the Pi binary to a concrete path (#6235). Diagnostics already resolve
+ * one; launching that same path keeps the runtime and the diagnostic in
+ * agreement instead of relying on the spawned shell to re-resolve a bare name,
+ * which fails for npm `.cmd` shims when the daemon child cannot see the shim
+ * directory or PATHEXT. A hit is cached and revalidated so a Pi that moved or
+ * was reinstalled is resolved again instead of launching a stale path; a miss is
+ * retried so a Pi installed after the daemon started is picked up without a
+ * restart.
+ */
+async function resolvePiBinaryPath(): Promise<string | null> {
+  if (cachedPiBinaryPath && existsSync(cachedPiBinaryPath)) {
+    return cachedPiBinaryPath;
+  }
+  cachedPiBinaryPath = null;
+  try {
+    cachedPiBinaryPath = await findExecutable(PI_BINARY_COMMAND);
+  } catch {
+    return null;
+  }
+  return cachedPiBinaryPath;
+}
+
+export function createPiRuntime(
   logger: Logger,
   runtimeSettings: ProviderRuntimeSettings | undefined,
   requestTimeoutMs: number,
@@ -1161,6 +1187,7 @@ function createRuntime(
     command: [PI_BINARY_COMMAND],
     commandsRpcName: "get_commands",
     requestTimeoutMs,
+    resolveDefaultCommand: resolvePiBinaryPath,
   });
 }
 
@@ -2757,7 +2784,7 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   private resolveRuntime(rpcTimeoutMs: number): PiRuntime {
-    return this.runtime ?? createRuntime(this.logger, this.runtimeSettings, rpcTimeoutMs);
+    return this.runtime ?? createPiRuntime(this.logger, this.runtimeSettings, rpcTimeoutMs);
   }
 
   private async prepareMcpInjection(
