@@ -2090,6 +2090,7 @@ export const fr: TranslationResources = {
     addHost: "Ajouter un hôte",
     enableBuiltInDaemon: "Activer le daemon intégré",
     projects: "Projets",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "Impossible de charger les projets depuis l’hôte {{hostName}} : {{message}}",
       editProject: "Modifier {{projectName}}",

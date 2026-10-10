@@ -3,6 +3,7 @@
  */
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectHostEntry, ProjectSummary, WorkspaceSummary } from "@/utils/projects";
 import type { ProjectHostError, UseProjectsResult } from "@/hooks/use-projects";
@@ -238,6 +239,7 @@ function findRow(container: HTMLElement, projectKey: string): HTMLElement {
 describe("ProjectsScreen", () => {
   let container: HTMLElement | null = null;
   let root: Root | null = null;
+  let queryClient: QueryClient;
 
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -246,6 +248,7 @@ describe("ProjectsScreen", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     setProjectsState({});
     push.mockReset();
   });
@@ -257,6 +260,7 @@ describe("ProjectsScreen", () => {
       });
     }
     root = null;
+    queryClient.clear();
     container?.remove();
     container = null;
     vi.unstubAllGlobals();
@@ -264,7 +268,11 @@ describe("ProjectsScreen", () => {
 
   function render(serverId = "host-a") {
     act(() => {
-      root?.render(<ProjectsScreen serverId={serverId} />);
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <ProjectsScreen serverId={serverId} />
+        </QueryClientProvider>,
+      );
     });
   }
 
