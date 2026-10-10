@@ -5136,6 +5136,42 @@ test("session config drift events update state through the stream channel", asyn
   expect(persisted?.config?.modeId).toBe("build");
 });
 
+test("provider-side model switch survives reload and daemon restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-model-switch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class ModelSwitchClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+  const client = new ModelSwitchClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000134",
+  });
+
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.2-codex" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  capturedSession!.pushEvent({
+    type: "model_changed",
+    provider: "codex",
+    runtimeInfo: { provider: "codex", sessionId: capturedSession!.id, model: "gpt-5.4" },
+  });
+  await manager.flush();
+
+  await manager.reloadAgentSession(snapshot.id);
+  expect(client.resumeOverrides.at(-1)?.model).toBe("gpt-5.4");
+  expect((await storage.get(snapshot.id))?.config?.model).toBe("gpt-5.4");
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("setLabels merges and persists labels", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
   const storagePath = join(workdir, "agents");
