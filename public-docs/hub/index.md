@@ -23,6 +23,7 @@ What that gives you today:
 - Triggers you can keep in a repository and deploy from the CLI.
 - A record of everything that arrived, what it matched, and what ran.
 - One place for your team to see all of it.
+- [Agent control from an MCP client](/docs/hub/mcp), with worker status and saved results.
 
 Your daemons keep running agents where they always did. Hub decides when to ask them to.
 
@@ -48,6 +49,7 @@ The file names the app connection, allowed user, daemon, working directory, agen
 6. [GitHub access](/docs/hub/github)
 7. [Configuration](/docs/hub/configuration)
 8. [Security](/docs/hub/security)
+9. [MCP](/docs/hub/mcp)
 
 If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
