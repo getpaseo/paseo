@@ -52,6 +52,7 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
+import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -500,6 +501,63 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+  ]);
+}
+
+interface KeyboardImagesEffectArgs {
+  getWebTextArea: () => TextAreaHandle | null;
+  hasFinePointer: boolean;
+  onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  isConnected: boolean;
+  disabled: boolean;
+  isDictating: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+}
+
+// Chrome on Android lets an on-screen keyboard insert an image (a clipboard image, a sticker,
+// a GIF) only into a field it treats as a rich editor, and delivers the image as a paste event,
+// which the paste effect turns into an attachment. Marking the textarea read-write makes Chrome
+// treat it as one; typing still goes to the textarea's own plain-text editor. The marking applies
+// only while the paste handler would accept an image, because a read-only composer marked
+// read-write would be reported to the keyboard as editable.
+function useKeyboardImagesEffect(args: KeyboardImagesEffectArgs): void {
+  const {
+    getWebTextArea,
+    hasFinePointer,
+    onAddImages,
+    isConnected,
+    disabled,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+  } = args;
+
+  useEffect(() => {
+    if (
+      !isWeb ||
+      hasFinePointer ||
+      !onAddImages ||
+      !isConnected ||
+      disabled ||
+      isDictating ||
+      isRealtimeVoiceForCurrentAgent
+    )
+      return;
+
+    const textarea = getWebTextArea() as HTMLElement | null;
+    if (!textarea) return;
+
+    textarea.style.setProperty("-webkit-user-modify", "read-write");
+    return () => {
+      textarea.style.removeProperty("-webkit-user-modify");
+    };
+  }, [
+    getWebTextArea,
+    hasFinePointer,
+    onAddImages,
+    isConnected,
+    disabled,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
   ]);
 }
 
@@ -1189,6 +1247,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
+    const hasFinePointer = useHasFinePointer();
     const { height: windowHeight } = useWindowDimensions();
     const maxInputHeight = resolveMaxInputHeight(windowHeight);
     const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -1581,6 +1640,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isDictating,
       isRealtimeVoiceForCurrentAgent,
       onAddImages,
+    });
+
+    useKeyboardImagesEffect({
+      getWebTextArea,
+      hasFinePointer,
+      onAddImages,
+      isConnected,
+      disabled,
+      isDictating,
+      isRealtimeVoiceForCurrentAgent,
     });
 
     const handleSelectionChange = useCallback(
