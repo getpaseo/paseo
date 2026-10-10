@@ -62,6 +62,7 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const rowHeight = isCompact ? density.rowHeight.xs : density.rowHeight.md;
+  const navigationRowHeight = isCompact ? density.tightRowHeight.xs : density.tightRowHeight.md;
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const collapsed = useSidebarViewStore((state) => state.navCollapsed);
@@ -78,6 +79,7 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
     viewportHeight,
     footerHeight: resolvedFooterHeight,
     rowHeight,
+    navigationRowHeight,
   });
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const rowsStyle = useMemo(
@@ -97,11 +99,12 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
           viewportHeight,
           footerHeight: resolvedFooterHeight,
           rowHeight,
+          navigationRowHeight,
         }),
       );
       setDraggedHeight(null);
     },
-    [resolvedFooterHeight, rowHeight, setStoredHeight, viewportHeight],
+    [navigationRowHeight, resolvedFooterHeight, rowHeight, setStoredHeight, viewportHeight],
   );
 
   if (visibleItems.length === 0) return null;

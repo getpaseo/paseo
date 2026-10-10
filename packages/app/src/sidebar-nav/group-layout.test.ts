@@ -30,6 +30,20 @@ describe("resolveSidebarNavGroupMaxHeight", () => {
 });
 
 describe("resolveSidebarNavGroupHeight", () => {
+  it("keeps a full compact navigation row when dragged fully up", () => {
+    for (const viewportHeight of [900, 100]) {
+      expect(
+        resolveSidebarNavGroupHeight({
+          requestedHeight: 0,
+          viewportHeight,
+          footerHeight: SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+          rowHeight: 44,
+          navigationRowHeight: 40,
+        }),
+      ).toBe(40);
+    }
+  });
+
   it("uses the default share until the owner drags the group", () => {
     expect(
       resolveSidebarNavGroupHeight({
