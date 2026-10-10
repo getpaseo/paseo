@@ -29,16 +29,18 @@ export interface AssistantFileLinkActions {
   canResolveFile(source: AssistantFileLinkSource): boolean;
 }
 
+interface AssistantFileLinkLookupKey {
+  query: string;
+  path: string;
+  lineStart: number | null;
+  lineEnd: number | null;
+}
+
 type AssistantFileLinkQueryKey = readonly [
   "assistantFileLink",
   string | null,
   string | null,
-  {
-    query: string;
-    path: string;
-    lineStart: number | null;
-    lineEnd: number | null;
-  } | null,
+  AssistantFileLinkLookupKey | null,
 ];
 
 const DISABLED_QUERY_KEY = ["assistantFileLink", null, null, null] as const;

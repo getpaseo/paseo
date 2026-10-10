@@ -121,6 +121,39 @@ test.describe("CodeMirror workspace file editing", () => {
     }
   });
 
+  for (const order of ["raw-first", "href-first"] as const) {
+    test(`opens literal and encoded percent filenames independently ${order}`, async ({ page }) => {
+      const session = await seedMockAgentWorkspace({
+        repoPrefix: "percent-link-cache-",
+        title: "Distinct file links",
+        initialPrompt: "Show both filenames",
+        featureValues: {
+          mockAssistantResponse: "Raw `literal%20.md`. [Decoded](literal%20.md).",
+        },
+      });
+      try {
+        await writeFile(path.join(session.cwd, "literal%20.md"), "# Literal filename\n");
+        await writeFile(path.join(session.cwd, "literal .md"), "# Decoded filename\n");
+        await openAgentRoute(page, session);
+        const links = order === "raw-first" ? ["raw", "href"] : ["href", "raw"];
+        for (const link of links) {
+          await returnToAssistant(page, session.agentId);
+          if (link === "raw") {
+            await openAssistantInlinePath(page, "literal%20.md");
+            await expectFileTabOpen(page, "literal%20.md");
+            await expectPreviewText(page, "Literal filename");
+          } else {
+            await openAssistantMarkdownLink(page, "Decoded");
+            await expectFileTabOpen(page, "literal .md");
+            await expectPreviewText(page, "Decoded filename");
+          }
+        }
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
+
   test("jumps to each relative reference to the same file", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "relative-reference-qa-",
@@ -785,4 +818,21 @@ test.describe("CodeMirror workspace file editing", () => {
 
 async function openAssistantMarkdownLink(page: Page, name: string): Promise<void> {
   await page.getByRole("link", { name, exact: true }).first().click();
+}
+
+async function returnToAssistant(page: Page, agentId: string): Promise<void> {
+  await page.getByTestId(`workspace-tab-agent_${agentId}`).filter({ visible: true }).click();
+}
+
+async function openAssistantInlinePath(page: Page, token: string): Promise<void> {
+  await page.getByText(token, { exact: true }).click();
+}
+
+async function expectPreviewText(page: Page, text: string): Promise<void> {
+  await expect(
+    page
+      .getByTestId("workspace-file-pane")
+      .filter({ visible: true })
+      .getByText(text, { exact: true }),
+  ).toBeVisible();
 }

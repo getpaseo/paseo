@@ -591,3 +591,23 @@ describe("normalizeInlinePathTarget", () => {
     });
   });
 });
+
+describe("encoded filename line markers", () => {
+  it.each(["docs/report.md%3A12", "docs/report.md%2812%2C4%29"])(
+    "keeps encoded line syntax in the filename %s",
+    (href) => {
+      expect(
+        parseAssistantFileLink(href, {
+          workspaceRoot: "/workspace",
+          decodeHref: true,
+        }),
+      ).toMatchObject({ path: `/workspace/${decodeURIComponent(href)}` });
+      expect(
+        parseAssistantFileLink(href, {
+          workspaceRoot: "/workspace",
+          decodeHref: true,
+        })?.lineStart,
+      ).toBeUndefined();
+    },
+  );
+});
