@@ -208,6 +208,7 @@ type ScheduleAgentManager = Pick<
 > &
   Pick<
     AgentManager,
+    | "cancelAgentRun"
     | "createAgent"
     | "getRegisteredProviderIds"
     | "hydrateTimelineFromProvider"
@@ -963,7 +964,9 @@ export class ScheduleService {
 
   // A permission prompt doesn't end the turn, so runAgent alone would wait for an approval
   // nobody is watching for. Watch the agent while the run is in flight and fail the run on
-  // the first prompt, so the run records which tool it stopped on.
+  // the first prompt, so the run records which tool it stopped on. The watcher races the
+  // run itself: a turn that fails to start can settle the run without publishing any
+  // agent event, and the watcher would otherwise wait forever.
   private async runScheduledAgent(
     agentId: string,
     prompt: string,
@@ -972,23 +975,48 @@ export class ScheduleService {
     waitResult: Awaited<ReturnType<ScheduleAgentManager["waitForAgentEvent"]>>;
   }> {
     const run = settle(this.agentManager.runAgent(agentId, prompt));
-    let waitResult: Awaited<ReturnType<ScheduleAgentManager["waitForAgentEvent"]>>;
-    try {
-      waitResult = await this.agentManager.waitForAgentEvent(agentId, { waitForActive: true });
-    } catch (waitError) {
-      // The run's own failure explains more than losing track of the agent it failed on.
-      const settledRun = await run;
-      throw settledRun.status === "rejected" ? settledRun.reason : waitError;
+    const stopWatching = new AbortController();
+    const watch = settle(
+      this.agentManager.waitForAgentEvent(agentId, {
+        waitForActive: true,
+        signal: stopWatching.signal,
+      }),
+    );
+    const first = await Promise.race([
+      run.then(() => "run" as const),
+      watch.then(() => "watch" as const),
+    ]);
+    if (first === "run") {
+      stopWatching.abort();
     }
-    if (waitResult.permission) {
+    const watched = await watch;
+    if (first === "watch" && watched.status === "fulfilled" && watched.value.permission) {
+      // Failing the run while its turn stays parked on the prompt would let a later
+      // approval resume work this run already reported as failed.
+      try {
+        await this.agentManager.cancelAgentRun(agentId);
+        await run;
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId },
+          "Failed to cancel a scheduled agent waiting for permission",
+        );
+      }
       throw new Error(
-        `Scheduled agent ${agentId} is waiting for permission to use ${waitResult.permission.name}`,
+        `Scheduled agent ${agentId} is waiting for permission to use ${watched.value.permission.name}`,
       );
     }
     const settled = await run;
     if (settled.status === "rejected") {
       throw settled.reason;
     }
+    if (first === "watch" && watched.status === "rejected") {
+      throw watched.reason;
+    }
+    const waitResult =
+      first === "watch" && watched.status === "fulfilled"
+        ? watched.value
+        : await this.agentManager.waitForAgentEvent(agentId, { waitForActive: true });
     return { result: settled.value, waitResult };
   }
 
