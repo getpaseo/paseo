@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 // node:sqlite has no @types/node@20 typings; require it with a narrow local type.
@@ -255,6 +255,78 @@ describe("cursor usage source", () => {
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "state.vscdb"), "invalid database");
     expect(await discover()).toEqual([]);
+  });
+
+  describe("session discovery", () => {
+    let sessionHome: string;
+    beforeEach(() => {
+      sessionHome = mkdtempSync(join(tmpdir(), "usage-session-home-"));
+    });
+    afterEach(() => {
+      rmSync(sessionHome, { recursive: true, force: true });
+    });
+    function cursorSession(env: Record<string, string>, provider = "cursor") {
+      return { kind: "session" as const, provider, env: { HOME: sessionHome, ...env } };
+    }
+    function writeAuthJson(path: string): void {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, JSON.stringify({ accessToken: "session-token" }));
+    }
+
+    it("reads the login cursor-agent uses under the session's XDG_CONFIG_HOME", async () => {
+      const configHome = join(sessionHome, "xdg");
+      const authPath = join(configHome, "cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(
+        await discoverSession(cursorSession({ XDG_CONFIG_HOME: configHome }), "linux"),
+      ).toEqual([{ key: "default", input: { store: "file", locator: authPath } }]);
+    });
+
+    it("reads the login under the session's HOME, not the daemon's", async () => {
+      writeCursorAuthJson(homeDir, "daemon-token");
+      writeCursorAuthJson(sessionHome, "session-token");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual([
+        {
+          key: "default",
+          input: { store: "file", locator: join(sessionHome, ".config", "cursor", "auth.json") },
+        },
+      ]);
+    });
+
+    it("reads %APPDATA%/Cursor/auth.json on Windows", async () => {
+      const appData = join(sessionHome, "AppData", "Roaming");
+      const authPath = join(appData, "Cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(await discoverSession(cursorSession({ APPDATA: appData }), "win32")).toEqual([
+        { key: "default", input: { store: "file", locator: authPath } },
+      ]);
+    });
+
+    it("reads ~/.cursor/auth.json on macOS only when cursor-agent uses the file store", async () => {
+      const authPath = join(sessionHome, ".cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(await discoverSession(cursorSession({}), "darwin")).toEqual([]);
+      expect(
+        await discoverSession(cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "file" }), "darwin"),
+      ).toEqual([{ key: "default", input: { store: "file", locator: authPath } }]);
+    });
+
+    it.each([
+      ["another provider", cursorSession({}, "claude")],
+      ["a CURSOR_API_KEY session", cursorSession({ CURSOR_API_KEY: "key" })],
+      ["a CURSOR_AUTH_TOKEN session", cursorSession({ CURSOR_AUTH_TOKEN: "token" })],
+      ["an in-memory credential store", cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "memory" })],
+    ])("returns no login for %s", async (_scenario, scope) => {
+      writeCursorAuthJson(sessionHome, "session-token");
+      expect(await discoverSession(scope, "linux")).toEqual([]);
+    });
+
+    it("never falls back to the daemon's default stores", async () => {
+      writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "desktop-token" });
+      writeCursorAuthJson(homeDir, "daemon-token");
+      process.env["CURSOR_ACCESS_TOKEN"] = "daemon-env-token";
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual([]);
+    });
   });
 });
 
