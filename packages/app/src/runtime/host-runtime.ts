@@ -51,6 +51,7 @@ import { readDesktopManagedLocalCredential } from "@/desktop/daemon/local-creden
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
+  selectAgentTurnPresentation,
   useSessionStore,
   toDaemonServerInfo,
   type Agent,
@@ -2403,6 +2404,9 @@ export class HostRuntimeStore {
     if (!client || !queue?.length || session.initializingAgents.get(agentId) === true) {
       return;
     }
+    // A message sent while the agent runs can replace its turn. The replaced turn closes
+    // before the replacement opens, but the agent is still busy with the sent message.
+    if (selectAgentTurnPresentation(session, agentId).isActive) return;
     this.queuedAgentDrainInFlight.add(drainKey);
     const next = queue[0];
     void sendQueuedComposerMessageNow({

@@ -1292,6 +1292,49 @@ test.describe("Agent message submission", () => {
     }
   });
 
+  for (const behavior of ["Steer", "Interrupt"] as const) {
+    test(`keeps the next queued message queued after sending one now with ${behavior}`, async ({
+      page,
+    }, testInfo) => {
+      test.setTimeout(120_000);
+      const agent = await startRunningMockAgent(page, {
+        prefix: `queued-send-now-${behavior.toLowerCase()}-${testInfo.workerIndex}-`,
+        model: "one-minute-stream",
+        prompt: "Keep this turn active while the user sends a queued message now.",
+      });
+      const firstPrompt = "Send the first queued message now.";
+      const secondPrompt = "Keep the second queued message queued.";
+      try {
+        await (behavior === "Steer"
+          ? configureSteerInSettings(page)
+          : configureInterruptInSettings(page));
+        await page.goBack();
+        await expectComposerVisible(page);
+        await expectAgentReadyToInterrupt(page);
+        await queueMessage(page, firstPrompt);
+        await queueMessage(page, secondPrompt);
+        const sendNow = page.getByRole("button", { name: "Send queued message now" });
+        await expect(sendNow).toHaveCount(2);
+
+        await sendNow.first().click();
+
+        await expect(page.getByTestId("user-message").filter({ hasText: firstPrompt })).toHaveCount(
+          1,
+        );
+        await expect(
+          page.getByTestId("user-message").filter({ hasText: firstPrompt }),
+        ).toHaveAttribute("aria-busy", "false");
+        await expectAgentReadyToInterrupt(page);
+        await expect(sendNow).toHaveCount(1);
+        await expect(
+          page.getByTestId("user-message").filter({ hasText: secondPrompt }),
+        ).toHaveCount(0);
+      } finally {
+        await agent.cleanup();
+      }
+    });
+  }
+
   test("replays Claude-shaped steering inside one active turn", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
     await replaySteeredSleepTurnInBrowser(page, testInfo, "claude");
