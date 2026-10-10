@@ -2204,6 +2204,60 @@ describe("Codex app-server provider", () => {
   });
 
   test.each(["legacy", "paginated"] as const)(
+    "rejects rewinding a steer message in a %s thread before forking",
+    async (historyMode) => {
+      const appServer = createFakeCodexAppServer({
+        "thread/read": () => ({ thread: { id: "thread-1", historyMode, turns: [] } }),
+        "turn/steer": () => ({ turnId: "turn-first" }),
+      });
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/workspace/project" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+
+      try {
+        const started = await session.startTurn("original prompt");
+        appServer.startsTurn({ threadId: "thread-1", turnId: "turn-first" });
+        const originalMessage = waitForNextTimelineItem(session, "user_message");
+        emitCodexUserMessage(appServer, {
+          id: "codex-first",
+          text: "original prompt",
+          turnId: "turn-first",
+        });
+        await originalMessage;
+        await expect(
+          session.steerActiveTurn("steer prompt", { expectedTurnId: started.turnId }),
+        ).resolves.toEqual({ status: "accepted" });
+        const steerMessage = waitForNextTimelineItem(session, "user_message");
+        emitCodexUserMessage(appServer, {
+          id: "codex-steer",
+          text: "steer prompt",
+          turnId: "turn-first",
+        });
+        await steerMessage;
+        appServer.completeTurn();
+
+        await expect(session.revertConversation({ messageId: "codex-steer" })).rejects.toThrow(
+          "Select the first message in the turn instead",
+        );
+        expect(appServer.requests().filter((request) => request.method === "thread/fork")).toEqual(
+          [],
+        );
+        expect(appServer.recordedRollbacks).toEqual([]);
+        expect(session.id).toBe("thread-1");
+
+        await session.revertConversation({ messageId: "codex-first" });
+        expect(session.id).toBe("forked-thread");
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test.each(["legacy", "paginated"] as const)(
     "rewinds a %s thread onto a fork that keeps the custom provider and runtime MCP servers",
     async (historyMode) => {
       const appServer = createFakeCodexAppServer(
