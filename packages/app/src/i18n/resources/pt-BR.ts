@@ -1163,6 +1163,10 @@ export const ptBR: TranslationResources = {
       title: "Não foi possível carregar o changelog",
       description: "Verifique sua conexão e tente novamente.",
     },
+    empty: {
+      title: "Não há notas de versão para esta versão",
+      description: "Abra o changelog completo para ver todas as versões.",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "Grupo {{label}}",

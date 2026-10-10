@@ -1164,6 +1164,10 @@ export const fr: TranslationResources = {
       title: "Impossible de charger le journal des modifications",
       description: "Vérifiez votre connexion et réessayez.",
     },
+    empty: {
+      title: "Aucune note de version pour cette version",
+      description: "Ouvrez le journal des modifications complet pour voir toutes les versions.",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "Groupe {{label}}",

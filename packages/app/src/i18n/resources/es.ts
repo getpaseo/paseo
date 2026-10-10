@@ -1173,6 +1173,10 @@ export const es: TranslationResources = {
       title: "No se pudo cargar el registro de cambios",
       description: "Comprueba tu conexión e inténtalo de nuevo.",
     },
+    empty: {
+      title: "No hay notas de la versión para esta versión",
+      description: "Abre el registro de cambios completo para ver todas las versiones.",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "Grupo {{label}}",

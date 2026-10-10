@@ -1150,6 +1150,10 @@ export const ja: TranslationResources = {
       title: "変更履歴を読み込めません",
       description: "接続を確認してもう一度お試しください。",
     },
+    empty: {
+      title: "このバージョンのリリースノートはありません",
+      description: "すべてのリリースは変更履歴の全文で確認できます。",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "{{label}} グループ",

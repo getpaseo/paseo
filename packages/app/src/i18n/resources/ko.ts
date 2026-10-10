@@ -1144,6 +1144,10 @@ export const ko: TranslationResources = {
       title: "변경 내역을 불러오지 못했습니다",
       description: "연결을 확인한 후 다시 시도하세요.",
     },
+    empty: {
+      title: "이 버전의 릴리스 노트가 없습니다",
+      description: "전체 변경 내역에서 모든 릴리스를 확인하세요.",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "{{label}} 그룹",

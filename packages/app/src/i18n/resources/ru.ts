@@ -1154,6 +1154,10 @@ export const ru: TranslationResources = {
       title: "Не удалось загрузить список изменений",
       description: "Проверьте подключение и попробуйте снова.",
     },
+    empty: {
+      title: "Для этой версии нет примечаний к выпуску",
+      description: "Откройте полный список изменений, чтобы увидеть все выпуски.",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "Группа «{{label}}»",
