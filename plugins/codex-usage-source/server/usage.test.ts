@@ -465,3 +465,50 @@ test("#6155: real Codex and OpenCode stores share an account but keep agent fail
   });
   expect(agent?.loginErrors).toEqual([host!.loginErrors![0]]);
 });
+
+async function codexReport(body: unknown) {
+  const home = await mkdtemp(join(tmpdir(), "usage-codex-business-"));
+  try {
+    await writeFile(join(home, "auth.json"), JSON.stringify({ tokens: { access_token: "t" } }));
+    return await fetchUsage(authInput(home), () =>
+      Promise.resolve(new Response(JSON.stringify(body), { status: 200 })),
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+test("Business spend-control budget is reported as a spend balance", async () => {
+  const report = await codexReport({
+    plan_type: "business",
+    credits: { balance: null },
+    spend_control: {
+      individual_limit: {
+        limit: "32500",
+        used: "4938.24",
+        remaining: "27561.76",
+        reset_at: 1790000000,
+      },
+    },
+  });
+  expect(report).toMatchObject({
+    status: "available",
+    balances: [
+      expect.objectContaining({ id: "spend", limit: 32500, used: 4938.24, unit: "credits" }),
+    ],
+  });
+});
+
+test("a null credits balance is not shown as zero credits", async () => {
+  const report = await codexReport({ plan_type: "business", credits: { balance: null } });
+  expect(report).toMatchObject({ status: "available", balances: [] });
+});
+
+test("malformed spend control does not drop valid windows", async () => {
+  const report = await codexReport({
+    plan_type: "plus",
+    rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000 } },
+    spend_control: "garbage",
+  });
+  expect(report).toMatchObject({ status: "available", windows: [expect.any(Object)] });
+});
