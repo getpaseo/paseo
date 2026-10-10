@@ -2346,6 +2346,8 @@ export const zhCN: TranslationResources = {
         toggleVoiceMode: "切换语音模式",
         startStopDictation: "开始/停止听写",
         interruptAgent: "中断 Agent",
+        forkChatInNewTab: "将对话分叉到新标签页",
+        forkChatInNewWorkspace: "将对话分叉到新工作区",
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",

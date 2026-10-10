@@ -200,6 +200,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "voice-toggle",
     "dictation-toggle",
     "agent-interrupt",
+    "fork-chat-new-tab",
+    "fork-chat-new-workspace",
     "voice-mute-toggle",
   ],
 };
@@ -247,6 +249,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
+  "fork-chat-new-tab": "settings.shortcuts.help.forkChatInNewTab",
+  "fork-chat-new-workspace": "settings.shortcuts.help.forkChatInNewWorkspace",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
 };
 
@@ -1147,6 +1151,52 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "agent-interrupt",
       section: "agent-input",
       label: "Interrupt agent",
+    },
+  },
+
+  // --- Fork chat ---
+  {
+    id: "agent-fork-tab-cmd-shift-k-mac",
+    action: "agent.fork.tab",
+    combo: "Cmd+Shift+K",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "fork-chat-new-tab",
+      section: "agent-input",
+      label: "Fork chat in new tab",
+    },
+  },
+  {
+    id: "agent-fork-tab-ctrl-shift-k-non-mac",
+    action: "agent.fork.tab",
+    combo: "Ctrl+Shift+K",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "fork-chat-new-tab",
+      section: "agent-input",
+      label: "Fork chat in new tab",
+    },
+  },
+  {
+    id: "agent-fork-workspace-mac",
+    action: "agent.fork.workspace",
+    combo: "",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "fork-chat-new-workspace",
+      section: "agent-input",
+      label: "Fork chat in new workspace",
+    },
+  },
+  {
+    id: "agent-fork-workspace-non-mac",
+    action: "agent.fork.workspace",
+    combo: "",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "fork-chat-new-workspace",
+      section: "agent-input",
+      label: "Fork chat in new workspace",
     },
   },
   {

@@ -79,6 +79,7 @@ import {
   type InFlightTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
+import { useForkLatestTurnActions } from "./use-fork-latest-turn-actions";
 import { resolveBottomOverlayTailInset } from "./bottom-overlay-inset";
 import { layoutStream, type StreamLayoutItem } from "./layout";
 import {
@@ -287,6 +288,8 @@ export interface AgentStreamViewProps {
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
+  /** Registers the latest-turn fork shortcuts and Command Center items while true. */
+  isPaneFocused?: boolean;
   historyPagination?: {
     hasOlder: boolean;
     isLoadingOlder: boolean;
@@ -341,6 +344,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
+      isPaneFocused,
       historyPagination,
     },
     ref,
@@ -968,6 +972,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         supportsAgentForkContextCursor,
       ],
     );
+    useForkLatestTurnActions({
+      sourceId: `agent-fork:${resolvedServerId}:${agentId}`,
+      enabled: isPaneFocused === true,
+      readOnly,
+      isTurnActive,
+      latestTurnFooter: bottomTurnFooterHost,
+      supportsTimelineCursor: supportsAgentForkContextCursor,
+      onForkInFlightTurn: handleForkInFlightTurn,
+      onForkAssistantTurn: handleForkAssistantTurn,
+    });
+
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
         ...baseRenderModel,
@@ -1275,6 +1290,7 @@ function agentStreamViewPropsEqual(
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
+  if (left.isPaneFocused !== right.isPaneFocused) reasons.push("isPaneFocused");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
   }
