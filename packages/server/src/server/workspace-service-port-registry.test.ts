@@ -123,6 +123,24 @@ describe("ensureWorkspaceServicePortPlan", () => {
     expect(allocationCount).toBe(0);
   });
 
+  it("rejects an explicit port reserved by a workspace runtime block", async () => {
+    let allocationCount = 0;
+
+    await expect(
+      ensureWorkspaceServicePortPlan({
+        workspaceId: "registry-explicit-runtime-reservation-workspace",
+        services: [{ scriptName: "api", port: 4410 }],
+        getReservedPorts: () => new Set([4410]),
+        allocatePort: async () => {
+          allocationCount += 1;
+          return 4411;
+        },
+      }),
+    ).rejects.toThrow("Service 'api' has a port reserved by a workspace runtime block: 4410");
+
+    expect(allocationCount).toBe(0);
+  });
+
   it("retries dynamic allocation when a port is already planned", async () => {
     const ports = [4400, 4400, 4401];
 
@@ -332,6 +350,23 @@ describe("refreshWorkspaceServicePort", () => {
 
     expect(refreshedPort).toBe(5100);
     expect(allocationCount).toBe(0);
+  });
+
+  it("rejects an explicit refresh port reserved by a workspace runtime block", async () => {
+    await ensureWorkspaceServicePortPlan({
+      workspaceId: "registry-refresh-runtime-reservation-workspace",
+      services: [{ scriptName: "api" }],
+      allocatePort: async () => 5000,
+    });
+
+    await expect(
+      refreshWorkspaceServicePort({
+        workspaceId: "registry-refresh-runtime-reservation-workspace",
+        service: { scriptName: "api", port: 5100 },
+        getReservedPorts: () => new Set([5100]),
+        allocatePort: async () => 5001,
+      }),
+    ).rejects.toThrow("Service 'api' has a port reserved by a workspace runtime block: 5100");
   });
 });
 
