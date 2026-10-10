@@ -583,7 +583,7 @@ describe("createTerminal", () => {
       }),
     );
     const state = await waitForState(session, (current) => getRowText(current, 0) === "FULLSCREEN");
-    session.write("q");
+    session.send({ type: "input", data: "q" });
     const exited = await waitForState(session, (current) => getRowText(current, 1) === "PROMPT");
     const expected = getLines(exited).join("\n").trim();
     expect(expected).toBe("SHELL\nPROMPT");
