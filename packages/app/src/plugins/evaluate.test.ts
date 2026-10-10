@@ -631,7 +631,7 @@ describe("evaluatePluginClientBundle", () => {
       const client = require("@getpaseo/plugin/client");
       const { ExternalLink } = require("@getpaseo/plugin/client/ui");
       if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
-      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl"]) {
+      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl", "addRemoteSshHost", "removeHost"]) {
         if (name in shared || typeof client[name] !== "function") throw new Error(name);
       }
       if ("Icon" in shared || typeof shared.PluginAttachmentItemSchema.parse !== "function") throw new Error("shared exports");
@@ -722,14 +722,26 @@ it("binds imported getters to each originating installation across delayed callb
         calls.push(`${installation}/${serverId}`);
         return runtime.paseo;
       },
+      async addRemoteSshHost(input) {
+        calls.push(`${installation}/add ${input.target}`);
+        return { serverId: "added", label: "Added", status: "offline" as const };
+      },
+      async removeHost(serverId) {
+        calls.push(`${installation}/remove ${serverId}`);
+      },
     },
   });
   const source = bundle(`
-    const { getPaseoClient } = require("@getpaseo/plugin/client");
+    const { addRemoteSshHost, getPaseoClient, removeHost } = require("@getpaseo/plugin/client");
     getPaseoClient("entry-host");
     plugin.addCommandCenterItem({
       id: "read", title: "Read", icon: "Server", context: "global",
-      onSelect: async () => { await Promise.resolve(); getPaseoClient("target-host"); },
+      onSelect: async () => {
+        await Promise.resolve();
+        getPaseoClient("target-host");
+        await addRemoteSshHost({ target: "ssh://vm" });
+        await removeHost("gone");
+      },
     });
   `);
   const first = runPluginClientBundle("same-id", source, hostRuntime("first"));
@@ -741,7 +753,11 @@ it("binds imported getters to each originating installation across delayed callb
     "first/entry-host",
     "second/entry-host",
     "first/target-host",
+    "first/add ssh://vm",
+    "first/remove gone",
     "second/target-host",
+    "second/add ssh://vm",
+    "second/remove gone",
   ]);
   await first.cleanup();
   await second.cleanup();

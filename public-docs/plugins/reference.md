@@ -147,7 +147,7 @@ Paseo provides these modules to client code:
 | `@getpaseo/plugin`                     | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
 | `@getpaseo/plugin/client/ui`           | Named, composable settings components                                                             |
 | `@getpaseo/plugin/client/react-native` | Paseo UI components and UI hooks                                                                  |
-| `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
+| `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, data hooks, and host access    |
 | `@tanstack/react-query`                | Request state and caching                                                                         |
 | `react`                                | Components and hooks                                                                              |
 | `react/jsx-runtime`                    | Compiled JSX                                                                                      |
@@ -2067,6 +2067,44 @@ Plugins are trusted app code; cross-host access is intentional. Summaries contai
 URLs or credentials, and borrowed APIs provide no connection lifecycle controls. See the
 [host agents example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts).
 
+### Register and remove hosts
+
+**Requires Paseo 0.11.**
+
+A plugin that provisions a machine with a Paseo daemon can register it as a host, the same way
+**Settings → Add host → Remote SSH** does, and remove it again when the machine goes away:
+
+```tsx
+import { addRemoteSshHost, getPaseoClient, removeHost, useHosts } from "@getpaseo/plugin/client";
+
+// In an action callback: register the machine and remember its server ID.
+const host = await addRemoteSshHost({ target: "ssh://root@vm-1.example", label: "VM 1" });
+setServerId(host.serverId);
+
+// In the component: borrow the client only once the app connection is online.
+const online = useHosts().some((entry) => entry.serverId === serverId && entry.status === "online");
+if (online) {
+  const { entries } = await getPaseoClient(serverId).agents.list();
+}
+
+// When the machine goes away.
+await removeHost(serverId);
+```
+
+`addRemoteSshHost` resolves once the host is saved. The app connection to it may still be
+`connecting`; wait for `status: "online"` in `useHosts()` before calling `getPaseoClient`.
+
+| Function                                          | Behavior                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `addRemoteSshHost({ target, label?, password? })` | Connects through `ssh -W` first and saves the host under the server ID the daemon reports; a failed connection saves nothing and rejects with the connection error. `target` is `ssh://user@host[:port][?daemonPort=N]`. An address that already exists updates that host and keeps its label. Resolves with the host's `PluginHostSummary`, also when the plugin unloads after the host was saved. |
+| `removeHost(serverId)`                            | Removes the host and its connections. Rejects an unknown ID and the host this installation runs on.                                                                                                                                                                                                                                                                                                 |
+
+Hosts are durable user data, not registrations: they stay configured after the plugin unloads,
+and the user can rename or remove them in Settings. Remote SSH is available in the desktop app
+only; elsewhere `addRemoteSshHost` rejects with `Remote SSH is only available in the desktop app.`
+A daemon whose identity changed, for example a recreated machine, needs `removeHost` followed by a
+new `addRemoteSshHost`: the existing host stays offline because its server ID no longer matches.
+
 ## Add plugin-specific backend behavior
 
 Use plugin RPC only for work that is not a normal Paseo operation: reading a vendor API, accessing daemon-local resources, or keeping credentials off the client.
@@ -2257,6 +2295,9 @@ Paseo owns the composer menu, search picker, selected pill, draft state, and sub
 Plugins are installed per daemon. When the same contribution exists on several connected hosts, Paseo shows one sidebar item and adds a host picker. The selected host supplies the bundle, Paseo API, RPC transport, and query cache. Calls never fall through to another host when the selected host is offline.
 
 Attachment sources remain scoped to each composer's host.
+
+Hosts a plugin registers with `addRemoteSshHost` are ordinary hosts. They persist after the plugin
+unloads and disappear only through `removeHost` or Settings.
 
 Workspace panels and Command Center items stay scoped to the active host and exact cached context.
 Reload replaces their registrations. Disable, removal, host disconnect, and evaluation failure

@@ -30,6 +30,7 @@ import {
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
   type PluginButtonRegistration,
+  type PluginRemoteSshHostInput,
 } from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
 import type { ComponentType } from "react";
@@ -448,6 +449,9 @@ export function runPluginClientBundle(
         useSettings,
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        addRemoteSshHost: (input: PluginRemoteSshHostInput) =>
+          runtime.hosts.addRemoteSshHost(input),
+        removeHost: (serverId: string) => runtime.hosts.removeHost(serverId),
         useHosts: () =>
           React.useSyncExternalStore(
             runtime.hosts.subscribe,

@@ -361,7 +361,10 @@ Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo o
 Host-targeted clients and discovery are owned by `packages/app/src/plugins/hosts`, with per-installation
 bindings supplied by the bundle loader. Bind the imperative getter to that installation; do not
 resolve ownership through a mutable current-plugin global. Keep observation ownership in this module
-and transport ownership in the app host runtime. See the [public host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
+and transport ownership in the app host runtime. Host registration (`addRemoteSshHost`,
+`removeHost`) lives in the same module and delegates to the host runtime store's probe-and-upsert
+and remove operations, so plugin-added hosts follow the same identity, persistence, and push-token
+rules as hosts added in Settings. See the [public host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
 
 Each subprocess gets an exclusively owned `plugin:<id>` session. That identity is reserved from
 normal clients, never resumes another session, and is cleaned immediately on exit without reconnect

@@ -1,6 +1,7 @@
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginHostSummary } from "@getpaseo/plugin/client";
+import type { PluginHostSummary, PluginRemoteSshHostInput } from "@getpaseo/plugin/client";
+import { parseSshTransportUri } from "@getpaseo/protocol/ssh-transport";
 
 export interface PluginHostsSource {
   getHosts(): readonly { serverId: string; label: string }[];
@@ -10,10 +11,28 @@ export interface PluginHostsSource {
   } | null;
   subscribeAll(listener: () => void): () => void;
   subscribeHostList(listener: () => void): () => void;
+  /** Connects first and saves the host under the daemon's server ID; saves nothing on failure. */
+  probeAndUpsertRemoteSshConnection(input: {
+    host: string;
+    sshPort?: number;
+    daemonPort?: number;
+    password?: string;
+    label?: string;
+  }): Promise<{ serverId: string }>;
+  removeHost(serverId: string): Promise<void>;
+}
+
+export interface PluginHostsOptions {
+  /** The host that serves this installation. A plugin cannot remove it. */
+  selfServerId?: string;
 }
 
 /** Each evaluated installation owns its borrowed APIs and registry subscriptions. */
-export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal) {
+export function createPluginHosts(
+  source: PluginHostsSource,
+  signal: AbortSignal,
+  options: PluginHostsOptions = {},
+) {
   const clients = new Map<
     string,
     { client: DaemonClient; api: PaseoApi; lifetime: AbortController }
@@ -27,8 +46,11 @@ export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal
       status: source.getSnapshot(serverId)?.connectionStatus ?? "offline",
     }));
   }
-  function resolve(serverId: string): DaemonClient {
+  function requireRunning() {
     if (signal.aborted) throw new Error("Plugin has stopped");
+  }
+  function resolve(serverId: string): DaemonClient {
+    requireRunning();
     if (!source.getHosts().some((host) => host.serverId === serverId)) {
       throw new Error(`Unknown Paseo host: ${serverId}`);
     }
@@ -104,6 +126,34 @@ export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal
       };
       clients.set(serverId, { client, api, lifetime });
       return api;
+    },
+    async addRemoteSshHost(input: PluginRemoteSshHostInput): Promise<PluginHostSummary> {
+      requireRunning();
+      const target = parseSshTransportUri(input.target);
+      const { serverId } = await source.probeAndUpsertRemoteSshConnection({
+        ...target,
+        ...(input.label === undefined ? {} : { label: input.label }),
+        ...(input.password === undefined ? {} : { password: input.password }),
+      });
+      // The store has saved the host by now; report it even if the plugin stopped meanwhile,
+      // so the caller can track or remove what it created.
+      if (!signal.aborted) refresh();
+      const saved = source.getHosts().find((host) => host.serverId === serverId);
+      return {
+        serverId,
+        label: saved?.label ?? input.label ?? serverId,
+        status: source.getSnapshot(serverId)?.connectionStatus ?? "offline",
+      };
+    },
+    async removeHost(serverId: string): Promise<void> {
+      requireRunning();
+      if (serverId === options.selfServerId) {
+        throw new Error(`Plugin cannot remove its own host: ${serverId}`);
+      }
+      if (!source.getHosts().some((host) => host.serverId === serverId)) {
+        throw new Error(`Unknown Paseo host: ${serverId}`);
+      }
+      await source.removeHost(serverId);
     },
   };
 }
