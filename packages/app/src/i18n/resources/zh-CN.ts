@@ -229,6 +229,14 @@ export const zhCN: TranslationResources = {
     },
   },
   agentStream: {
+    linkMenu: {
+      openInPaseo: "在 Paseo 中打开",
+      openInBrowser: "在默认浏览器中打开",
+      copyFilePath: "复制文件路径",
+      openWithDefaultApp: "用默认软件打开",
+      revealIn: "在 {{target}} 中显示",
+      fileManagerFallback: "文件管理器",
+    },
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
@@ -635,6 +643,7 @@ export const zhCN: TranslationResources = {
         copyAgentId: "复制 Agent ID",
         copyTerminalId: "复制 Terminal ID",
         copyFilePath: "Copy file path",
+        openWithDefaultApp: "用默认应用打开",
         rename: "重命名",
         closeAbove: "关闭上方标签",
         closeBelow: "关闭下方标签",

@@ -231,6 +231,14 @@ export const ru: TranslationResources = {
     },
   },
   agentStream: {
+    linkMenu: {
+      openInPaseo: "Открыть в Paseo",
+      openInBrowser: "Открыть в браузере по умолчанию",
+      copyFilePath: "Скопировать путь к файлу",
+      openWithDefaultApp: "Открыть в приложении по умолчанию",
+      revealIn: "Показать в {{target}}",
+      fileManagerFallback: "файловый менеджер",
+    },
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
@@ -642,6 +650,7 @@ export const ru: TranslationResources = {
         copyAgentId: "Скопировать идентификатор агента",
         copyTerminalId: "Скопировать идентификатор терминала",
         copyFilePath: "Скопировать путь к файлу",
+        openWithDefaultApp: "Открыть в приложении по умолчанию",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
         closeBelow: "Закрыть вкладки ниже",

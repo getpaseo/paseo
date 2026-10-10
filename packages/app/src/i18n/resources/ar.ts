@@ -229,6 +229,14 @@ export const ar: TranslationResources = {
     },
   },
   agentStream: {
+    linkMenu: {
+      openInPaseo: "الفتح في Paseo",
+      openInBrowser: "الفتح في المتصفح الافتراضي",
+      copyFilePath: "نسخ مسار الملف",
+      openWithDefaultApp: "الفتح بالتطبيق الافتراضي",
+      revealIn: "الإظهار في {{target}}",
+      fileManagerFallback: "مدير الملفات",
+    },
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
@@ -635,6 +643,7 @@ export const ar: TranslationResources = {
         copyAgentId: "نسخ معرف الوكيل",
         copyTerminalId: "نسخ معرف المحطة",
         copyFilePath: "Copy file path",
+        openWithDefaultApp: "الفتح بالتطبيق الافتراضي",
         rename: "إعادة تسمية",
         closeAbove: "إغلاق علامات التبويب أعلاه",
         closeBelow: "إغلاق علامات التبويب أدناه",

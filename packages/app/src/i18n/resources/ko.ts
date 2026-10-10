@@ -229,6 +229,14 @@ export const ko: TranslationResources = {
     },
   },
   agentStream: {
+    linkMenu: {
+      openInPaseo: "Paseo에서 열기",
+      openInBrowser: "기본 브라우저에서 열기",
+      copyFilePath: "파일 경로 복사",
+      openWithDefaultApp: "기본 앱으로 열기",
+      revealIn: "{{target}}에서 보기",
+      fileManagerFallback: "파일 관리자",
+    },
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
@@ -636,6 +644,7 @@ export const ko: TranslationResources = {
         copyAgentId: "에이전트 ID 복사",
         copyTerminalId: "터미널 ID 복사",
         copyFilePath: "파일 경로 복사",
+        openWithDefaultApp: "기본 앱으로 열기",
         rename: "이름 변경",
         closeAbove: "위쪽 탭 닫기",
         closeBelow: "아래쪽 탭 닫기",

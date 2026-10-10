@@ -5,6 +5,22 @@ import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 
 export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 
+/**
+ * Extra file-tab actions that only exist when a local desktop host can hand the
+ * path to the operating system. Surfaces without one leave this undefined and
+ * the entries are omitted.
+ */
+export interface WorkspaceTabFileActions {
+  openWithDefaultApp: {
+    label: string;
+    onSelect: (filePath: string) => void;
+  };
+  revealInFileManager: {
+    label: string;
+    onSelect: (filePath: string) => void;
+  };
+}
+
 export interface WorkspaceTabMenuLabels {
   copyResumeCommand: string;
   copyAgentId: string;
@@ -49,6 +65,8 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "external-link"
+        | "folder-open"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -78,6 +96,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  /** Provided by surfaces backed by a local desktop host. */
+  fileActions?: WorkspaceTabFileActions;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -95,6 +115,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  fileActions?: WorkspaceTabFileActions;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -183,6 +204,7 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsAfter,
     onCloseOtherTabs,
   } = input;
+  const fileActions = input.fileActions;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
   const isLastTab = index === tabCount - 1;
@@ -241,6 +263,28 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyFilePath(filePath);
       },
     });
+    if (fileActions) {
+      entries.push({
+        kind: "item",
+        key: "open-with-default-app",
+        label: fileActions.openWithDefaultApp.label,
+        icon: "external-link",
+        testID: `${menuTestIDBase}-open-with-default-app`,
+        onSelect: () => {
+          fileActions.openWithDefaultApp.onSelect(filePath);
+        },
+      });
+      entries.push({
+        kind: "item",
+        key: "reveal-in-file-manager",
+        label: fileActions.revealInFileManager.label,
+        icon: "folder-open",
+        testID: `${menuTestIDBase}-reveal-in-file-manager`,
+        onSelect: () => {
+          fileActions.revealInFileManager.onSelect(filePath);
+        },
+      });
+    }
   }
 
   if (tab.target.kind === "agent" || tab.target.kind === "terminal") {
@@ -343,6 +387,7 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
+      fileActions: input.fileActions,
       labels: input.labels,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),
