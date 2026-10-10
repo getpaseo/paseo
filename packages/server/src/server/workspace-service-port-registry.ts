@@ -24,6 +24,24 @@ interface PendingWorkspaceServicePortPlanToken {
   isReleased: boolean;
 }
 
+class WorkspaceServicePortPlanReleasedError extends Error {
+  constructor(workspaceId: string) {
+    super(`Workspace service port plan was released while being created for '${workspaceId}'`);
+  }
+}
+
+async function waitForWorkspaceServicePortPlanUpdate(
+  pendingPlan: Promise<Map<string, number>>,
+): Promise<void> {
+  try {
+    await pendingPlan;
+  } catch (error) {
+    // Allocation failure belongs to the original request. A waiting request
+    // retries against the rolled-back plan; workspace archival cancels both.
+    if (error instanceof WorkspaceServicePortPlanReleasedError) throw error;
+  }
+}
+
 const workspaceServicePortPlans = new Map<string, Map<string, number>>();
 const pendingWorkspaceServicePortPlans = new Map<string, Promise<Map<string, number>>>();
 const pendingWorkspaceServicePortPlanTokens = new Map<
@@ -39,7 +57,7 @@ export async function ensureWorkspaceServicePortPlan(
 ): Promise<ReadonlyMap<string, number>> {
   const pendingPlan = pendingWorkspaceServicePortPlans.get(options.workspaceId);
   if (pendingPlan) {
-    await pendingPlan;
+    await waitForWorkspaceServicePortPlanUpdate(pendingPlan);
     return ensureWorkspaceServicePortPlan(options);
   }
 
@@ -107,9 +125,7 @@ async function createPendingWorkspaceServicePortPlan(
     const plan = new Map(options.existingPlan);
     for (const [scriptName, port] of updatedPlan) plan.set(scriptName, port);
     if (options.token.isReleased) {
-      throw new Error(
-        `Workspace service port plan was released while being created for '${options.workspaceId}'`,
-      );
+      throw new WorkspaceServicePortPlanReleasedError(options.workspaceId);
     }
     for (const [scriptName, port] of previousDynamicPorts) {
       if (plan.get(scriptName) !== port) {
@@ -122,7 +138,7 @@ async function createPendingWorkspaceServicePortPlan(
     const dynamicPorts = dynamicPortsByWorkspace.get(options.workspaceId);
     if (dynamicPorts) {
       for (const [scriptName, port] of dynamicPorts) {
-        if (previousDynamicPorts.get(scriptName) !== port) {
+        if (options.token.isReleased || previousDynamicPorts.get(scriptName) !== port) {
           releaseDynamicPort({ workspaceId: options.workspaceId, scriptName, port });
         }
       }
@@ -132,6 +148,8 @@ async function createPendingWorkspaceServicePortPlan(
         reserveDynamicPort({ workspaceId: options.workspaceId, scriptName, port });
       }
     }
+    if (options.token.isReleased)
+      throw new WorkspaceServicePortPlanReleasedError(options.workspaceId);
     throw error;
   } finally {
     pendingWorkspaceServicePortPlans.delete(options.workspaceId);
@@ -184,7 +202,7 @@ export async function refreshWorkspaceServicePort(
 ): Promise<number> {
   const pendingPlan = pendingWorkspaceServicePortPlans.get(options.workspaceId);
   if (pendingPlan) {
-    await pendingPlan;
+    await waitForWorkspaceServicePortPlanUpdate(pendingPlan);
     return refreshWorkspaceServicePort(options);
   }
 
