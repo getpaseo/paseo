@@ -5,7 +5,7 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveAgentBucketWithSubagentActivity } from "@/subagents/agent-activity";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 
@@ -14,12 +14,14 @@ export function AgentStatusDot({
   requiresAttention,
   attentionReason,
   pendingPermissionCount,
+  hasRunningProviderSubagent = false,
   showInactive = false,
 }: {
   status: string | null | undefined;
   requiresAttention: boolean | null | undefined;
   attentionReason?: "finished" | "error" | "permission" | null;
   pendingPermissionCount?: number;
+  hasRunningProviderSubagent?: boolean;
   showInactive?: boolean;
 }) {
   const { theme } = useUnistyles();
@@ -31,11 +33,14 @@ export function AgentStatusDot({
     return null;
   }
 
-  const bucket = deriveSidebarStateBucket({
-    status,
-    requiresAttention: Boolean(requiresAttention),
-    attentionReason: attentionReason ?? null,
-    pendingPermissionCount: pendingPermissionCount ?? 0,
+  const bucket = deriveAgentBucketWithSubagentActivity({
+    agent: {
+      status,
+      requiresAttention: Boolean(requiresAttention),
+      attentionReason: attentionReason ?? null,
+      pendingPermissionCount: pendingPermissionCount ?? 0,
+    },
+    hasRunningProviderSubagent,
   });
   const color = getStatusDotColor({ theme, bucket, showDoneAsInactive: showInactive });
 

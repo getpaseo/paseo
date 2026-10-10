@@ -36,6 +36,7 @@ interface ProviderSubagentState {
     serverId: string,
     parentAgentId: string,
     subagents: ProviderSubagentDescriptorPayload[],
+    freshness?: ProviderSubagentListFreshness,
   ): void;
   applyUpdate(
     serverId: string,
@@ -69,36 +70,168 @@ export function providerSubagentLifecycleStatus(
   return "idle";
 }
 
-type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
+interface ProviderSubagentListClient {
+  listProviderSubagents: (
+    parentAgentId: string,
+  ) => Promise<{ subagents: ProviderSubagentDescriptorPayload[] }>;
+}
 
-const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
+interface InflightProviderSubagentList {
+  epoch: number;
+  promise: Promise<void>;
+}
+
+const pendingListRequests = new WeakMap<
+  ProviderSubagentListClient,
+  Map<string, InflightProviderSubagentList>
+>();
+const loadedParents = new WeakMap<ProviderSubagentListClient, Set<string>>();
+const loadEpochByClient = new WeakMap<ProviderSubagentListClient, number>();
+const mountedParents = new WeakMap<ProviderSubagentListClient, Map<string, number>>();
+
+let listWriteGeneration = 0;
+let inFlightLists = 0;
+const liveGenerationByKey = new Map<string, number>();
+const removedGenerationByKey = new Map<string, number>();
+
+function noteLiveDescriptor(key: string): void {
+  listWriteGeneration += 1;
+  // A stamp only matters for a list that is already open. Idle writes would never beat
+  // the next snapshot, and keeping them grows these maps for the life of the app.
+  if (inFlightLists === 0) return;
+  liveGenerationByKey.set(key, listWriteGeneration);
+  removedGenerationByKey.delete(key);
+}
+
+function noteRemovedDescriptor(key: string): void {
+  listWriteGeneration += 1;
+  if (inFlightLists === 0) return;
+  liveGenerationByKey.delete(key);
+  removedGenerationByKey.set(key, listWriteGeneration);
+}
+
+function finishListRequest(): void {
+  if (inFlightLists > 0) inFlightLists -= 1;
+  if (inFlightLists > 0) return;
+  liveGenerationByKey.clear();
+  removedGenerationByKey.clear();
+}
+
+function clientLoadEpoch(client: ProviderSubagentListClient): number {
+  return loadEpochByClient.get(client) ?? 0;
+}
+
+/** Drops list-freshness stamps so one test cannot leak into the next. */
+export function resetProviderSubagentListFreshness(): void {
+  listWriteGeneration = 0;
+  inFlightLists = 0;
+  liveGenerationByKey.clear();
+  removedGenerationByKey.clear();
+}
+
+export function providerSubagentFreshnessSize(): { live: number; removed: number } {
+  return { live: liveGenerationByKey.size, removed: removedGenerationByKey.size };
+}
+
+export interface ProviderSubagentListFreshness {
+  /** Writes after this generation happened while the list request was in flight. */
+  snapshotGeneration: number;
+}
 
 export function refreshProviderSubagents(
   client: ProviderSubagentListClient,
   serverId: string,
   parentAgentId: string,
+  options?: { once?: boolean },
 ): Promise<void> {
   const requestKey = `${serverId}\0${parentAgentId}`;
+  if (options?.once && loadedParents.get(client)?.has(requestKey)) {
+    return Promise.resolve();
+  }
   let clientRequests = pendingListRequests.get(client);
   if (!clientRequests) {
     clientRequests = new Map();
     pendingListRequests.set(client, clientRequests);
   }
+  const epoch = clientLoadEpoch(client);
   const pending = clientRequests.get(requestKey);
-  if (pending) return pending;
+  if (pending?.epoch === epoch) return pending.promise;
 
   useProviderSubagentStore.getState().trackParent(serverId, parentAgentId);
-  const request = client
+  inFlightLists += 1;
+  const snapshotGeneration = listWriteGeneration;
+  const entry: InflightProviderSubagentList = {
+    epoch,
+    promise: Promise.resolve(),
+  };
+  entry.promise = client
     .listProviderSubagents(parentAgentId)
     .then((payload) => {
-      useProviderSubagentStore.getState().replaceList(serverId, parentAgentId, payload.subagents);
+      if (clientLoadEpoch(client) !== epoch) return undefined;
+      useProviderSubagentStore.getState().replaceList(serverId, parentAgentId, payload.subagents, {
+        snapshotGeneration,
+      });
+      let loaded = loadedParents.get(client);
+      if (!loaded) {
+        loaded = new Set();
+        loadedParents.set(client, loaded);
+      }
+      loaded.add(requestKey);
       return undefined;
     })
     .finally(() => {
-      clientRequests?.delete(requestKey);
+      finishListRequest();
+      if (clientRequests?.get(requestKey) === entry) clientRequests.delete(requestKey);
     });
-  clientRequests.set(requestKey, request);
-  return request;
+  clientRequests.set(requestKey, entry);
+  return entry.promise;
+}
+
+function parentRequestKey(serverId: string, parentAgentId: string): string {
+  return `${serverId}\0${parentAgentId}`;
+}
+
+/**
+ * Keeps a parent on the reconnect refresh list. Several surfaces can watch the same parent.
+ */
+export function watchProviderSubagentParent(
+  client: ProviderSubagentListClient,
+  serverId: string,
+  parentAgentId: string,
+): () => void {
+  const requestKey = parentRequestKey(serverId, parentAgentId);
+  let mounted = mountedParents.get(client);
+  if (!mounted) {
+    mounted = new Map();
+    mountedParents.set(client, mounted);
+  }
+  mounted.set(requestKey, (mounted.get(requestKey) ?? 0) + 1);
+  void refreshProviderSubagents(client, serverId, parentAgentId, { once: true }).catch(
+    () => undefined,
+  );
+  return () => {
+    const current = mountedParents.get(client);
+    if (!current) return;
+    const next = (current.get(requestKey) ?? 0) - 1;
+    if (next <= 0) current.delete(requestKey);
+    else current.set(requestKey, next);
+  };
+}
+
+/** Drops the once-cache and asks again for parents that are still on screen. */
+export function invalidateProviderSubagentLoads(client: ProviderSubagentListClient): void {
+  loadEpochByClient.set(client, clientLoadEpoch(client) + 1);
+  loadedParents.get(client)?.clear();
+  const mounted = mountedParents.get(client);
+  if (!mounted) return;
+  for (const requestKey of mounted.keys()) {
+    const splitAt = requestKey.indexOf("\0");
+    void refreshProviderSubagents(
+      client,
+      requestKey.slice(0, splitAt),
+      requestKey.slice(splitAt + 1),
+    ).catch(() => undefined);
+  }
 }
 
 function parentPrefix(serverId: string, parentAgentId: string): string {
@@ -168,6 +301,95 @@ function settleTimeline(
   };
 }
 
+function keepsLiveDescriptor(
+  current: ProviderSubagentDescriptorPayload | undefined,
+  listed: ProviderSubagentDescriptorPayload,
+  liveGeneration: number,
+  snapshotGeneration: number,
+): boolean {
+  if (!current) return false;
+  if (current.updatedAt > listed.updatedAt) return true;
+  return current.updatedAt === listed.updatedAt && liveGeneration > snapshotGeneration;
+}
+
+function descriptorsAfterFreshList(
+  previous: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  listed: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  prefix: string,
+  snapshotGeneration: number,
+): Map<string, ProviderSubagentDescriptorPayload> {
+  const descriptors = new Map(previous);
+  for (const key of previous.keys()) {
+    if (!key.startsWith(prefix) || listed.has(key)) continue;
+    if ((liveGenerationByKey.get(key) ?? 0) <= snapshotGeneration) descriptors.delete(key);
+  }
+  for (const [key, subagent] of listed) {
+    if ((removedGenerationByKey.get(key) ?? 0) > snapshotGeneration) {
+      descriptors.delete(key);
+      continue;
+    }
+    const current = previous.get(key);
+    const liveGeneration = liveGenerationByKey.get(key) ?? 0;
+    if (keepsLiveDescriptor(current, subagent, liveGeneration, snapshotGeneration)) continue;
+    descriptors.set(key, subagent);
+    liveGenerationByKey.set(key, snapshotGeneration);
+    removedGenerationByKey.delete(key);
+  }
+  return descriptors;
+}
+
+function descriptorsAfterFullList(
+  previous: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  listed: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  prefix: string,
+): Map<string, ProviderSubagentDescriptorPayload> {
+  const descriptors = new Map(previous);
+  for (const key of previous.keys()) {
+    if (key.startsWith(prefix) && !listed.has(key)) {
+      descriptors.delete(key);
+      noteRemovedDescriptor(key);
+    }
+  }
+  for (const [key, subagent] of listed) {
+    descriptors.set(key, subagent);
+    noteLiveDescriptor(key);
+  }
+  return descriptors;
+}
+
+function unhideRunningChildren(
+  hiddenFromTrack: ReadonlySet<string>,
+  descriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  prefix: string,
+): Set<string> {
+  const next = new Set(hiddenFromTrack);
+  for (const [key, subagent] of descriptors) {
+    if (key.startsWith(prefix) && subagent.status === "running") next.delete(key);
+  }
+  return next;
+}
+
+function timelinesAfterList(
+  previousTimelines: ReadonlyMap<string, ProviderSubagentTimelineState>,
+  previousDescriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  descriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  prefix: string,
+): Map<string, ProviderSubagentTimelineState> {
+  const retainedKeys = new Set(descriptors.keys());
+  const timelines = new Map(
+    [...previousTimelines].filter(([key]) => !key.startsWith(prefix) || retainedKeys.has(key)),
+  );
+  for (const [key, subagent] of descriptors) {
+    if (!key.startsWith(prefix)) continue;
+    const current = timelines.get(key);
+    const prior = previousDescriptors.get(key);
+    if (current && prior?.status !== subagent.status) {
+      timelines.set(key, settleTimeline(current, subagent));
+    }
+  }
+  return timelines;
+}
+
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
   descriptors: new Map(),
   timelines: new Map(),
@@ -190,33 +412,23 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       return { hiddenFromTrack };
     });
   },
-  replaceList(serverId, parentAgentId, subagents) {
+  replaceList(serverId, parentAgentId, subagents, freshness) {
     set((state) => {
       const prefix = parentPrefix(serverId, parentAgentId);
-      const descriptors = new Map(
-        [...state.descriptors].filter(([key]) => !key.startsWith(prefix)),
+      const listed = new Map(
+        subagents.map((subagent) => [
+          providerSubagentKey(serverId, parentAgentId, subagent.id),
+          subagent,
+        ]),
       );
-      const hiddenFromTrack = new Set(state.hiddenFromTrack);
-      for (const subagent of subagents) {
-        const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
-        descriptors.set(key, subagent);
-        if (subagent.status === "running") {
-          hiddenFromTrack.delete(key);
-        }
-      }
-      const retainedKeys = new Set(descriptors.keys());
-      const timelines = new Map(
-        [...state.timelines].filter(([key]) => !key.startsWith(prefix) || retainedKeys.has(key)),
-      );
-      for (const subagent of subagents) {
-        const key = providerSubagentKey(serverId, parentAgentId, subagent.id);
-        const current = timelines.get(key);
-        const previous = state.descriptors.get(key);
-        if (current && previous?.status !== subagent.status) {
-          timelines.set(key, settleTimeline(current, subagent));
-        }
-      }
-      return { descriptors, timelines, hiddenFromTrack };
+      const descriptors = freshness
+        ? descriptorsAfterFreshList(state.descriptors, listed, prefix, freshness.snapshotGeneration)
+        : descriptorsAfterFullList(state.descriptors, listed, prefix);
+      return {
+        descriptors,
+        hiddenFromTrack: unhideRunningChildren(state.hiddenFromTrack, descriptors, prefix),
+        timelines: timelinesAfterList(state.timelines, state.descriptors, descriptors, prefix),
+      };
     });
   },
   applyUpdate(serverId, payload) {
@@ -227,6 +439,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           payload.subagent.parentAgentId,
           payload.subagent.id,
         );
+        noteLiveDescriptor(key);
         const descriptors = new Map(state.descriptors);
         const hiddenFromTrack = new Set(state.hiddenFromTrack);
         const previous = descriptors.get(key);
@@ -244,6 +457,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       }
       if (payload.kind === "remove") {
         const key = providerSubagentKey(serverId, payload.parentAgentId, payload.subagentId);
+        noteRemovedDescriptor(key);
         const descriptors = new Map(state.descriptors);
         descriptors.delete(key);
         const timelines = new Map(state.timelines);
