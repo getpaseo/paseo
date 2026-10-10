@@ -321,6 +321,16 @@ const CATALOG_DATA = [
     command: ["pool", "acp"],
   },
   {
+    id: "prime-agent",
+    title: "Prime Agent",
+    description:
+      "Self-improving AI coding assistant and RLM agent by Prime Intellect.",
+    version: "0.9.8",
+    iconId: "prime-agent",
+    installLink: "https://github.com/PrimeIntellect-ai/prime-agent",
+    command: ["prime-agent", "--mode", "acp"],
+  },
+  {
     id: "qoder",
     title: "Qoder CLI",
     description: "AI coding assistant with agentic capabilities",
