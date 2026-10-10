@@ -3486,6 +3486,55 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("keeps a discovered daemon separate from a saved host using the same endpoint", async () => {
+    const storage = createMemoryHostRuntimeStorage({
+      "@paseo:daemon-registry": JSON.stringify([
+        makeHost({
+          serverId: "srv_old_home",
+          label: "Old home",
+          password: "old-password",
+          connections: [
+            { id: "direct:localhost:6767", type: "directTcp", endpoint: "localhost:6767" },
+            {
+              id: "relay:relay.example.com:443",
+              type: "relay",
+              relayEndpoint: "relay.example.com:443",
+              daemonPublicKeyB64: "old-key",
+            },
+          ],
+          preferredConnectionId: "relay:relay.example.com:443",
+        }),
+      ]),
+      "@paseo:e2e": "1",
+    });
+    const store = createPairingStore({ storage });
+    try {
+      await store.boot();
+      const oldHost = store.getHosts()[0];
+
+      await store.upsertConnectionFromListen({
+        listenAddress: "127.0.0.1:6767",
+        serverId: "srv_new_home",
+        hostname: "New home",
+      });
+
+      expect(store.getHosts().map((host) => host.serverId)).toEqual([
+        "srv_old_home",
+        "srv_new_home",
+      ]);
+      expect(store.getHosts()[0]).toEqual(oldHost);
+      expect(store.getHosts()[1]).toMatchObject({
+        label: "New home",
+        connections: [
+          { id: "direct:localhost:6767", type: "directTcp", endpoint: "localhost:6767" },
+        ],
+      });
+      expect(store.getHosts()[1]).not.toHaveProperty("password");
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
   it("preserves a manual host rename when desktop status re-advertises the daemon hostname", async () => {
     const advertisedHostname = "macbook-pro.local";
     const store = new HostRuntimeStore({

@@ -221,6 +221,7 @@ export function upsertHostConnectionInProfiles(input: {
   connection: HostConnection;
   password?: string;
   now?: string;
+  matchBy?: "serverId" | "serverIdOrConnection";
 }): HostProfile[] {
   const serverId = input.serverId.trim();
   if (!serverId) {
@@ -234,12 +235,12 @@ export function upsertHostConnectionInProfiles(input: {
   const derivedLabel = labelTrimmed || serverId;
   const existing = input.profiles;
   const matchingIndexes = existing.reduce<number[]>((matches, daemon, index) => {
-    if (
-      daemon.serverId === serverId ||
+    const matchesConnection =
+      input.matchBy !== "serverId" &&
       daemon.connections.some((existingConnection) =>
         hostConnectionEquals(existingConnection, normalizedConnection),
-      )
-    ) {
+      );
+    if (daemon.serverId === serverId || matchesConnection) {
       matches.push(index);
     }
     return matches;

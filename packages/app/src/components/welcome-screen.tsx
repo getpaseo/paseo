@@ -197,7 +197,9 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   }, [router]);
 
   const handleOpenDirect = useCallback(() => setIsDirectOpen(true), []);
-  const handleCloseDirect = useCallback(() => setIsDirectOpen(false), []);
+  const handleCloseDirect = useCallback(() => {
+    setIsDirectOpen(false);
+  }, []);
   const handleOpenRemoteSsh = useCallback(() => setIsRemoteSshOpen(true), []);
   const handleCloseRemoteSsh = useCallback(() => setIsRemoteSshOpen(false), []);
   const handleOpenPasteLink = useCallback(() => setIsPasteLinkOpen(true), []);

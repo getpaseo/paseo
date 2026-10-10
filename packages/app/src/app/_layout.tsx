@@ -112,6 +112,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
+import { LocalDaemonConnectionPrompt } from "@/desktop/components/local-daemon-connection-prompt";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
@@ -144,6 +145,7 @@ polyfillCrypto();
 export interface HostRuntimeBootstrapState {
   splashError: string | null;
   retry: () => void;
+  continueWithoutDaemon: () => void;
   hasGivenUpWaitingForHost: boolean;
   storeReady: boolean;
   startupBlocker: StartupBlocker;
@@ -152,6 +154,7 @@ export interface HostRuntimeBootstrapState {
 const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   splashError: null,
   retry: () => {},
+  continueWithoutDaemon: () => {},
   hasGivenUpWaitingForHost: false,
   storeReady: false,
   startupBlocker: { kind: "none" },
@@ -423,13 +426,33 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
   }, []);
 
+  const continueWithoutDaemon = useCallback(() => {
+    const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
+    void daemonStartService.startIfEnabled({ shouldStart: false });
+    setHasGivenUpWaitingForHost(true);
+  }, []);
+
   const splashError =
     startupBlocker.kind === "managed-daemon-error" ? startupBlocker.message : null;
   const storeReady = resolveStartupNavigationReady({ startupBlocker });
 
   const state = useMemo<HostRuntimeBootstrapState>(
-    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker }),
-    [splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker],
+    () => ({
+      splashError,
+      retry,
+      continueWithoutDaemon,
+      hasGivenUpWaitingForHost,
+      storeReady,
+      startupBlocker,
+    }),
+    [
+      splashError,
+      retry,
+      continueWithoutDaemon,
+      hasGivenUpWaitingForHost,
+      storeReady,
+      startupBlocker,
+    ],
   );
 
   return (
@@ -609,6 +632,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <AddProjectFlowHost />
         <HostChooserModal />
         <HostConfirmationSheet />
+        {shouldUseDesktopDaemon() ? <LocalDaemonConnectionPrompt /> : null}
         <ProviderSettingsHost />
         <WorkspaceSetupDialog />
         <KeyboardShortcutsDialog />

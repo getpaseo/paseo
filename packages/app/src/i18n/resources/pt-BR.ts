@@ -1553,6 +1553,11 @@ export const ptBR: TranslationResources = {
     details: "Detalhes",
   },
   startup: {
+    continueWithoutServer: "Continuar sem servidor local",
+    continueWithoutServerDescription:
+      "Desative a inicialização automática do servidor local e conecte-se a um host existente. Você pode reativar o daemon integrado nas configurações.",
+    continueWithoutServerFailed:
+      "Não foi possível salvar a configuração do servidor local: {{message}}",
     errorTitle: "Algo deu errado",
     errorDescription:
       "O servidor local falhou ao iniciar. Se isso continuar acontecendo, reporte o problema no GitHub e inclua os logs abaixo.",
@@ -1712,6 +1717,14 @@ export const ptBR: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Daemons locais",
+      searching: "Buscando neste computador…",
+      empty: "Nenhum daemon local encontrado. Você ainda pode inserir um endereço abaixo.",
+      failed: "Não foi possível buscar daemons locais. Insira um endereço ou tente novamente.",
+      refresh: "Atualizar",
+      passwordRequired: "Senha necessária",
+    },
     hostPassword: {
       title: "Senha de {{host}}",
       label: "Senha do host",

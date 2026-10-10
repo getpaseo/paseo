@@ -1523,6 +1523,10 @@ export const ar: TranslationResources = {
     details: "التفاصيل",
   },
   startup: {
+    continueWithoutServer: "المتابعة بدون خادم محلي",
+    continueWithoutServerDescription:
+      "أوقف التشغيل التلقائي للخادم المحلي واتصل بمضيف موجود. يمكنك إعادة تفعيل الخدمة المضمنة من الإعدادات.",
+    continueWithoutServerFailed: "تعذر حفظ إعداد الخادم المحلي: {{message}}",
     errorTitle: "حدث خطأ ما",
     errorDescription:
       "فشل الخادم المحلي في البدء. إذا استمر حدوث ذلك، فيرجى الإبلاغ عن المشكلة على GitHub وتضمين السجلات أدناه.",
@@ -1681,6 +1685,14 @@ export const ar: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "الخدمات المحلية",
+      searching: "جارٍ البحث على هذا الكمبيوتر…",
+      empty: "لم يتم العثور على خدمة محلية. يمكنك إدخال عنوان أدناه.",
+      failed: "تعذر البحث عن الخدمات المحلية. أدخل عنوانًا أو حاول مجددًا.",
+      refresh: "تحديث",
+      passwordRequired: "كلمة المرور مطلوبة",
+    },
     hostPassword: {
       title: "كلمة المرور لـ {{host}}",
       label: "كلمة مرور المضيف",

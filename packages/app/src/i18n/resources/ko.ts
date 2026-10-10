@@ -1532,6 +1532,10 @@ export const ko: TranslationResources = {
     details: "세부",
   },
   startup: {
+    continueWithoutServer: "로컬 서버 없이 계속",
+    continueWithoutServerDescription:
+      "로컬 서버 자동 시작을 끄고 기존 호스트에 연결합니다. 설정에서 내장 daemon을 다시 활성화할 수 있습니다.",
+    continueWithoutServerFailed: "로컬 서버 설정을 저장할 수 없습니다: {{message}}",
     errorTitle: "문제가 발생했습니다",
     errorDescription:
       "로컬 서버를 시작하지 못했습니다. 이 문제가 계속되면 아래 로그를 포함하여 GitHub에 문제를 보고해 주세요.",
@@ -1691,6 +1695,14 @@ export const ko: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "로컬 데몬",
+      searching: "이 컴퓨터에서 검색 중…",
+      empty: "로컬 데몬을 찾지 못했습니다. 아래에 주소를 직접 입력할 수 있습니다.",
+      failed: "로컬 데몬을 검색할 수 없습니다. 주소를 입력하거나 다시 시도하세요.",
+      refresh: "새로고침",
+      passwordRequired: "비밀번호 필요",
+    },
     hostPassword: {
       title: "{{host}}의 비밀번호",
       label: "호스트 비밀번호",

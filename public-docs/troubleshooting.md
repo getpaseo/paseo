@@ -84,6 +84,43 @@ Either way, the fix for a missing tool lives in your shell config (`.zshrc`, `.z
 
 This login-shell step runs on macOS and Linux. On Windows, Paseo uses the environment it was launched with.
 
+## Choosing a local server on Desktop
+
+Desktop manages its built-in daemon by default. Before starting a new process,
+it checks the configured local TCP address for an existing Paseo daemon and uses
+that connection when available, including a daemon started with a different
+`PASEO_HOME`. An existing instance in Desktop's own home keeps its original reuse
+and authentication path. If a discovered daemon requires a password, Desktop
+opens the connection form instead of starting a conflicting process.
+
+An explicit custom listen address takes priority over the default port. If no
+local Paseo daemon is available, Desktop starts its built-in daemon as before.
+Disabling built-in daemon management in Settings still disables automatic startup.
+
+Direct connection automatically checks loopback TCP listeners at port `6767` and
+the local port recorded in Desktop's daemon config or running-instance file.
+Select a discovered daemon to fill in its address, then connect. Password-protected
+daemons still require a password. Other TCP ports and remote hosts can be entered
+manually. Discovery does not search socket/pipe listeners or scan the LAN.
+
+Once enabled, the built-in daemon starts with Desktop. By default, quitting
+Desktop stops the daemon it started in that session. **Keep daemon running after
+quit** changes that behavior. Connecting to an independently started daemon does
+not give Desktop ownership of its lifecycle.
+
+## Desktop cannot start its local server
+
+If the local server fails to start, choose **Continue without local server** on
+the error screen. This turns off automatic local server startup for this Desktop
+client and lets you open Settings or connect to an existing host. You can enable
+the built-in daemon again in Settings.
+
+`EADDRINUSE` means another process already holds the configured listen address.
+If that process cannot be identified as an available Paseo daemon, Desktop may
+still report a startup error. Continue without the local server to inspect the
+connection or choose **Settings → Add host → Direct connection**.
+See [Connectivity](/docs/connectivity).
+
 ## Reading the logs
 
 - **Desktop app** — the login-shell resolution is logged here. Look for `[login-shell-env]`: `applied` means it worked (it logs the `PATH` before and after); `failed; keeping inherited env` means it fell back to the stripped-down environment, with a `reason` (a timeout, a non-zero exit from your shell config, no output, …). A slow or erroring `.zshrc`/`.zprofile` is the usual cause.

@@ -1562,6 +1562,11 @@ export const fr: TranslationResources = {
     details: "Détails",
   },
   startup: {
+    continueWithoutServer: "Continuer sans serveur local",
+    continueWithoutServerDescription:
+      "Désactivez le démarrage automatique du serveur local et connectez-vous à un hôte existant. Vous pourrez réactiver le daemon intégré dans les paramètres.",
+    continueWithoutServerFailed:
+      "Impossible d’enregistrer le paramètre du serveur local : {{message}}",
     errorTitle: "Une erreur s’est produite",
     errorDescription:
       "Le serveur local n’a pas pu démarrer. Si le problème persiste, signalez-le sur GitHub en joignant les journaux ci-dessous.",
@@ -1723,6 +1728,14 @@ export const fr: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Daemons locaux",
+      searching: "Recherche sur cet ordinateur…",
+      empty: "Aucun daemon local trouvé. Vous pouvez saisir une adresse ci-dessous.",
+      failed: "Impossible de rechercher les daemons locaux. Saisissez une adresse ou réessayez.",
+      refresh: "Actualiser",
+      passwordRequired: "Mot de passe requis",
+    },
     hostPassword: {
       title: "Mot de passe pour {{host}}",
       label: "Mot de passe de l’hôte",

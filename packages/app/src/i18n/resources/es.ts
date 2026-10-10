@@ -1568,6 +1568,11 @@ export const es: TranslationResources = {
     details: "Detalles",
   },
   startup: {
+    continueWithoutServer: "Continuar sin servidor local",
+    continueWithoutServerDescription:
+      "Desactiva el inicio automático del servidor local y conéctate a un host existente. Puedes volver a activar el daemon integrado en Configuración.",
+    continueWithoutServerFailed:
+      "No se pudo guardar la configuración del servidor local: {{message}}",
     errorTitle: "algo salió mal",
     errorDescription:
       "El servidor local no pudo iniciarse. Si esto continúa sucediendo, informe el problema enGitHube incluya los registros a continuación.",
@@ -1727,6 +1732,15 @@ export const es: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Daemons locales",
+      searching: "Buscando en este equipo…",
+      empty: "No se encontró ningún daemon local. Puedes introducir una dirección abajo.",
+      failed:
+        "No se pudieron buscar daemons locales. Introduce una dirección o inténtalo de nuevo.",
+      refresh: "Actualizar",
+      passwordRequired: "Contraseña requerida",
+    },
     hostPassword: {
       title: "Contraseña de {{host}}",
       label: "Contraseña del host",

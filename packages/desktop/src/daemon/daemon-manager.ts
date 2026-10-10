@@ -53,6 +53,7 @@ import {
   readLegacySkillSelection,
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
+import { getLocalDaemonCandidates } from "./local-daemon-candidates.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 let ownedLaunch: { home: string; instance: DaemonInstance } | null = null;
@@ -406,6 +407,8 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
     }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
+    desktop_local_daemon_candidates: (args) =>
+      getLocalDaemonCandidates(getPaseoHome(), args?.forStartup === true),
     desktop_local_credential: async (args) => {
       const instance = await readDaemonInstance(getPaseoHome());
       if (!instance?.desktopManaged || typeof args?.listen !== "string") return null;

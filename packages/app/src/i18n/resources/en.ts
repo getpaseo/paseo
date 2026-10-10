@@ -1547,6 +1547,10 @@ export const en = {
     details: "Details",
   },
   startup: {
+    continueWithoutServer: "Continue without local server",
+    continueWithoutServerDescription:
+      "Turn off automatic local server startup and connect to an existing host. You can enable the built-in daemon again in Settings.",
+    continueWithoutServerFailed: "Unable to save the local server setting: {{message}}",
     errorTitle: "Something went wrong",
     errorDescription:
       "The local server failed to start. If this keeps happening, please report the issue on GitHub and include the logs below.",
@@ -1706,6 +1710,14 @@ export const en = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Local daemons",
+      searching: "Searching this computer…",
+      empty: "No local daemon found. You can still enter an address below.",
+      failed: "Could not search for local daemons. Enter an address or try again.",
+      refresh: "Refresh",
+      passwordRequired: "Password required",
+    },
     hostPassword: {
       title: "Password for {{host}}",
       label: "Host password",
