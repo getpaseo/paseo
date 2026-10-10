@@ -411,6 +411,43 @@ describe("refreshWorkspaceServicePort", () => {
     ]);
   });
 
+  it("preserves a concurrent service addition while refreshing a stopped service", async () => {
+    const workspaceId = "registry-refresh-and-extend-workspace";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }],
+      allocatePort: async () => 6400,
+    });
+    const allocation = createDeferredPort();
+    const refreshing = refreshWorkspaceServicePort({
+      workspaceId,
+      service: { scriptName: "backend-dev" },
+      allocatePort: async () => allocation.promise,
+    });
+    const extending = ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }, { scriptName: "web", port: 6402 }],
+      allocatePort: async () => {
+        throw new Error("Explicit addition needs no allocation");
+      },
+    });
+    allocation.resolve(6401);
+    expect(await refreshing).toBe(6401);
+    await extending;
+    const plan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [],
+      allocatePort: async () => {
+        throw new Error("No allocation needed");
+      },
+    });
+    expect(Array.from(plan.entries())).toEqual([
+      ["backend-dev", 6401],
+      ["web", 6402],
+    ]);
+    releaseWorkspaceServicePortPlan(workspaceId);
+  });
+
   it("uses an explicit configured port without calling the allocator", async () => {
     let allocationCount = 0;
 
