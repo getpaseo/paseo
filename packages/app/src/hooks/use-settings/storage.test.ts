@@ -27,6 +27,26 @@ import { DEFAULT_CONTENT_MAX_WIDTH, THEME_OPTIONS } from "@/styles/theme";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
+const MOCHA_SNAPSHOT = {
+  id: "catppuccin/theme/mocha",
+  serverId: "host-a",
+  contribution: {
+    id: "mocha",
+    name: "Catppuccin Mocha",
+    appearance: "dark" as const,
+    colors: {
+      background: "#1e1e2e",
+      foreground: "#cdd6f4",
+      raised: "#313244",
+      control: "#45475a",
+      border: "#45475a",
+      accent: "#cba6f7",
+      mutedForeground: "#a6adc8",
+      ring: "#6c7086",
+    },
+  },
+};
+
 function makeDeps(
   overrides: {
     storage?: ReturnType<typeof createInMemoryKeyValueStorage>;
@@ -728,19 +748,47 @@ describe("saveAppSettings", () => {
     });
   });
 
-  it("persists a selected plugin theme", async () => {
+  it("persists a selected plugin theme with its palette", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
 
     await saveAppSettings({
       queryClient,
-      updates: { theme: "plugin", pluginThemeId: "catppuccin/theme/mocha" },
+      updates: {
+        theme: "plugin",
+        pluginThemeId: MOCHA_SNAPSHOT.id,
+        pluginThemeSnapshot: MOCHA_SNAPSHOT,
+      },
       deps,
     });
 
     const loaded = await loadAppSettingsFromStorage(deps);
     expect(loaded.theme).toBe("plugin");
-    expect(loaded.pluginThemeId).toBe("catppuccin/theme/mocha");
+    expect(loaded.pluginThemeId).toBe(MOCHA_SNAPSHOT.id);
+    expect(loaded.pluginThemeSnapshot).toEqual(MOCHA_SNAPSHOT);
+  });
+
+  it("drops a stored plugin palette that no longer parses and keeps the selection", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          theme: "plugin",
+          pluginThemeId: MOCHA_SNAPSHOT.id,
+          pluginThemeSnapshot: {
+            ...MOCHA_SNAPSHOT,
+            contribution: {
+              ...MOCHA_SNAPSHOT.contribution,
+              colors: { ...MOCHA_SNAPSHOT.contribution.colors, background: "mauve" },
+            },
+          },
+        }),
+      }),
+    });
+
+    const loaded = await loadAppSettingsFromStorage(deps);
+    expect(loaded.theme).toBe("plugin");
+    expect(loaded.pluginThemeId).toBe(MOCHA_SNAPSHOT.id);
+    expect(loaded.pluginThemeSnapshot).toBeNull();
   });
 
   // The row items are written as one object through one strict schema, so an item the schema

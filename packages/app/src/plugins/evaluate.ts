@@ -35,7 +35,7 @@ import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
 import { pluginReactNativeRuntime } from "./react-native/runtime";
-import { parsePluginThemeContribution } from "./themes";
+import { parsePluginThemeContribution } from "./themes/palette";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;

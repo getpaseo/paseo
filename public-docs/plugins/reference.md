@@ -1417,9 +1417,7 @@ colors, and the terminal without listing them.
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
 
-Only one contributed theme is active at a time. Selecting one persists the choice; if the plugin is
-later disabled or removed, Paseo falls back to the default theme rather than leaving the app
-unpainted.
+Only one contributed theme is active at a time. Selecting one persists the choice and its palette, so the app opens in that theme before the plugin has loaded and keeps it while the host reconnects. If the plugin is later disabled or removed, Paseo falls back to the default theme once that host has loaded its plugins without it, rather than leaving the app unpainted.
 
 Themes need a host that supports them. A client released before `addTheme` cannot evaluate that client entry and reports
 `client.addTheme is not a function`. Update the client.

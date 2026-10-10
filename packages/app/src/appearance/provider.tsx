@@ -14,8 +14,12 @@ import {
   useAppSettings,
   type AppSettings,
 } from "@/hooks/use-settings";
+import { useLoadedPluginHosts } from "@/plugins/registry";
 import {
+  pluginThemeOption,
   rememberPluginThemeHost,
+  resolveContributedTheme,
+  snapshotPluginTheme,
   usePluginThemeCatalog,
   type PluginThemeOption,
 } from "@/plugins/themes";
@@ -59,10 +63,30 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, updateSettings, isLoading } = useAppSettings();
   const [hasAppliedAppearance, setHasAppliedAppearance] = useState(false);
   const options = usePluginThemeCatalog();
+  const loadedHosts = useLoadedPluginHosts();
+  const usesPluginTheme = settings.theme === PLUGIN_THEME_PREFERENCE;
+  const { selected: live, snapshot } = useMemo(
+    () =>
+      usesPluginTheme
+        ? resolveContributedTheme({
+            pluginThemeId: settings.pluginThemeId,
+            options,
+            stored: settings.pluginThemeSnapshot,
+            loadedHosts,
+          })
+        : { selected: null, snapshot: settings.pluginThemeSnapshot },
+    [loadedHosts, options, settings.pluginThemeId, settings.pluginThemeSnapshot, usesPluginTheme],
+  );
+  // Until a host contributes the theme, the stored snapshot paints the app and names the picker.
   const selected = useMemo(() => {
-    if (settings.theme !== PLUGIN_THEME_PREFERENCE) return null;
-    return options.find((option) => option.id === settings.pluginThemeId) ?? null;
-  }, [options, settings.pluginThemeId, settings.theme]);
+    if (live) return live;
+    return usesPluginTheme && snapshot ? pluginThemeOption(snapshot) : null;
+  }, [live, snapshot, usesPluginTheme]);
+
+  useEffect(() => {
+    if (isLoading || snapshot === settings.pluginThemeSnapshot) return;
+    void updateSettings({ pluginThemeSnapshot: snapshot });
+  }, [isLoading, snapshot, settings.pluginThemeSnapshot, updateSettings]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -96,6 +120,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       void updateSettings({
         theme: PLUGIN_THEME_PREFERENCE,
         pluginThemeId: option.id,
+        pluginThemeSnapshot: snapshotPluginTheme(option),
       });
     },
     [updateSettings],
