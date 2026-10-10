@@ -33,6 +33,10 @@ type ProjectListResult = Awaited<ReturnType<DaemonClient["listProjects"]>>;
 type AgentFetchResult = Awaited<ReturnType<DaemonClient["fetchAgents"]>>;
 
 class FakeDirectoryClient {
+  supportsBackgroundWorkspaces(): boolean {
+    return false;
+  }
+
   supportsWorkspaceLabels = false;
   listWorkspaceLabelsCalls = 0;
   fetchAgentsCalls = 0;
