@@ -281,6 +281,12 @@ const TerminalActivityReportSchema = z.object({
   terminalId: z.string().min(1),
   token: z.string().min(1),
   state: z.enum(["running", "idle", "needs-input"]),
+  at_ns: z
+    .union([
+      z.string().regex(/^[1-9]\d{0,18}$/),
+      z.number().positive().max(1e19).refine(Number.isInteger),
+    ])
+    .optional(),
 });
 
 const TERMINAL_ACTIVITY_STATE_MAP = {
@@ -323,6 +329,7 @@ export function createTerminalActivityRouteHandler(
       const updated = await terminalManager.setTerminalActivity(
         parsed.data.terminalId,
         TERMINAL_ACTIVITY_STATE_MAP[parsed.data.state],
+        parsed.data.at_ns === undefined ? undefined : String(parsed.data.at_ns),
       );
       if (!updated) {
         res.status(403).json({ error: "Forbidden" });

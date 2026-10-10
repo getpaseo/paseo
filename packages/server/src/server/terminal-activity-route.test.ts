@@ -1,9 +1,11 @@
 import { afterEach, expect, it } from "vitest";
-import type express from "express";
+import express from "express";
+import type { Server } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
+import { createWorkerTerminalManager } from "../terminal/worker-terminal-manager.js";
 import { createTerminalActivityRouteHandler } from "./bootstrap.js";
 
 interface MockResponse {
@@ -61,9 +63,22 @@ function createMockRequest(input: { body: unknown; remoteAddress?: string }): ex
 }
 
 let manager: TerminalManager | null = null;
+let server: Server | null = null;
 const temporaryDirs: string[] = [];
 
 afterEach(async () => {
+  if (server) {
+    await new Promise<void>((resolve, reject) => {
+      server!.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+    server = null;
+  }
   if (manager) {
     const terminalsByCwd = await Promise.all(
       manager.listDirectories().map((cwd) => manager!.getTerminals(cwd)),
@@ -82,16 +97,17 @@ afterEach(async () => {
   }
 });
 
-it("accepts terminalId and token reports through the route into the tracker", async () => {
+it("keeps newer terminal activity when delayed reports arrive through HTTP and the worker", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "terminal-activity-route-"));
   temporaryDirs.push(cwd);
   const envPath = join(cwd, "activity-env.json");
-  manager = createTerminalManager({
+  manager = createWorkerTerminalManager({
     getTerminalActivityUrl: () => "http://127.0.0.1:6767/api/terminal-activity",
   });
 
   const session = await manager.createTerminal({
     cwd,
+    workspaceId: "activity-route-test",
     command: process.execPath,
     args: [
       "-e",
@@ -104,18 +120,63 @@ it("accepts terminalId and token reports through the route into the tracker", as
     token: string;
     url: string;
   };
-  const response = createMockResponse();
   const handler = createTerminalActivityRouteHandler(manager);
-
-  await handler(
-    createMockRequest({ body: { terminalId: env.terminalId, token: env.token, state: "running" } }),
-    response as unknown as express.Response,
-    () => undefined,
-  );
+  const app = express();
+  app.use(express.json());
+  app.post("/api/terminal-activity", handler);
+  server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server!.once("listening", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected an HTTP listening address");
+  }
+  const url = `http://127.0.0.1:${address.port}/api/terminal-activity`;
+  async function reportActivity(body: Record<string, unknown>): Promise<Response> {
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ terminalId: env.terminalId, token: env.token, ...body }),
+    });
+  }
 
   expect(env.terminalId).toBe(session.id);
   expect(env.url).toBe("http://127.0.0.1:6767/api/terminal-activity");
-  expect(response.statusCode).toBe(204);
+  expect((await reportActivity({ state: "running" })).status).toBe(204);
+  expect(session.getActivity()?.state).toBe("working");
+  expect((await reportActivity({ state: "running", at_ns: 1791586800000000000 })).status).toBe(204);
+  expect((await reportActivity({ state: "running", at_ns: "1791586800000000001" })).status).toBe(
+    204,
+  );
+  expect((await reportActivity({ state: "idle", at_ns: "1791586800000000000" })).status).toBe(204);
+  expect(session.getActivity()?.state).toBe("working");
+
+  expect((await reportActivity({ state: "idle", at_ns: "1791586800000000002" })).status).toBe(204);
+  const finished = session.getActivity();
+  expect(finished).toMatchObject({ state: "idle", attentionReason: "finished" });
+  expect(
+    (await reportActivity({ state: "needs-input", at_ns: "1791586800000000002" })).status,
+  ).toBe(204);
+  expect(session.getActivity()).toEqual(finished);
+
+  await manager.clearTerminalAttention(session.id);
+  const reviewed = session.getActivity();
+  expect(reviewed).toMatchObject({ state: "idle" });
+  expect(reviewed?.attentionReason).toBeUndefined();
+  expect((await reportActivity({ state: "idle", at_ns: "1791586800000000002" })).status).toBe(204);
+  expect(session.getActivity()).toEqual(reviewed);
+
+  expect((await reportActivity({ state: "running", at_ns: "1791586800000000003" })).status).toBe(
+    204,
+  );
+  expect((await reportActivity({ state: "running", at_ns: "1791586800000000005" })).status).toBe(
+    204,
+  );
+  expect((await reportActivity({ state: "idle", at_ns: "1791586800000000004" })).status).toBe(204);
+  expect(session.getActivity()?.state).toBe("working");
+  session.setActivity("idle", "1791586800000000004");
+  await manager.setTerminalActivity(session.id, "working", "1791586800000000005");
+  expect(session.getActivity()?.state).toBe("working");
+  expect((await reportActivity({ state: "idle", at_ns: "invalid" })).status).toBe(400);
   expect(session.getActivity()?.state).toBe("working");
 });
 
