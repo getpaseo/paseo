@@ -714,6 +714,7 @@ export default function contribute(server: PluginServerContext) {
         await expect(stat(path.join(home, "plugins", id))).rejects.toMatchObject({
           code: "ENOENT",
         });
+        expect(await readFile(settingsFile, "utf8")).toBe(savedSettings);
         expect(await stat(repository)).toBeDefined();
         const sources = new ManagedPluginSources(home);
         // A record cannot confer ownership on another plugin's tree or a malformed version name.
