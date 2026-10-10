@@ -68,7 +68,13 @@ export interface TunnelBridgeDependencies {
   clearTimeout?: (timer: unknown) => void;
   generateId?: () => string;
   log?: (event: string, details: Record<string, unknown>) => void;
+  /** A provider registered or went away, so other windows can recover or take over. */
+  onProviderChange?: (change: TunnelProviderChange) => void;
 }
+
+export type TunnelProviderChange =
+  | { kind: "registered"; serverId: string; senderId: number }
+  | { kind: "released"; serverId: string; senderId: number; reason: TunnelProviderClosedReason };
 
 interface PendingWrite {
   data: Uint8Array;
@@ -121,6 +127,7 @@ export class TunnelBridge {
   private readonly cancelTimeout: NonNullable<TunnelBridgeDependencies["clearTimeout"]>;
   private readonly generateId: () => string;
   private readonly log: NonNullable<TunnelBridgeDependencies["log"]>;
+  private readonly onProviderChange: NonNullable<TunnelBridgeDependencies["onProviderChange"]>;
 
   public constructor(deps: TunnelBridgeDependencies) {
     this.emit = deps.emit;
@@ -129,6 +136,7 @@ export class TunnelBridge {
     this.cancelTimeout = deps.clearTimeout ?? ((timer) => clearTimeout(timer as NodeJS.Timeout));
     this.generateId = deps.generateId ?? randomUUID;
     this.log = deps.log ?? (() => {});
+    this.onProviderChange = deps.onProviderChange ?? (() => {});
   }
 
   public hasProvider(serverId: string): boolean {
@@ -161,6 +169,7 @@ export class TunnelBridge {
       providerId: provider.providerId,
       senderId,
     });
+    this.onProviderChange({ kind: "registered", serverId: provider.serverId, senderId });
     return { ok: true, providerId: provider.providerId };
   }
 
@@ -329,6 +338,7 @@ export class TunnelBridge {
       });
     }
     this.log("provider.closed", { serverId, providerId: provider.providerId, reason });
+    this.onProviderChange({ kind: "released", serverId, senderId: provider.senderId, reason });
   }
 
   public closeProvidersForSender(

@@ -203,8 +203,8 @@ export function mountNetworkTunnelProvider(input: {
       const event = routingChangedSchema.parse(raw);
       if (event.serverId !== input.serverId || disposed) return;
       revision++;
-      // Main re-emits the current value when an owning renderer exits. The same
-      // `enabled` value is therefore a handoff signal while provider ownership waits.
+      // Main re-emits the current value when the owning renderer releases the provider
+      // (closed, crashed or disconnected). The same `enabled` value is a handoff signal.
       resetOwnershipWait();
       const changed = event.enabled !== enabled;
       if (changed) permissionDenied = false;
