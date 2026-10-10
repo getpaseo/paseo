@@ -1,3 +1,10 @@
+import type {
+  NonNullableUsage,
+  Options,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -274,6 +281,453 @@ function buildCommandLifecycle(commandUuid: string | null | undefined, state: st
 
 afterEach(() => {
   queryFactory.mockReset();
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function unsupportedQueryOperation(): never {
+  throw new Error("Unexpected query operation in runtime lifecycle test");
+}
+
+interface RuntimeQueryHooks {
+  initialize?: (flags: Parameters<Query["applyFlagSettings"]>[0]) => Promise<void>;
+  retire?: () => Promise<void>;
+  beforeReply?: () => Promise<void>;
+}
+
+function createRuntimeQuery(prompt: AsyncIterable<SDKUserMessage>, hooks: RuntimeQueryHooks = {}) {
+  const usage: NonNullableUsage = {
+    input_tokens: 1,
+    output_tokens: 1,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+    server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
+    service_tier: "standard",
+    inference_geo: "",
+    speed: "standard",
+    iterations: [],
+    output_tokens_details: { thinking_tokens: 0 },
+  };
+  const output = createAsyncQueue<SDKMessage>();
+  const received: string[] = [];
+  let closed = false;
+  const stream = (async function* () {
+    for (;;) {
+      const next = await output.next();
+      if (next.done) return;
+      yield next.value;
+    }
+  })();
+  const returnStream = stream.return.bind(stream);
+  const query: Query = Object.assign(stream, {
+    interrupt: async () => undefined,
+    setPermissionMode: async () => undefined,
+    setModel: async () => undefined,
+    applyFlagSettings: async (flags: Parameters<Query["applyFlagSettings"]>[0]) => {
+      await hooks.initialize?.(flags);
+    },
+    return: async () => {
+      output.end();
+      await hooks.retire?.();
+      return returnStream();
+    },
+    supportedCommands: async () => [],
+    supportedModels: async () => [],
+    close: () => {
+      closed = true;
+      output.end();
+    },
+    setMcpPermissionModeOverride: unsupportedQueryOperation,
+    setMaxThinkingTokens: unsupportedQueryOperation,
+    initializationResult: unsupportedQueryOperation,
+    reinitialize: unsupportedQueryOperation,
+    supportedAgents: unsupportedQueryOperation,
+    mcpServerStatus: unsupportedQueryOperation,
+    getContextUsage: unsupportedQueryOperation,
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: unsupportedQueryOperation,
+    readFile: unsupportedQueryOperation,
+    reloadPlugins: unsupportedQueryOperation,
+    reloadSkills: unsupportedQueryOperation,
+    accountInfo: unsupportedQueryOperation,
+    rewindFiles: unsupportedQueryOperation,
+    seedReadState: unsupportedQueryOperation,
+    reconnectMcpServer: unsupportedQueryOperation,
+    toggleMcpServer: unsupportedQueryOperation,
+    setMcpServers: unsupportedQueryOperation,
+    streamInput: unsupportedQueryOperation,
+    stopTask: unsupportedQueryOperation,
+    backgroundTasks: unsupportedQueryOperation,
+  });
+  void (async () => {
+    for await (const message of prompt) {
+      const text = extractPromptText(message);
+      received.push(text);
+      await hooks.beforeReply?.();
+      output.push({
+        type: "assistant",
+        uuid: crypto.randomUUID(),
+        session_id: "runtime-lifecycle",
+        parent_tool_use_id: null,
+        message: {
+          id: crypto.randomUUID(),
+          type: "message",
+          role: "assistant",
+          model: "opus",
+          content: [{ type: "text", text: `reply to ${text}`, citations: null }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage,
+          container: null,
+          context_management: null,
+          diagnostics: null,
+          stop_details: null,
+        },
+      });
+      output.push({
+        type: "result",
+        subtype: "success",
+        uuid: crypto.randomUUID(),
+        session_id: "runtime-lifecycle",
+        duration_ms: 1,
+        duration_api_ms: 1,
+        is_error: false,
+        num_turns: 1,
+        result: `reply to ${text}`,
+        stop_reason: "end_turn",
+        total_cost_usd: 0,
+        usage,
+        modelUsage: {},
+        permission_denials: [],
+      });
+    }
+  })();
+  return { query, received, isClosed: () => closed };
+}
+
+test("command discovery overlapping startup preserves replies to subsequent prompts", async () => {
+  const lookup = deferred();
+  let lookups = 0;
+  const queries: ReturnType<typeof createRuntimeQuery>[] = [];
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => {
+      if (++lookups === 1) await lookup.promise;
+      return "/test/claude/bin";
+    },
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      const runtime = createRuntimeQuery(prompt);
+      queries.push(runtime);
+      return runtime.query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const commands = session.listCommands!();
+    const first = session.startTurn("first");
+    // Finish all work not blocked by executable discovery before releasing it.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    lookup.resolve();
+    await Promise.all([commands, first]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await session.startTurn("hello");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(collectAssistantText(events)).toBe("reply to firstreply to hello");
+    expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(2);
+    expect(queries).toHaveLength(1);
+    expect(queries[0].received).toEqual(["first", "hello"]);
+  } finally {
+    lookup.resolve();
+    for (const runtime of queries) runtime.query.close();
+    await session.close();
+  }
+});
+
+test("closing during query initialization disposes the process before initialization settles", async () => {
+  const initializing = deferred();
+  const release = deferred();
+  const queries: ReturnType<typeof createRuntimeQuery>[] = [];
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      const runtime = createRuntimeQuery(prompt, {
+        initialize: async () => {
+          initializing.resolve();
+          await release.promise;
+        },
+      });
+      queries.push(runtime);
+      return runtime.query;
+    },
+  }).createSession({ provider: "claude", model: "claude-opus-5-5", cwd: process.cwd() });
+  const discovery = session.listCommands!();
+  const rejected = expect(discovery).rejects.toThrow("Claude session is closed");
+  try {
+    await initializing.promise;
+    await session.close();
+    expect(queries[0].isClosed()).toBe(true);
+  } finally {
+    release.resolve();
+    await rejected;
+    await session.close();
+  }
+});
+
+async function createRuntimeHarness(
+  options: {
+    resolveBinary?: () => Promise<string>;
+    hooks?: RuntimeQueryHooks;
+  } = {},
+) {
+  const launches: Options[] = [];
+  const queries: ReturnType<typeof createRuntimeQuery>[] = [];
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: options.resolveBinary ?? (async () => "/test/claude/bin"),
+    queryFactory: ({ prompt, options: launch }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      launches.push(launch);
+      const runtime = createRuntimeQuery(prompt, options.hooks);
+      queries.push(runtime);
+      return runtime.query;
+    },
+  }).createSession({
+    provider: "claude",
+    model: "claude-opus-5-5",
+    thinkingOptionId: "low",
+    cwd: process.cwd(),
+  });
+  return { session, queries, launches };
+}
+
+test.each([true, false])(
+  "Fast mode changed to %s during startup reaches the launched query",
+  async (enabled) => {
+    const lookup = deferred();
+    const entered = deferred();
+    const applied: unknown[] = [];
+    const { session, queries } = await createRuntimeHarness({
+      resolveBinary: async () => {
+        entered.resolve();
+        await lookup.promise;
+        return "/test/claude/bin";
+      },
+      hooks: {
+        initialize: async (flags) => {
+          applied.push(flags.fastMode);
+        },
+      },
+    });
+    await session.setFeature!("fast_mode", !enabled);
+    const discovery = session.listCommands!();
+    try {
+      await entered.promise;
+      await session.setFeature!("fast_mode", enabled);
+      lookup.resolve();
+      await discovery;
+      await session.listCommands!();
+      expect(applied).toEqual([enabled]);
+      expect(queries).toHaveLength(1);
+    } finally {
+      lookup.resolve();
+      await discovery;
+      await session.close();
+    }
+  },
+);
+
+test("command discovery leaves a thinking change pending until the active turn finishes", async () => {
+  const reply = deferred();
+  const { session, queries, launches } = await createRuntimeHarness({
+    hooks: { beforeReply: () => reply.promise },
+  });
+  try {
+    const turn = collectUntilTerminal(streamSession(session, "first"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await session.setThinkingOption!("high");
+    await session.listCommands!();
+    expect(queries).toHaveLength(1);
+    reply.resolve();
+    expect(collectAssistantText(await turn)).toBe("reply to first");
+    const next = await collectUntilTerminal(streamSession(session, "hello"));
+    expect(collectAssistantText(next)).toBe("reply to hello");
+    expect(launches.map((launch) => launch.effort)).toEqual(["low", "high"]);
+  } finally {
+    reply.resolve();
+    await session.close();
+  }
+});
+
+test("command discovery and a prompt share replacement until the old runtime retires", async () => {
+  const retiring = deferred();
+  const release = deferred();
+  const { session, queries } = await createRuntimeHarness({
+    hooks: {
+      retire: async () => {
+        retiring.resolve();
+        await release.promise;
+      },
+    },
+  });
+  try {
+    await collectUntilTerminal(streamSession(session, "first"));
+    await session.setThinkingOption!("high");
+    const commands = session.listCommands!();
+    await retiring.promise;
+    const next = collectUntilTerminal(streamSession(session, "second"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(queries).toHaveLength(1);
+    release.resolve();
+    await commands;
+    expect(collectAssistantText(await next)).toBe("reply to second");
+    expect(collectAssistantText(await collectUntilTerminal(streamSession(session, "third")))).toBe(
+      "reply to third",
+    );
+    expect(queries).toHaveLength(2);
+    expect(queries[0].isClosed()).toBe(true);
+    expect(queries[1].received).toEqual(["second", "third"]);
+  } finally {
+    release.resolve();
+    await session.close();
+  }
+});
+
+test("a thinking change during startup remains pending for the following turn", async () => {
+  const lookup = deferred();
+  const entered = deferred();
+  const { session, launches } = await createRuntimeHarness({
+    resolveBinary: async () => {
+      entered.resolve();
+      await lookup.promise;
+      return "/test/claude/bin";
+    },
+  });
+  try {
+    await session.setThinkingOption!("medium");
+    const first = collectUntilTerminal(streamSession(session, "first"));
+    await entered.promise;
+    await session.setThinkingOption!("high");
+    lookup.resolve();
+    expect(collectAssistantText(await first)).toBe("reply to first");
+    expect(collectAssistantText(await collectUntilTerminal(streamSession(session, "second")))).toBe(
+      "reply to second",
+    );
+    expect(launches.map((launch) => launch.effort)).toEqual(["medium", "high"]);
+  } finally {
+    lookup.resolve();
+    await session.close();
+  }
+});
+
+test("closing during executable discovery never launches a late query", async () => {
+  const lookup = deferred();
+  const entered = deferred();
+  const { session, queries } = await createRuntimeHarness({
+    resolveBinary: async () => {
+      entered.resolve();
+      await lookup.promise;
+      return "/test/claude/bin";
+    },
+  });
+  const discovery = session.listCommands!();
+  const rejected = expect(discovery).rejects.toThrow("Claude session is closed");
+  await entered.promise;
+  await session.close();
+  lookup.resolve();
+  await rejected;
+  expect(queries).toHaveLength(0);
+  await expect(session.listCommands!()).rejects.toThrow("Claude session is closed");
+});
+
+test("a failed shared initialization releases the runtime for a subsequent prompt", async () => {
+  let attempts = 0;
+  const { session, queries } = await createRuntimeHarness({
+    hooks: {
+      initialize: async () => {
+        if (++attempts === 1) throw new Error("initialization rejected");
+      },
+    },
+  });
+  try {
+    const discovery = session.listCommands!();
+    const rejected = expect(discovery).rejects.toThrow("initialization rejected");
+    const failed = await collectUntilTerminal(streamSession(session, "first"));
+    await rejected;
+    expect(failed.at(-1)).toMatchObject({ type: "turn_failed", error: "initialization rejected" });
+    expect(queries[0].isClosed()).toBe(true);
+    expect(queries[0].received).toEqual([]);
+    const recovered = await collectUntilTerminal(streamSession(session, "retry"));
+    expect(collectAssistantText(recovered)).toBe("reply to retry");
+    expect(queries).toHaveLength(2);
+  } finally {
+    await session.close();
+  }
+});
+
+test("a new turn waits for a naturally ended runtime to finish cleanup", async () => {
+  const retiring = deferred();
+  const release = deferred();
+  const { session, queries } = await createRuntimeHarness({
+    hooks: {
+      retire: async () => {
+        retiring.resolve();
+        await release.promise;
+      },
+    },
+  });
+  try {
+    await collectUntilTerminal(streamSession(session, "first"));
+    queries[0].query.close();
+    await retiring.promise;
+    const next = collectUntilTerminal(streamSession(session, "second"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(queries).toHaveLength(1);
+    release.resolve();
+    expect(collectAssistantText(await next)).toBe("reply to second");
+    expect(queries).toHaveLength(2);
+  } finally {
+    release.resolve();
+    await session.close();
+  }
+});
+
+test("an interrupted startup failure does not finish its replacement turn twice", async () => {
+  const entered = deferred();
+  const release = deferred();
+  const { session } = await createRuntimeHarness({
+    hooks: {
+      initialize: async () => {
+        entered.resolve();
+        await release.promise;
+        throw new Error("initialization rejected");
+      },
+    },
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const first = session.startTurn("first");
+    await entered.promise;
+    await session.interrupt();
+    const replacement = session.startTurn("second");
+    release.resolve();
+    await Promise.all([first, replacement]);
+    expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+  } finally {
+    release.resolve();
+    await session.close();
+  }
 });
 
 test("interrupt only calls query.interrupt and leaves the query open", async () => {

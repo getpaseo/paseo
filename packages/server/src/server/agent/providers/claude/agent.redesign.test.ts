@@ -478,31 +478,23 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
 test("interruptActiveTurn only interrupts the active query without info logs", async () => {
   const spy = createSpyLogger();
   const session = await createSessionWithLogger(spy.logger);
-  const internal: {
-    query: {
-      interrupt: () => Promise<void>;
-      return?: () => Promise<void>;
-      close?: () => void;
-    } | null;
-    input: { end: () => void } | null;
-    queryRestartNeeded: boolean;
-    mainTurnInFlight: boolean;
-    interruptActiveTurn: () => Promise<void>;
-  } = asInternals(session);
-  const interrupt = vi.fn(async () => undefined);
-  const queryReturn = vi.fn(async () => undefined);
-  const end = vi.fn(() => undefined);
-  internal.query = {
-    interrupt,
-    return: queryReturn,
-    close: vi.fn(() => undefined),
-  };
-  internal.input = { end };
-  internal.queryRestartNeeded = false;
-  internal.mainTurnInFlight = true;
+  let acknowledgeInit!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    acknowledgeInit = resolve;
+  });
+  const activeQuery = createBaseQueryMock(
+    vi.fn(() => {
+      acknowledgeInit();
+      return new Promise<never>(() => {});
+    }),
+  );
+  activeQuery.next.mockResolvedValueOnce({ done: false, value: claudeTurnInit() });
+  sdkQueryFactory.mockImplementation(() => activeQuery);
+  await session.startTurn("hello");
+  await initialized;
 
   try {
-    await internal.interruptActiveTurn();
+    await session.interrupt();
 
     const interruptInfoMessages = extractStringLogArgs(spy.info.mock.calls).filter((message) =>
       message.includes("interruptActiveTurn"),
@@ -513,12 +505,11 @@ test("interruptActiveTurn only interrupts the active query without info logs", a
 
     expect(interruptInfoMessages).toEqual([]);
     expect(interruptDebugMessages).toEqual([]);
-    expect(interrupt).toHaveBeenCalledTimes(1);
-    expect(queryReturn).not.toHaveBeenCalled();
-    expect(end).not.toHaveBeenCalled();
-    expect(internal.query).not.toBeNull();
-    expect(internal.input).not.toBeNull();
-    expect(internal.queryRestartNeeded).toBe(false);
+    expect(activeQuery.interrupt).toHaveBeenCalledTimes(1);
+    expect(activeQuery.return).not.toHaveBeenCalled();
+    expect(activeQuery.close).not.toHaveBeenCalled();
+    await session.listCommands!();
+    expect(sdkQueryFactory).toHaveBeenCalledTimes(1);
   } finally {
     await session.close();
   }

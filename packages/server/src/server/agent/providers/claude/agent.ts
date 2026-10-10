@@ -2093,6 +2093,14 @@ class ClaudeContextUsageState {
   }
 }
 
+interface ClaudeRuntime {
+  query: Query;
+  input: AsyncMessageInput<SDKUserMessage>;
+  process: { child: ChildProcess | null };
+  pump: Promise<void> | null;
+  closing: Promise<void> | null;
+}
+
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -2106,14 +2114,12 @@ class ClaudeAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
-  private query: Query | null = null;
+  private runtime: ClaudeRuntime | null = null;
+  private runtimeStarting: Promise<ClaudeRuntime> | null = null;
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
-  private childProcess: ChildProcess | null = null;
-  private input: AsyncMessageInput<SDKUserMessage> | null = null;
-  /** The exact SDK query/input pair that owns the current foreground turn. */
-  private activeForegroundQuery: Query | null = null;
-  private activeForegroundInput: AsyncMessageInput<SDKUserMessage> | null = null;
+  /** The runtime that owns the foreground or autonomous turn. */
+  private activeTurnRuntime: ClaudeRuntime | null = null;
   /**
    * Messages pushed into the live SDK input (steers, and a foreground turn's own prompt) whose
    * command_lifecycle has not reached "started". Interrupting has to withdraw them, or the SDK
@@ -2169,7 +2175,6 @@ class ClaudeAgentSession implements AgentSession {
   private lastRuntimeModel: string | null = null;
   private compacting = false;
   private compactionMarkerOpen = false;
-  private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
   private pendingInterruptAbort = false;
   /**
@@ -2355,19 +2360,15 @@ class ClaudeAgentSession implements AgentSession {
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
     try {
-      await this.ensureQuery();
-      if (cancelIssued) {
-        // Stopped while Claude was still starting up: withdrawn by never sending it.
+      const runtime = await this.ensureRuntime();
+      if (this.closed || cancelIssued || this.activeForegroundTurnId !== turnId) {
+        // Stopped during startup: withdraw this turn's message by never sending it.
         if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
         return { turnId };
       }
-      if (!this.input) {
-        throw new Error("Claude session input stream not initialized");
-      }
-      this.activeForegroundQuery = this.query;
-      this.activeForegroundInput = this.input;
-      this.startQueryPump();
-      this.input.push(sdkMessage);
+      this.activeTurnRuntime = runtime;
+      runtime.input.push(sdkMessage);
+      this.startQueryPump(runtime);
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
           this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
@@ -2375,9 +2376,13 @@ class ClaudeAgentSession implements AgentSession {
       }, 0);
     } catch (error) {
       if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
-      this.finishForegroundTurn(
-        this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
-      );
+      if (this.activeForegroundTurnId === turnId) {
+        this.finishForegroundTurn(
+          this.buildTurnFailedEvent(
+            error instanceof Error ? error.message : "Claude stream failed",
+          ),
+        );
+      }
     }
 
     return { turnId };
@@ -2397,23 +2402,20 @@ class ClaudeAgentSession implements AgentSession {
 
     // Capture both ends of the live SDK stream before creating or delivering the message. There
     // is deliberately no await below: a finished A cannot make this input point at a later B.
-    const query = this.activeForegroundQuery;
-    const input = this.activeForegroundInput;
-    if (!query || !input || this.query !== query || this.input !== input) {
+    const runtime = this.activeTurnRuntime;
+    if (!runtime || this.runtime !== runtime) {
       return { status: "unavailable" };
     }
     const message = this.toSdkUserMessage(prompt);
     message.priority = "next";
     if (
       (this.activeForegroundTurnId ?? this.autonomousTurn?.id) !== options.expectedTurnId ||
-      this.activeForegroundQuery !== query ||
-      this.activeForegroundInput !== input ||
-      this.query !== query ||
-      this.input !== input
+      this.activeTurnRuntime !== runtime ||
+      this.runtime !== runtime
     ) {
       return { status: "unavailable" };
     }
-    this.enqueueSteer(input, message, options.clearPendingPermissions === true);
+    this.enqueueSteer(runtime.input, message, options.clearPendingPermissions === true);
     return { status: "accepted" };
   }
 
@@ -2505,7 +2507,7 @@ class ClaudeAgentSession implements AgentSession {
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
-    const launchesQuery = !this.query || this.queryRestartNeeded;
+    const launchesQuery = !this.runtime || this.queryRestartNeeded;
     const activeQuery = await this.ensureQuery(normalized);
     try {
       await activeQuery.setPermissionMode(normalized);
@@ -2604,7 +2606,7 @@ class ClaudeAgentSession implements AgentSession {
       ...this.config.featureValues,
       fast_mode: enabled,
     };
-    const activeQuery = query ?? this.query;
+    const activeQuery = query ?? this.runtime?.query;
     if (activeQuery) {
       await activeQuery.applyFlagSettings({ fastMode: enabled });
     }
@@ -2767,8 +2769,8 @@ class ClaudeAgentSession implements AgentSession {
         sessionId: this.claudeSessionId,
         turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
         turnState: this.turnState,
-        hasQuery: Boolean(this.query),
-        hasInput: Boolean(this.input),
+        hasQuery: Boolean(this.runtime),
+        hasInput: Boolean(this.runtime),
         hasActiveForegroundTurnId: Boolean(this.activeForegroundTurnId),
       },
       "provider.claude.session_close.start",
@@ -2778,35 +2780,17 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
+    this.activeTurnRuntime = null;
     this.autonomousTurn = null;
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.sidechainTracker.clear();
     this.taskProtocolSource.reset();
-    this.input?.end();
-    this.query?.close?.();
-    await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
-    await this.awaitWithTimeout(this.query?.return?.(), "close query return");
-    this.query = null;
-    this.input = null;
-    // Terminate the entire process tree (claude + MCP children) to prevent
-    // orphan accumulation. The SDK's internal cleanup may only kill the
-    // direct child process.
-    if (this.childProcess) {
-      const result = await terminateWithTreeKill(this.childProcess, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      });
-      if (result === "kill-timeout") {
-        this.logger.warn(
-          { pid: this.childProcess.pid, agentId: this.agentId },
-          "Claude process tree did not report exit after SIGKILL",
-        );
-      }
-      this.childProcess = null;
-    }
+    const runtime = this.runtime;
+    this.runtime = null;
+    if (runtime) await this.disposeRuntime(runtime);
+    // A pending launch checks closed before spawning and after initialization. Do not
+    // wait on executable discovery here: closing must work even when discovery stalls.
     if (this.persistSession === false && this.claudeSessionId) {
       // Claude Code currently ignores --no-session-persistence outside --print mode
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
@@ -3020,7 +3004,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureFreshQuery(): Promise<Query> {
-    if (this.query) {
+    if (this.runtime) {
       this.queryRestartNeeded = true;
     }
     return this.ensureQuery();
@@ -3200,75 +3184,99 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
-    if (this.query && !this.queryRestartNeeded) {
-      return this.query;
+    return (await this.ensureRuntime(launchMode)).query;
+  }
+
+  private ensureRuntime(launchMode: PermissionMode = this.currentMode): Promise<ClaudeRuntime> {
+    if (this.closed) return Promise.reject(new Error("Claude session is closed"));
+    if (this.runtimeStarting) return this.runtimeStarting;
+    if (
+      this.runtime &&
+      !this.runtime.closing &&
+      (!this.queryRestartNeeded || this.activeTurnRuntime === this.runtime)
+    ) {
+      return Promise.resolve(this.runtime);
     }
 
-    if (this.queryRestartNeeded && this.query) {
-      const oldQuery = this.query;
-      const oldInput = this.input;
-      // Null out query/input BEFORE awaiting the old iterator's return so the
-      // old pump sees this.query !== activeQuery and skips failActiveTurns.
-      this.query = null;
-      this.input = null;
-      this.queryPumpPromise = null;
-      this.queryRestartNeeded = false;
-      // Ending the input retires the process on purpose. Detach first so its
-      // exit is not reported as a crash.
-      const retiredChild = this.childProcess;
-      this.childProcess = null;
-      if (retiredChild) this.failRunningRuntimeTasks();
-      oldInput?.end();
-      oldQuery.close?.();
-      try {
-        await oldQuery.return?.();
-      } catch {
-        /* ignore */
-      }
-      // Tree-kill the old process tree now that the SDK has cleaned up.
-      // If we skip this, MCP children of the previous claude process can
-      // survive as orphans when the session spawns a replacement query.
-      if (retiredChild) {
-        await terminateWithTreeKill(retiredChild, {
-          gracefulTimeoutMs: 2_000,
-          forceTimeoutMs: 2_000,
-        }).catch(() => {
-          /* process may already be dead */
-        });
-      }
-    }
+    const starting = this.createRuntime(launchMode).finally(() => {
+      if (this.runtimeStarting === starting) this.runtimeStarting = null;
+    });
+    this.runtimeStarting = starting;
+    return starting;
+  }
 
-    // Preserve claudeSessionId across query recreation so buildOptions() passes
-    // resume: sessionId and the new query continues the existing conversation.
+  private async createRuntime(launchMode: PermissionMode): Promise<ClaudeRuntime> {
+    const retired = this.runtime;
+    this.runtime = null;
+    if (retired) {
+      this.failRunningRuntimeTasks();
+      await this.disposeRuntime(retired);
+    }
+    if (this.closed) throw new Error("Claude session is closed");
+
+    // Consume only the settings captured by this launch. A change during an await
+    // remains pending for the next turn, and the pump never initiates a restart.
+    this.queryRestartNeeded = false;
     this.persistence = null;
-
-    const input = createAsyncMessageInput<SDKUserMessage>();
     const options = await this.buildOptions(launchMode);
+    if (this.closed) throw new Error("Claude session is closed");
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
-    this.input = input;
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
-    this.query = claudeQuery(
+    const input = createAsyncMessageInput<SDKUserMessage>();
+    const process: ClaudeRuntime["process"] = { child: null };
+    const query = claudeQuery(
       { prompt: input.iterable, options },
       {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
         queryFactory: this.queryFactory,
         onChildProcess: (child) => {
-          this.childProcess = child;
+          process.child = child;
           child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
         },
       },
     );
-    const fastMode = this.resolveFastModeSetting();
-    if (fastMode !== null) {
-      await this.query.applyFlagSettings({ fastMode });
+    const runtime: ClaudeRuntime = { query, input, process, pump: null, closing: null };
+    this.runtime = runtime;
+    try {
+      const fastMode = this.resolveFastModeSetting();
+      if (fastMode !== null) await query.applyFlagSettings({ fastMode });
+      if (this.closed) throw new Error("Claude session is closed");
+      if (this.runtime !== runtime) throw new Error("Claude runtime exited during initialization");
+      return runtime;
+    } catch (error) {
+      if (this.runtime === runtime) this.runtime = null;
+      await this.disposeRuntime(runtime);
+      throw error;
     }
-    // Do not kick off background control-plane queries here. Methods like
-    // supportedCommands()/setPermissionMode() may execute immediately after
-    // ensureQuery() (for listCommands()/setMode()), and sharing the same query
-    // control plane can cause those calls to wait behind supportedModels().
-    return this.query;
+  }
+
+  private disposeRuntime(runtime: ClaudeRuntime): Promise<void> {
+    runtime.closing ??= this.closeRuntime(runtime);
+    return runtime.closing;
+  }
+
+  private async closeRuntime(runtime: ClaudeRuntime): Promise<void> {
+    const child = runtime.process.child;
+    runtime.process.child = null;
+    runtime.input.end();
+    runtime.query.close?.();
+    await this.awaitWithTimeout(runtime.query.interrupt?.(), "close query interrupt");
+    await this.awaitWithTimeout(runtime.query.return?.(), "close query return");
+    // Claude's SDK cleanup does not own MCP children; retire the entire tree.
+    if (child) {
+      const result = await terminateWithTreeKill(child, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      });
+      if (result === "kill-timeout") {
+        this.logger.warn(
+          { pid: child.pid, agentId: this.agentId },
+          "Claude process tree did not report exit after SIGKILL",
+        );
+      }
+    }
   }
 
   private async awaitWithTimeout(
@@ -3387,17 +3395,6 @@ class ClaudeAgentSession implements AgentSession {
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);
 
-    const claudeBinary = await this.resolveBinary();
-    this.logger.debug(
-      {
-        claudeBinary,
-        pathEnvKey: resolvePathEnvKey(),
-        pathIncludesClaudeLocalBin: (process.env["Path"] ?? process.env["PATH"] ?? "")
-          .toLowerCase()
-          .includes("\\.local\\bin"),
-      },
-      "Resolved Claude executable",
-    );
     const sessionBinding: Pick<ClaudeOptions, "resume" | "sessionId"> = {};
     if (this.pendingFreshSessionId) {
       sessionBinding.sessionId = this.pendingFreshSessionId;
@@ -3415,7 +3412,6 @@ class ClaudeAgentSession implements AgentSession {
       allowDangerouslySkipPermissions: true,
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
-      pathToClaudeCodeExecutable: claudeBinary,
       // Use Claude Code preset system prompt and load CLAUDE.md files
       // Append provider-agnostic system prompts for agents.
       systemPrompt: {
@@ -3465,7 +3461,18 @@ class ClaudeAgentSession implements AgentSession {
         ...this.runtimeSettings.disallowedTools,
       ];
     }
-    return base;
+    const claudeBinary = await this.resolveBinary();
+    this.logger.debug(
+      {
+        claudeBinary,
+        pathEnvKey: resolvePathEnvKey(),
+        pathIncludesClaudeLocalBin: (process.env["Path"] ?? process.env["PATH"] ?? "")
+          .toLowerCase()
+          .includes("\\.local\\bin"),
+      },
+      "Resolved Claude executable",
+    );
+    return { pathToClaudeCodeExecutable: claudeBinary, ...base };
   }
 
   private buildSettingsOptions(
@@ -3721,8 +3728,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
+    this.activeTurnRuntime = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.compactionMarkerOpen = false;
@@ -3740,15 +3746,13 @@ class ClaudeAgentSession implements AgentSession {
       this.compactionMarkerOpen = false;
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
-        this.activeForegroundQuery = null;
-        this.activeForegroundInput = null;
+        this.activeTurnRuntime = null;
         this.cancelCurrentTurn = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("foreground turn terminal");
       } else if (this.autonomousTurn) {
         this.autonomousTurn = null;
-        this.activeForegroundQuery = null;
-        this.activeForegroundInput = null;
+        this.activeTurnRuntime = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("autonomous turn terminal");
       }
@@ -3762,8 +3766,7 @@ class ClaudeAgentSession implements AgentSession {
     this.autonomousTurn = {
       id: this.createTurnId("autonomous"),
     };
-    this.activeForegroundQuery = this.query;
-    this.activeForegroundInput = this.input;
+    this.activeTurnRuntime = this.runtime;
     this.activeTurnHasAssistantText = false;
     this.contextUsage.beginTurn();
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
@@ -3776,8 +3779,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
     this.autonomousTurn = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
+    this.activeTurnRuntime = null;
     this.activeTurnHasAssistantText = false;
     this.compactionMarkerOpen = false;
     this.syncTurnState("autonomous turn completed");
@@ -3805,10 +3807,11 @@ class ClaudeAgentSession implements AgentSession {
     code: number | null,
     signal: NodeJS.Signals | null,
   ): void {
-    if (this.closed || this.childProcess !== child) {
+    const runtime = this.runtime;
+    if (this.closed || !runtime || runtime.process.child !== child) {
       return;
     }
-    this.childProcess = null;
+    runtime.process.child = null;
     this.logger.warn(
       { agentId: this.agentId, pid: child.pid, code, signal },
       "Claude runtime exited unexpectedly",
@@ -3817,13 +3820,19 @@ class ClaudeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId || this.autonomousTurn) {
       // The pump is about to throw. It waits for stderr to flush and reports the
       // real cause; reporting here first would replace that with a bare exit code
-      // and detach this.query, which is how the pump recognizes its own stream.
+      // and detach the runtime, which is how the pump recognizes its own stream.
       return;
     }
     // Drop the dead handles so the next write spawns a fresh process instead of
     // failing against a dead transport forever.
-    this.query = null;
-    this.input = null;
+    void this.disposeRuntime(runtime)
+      .then(() => {
+        if (this.runtime === runtime) this.runtime = null;
+        return undefined;
+      })
+      .catch((error) => {
+        this.logger.warn({ err: error }, "Failed to retire exited Claude runtime");
+      });
     this.dispatchEvents([
       this.buildTurnFailedEvent(
         `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
@@ -3839,12 +3848,12 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private startQueryPump(): void {
-    if (this.closed || this.queryPumpPromise) {
+  private startQueryPump(runtime: ClaudeRuntime): void {
+    if (this.closed || runtime.pump) {
       return;
     }
 
-    const pump = this.runQueryPump().catch((error) => {
+    const pump = this.runQueryPump(runtime).catch((error) => {
       this.logger.trace(
         {
           agentId: this.agentId,
@@ -3857,33 +3866,16 @@ class ClaudeAgentSession implements AgentSession {
       );
     });
 
-    this.queryPumpPromise = pump;
+    runtime.pump = pump;
     void pump.finally(() => {
-      if (this.queryPumpPromise === pump) {
-        this.queryPumpPromise = null;
+      if (runtime.pump === pump) {
+        runtime.pump = null;
       }
     });
   }
 
-  private async runQueryPump(): Promise<void> {
-    let activeQuery: Query;
-    try {
-      activeQuery = await this.ensureQuery();
-    } catch (error) {
-      this.logger.trace(
-        {
-          agentId: this.agentId,
-          provider: "claude",
-          sessionId: this.claudeSessionId,
-          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
-          err: error,
-        },
-        "provider.claude.query_pump.init_failed",
-      );
-      this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
-      return;
-    }
-
+  private async runQueryPump(runtime: ClaudeRuntime): Promise<void> {
+    const activeQuery = runtime.query;
     let consecutiveInterruptAbortRecoveries = 0;
     const logRawMessage = (message: SDKMessage): void => {
       this.logger.trace(
@@ -3901,9 +3893,10 @@ class ClaudeAgentSession implements AgentSession {
       );
     };
     const handlePumpedMessage = async (message: SDKMessage): Promise<boolean> => {
+      if (this.runtime !== runtime) return true;
       logRawMessage(message);
       consecutiveInterruptAbortRecoveries = 0;
-      if (await this.handleMissingResumedConversation(message, activeQuery)) {
+      if (await this.handleMissingResumedConversation(message, runtime)) {
         return true;
       }
       await this.routeSdkMessageFromPump(message);
@@ -3918,19 +3911,19 @@ class ClaudeAgentSession implements AgentSession {
       return false;
     };
     try {
-      while (!this.closed && this.query === activeQuery) {
+      while (!this.closed && this.runtime === runtime) {
         try {
           if (await drainActiveQuery()) {
             return;
           }
-          if (!this.closed && this.query === activeQuery) {
+          if (!this.closed && this.runtime === runtime) {
             this.failActiveTurns("Claude stream ended before terminal result");
           }
           return;
         } catch (error) {
           if (
             !this.closed &&
-            this.query === activeQuery &&
+            this.runtime === runtime &&
             this.shouldRecoverInterruptedQueryAbort(error, consecutiveInterruptAbortRecoveries)
           ) {
             consecutiveInterruptAbortRecoveries += 1;
@@ -3940,7 +3933,7 @@ class ClaudeAgentSession implements AgentSession {
             );
             continue;
           }
-          if (!this.closed && this.query === activeQuery) {
+          if (!this.closed && this.runtime === runtime) {
             await this.awaitRecentStderrAfterProcessExit(error);
             this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
           }
@@ -3948,10 +3941,8 @@ class ClaudeAgentSession implements AgentSession {
         }
       }
     } finally {
-      if (this.query === activeQuery) {
-        this.query = null;
-        this.input = null;
-      }
+      await this.disposeRuntime(runtime);
+      if (this.runtime === runtime) this.runtime = null;
     }
   }
 
@@ -4123,7 +4114,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private async handleMissingResumedConversation(
     message: SDKMessage,
-    activeQuery: Query,
+    runtime: ClaudeRuntime,
   ): Promise<boolean> {
     const staleResumeError = this.readMissingResumedConversationError(message);
     if (!staleResumeError) {
@@ -4138,29 +4129,8 @@ class ClaudeAgentSession implements AgentSession {
     );
 
     this.failActiveTurns(staleResumeError);
-    // Ending the input retires the process on purpose. Detach first so its exit
-    // is not reported as a crash.
-    const retiredChild = this.childProcess;
-    this.childProcess = null;
-    this.input?.end();
-    await this.awaitWithTimeout(
-      activeQuery.return?.(),
-      "query pump return on missing resumed conversation",
-    );
-    // Tree-kill for the same reason the restart path does: MCP children of the
-    // retired claude process outlive it otherwise.
-    if (retiredChild) {
-      await terminateWithTreeKill(retiredChild, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      }).catch(() => {
-        /* process may already be dead */
-      });
-    }
-    if (this.query === activeQuery) {
-      this.query = null;
-      this.input = null;
-    }
+    // Clear the conversation before yielding to teardown, so a later request
+    // cannot resume a session that has already been rejected.
     this.persistence = null;
     this.persistedHistory = [];
     this.persistedProviderSubagentEvents = [];
@@ -4169,9 +4139,10 @@ class ClaudeAgentSession implements AgentSession {
     this.queryRestartNeeded = false;
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
+    this.activeTurnRuntime = null;
     this.syncTurnState("missing resumed conversation");
+    await this.disposeRuntime(runtime);
+    if (this.runtime === runtime) this.runtime = null;
     return true;
   }
 
@@ -4182,7 +4153,7 @@ class ClaudeAgentSession implements AgentSession {
    * perTaskStopAffordance), and no result would follow to consume pendingInterruptAbort.
    */
   private async interruptActiveTurn(claudeStartedTurn = this.mainTurnInFlight): Promise<void> {
-    const queryToInterrupt = this.query;
+    const queryToInterrupt = this.runtime?.query;
     if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
       this.logger.trace(
         {
