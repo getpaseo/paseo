@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { runPluginClientBundle, type PluginClientRuntime } from "@/plugins/evaluate";
 import type { InstalledPlugin } from "@/plugins/types";
@@ -11,6 +11,10 @@ import {
   type UserMessageItem,
 } from "@/types/stream";
 import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
+import {
+  clearMarkdownBlockDelimiters,
+  setMarkdownBlockDelimiters,
+} from "@/utils/split-markdown-blocks";
 import { createStreamPresentation } from "./presentation";
 import { buildAgentStreamRenderModel } from "./model";
 
@@ -121,6 +125,10 @@ function assistant(text: string, messageId = "message-1"): AgentStreamEventPaylo
 
 function rows(result: { tail: StreamItem[]; head: StreamItem[] }): StreamItem[] {
   return [...result.tail, ...result.head];
+}
+
+function assistantRowTexts(items: StreamItem[]): string[] {
+  return items.flatMap((item) => (item.kind === "assistant_message" ? [item.text] : []));
 }
 
 describe("stream presentation through installed plugins", () => {
@@ -261,6 +269,79 @@ describe("stream presentation through installed plugins", () => {
     const blocks = (items: StreamItem[]) =>
       items.map((item) => [item.id, item.kind === "assistant_message" ? item.text : null]);
     expect(blocks(present("head"))).toEqual(blocks(present("tail")));
+  });
+
+  describe("host-scoped row splitting", () => {
+    afterEach(() => {
+      clearMarkdownBlockDelimiters();
+    });
+
+    it("keeps a region declared by the host's plugins in one row across blank lines", () => {
+      setMarkdownBlockDelimiters("host-a", [{ open: ":::", close: ":::" }]);
+      const source = hydrateStreamState([
+        { event: assistant("Intro\n\n:::\nstill\n\nstreaming"), timestamp: new Date(1000) },
+      ]);
+      const render = (serverId: string | undefined) =>
+        assistantRowTexts(
+          rows(
+            createStreamPresentation()({
+              ...presentationOptions,
+              transform: undefined,
+              serverId,
+              tail: source,
+              head: [],
+            }),
+          ),
+        );
+      expect(render("host-a")).toEqual(["Intro", ":::\nstill\n\nstreaming"]);
+      expect(render(undefined)).toEqual(["Intro", ":::\nstill", "streaming"]);
+    });
+
+    it("re-splits cached rows when the presentation host changes", () => {
+      setMarkdownBlockDelimiters("host-a", [{ open: ":::", close: ":::" }]);
+      const source = hydrateStreamState([
+        { event: assistant(":::\nstill\n\nstreaming"), timestamp: new Date(1000) },
+      ]);
+      const present = createStreamPresentation();
+      const render = (serverId: string) =>
+        assistantRowTexts(
+          rows(
+            present({
+              ...presentationOptions,
+              transform: undefined,
+              serverId,
+              tail: source,
+              head: [],
+            }),
+          ),
+        );
+      expect(render("host-a")).toEqual([":::\nstill\n\nstreaming"]);
+      expect(render("host-b")).toEqual([":::\nstill", "streaming"]);
+    });
+
+    it("re-splits cached rows when the host's plugin catalog changes", () => {
+      const source = hydrateStreamState([
+        { event: assistant(":::\nstill\n\nstreaming"), timestamp: new Date(1000) },
+      ]);
+      const present = createStreamPresentation();
+      const render = () =>
+        assistantRowTexts(
+          rows(
+            present({
+              ...presentationOptions,
+              transform: undefined,
+              serverId: "host-a",
+              tail: source,
+              head: [],
+            }),
+          ),
+        );
+      expect(render()).toEqual([":::\nstill", "streaming"]);
+      setMarkdownBlockDelimiters("host-a", [{ open: ":::", close: ":::" }]);
+      expect(render()).toEqual([":::\nstill\n\nstreaming"]);
+      setMarkdownBlockDelimiters("host-a", []);
+      expect(render()).toEqual([":::\nstill", "streaming"]);
+    });
   });
 
   // Rows are addressed by id from outside presentation, so the same text has to land on

@@ -33,6 +33,7 @@ function installed(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    markdownExtensions: [],
   };
 }
 
