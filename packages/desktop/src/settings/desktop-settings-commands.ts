@@ -1,6 +1,14 @@
 import type { DesktopSettingsStore } from "./desktop-settings.js";
 
-export type DesktopCommandHandler = (args?: Record<string, unknown>) => unknown;
+export interface DesktopCommandContext {
+  /** webContents id of the renderer that issued `paseo:invoke`. */
+  senderId: number;
+}
+
+export type DesktopCommandHandler = (
+  args?: Record<string, unknown>,
+  context?: DesktopCommandContext,
+) => unknown;
 
 export function createDesktopSettingsCommandHandlers({
   settingsStore,

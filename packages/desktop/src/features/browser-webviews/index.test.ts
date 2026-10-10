@@ -43,6 +43,8 @@ class FakeBrowserGuest {
   }
 }
 
+const ROUTED_PARTITION = "persist:paseo-browser-via-0123456789abcdef";
+
 describe("browser webview attachment", () => {
   test("accepts only allowed URLs on the shared profile partition", () => {
     expect(
@@ -60,6 +62,38 @@ describe("browser webview attachment", () => {
     expect(
       isPaseoBrowserWebviewAttach({ src: "https://example.com", partition: "persist:foreign" }),
     ).toBe(false);
+    expect(isPaseoBrowserWebviewAttach({ src: "https://example.com" })).toBe(false);
+  });
+
+  test("accepts a routed per-host partition only while its proxy is ready", () => {
+    const ready = new Set<string>();
+    const options = { isRoutedPartitionReady: (partition: string) => ready.has(partition) };
+
+    expect(
+      isPaseoBrowserWebviewAttach(
+        { src: "https://example.com", partition: ROUTED_PARTITION },
+        options,
+      ),
+    ).toBe(false);
+    ready.add(ROUTED_PARTITION);
+    expect(
+      isPaseoBrowserWebviewAttach(
+        { src: "https://example.com", partition: ROUTED_PARTITION },
+        options,
+      ),
+    ).toBe(true);
+    expect(
+      isPaseoBrowserWebviewAttach(
+        { src: "file:///etc/passwd", partition: ROUTED_PARTITION },
+        options,
+      ),
+    ).toBe(false);
+    expect(
+      isPaseoBrowserWebviewAttach(
+        { src: "https://example.com", partition: PASEO_BROWSER_PROFILE_PARTITION },
+        options,
+      ),
+    ).toBe(true);
   });
 
   test("binds explicit browser identity to the renderer that hosts the guest", () => {
@@ -72,7 +106,7 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: renderer,
-      profileSession,
+      isProfileSession: (candidate) => candidate === profileSession,
       findWebContents: () => guest,
     });
 
@@ -93,12 +127,32 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: claimant,
-      profileSession,
+      isProfileSession: (candidate) => candidate === profileSession,
       findWebContents: () => guest,
     });
 
     expect(registered).toBe(false);
     expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
+  });
+
+  test("accepts a guest in a ready routed profile", () => {
+    const profileSession = {};
+    const routedSession = {};
+    const renderer = new FakeRenderer(1);
+    const guest = new FakeBrowserGuest(302, renderer, routedSession);
+
+    const registered = registerAttachedPaseoBrowser({
+      browserId: "browser-routed",
+      workspaceId: "workspace-a",
+      webContentsId: guest.id,
+      sender: renderer,
+      isProfileSession: (candidate) => candidate === profileSession || candidate === routedSession,
+      findWebContents: () => guest,
+    });
+
+    expect(registered).toBe(true);
+    expect(getPaseoBrowserIdForWebContents(guest)).toBe("browser-routed");
+    unregisterPaseoBrowser("browser-routed");
   });
 
   test("rejects a guest outside the shared profile", () => {
@@ -111,7 +165,7 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-a",
       webContentsId: guest.id,
       sender: renderer,
-      profileSession,
+      isProfileSession: (candidate) => candidate === profileSession,
       findWebContents: () => guest,
     });
 
@@ -135,7 +189,7 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-second",
       webContentsId: secondGuest.id,
       sender: secondRenderer,
-      profileSession,
+      isProfileSession: (candidate) => candidate === profileSession,
       findWebContents: (id) => guests.get(id) ?? null,
     });
     registerAttachedPaseoBrowser({
@@ -143,7 +197,7 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-first",
       webContentsId: firstGuest.id,
       sender: firstRenderer,
-      profileSession,
+      isProfileSession: (candidate) => candidate === profileSession,
       findWebContents: (id) => guests.get(id) ?? null,
     });
 
@@ -169,7 +223,7 @@ describe("browser webview attachment", () => {
         workspaceId: "workspace-shared",
         webContentsId: guest.id,
         sender: renderer,
-        profileSession,
+        isProfileSession: (candidate) => candidate === profileSession,
         findWebContents: () => guest,
       });
     }
@@ -192,7 +246,7 @@ describe("browser webview attachment", () => {
       workspaceId: "workspace-cleanup",
       webContentsId: guest.id,
       sender: renderer,
-      profileSession,
+      isProfileSession: (candidate) => candidate === profileSession,
       findWebContents: () => guest,
     });
 
