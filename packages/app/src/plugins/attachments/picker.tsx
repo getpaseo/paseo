@@ -42,6 +42,7 @@ interface PluginAttachmentPickerInput {
 
 interface PluginAttachmentPickerBinding {
   menuItems: AttachmentMenuItem[];
+  newAgentShortcutItems: AttachmentMenuItem[];
   picker: ReactElement | null;
 }
 
@@ -156,9 +157,18 @@ export function usePluginAttachmentPicker(
       }),
     [sources],
   );
-  if (!active) return { menuItems, picker: null };
+  const newAgentShortcutItems = useMemo(() => {
+    const shortcutIds = new Set(
+      sources
+        .filter(({ source }) => source.newAgentShortcut === true)
+        .map(({ key }) => `plugin:${key}`),
+    );
+    return menuItems.filter((item) => shortcutIds.has(item.id));
+  }, [menuItems, sources]);
+  if (!active) return { menuItems, newAgentShortcutItems, picker: null };
   return {
     menuItems,
+    newAgentShortcutItems,
     picker: (
       <Combobox
         options={options}
