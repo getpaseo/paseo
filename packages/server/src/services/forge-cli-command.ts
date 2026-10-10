@@ -143,6 +143,7 @@ export class ForgeAuthenticationError extends Error {
   constructor(message: string, params: { stderr: string }) {
     super(message);
     this.stderr = params.stderr;
+    Object.defineProperty(this, "stderr", { enumerable: false });
   }
 }
 
@@ -168,13 +169,16 @@ export class ForgeCommandError extends Error {
   readonly stdout?: string;
 
   constructor(label: { brand: string; binary: string }, params: ForgeCommandFailureParams) {
-    super(`${label.brand} CLI command failed: ${label.binary} ${params.args.join(" ")}`);
+    super(`${label.brand} CLI command failed: ${label.binary}`);
     this.args = [...params.args];
     this.cwd = params.cwd;
     this.exitCode = params.exitCode;
     this.stderr = params.stderr;
     if (params.stdout !== undefined) {
       this.stdout = params.stdout;
+    }
+    for (const key of ["args", "cwd", "stderr"] as const) {
+      Object.defineProperty(this, key, { enumerable: false });
     }
   }
 }
@@ -257,7 +261,7 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
     args: options.args,
     cwd: options.cwd,
     exitCode: typeof failure.code === "number" ? failure.code : null,
-    stderr: stderr || message,
+    stderr: stderr || `${options.commandName} command failed without stderr`,
     ...(stdout ? { stdout } : {}),
   });
 }

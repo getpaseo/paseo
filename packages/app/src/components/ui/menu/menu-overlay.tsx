@@ -53,51 +53,39 @@ const contentExiting = new Keyframe({
   100: { opacity: 0, transform: [{ scale: 0.97 }] },
 }).duration(100);
 
-function releaseFixedMenuHeight(surfaceNativeID: string): void {
-  if (!isWeb) return;
-  document.getElementById(surfaceNativeID)?.style.removeProperty("height");
-}
-
 /**
- * Reanimated's web entering animation leaves an inline height snapshot on the measured surface.
- * Once the menu is open, height must return to content-sized so rows can grow in place — and so
- * a submenu page taller than the page it replaced is not clipped to the old height.
+ * Reanimated's web entering animation snapshots the surface's size when it ends and writes that
+ * snapshot back as inline `height` in a cleanup timer several hundred milliseconds later. The
+ * surface must stay content-sized: rows grow in place, and content that lands between the two
+ * moments — a plugin panel still waiting on its data after a page refresh — would otherwise be
+ * clamped to the height of an empty page, its padding alone.
  *
- * `revision` is what makes that second case work: bump it whenever the rendered content changes
- * identity (a page push, for instance) and the snapshot is released again.
+ * Releasing on timers raced that write-back and lost whenever the content changed first, so the
+ * surface is watched instead: a mutation observer runs before the next paint, which removes the
+ * height before it is ever drawn.
  */
-function useReleaseFixedMenuHeight({
-  contentSize,
+function useKeepMenuContentSized({
   enabled,
+  placed,
   surfaceNativeID,
-  revision,
 }: {
-  contentSize: Size | null;
   enabled: boolean;
+  placed: boolean;
   surfaceNativeID: string;
-  revision?: string | number;
 }): void {
   useEffect(() => {
-    if (!enabled) return undefined;
-
+    if (!isWeb || !enabled) return undefined;
+    // `placed` remounts the surface element, so each placement is observed afresh.
+    const surface = document.getElementById(surfaceNativeID);
+    if (!surface) return undefined;
     const release = () => {
-      releaseFixedMenuHeight(surfaceNativeID);
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(() => releaseFixedMenuHeight(surfaceNativeID));
-      }
+      if (surface.style.height) surface.style.removeProperty("height");
     };
-    const timers: ReturnType<typeof setTimeout>[] = [
-      setTimeout(release, CONTENT_ENTERING_DURATION_MS),
-    ];
-
-    if (contentSize) {
-      timers.push(setTimeout(release, 0));
-    }
-
-    return () => {
-      for (const timer of timers) clearTimeout(timer);
-    };
-  }, [contentSize, enabled, surfaceNativeID, revision]);
+    release();
+    const observer = new MutationObserver(release);
+    observer.observe(surface, { attributes: true, attributeFilter: ["style"] });
+    return () => observer.disconnect();
+  }, [enabled, placed, surfaceNativeID]);
 }
 
 /**
@@ -228,8 +216,6 @@ export interface AnchoredSurfaceProps {
   fullWidth?: boolean;
   horizontalPadding?: number;
   scrollable?: boolean;
-  /** Bump when the rendered content changes identity, so the height snapshot is released. */
-  revision?: string | number;
   /** A submenu sits inside its parent's overlay and must not paint a second backdrop. */
   backdrop?: boolean;
   /**
@@ -263,7 +249,6 @@ export function AnchoredSurface({
   fullWidth = false,
   horizontalPadding = 16,
   scrollable = false,
-  revision,
   backdrop = true,
   onPointerEnter,
   onPointerLeave,
@@ -273,24 +258,20 @@ export function AnchoredSurface({
 }: AnchoredSurfaceProps): ReactElement | null {
   const { t } = useTranslation();
   const surfaceNativeID = useId();
-  const { position, actualPlacement, contentSize, visibleContentSize, onContentLayout } =
-    useAnchoredPosition({
-      open,
-      anchorRect,
-      anchorRef,
-      side,
-      align,
-      offset,
-      scrollable,
-      maxHeight,
-    });
-
-  useReleaseFixedMenuHeight({
-    contentSize,
-    enabled: open,
-    surfaceNativeID,
-    revision,
+  const { position, actualPlacement, visibleContentSize, onContentLayout } = useAnchoredPosition({
+    open,
+    anchorRect,
+    anchorRef,
+    side,
+    align,
+    offset,
+    scrollable,
+    maxHeight,
   });
+
+  const placed = position !== null;
+
+  useKeepMenuContentSized({ enabled: open, placed, surfaceNativeID });
 
   // The surface is placed once both measurements land. Until then it sits off-screen so it can
   // be measured, and it must not animate: Reanimated's web entering path snapshots the element's
@@ -298,7 +279,6 @@ export function AnchoredSurface({
   // keyframe up 750ms later. If the animation ends before placement, the snapshot is the
   // off-screen rect and the menu jumps back off-screen. Remounting on placement starts the
   // animation from the final position.
-  const placed = position !== null;
 
   useEffect(() => {
     if (!isWeb || !open || !placed || typeof document === "undefined") return undefined;

@@ -176,9 +176,11 @@ its own.
 
 ## Gotchas
 
-- **Released height.** Reanimated's web entering animation leaves an inline height snapshot on
-  the surface. `AnchoredSurface` clears it, and a `revision` prop re-clears it when content
-  identity changes — a pushed page taller than the one it replaced is clipped without that.
+- **Released height.** Reanimated's web entering animation snapshots the surface when it ends and
+  writes that height back inline in a cleanup timer ~750ms later. Content that grew in between —
+  a plugin popover still loading after a page refresh — was clamped to the empty page's padding, the
+  "8px popover". `AnchoredSurface` watches the surface's `style` with a mutation observer and removes
+  the height before it paints. Timed releases raced the write-back and lost; don't go back to them.
 - **Animate only once placed.** The same snapshot carries top/left, and Reanimated writes it back
   750ms after mount. `AnchoredSurface` remounts the surface when its position resolves so the
   entering animation never ends at the off-screen measuring position; on a slow machine that

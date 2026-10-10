@@ -106,7 +106,9 @@ function HostAgentReadyRouteContent() {
     handledNavigationRef.current = navigationKey;
 
     if (resolution.kind === "resolved") {
-      navigateToAgent({ serverId, agentId, workspaceId: resolution.workspaceId });
+      // Pinned like the workspace `?open=agent:` intent: an agent URL is an explicit open, and an
+      // archived agent's tab would otherwise be reconciled away as soon as it opens.
+      navigateToAgent({ serverId, agentId, workspaceId: resolution.workspaceId, pin: true });
       return;
     }
     router.replace(resolution.kind === "invalid" ? ("/" as Href) : buildHostRootRoute(serverId));

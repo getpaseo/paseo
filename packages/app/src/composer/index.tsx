@@ -146,6 +146,7 @@ import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { getForgePresentation } from "@/git/forge";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
@@ -314,6 +315,7 @@ interface RenderAttachmentTrayArgs {
   isComposerLocked: boolean;
   handleOpenAttachment: (attachment: ComposerAttachment) => void;
   handleRemoveAttachment: (index: number) => void;
+  clientForgeHost: ClientForgeHostSnapshot;
   labels: {
     openImage: string;
     removeImage: string;
@@ -330,6 +332,7 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
     isComposerLocked,
     handleOpenAttachment,
     handleRemoveAttachment,
+    clientForgeHost,
     labels,
   } = args;
   if (selectedAttachments.length === 0 && pendingFiles.length === 0) return null;
@@ -343,6 +346,7 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
           onOpen: handleOpenAttachment,
           onRemove: handleRemoveAttachment,
           labels,
+          clientForgeHost,
         }),
       )}
       {pendingFiles.map(({ id, file }) => (
@@ -393,10 +397,11 @@ interface RenderComposerAttachmentPillArgs {
   onOpen: (attachment: ComposerAttachment) => void;
   onRemove: (index: number) => void;
   labels: RenderAttachmentTrayArgs["labels"];
+  clientForgeHost: ClientForgeHostSnapshot;
 }
 
 function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
-  const { attachment, index, disabled, onOpen, onRemove, labels } = args;
+  const { attachment, index, disabled, onOpen, onRemove, labels, clientForgeHost } = args;
   if (attachment.kind === "image") {
     return (
       <ImageAttachmentPill
@@ -468,6 +473,7 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
       onRemove={onRemove}
       openLabel={labels.openGithub}
       removeLabel={labels.removeGithub}
+      clientForgeHost={clientForgeHost}
     />
   );
 }
@@ -744,6 +750,7 @@ interface GithubAttachmentPillProps {
   onRemove: (index: number) => void;
   openLabel: (kind: string, numberLabel: string) => string;
   removeLabel: (kind: string, numberLabel: string) => string;
+  clientForgeHost: ClientForgeHostSnapshot;
 }
 
 function GithubAttachmentPill({
@@ -754,9 +761,10 @@ function GithubAttachmentPill({
   onRemove,
   openLabel,
   removeLabel,
+  clientForgeHost,
 }: GithubAttachmentPillProps) {
   const item = attachment.item;
-  const presentation = getForgePresentation(item.forge ?? "github");
+  const presentation = getForgePresentation(item.forge ?? "github", clientForgeHost);
   const isChangeRequest = item.kind === "change_request";
   const kindLabel = isChangeRequest ? presentation.changeRequestAbbrev : "issue";
   const subtitleKind = isChangeRequest ? presentation.changeRequestAbbrev : "Issue";
@@ -1235,6 +1243,7 @@ function ComposerContentImpl({
   submitLabel,
   placeholder,
 }: ComposerContentProps) {
+  const clientForgeHost = useClientForgeHost(serverId);
   const mode = resolveComposerInputMode(inputMode);
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
@@ -1301,6 +1310,7 @@ function ComposerContentImpl({
   const forgeConfiguration = useMemo(
     () => ({
       remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
+      clientForgeHost,
       attachments,
       client,
       isConnected,
@@ -1313,6 +1323,7 @@ function ComposerContentImpl({
     }),
     [
       checkoutStatusQuery.status,
+      clientForgeHost,
       attachments,
       client,
       isConnected,
@@ -2069,7 +2080,10 @@ function ComposerContentImpl({
     cwd,
     enabled: isConnected && cwd.trim().length > 0 && (isGithubPickerOpen || hasGithubAttachment),
   });
-  const forgePresentation = useMemo(() => getForgePresentation(forge), [forge]);
+  const forgePresentation = useMemo(
+    () => getForgePresentation(forge, clientForgeHost),
+    [clientForgeHost, forge],
+  );
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
   const githubSearchResultsQuery = useForgeSearchQuery({
@@ -2086,7 +2100,7 @@ function ComposerContentImpl({
   const githubSearchOptions: ComboboxOption[] = useMemo(
     () =>
       githubSearchItems.map((item) => {
-        const presentation = getForgePresentation(item.forge ?? "github");
+        const presentation = getForgePresentation(item.forge ?? "github", clientForgeHost);
         const numberPrefix =
           item.kind === "change_request"
             ? presentation.numberPrefix
@@ -2097,7 +2111,7 @@ function ComposerContentImpl({
           description: githubSearchQueryTrimmed,
         };
       }),
-    [githubSearchItems, githubSearchQueryTrimmed],
+    [clientForgeHost, githubSearchItems, githubSearchQueryTrimmed],
   );
 
   const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
@@ -2127,7 +2141,7 @@ function ComposerContentImpl({
         label: t("composer.attachments.addIssueOrPr", {
           context: forgePresentation.changeRequestContext,
         }),
-        icon: renderForgeAttachmentIcon(forgePresentation.icon),
+        icon: renderForgeAttachmentIcon(forgePresentation.icon, clientForgeHost),
         onSelect: () => {
           setIsGithubPickerOpen(true);
         },
@@ -2144,6 +2158,7 @@ function ComposerContentImpl({
     );
     return items;
   }, [
+    clientForgeHost,
     forgePresentation,
     handlePasteImage,
     handlePickFile,
@@ -2258,6 +2273,7 @@ function ComposerContentImpl({
         isComposerLocked,
         handleOpenAttachment,
         handleRemoveAttachment,
+        clientForgeHost,
         labels: {
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
@@ -2269,6 +2285,7 @@ function ComposerContentImpl({
         },
       }),
     [
+      clientForgeHost,
       handleOpenAttachment,
       handleRemoveAttachment,
       isComposerLocked,
@@ -2613,9 +2630,17 @@ const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foregroun
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
 
-function renderForgeAttachmentIcon(icon: string): ReactElement {
+function renderForgeAttachmentIcon(
+  icon: string,
+  clientForgeHost: ClientForgeHostSnapshot,
+): ReactElement {
   return (
-    <ForgeBrandIcon iconKind={icon} size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />
+    <ForgeBrandIcon
+      iconKind={icon}
+      size={ICON_SIZE.md}
+      uniProps={iconForegroundMutedMapping}
+      host={clientForgeHost}
+    />
   );
 }
 

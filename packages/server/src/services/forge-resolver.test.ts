@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createForgeService } from "./forge-registry.js";
+import { createForgeService, ForgeRegistry } from "./forge-registry.js";
 import { createForgeResolver, forgeForHost, parseRemoteHost } from "./forge-resolver.js";
 
 function createSshHostnameResolver(hostnameByAlias: Record<string, string | null>) {
@@ -217,6 +217,226 @@ describe("createForgeResolver", () => {
     expect(built).toBe(1);
     expect(probeForge).toHaveBeenCalledTimes(1);
     expect(first?.service).toBe(second?.service);
+  });
+
+  it("replaces a cached service after its dynamic adapter is re-registered", async () => {
+    const registry = new ForgeRegistry();
+    const firstService = createForgeService("github");
+    const secondService = createForgeService("github");
+    if (!firstService || !secondService) throw new Error("GitHub service is unavailable");
+    const unregisterFirst = registry.register("dynamic", {
+      createService: () => firstService,
+      matchesHost: (host) => host === "dynamic.example.com",
+    });
+    const resolver = createForgeResolver({ registry });
+    const remoteUrl = "git@dynamic.example.com:acme/repo.git";
+
+    expect(resolver.resolveFromRemoteUrl(remoteUrl)?.service).toBe(firstService);
+    unregisterFirst();
+    expect(resolver.resolveFromRemoteUrl(remoteUrl)).toBeNull();
+
+    const unregisterSecond = registry.register("dynamic", {
+      createService: () => secondService,
+      matchesHost: (host) => host === "dynamic.example.com",
+    });
+    try {
+      expect(resolver.resolveFromRemoteUrl(remoteUrl)?.service).toBe(secondService);
+    } finally {
+      unregisterSecond();
+    }
+  });
+
+  it("does not retain a positive host probe after the contributing adapter is removed", async () => {
+    const registry = new ForgeRegistry();
+    const service = createForgeService("github");
+    if (!service) throw new Error("GitHub service is unavailable");
+    const unregister = registry.register("dynamic", {
+      createService: () => service,
+      probeHost: async (host) => host === "git.acme.internal",
+    });
+    const resolver = createForgeResolver({
+      registry,
+      resolveSshHostname: resolveSshHostnameAsLiteralHost,
+    });
+    const remoteUrl = "git@git.acme.internal:acme/repo.git";
+
+    await expect(resolver.resolveFromRemoteUrlAsync(remoteUrl)).resolves.toMatchObject({
+      forge: "dynamic",
+    });
+    expect(resolver.resolveFromRemoteUrl(remoteUrl)).toMatchObject({ forge: "dynamic" });
+
+    unregister();
+
+    expect(resolver.resolveFromRemoteUrl(remoteUrl)).toBeNull();
+    await expect(resolver.resolveFromRemoteUrlAsync(remoteUrl)).resolves.toBeNull();
+  });
+
+  it("uses the current registry revision without waiting for a third refresh", async () => {
+    let releaseOldProbe: ((recognized: boolean) => void) | undefined;
+    const oldProbe = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseOldProbe = resolve;
+        }),
+    );
+    const registry = new ForgeRegistry();
+    const service = createForgeService("github");
+    if (!service) throw new Error("GitHub service is unavailable");
+    const unregisterOld = registry.register("old", {
+      createService: () => service,
+      probeHost: oldProbe,
+    });
+    const resolver = createForgeResolver({
+      registry,
+      resolveSshHostname: resolveSshHostnameAsLiteralHost,
+    });
+    const remoteUrl = "git@git.acme.internal:acme/repo.git";
+    const first = resolver.resolveFromRemoteUrlAsync(remoteUrl);
+    await vi.waitFor(() => expect(oldProbe).toHaveBeenCalledTimes(1));
+
+    unregisterOld();
+    const currentProbe = vi.fn(async () => true);
+    const unregisterCurrent = registry.register("dynamic", {
+      createService: () => service,
+      probeHost: currentProbe,
+    });
+    try {
+      await expect(resolver.resolveFromRemoteUrlAsync(remoteUrl)).resolves.toMatchObject({
+        forge: "dynamic",
+      });
+      expect(currentProbe).toHaveBeenCalledTimes(1);
+
+      releaseOldProbe?.(true);
+      await expect(first).resolves.toBeNull();
+    } finally {
+      unregisterCurrent();
+    }
+  });
+
+  it("does not let a stale probe clear the current revision's in-flight probe", async () => {
+    let releaseOldProbe: ((recognized: boolean) => void) | undefined;
+    let releaseCurrentProbe: ((recognized: boolean) => void) | undefined;
+    const oldProbe = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseOldProbe = resolve;
+        }),
+    );
+    const currentProbe = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseCurrentProbe = resolve;
+        }),
+    );
+    const registry = new ForgeRegistry();
+    const service = createForgeService("github");
+    if (!service) throw new Error("GitHub service is unavailable");
+    const unregisterOld = registry.register("old", {
+      createService: () => service,
+      probeHost: oldProbe,
+    });
+    const resolver = createForgeResolver({
+      registry,
+      resolveSshHostname: resolveSshHostnameAsLiteralHost,
+    });
+    const remoteUrl = "git@git.acme.internal:acme/repo.git";
+    const staleResolution = resolver.resolveFromRemoteUrlAsync(remoteUrl);
+    await vi.waitFor(() => expect(oldProbe).toHaveBeenCalledTimes(1));
+
+    unregisterOld();
+    const unregisterCurrent = registry.register("dynamic", {
+      createService: () => service,
+      probeHost: currentProbe,
+    });
+    try {
+      const currentResolution = resolver.resolveFromRemoteUrlAsync(remoteUrl);
+      await vi.waitFor(() => expect(currentProbe).toHaveBeenCalledTimes(1));
+
+      releaseOldProbe?.(true);
+      await expect(staleResolution).resolves.toBeNull();
+
+      const coalescedResolution = resolver.resolveFromRemoteUrlAsync(remoteUrl);
+      expect(currentProbe).toHaveBeenCalledTimes(1);
+      releaseCurrentProbe?.(true);
+      await expect(Promise.all([currentResolution, coalescedResolution])).resolves.toEqual([
+        expect.objectContaining({ forge: "dynamic" }),
+        expect.objectContaining({ forge: "dynamic" }),
+      ]);
+      expect(currentProbe).toHaveBeenCalledTimes(1);
+    } finally {
+      unregisterCurrent();
+    }
+  });
+
+  it("fails closed without probing when direct host matchers conflict", async () => {
+    const probe = vi.fn(async () => true);
+    const service = createForgeService("github");
+    if (!service) throw new Error("GitHub service is unavailable");
+    const registry = new ForgeRegistry([
+      [
+        "first",
+        {
+          createService: () => service,
+          matchesHost: (host) => host === "forge.example.com",
+          probeHost: probe,
+        },
+      ],
+      [
+        "second",
+        {
+          createService: () => service,
+          matchesHost: (host) => host === "forge.example.com",
+          probeHost: probe,
+        },
+      ],
+    ]);
+    const resolver = createForgeResolver({ registry });
+    const remoteUrl = "https://forge.example.com/acme/repo.git";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(resolver.resolveFromRemoteUrl(remoteUrl)).toBeNull();
+      await expect(resolver.resolveFromRemoteUrlAsync(remoteUrl)).resolves.toBeNull();
+      expect(probe).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("fails closed without probing when an SSH alias resolves to ambiguous direct matches", async () => {
+    const probe = vi.fn(async () => true);
+    const service = createForgeService("github");
+    if (!service) throw new Error("GitHub service is unavailable");
+    const registry = new ForgeRegistry([
+      [
+        "first",
+        {
+          createService: () => service,
+          matchesHost: (host) => host === "forge.example.com",
+          probeHost: probe,
+        },
+      ],
+      [
+        "second",
+        {
+          createService: () => service,
+          matchesHost: (host) => host === "forge.example.com",
+          probeHost: probe,
+        },
+      ],
+    ]);
+    const resolver = createForgeResolver({
+      registry,
+      resolveSshHostname: createSshHostnameResolver({ "forge-work": "forge.example.com" }),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(
+        resolver.resolveFromRemoteUrlAsync("git@forge-work:acme/repo.git"),
+      ).resolves.toBeNull();
+      expect(probe).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("memoizes the remote-url resolution per cwd", async () => {

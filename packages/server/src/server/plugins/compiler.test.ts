@@ -157,6 +157,7 @@ describe("plugin runtime entries", () => {
     "@getpaseo/plugin/server",
     "@getpaseo/plugin/server/provider",
     "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/server/forge-toolkit",
   ])("rejects %s from client code", async (specifier) => {
     const entries = await createSplitPlugin();
     await writeFile(
@@ -210,7 +211,6 @@ describe("plugin runtime entries", () => {
       ).rejects.toThrow("plugin shared");
     },
   );
-
   it.each([
     'import type { PluginClientContext } from "@getpaseo/plugin/client"; export type Context = PluginClientContext;',
     'export type { PluginClientContext } from "@getpaseo/plugin/client";',

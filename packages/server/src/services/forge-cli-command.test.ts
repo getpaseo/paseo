@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createCachedCliPathResolver,
   createForgeCliRunner,
+  ForgeCommandError,
+  normalizeCliCommandError,
   probeHostViaCliAuthStatus,
 } from "./forge-cli-command.js";
 import { isPlatform } from "../test-utils/platform.js";
@@ -137,6 +139,48 @@ describe.skipIf(isPlatform("win32"))("createForgeCliRunner", () => {
     const normalized = runner.normalizeError(rawError, { args: ["arg"], cwd: tempDir });
     expect(normalized).toBeInstanceOf(FakeCommandError);
     expect((normalized as FakeCommandError).stderr).toMatch(/timed out after 100ms/);
+  });
+});
+
+describe("ForgeCommandError", () => {
+  it("keeps diagnostics readable without exposing them to default error serialization", () => {
+    const error = new ForgeCommandError(
+      { brand: "Acme", binary: "acme" },
+      {
+        args: ["merge", "--body", "sensitive body"],
+        cwd: "/sensitive/repo",
+        exitCode: 1,
+        stderr: "sensitive stderr",
+      },
+    );
+
+    expect(error.message).toBe("Acme CLI command failed: acme");
+    expect(error.args).toEqual(["merge", "--body", "sensitive body"]);
+    expect(error.cwd).toBe("/sensitive/repo");
+    expect(error.stderr).toBe("sensitive stderr");
+    for (const key of ["args", "cwd", "stderr"]) {
+      expect(Object.keys(error)).not.toContain(key);
+    }
+  });
+
+  it("does not preserve a raw process message that may contain the full command", () => {
+    const error = normalizeCliCommandError({
+      error: new Error("Command failed: acme merge --body sensitive body"),
+      args: ["merge", "--body", "sensitive body"],
+      cwd: "/repo",
+      commandName: "acme",
+      isAlreadyClassified: () => false,
+      isCommandError: () => false,
+      isAuthFailureText: () => false,
+      createAuthError: (stderr) => new Error(stderr),
+      createMissingError: () => new Error("missing"),
+      createCommandError: (params) =>
+        new ForgeCommandError({ brand: "Acme", binary: "acme" }, params),
+    });
+
+    expect(error.message).toBe("Acme CLI command failed: acme");
+    expect((error as ForgeCommandError).stderr).toBe("acme command failed without stderr");
+    expect((error as ForgeCommandError).stderr).not.toContain("sensitive body");
   });
 });
 

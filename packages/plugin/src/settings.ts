@@ -11,6 +11,27 @@ export interface SettingsDefinition<Schema extends ZodType = ZodType> {
   migrate?: (values: unknown, fromVersion: number) => unknown | Promise<unknown>;
 }
 
+export type DeepReadonly<Value> = Value extends (...args: never[]) => unknown
+  ? Value
+  : Value extends readonly (infer Item)[]
+    ? readonly DeepReadonly<Item>[]
+    : Value extends object
+      ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }
+      : Value;
+
+export type PluginSettingsErrorCode =
+  | "stored_invalid"
+  | "migration_failed"
+  | "mutator_threw"
+  | "thenable_returned"
+  | "reentrant_access"
+  | "next_invalid"
+  | "store_poisoned";
+
+export type PluginSettingsDecision<Values, Result> =
+  | { status: "unchanged"; result: Result }
+  | { status: "commit"; values: Values; result: Result };
+
 export function defineSettings<Schema extends ZodType>(
   definition: SettingsDefinition<Schema>,
 ): SettingsDefinition<Schema> {

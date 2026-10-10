@@ -1,7 +1,9 @@
-import { FORGE_DEFINITIONS } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeReferencePath } from "@/git/client-forge-module";
-import { CLIENT_FORGE_LOGIC_MODULES } from "@/git/forges";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 
 export interface ForgeRef {
   kind: ForgeReferencePath["kind"];
@@ -27,8 +29,9 @@ interface RemoteReferenceTarget {
 export function extractForgeRefs(
   text: string | null | undefined,
   remoteUrl: string | null | undefined,
+  clientForgeHost: ClientForgeHostSnapshot = BUILTIN_CLIENT_FORGE_HOST,
 ): ForgeRef[] {
-  const target = resolveRemoteReferenceTarget(remoteUrl);
+  const target = resolveRemoteReferenceTarget(remoteUrl, clientForgeHost);
   const body = text?.trim();
   if (!target || !body) {
     return [];
@@ -45,7 +48,7 @@ export function extractForgeRefs(
     if (!pathname) {
       continue;
     }
-    for (const referencePath of registeredReferencePaths(target.forgeIds)) {
+    for (const referencePath of registeredReferencePaths(clientForgeHost, target.forgeIds)) {
       const ref = parseReferencePath(pathname, target.repoPath, referencePath);
       if (!ref) {
         continue;
@@ -64,12 +67,14 @@ export function extractForgeRefs(
 export function parseForgeRef(
   text: string | null | undefined,
   remoteUrl: string | null | undefined,
+  clientForgeHost: ClientForgeHostSnapshot = BUILTIN_CLIENT_FORGE_HOST,
 ): ForgeRef | null {
-  return extractForgeRefs(text, remoteUrl)[0] ?? null;
+  return extractForgeRefs(text, remoteUrl, clientForgeHost)[0] ?? null;
 }
 
 function resolveRemoteReferenceTarget(
   remoteUrl: string | null | undefined,
+  clientForgeHost: ClientForgeHostSnapshot,
 ): RemoteReferenceTarget | null {
   if (!remoteUrl) {
     return null;
@@ -81,7 +86,7 @@ function resolveRemoteReferenceTarget(
 
   const webHosts = new Set([remote.host]);
   const forgeIds = new Set<string>();
-  for (const definition of FORGE_DEFINITIONS) {
+  for (const definition of clientForgeHost.definitionsById.values()) {
     const cloudHosts = definition.cloudHosts?.map(normalizeHost) ?? [];
     if (cloudHosts.includes(remote.host)) {
       forgeIds.add(definition.id);
@@ -115,9 +120,10 @@ function decodePathname(pathname: string): string | null {
 }
 
 function registeredReferencePaths(
+  clientForgeHost: ClientForgeHostSnapshot,
   forgeIds: ReadonlySet<string> | null,
 ): readonly ForgeReferencePath[] {
-  return CLIENT_FORGE_LOGIC_MODULES.flatMap((module) =>
+  return [...clientForgeHost.logicById.values()].flatMap((module) =>
     !forgeIds || forgeIds.has(module.id) ? (module.urlGrammar?.referencePaths ?? []) : [],
   );
 }

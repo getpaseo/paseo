@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildForgeSignInCommand,
-  forgeFromRemoteUrl,
-  getForgePresentation,
+  buildForgeSignInCommand as buildForgeSignInCommandForHost,
+  forgeFromRemoteUrl as forgeFromRemoteUrlForHost,
+  getForgePresentation as getForgePresentationForHost,
   normalizeForge,
 } from "./forge";
+import { BUILTIN_CLIENT_FORGE_HOST, ClientForgeRegistry } from "./client-forge-registry";
+
+const getForgePresentation = (forge: string) =>
+  getForgePresentationForHost(forge, BUILTIN_CLIENT_FORGE_HOST);
+const forgeFromRemoteUrl = (remoteUrl: string) =>
+  forgeFromRemoteUrlForHost(remoteUrl, BUILTIN_CLIENT_FORGE_HOST);
+const buildForgeSignInCommand = (forge: string, host: string | null) =>
+  buildForgeSignInCommandForHost(forge, host, BUILTIN_CLIENT_FORGE_HOST);
 
 describe("normalizeForge", () => {
   it("maps the gitlab discriminant to gitlab", () => {
@@ -80,6 +88,36 @@ describe("forgeFromRemoteUrl", () => {
     expect(forgeFromRemoteUrl("git@gitlab.example.org:example/repo.git")).toBeNull();
     expect(forgeFromRemoteUrl("git@forgejo.example.org:example/repo.git")).toBeNull();
     expect(forgeFromRemoteUrl("https://notgitlab.example.org/example/repo.git")).toBeNull();
+  });
+
+  it("does not choose a provider when multiple definitions claim one cloud host", () => {
+    const registry = new ClientForgeRegistry();
+    const definition = {
+      displayName: "Acme",
+      changeRequestAbbrev: "PR",
+      changeRequestNoun: "pull request",
+      changeRequestNumberPrefix: "#",
+      issueNumberPrefix: "#",
+      signIn: null,
+      cloudHosts: ["git.acme.example"],
+    };
+    registry.replaceHost("host-a", [
+      {
+        pluginId: "first-plugin",
+        contribution: { definition: { ...definition, id: "first" } },
+      },
+      {
+        pluginId: "second-plugin",
+        contribution: { definition: { ...definition, id: "second" } },
+      },
+    ]);
+
+    expect(
+      forgeFromRemoteUrlForHost(
+        "https://git.acme.example/example/repo.git",
+        registry.getHostSnapshot("host-a"),
+      ),
+    ).toBeNull();
   });
 });
 

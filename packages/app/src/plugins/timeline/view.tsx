@@ -9,11 +9,12 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { PluginTimelineStreamItem } from "@/types/stream";
 import { createPluginClientStateSource } from "../client-state/source";
+import { usePluginHostNavigation } from "../host-navigation";
 import { useInstalledPlugin } from "../registry";
 import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
-import { resolvePluginPlatform } from "../platform";
+import { usePluginLayout } from "../layout";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
@@ -55,10 +56,11 @@ function PluginTimelineItemBody({
   const parsed = parseRendererData(renderer, item.data);
   const client = useHostRuntimeClient(serverId);
   const compact = useIsCompactFormFactor();
+  const navigation = usePluginHostNavigation(serverId, item.pluginId);
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
+  const layout = usePluginLayout(compact);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
 
   if (!plugin || !renderer || !parsed || !client) {
@@ -71,6 +73,7 @@ function PluginTimelineItemBody({
     theme,
     host,
     layout,
+    navigation,
     timestamp: item.timestamp,
     item: {
       type: "plugin",
