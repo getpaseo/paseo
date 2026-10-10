@@ -8,6 +8,7 @@ import type {
   ProviderTimelineItem,
 } from "./provider.js";
 import { createAcpProviderConnection } from "./acp-internal/connection.js";
+export { HermesSubagents } from "./acp-internal/hermes-subagents.js";
 
 interface RunAcpProviderBaseOptions {
   id: string;

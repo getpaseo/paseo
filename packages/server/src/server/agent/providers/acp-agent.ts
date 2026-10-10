@@ -1,4 +1,5 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import { HermesAcpSubagents } from "./acp-hermes-subagents.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -307,7 +308,14 @@ export function buildACPClientCapabilities(
       ...override?.fs,
     },
   };
-  return meta && Object.keys(meta).length > 0 ? { ...capabilities, _meta: meta } : capabilities;
+  const metadata = { ...override?._meta, ...meta };
+  return {
+    ...capabilities,
+    _meta: {
+      ...metadata,
+      hermes: { ...(isRecord(metadata.hermes) ? metadata.hermes : {}), subagentProgress: 1 },
+    },
+  };
 }
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
@@ -1684,6 +1692,7 @@ export class ACPAgentClient implements AgentClient {
 export class ACPAgentSession implements AgentSession, ACPClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
+  private readonly hermesSubagents: HermesAcpSubagents;
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -1780,6 +1789,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.initialHandle = options.handle;
     this.resumePurpose = options.resumePurpose ?? "interactive";
     this.config = { ...config, provider: options.provider };
+    this.hermesSubagents = new HermesAcpSubagents({
+      provider: this.provider,
+      cwd: config.cwd,
+      emit: (event) => {
+        if (!this.replayingHistory) this.pushEvent(event);
+      },
+    });
     this.currentMode = config.modeId ?? null;
     this.currentModel = config.model ?? null;
     this.thinkingOptionId = config.thinkingOptionId ?? null;
@@ -1851,9 +1867,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
         this.deliverTranslatedEvents(this.flushPendingUserMessage());
         this.replayingHistory = false;
-        this.historyPending = this.persistedHistory.length > 0;
+        this.historyPending =
+          this.persistedHistory.length > 0 || this.hermesSubagents.replay().length > 0;
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
+        this.replayingHistory = true;
         const response = await this.runACPRequest(() =>
           this.connection!.unstable_resumeSession({
             sessionId: handle.sessionId,
@@ -1861,6 +1879,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             mcpServers: this.acpMcpServers(),
           }),
         );
+        this.deliverTranslatedEvents(this.flushPendingUserMessage());
+        this.replayingHistory = false;
+        this.historyPending =
+          this.persistedHistory.length > 0 || this.hermesSubagents.replay().length > 0;
         this.applySessionState(response);
       } else {
         throw new Error(`${this.provider} does not support ACP session resume`);
@@ -1965,7 +1987,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    if (!this.historyPending || this.persistedHistory.length === 0) {
+    if (!this.historyPending) {
       return;
     }
     const history = [...this.persistedHistory];
@@ -1974,6 +1996,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     for (const item of history) {
       yield { type: "timeline", provider: this.provider, item };
     }
+    yield* this.hermesSubagents.replay();
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -2504,6 +2527,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.closed = true;
+    this.hermesSubagents.finish("canceled");
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
@@ -2599,6 +2623,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
+    if (this.closed) return;
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2615,6 +2640,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (params.sessionId !== this.sessionId) {
       return;
     }
+    if (this.hermesSubagents.update(params.update)) return;
 
     const events = this.translateSessionUpdate(params.update);
     this.logger.trace(
@@ -2844,6 +2870,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (this.closed) {
         return;
       }
+      this.hermesSubagents.finish("failed");
       if (this.activeForegroundTurnId) {
         this.synthesizeCanceledToolCalls();
         this.finishTurn({

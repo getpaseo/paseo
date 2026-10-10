@@ -1327,3 +1327,200 @@ describe("ACP streamed message boundaries", () => {
     },
   );
 });
+
+function hermesSnapshot(id: string, sequence: number, status = "running"): SessionUpdate {
+  return {
+    sessionUpdate: "tool_call",
+    toolCallId: `hermes-subagent:${id}`,
+    title: "Hermes subagent",
+    status: "in_progress",
+    _meta: {
+      hermes: {
+        subagentProgress: {
+          version: 1,
+          id,
+          parentId: null,
+          depth: 1,
+          sequence,
+          status,
+          text: "Public child reply",
+          tools: ["terminal"],
+        },
+      },
+    },
+  };
+}
+
+describe("Hermes progress through the ACP connection", () => {
+  it("keeps background updates after the root turn and ignores updates for another native session", async () => {
+    const harness = connectorHarness({
+      promptUpdates: () => [hermesSnapshot("alpha", 1), hermesSnapshot("beta", 2)],
+    });
+    const registration = runAcpProvider({
+      id: "hermes",
+      label: "Hermes",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "turn-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "fixture" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.sessionId === "session-1" &&
+          event.state === "completed",
+      );
+      const active = harness.instances.at(-1)!;
+      active.notify("session/update", {
+        sessionId: "wrong-native-session",
+        update: hermesSnapshot("intruder", 3),
+      });
+      active.notify("session/update", {
+        sessionId: "connector-session",
+        update: hermesSnapshot("beta", 4, "failed"),
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.sessionId.endsWith(":hermes:beta") &&
+          event.state === "failed",
+      );
+      expect(events.filter((event) => event.type === "session.opened")).toHaveLength(3);
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.sessionId === "session-1" &&
+            event.item.type === "assistant_message",
+        ),
+      ).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("retains child and root history streamed inside session/load before its response", async () => {
+    const harness = connectorHarness({
+      capabilities: { loadSession: true },
+      handleRequest(instance, request) {
+        if (request.method !== "session/load") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: hermesSnapshot("restored", 8, "completed"),
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Root history"),
+        });
+        instance.respond(request, { modes: null, configOptions: [] });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "hermes",
+      label: "Hermes",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.persistence"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        ...openInput(),
+        persistence: { version: 1, data: { sessionId: "connector-session" } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(
+        events.filter((event) => event.type === "session.opened").map((event) => event.sessionId),
+      ).toEqual(["session-1", "session-1:hermes:restored"]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          sessionId: "session-1",
+          item: expect.objectContaining({ text: "Root history" }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "session.turn",
+          sessionId: "session-1:hermes:restored",
+          state: "completed",
+        }),
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+  it.each(["count", "bytes", "stalled"])(
+    "fails opening bounded history on %s without exposing partial sessions",
+    async (mode) => {
+      const harness = connectorHarness({
+        capabilities: { loadSession: true },
+        handleRequest(instance, request) {
+          if (request.method !== "session/load") return false;
+          if (mode === "count")
+            for (let i = 0; i < 4097; i++)
+              instance.notify("session/update", {
+                sessionId: "connector-session",
+                update: textChunk("x"),
+              });
+          if (mode === "bytes")
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("x".repeat(8 * 1024 * 1024)),
+            });
+          return true; // deliberately withhold the load response
+        },
+      });
+      const registration = runAcpProvider({
+        id: "hermes",
+        label: "Hermes",
+        connector: harness.connector,
+        acpOptions: { startupTimeoutMs: 500 },
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message", "session.persistence"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send({
+          ...openInput(),
+          persistence: { version: 1, data: { sessionId: "connector-session" } },
+        });
+        const failed = await waitForEvent(events, (event) => event.type === "request.failed");
+        expect(failed).toMatchObject({
+          error: {
+            message: expect.stringContaining(
+              mode === "stalled" ? "opening timed out" : "4096 notifications or 8 MiB",
+            ),
+          },
+        });
+        expect(events.filter((event) => event.type === "session.opened")).toEqual([]);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+});

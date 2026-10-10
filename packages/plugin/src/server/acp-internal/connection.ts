@@ -20,6 +20,7 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { z } from "zod";
+import { HermesSubagents } from "./hermes-subagents.js";
 import type {
   AcpConfigAccess,
   AcpConfigChange,
@@ -360,6 +361,12 @@ class AcpRuntime {
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallSnapshot>();
   private readonly pendingCompactions = new Set<string>();
+  private hermesSubagents: HermesSubagents | null = null;
+  private openingUpdates: SessionNotification[] | null = null;
+  private openingBytes = 0;
+  private openingError: Error | null = null;
+  private openingFailure: Promise<never> | null = null;
+  private rejectOpening: ((error: Error) => void) | null = null;
   private readonly permissions = new Map<
     string,
     { request: RequestPermissionRequest; resolve(response: RequestPermissionResponse): void }
@@ -421,7 +428,7 @@ class AcpRuntime {
         runtime.call(
           runtime.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
+            clientCapabilities: { _meta: { hermes: { subagentProgress: 1 } } },
             clientInfo: { name: "paseo", version: "1" },
           }),
         ),
@@ -485,6 +492,17 @@ class AcpRuntime {
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
   ): Promise<readonly ProviderCapability[]> {
+    this.hermesSubagents = new HermesSubagents({
+      sessionId: this.options.boundarySessionId,
+      cwd: input.config.cwd,
+      emit: this.emit,
+    });
+    // ACP load streams history before its response. Hold it until the root
+    // provider session exists so child sessions and transcript items have an owner.
+    this.openingUpdates = [];
+    this.openingFailure = new Promise<never>((_resolve, reject) => {
+      this.rejectOpening = reject;
+    });
     const mcpServers = toAcpMcpServers(input.config);
     const nativeSessionId = readNativeSessionId(input.persistence);
     const metadata = {
@@ -527,6 +545,7 @@ class AcpRuntime {
         this.configOptions.length > 0 ||
         this.transformers.some((transformer) => transformer.configure !== undefined),
     );
+    if (this.openingError) throw this.openingError;
     this.emit({
       type: "session.opened",
       requestId: input.requestId,
@@ -538,6 +557,12 @@ class AcpRuntime {
       cwd: input.config.cwd,
     });
     this.emitConfig();
+    const openingUpdates = this.openingUpdates;
+    this.openingUpdates = null;
+    this.openingFailure = null;
+    this.rejectOpening = null;
+    this.openingBytes = 0;
+    for (const update of openingUpdates) this.sessionUpdate(update);
     if (this.options.options.acpOptions?.waitForInitialCommands) {
       await this.waitForInitialCommands();
     }
@@ -729,6 +754,7 @@ class AcpRuntime {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    this.hermesSubagents?.finish("canceled");
     this.settlePendingWork();
     await this.closeConnector();
     const child = this.child;
@@ -886,7 +912,21 @@ class AcpRuntime {
   }
 
   private sessionUpdate(notification: SessionNotification): void {
+    if (this.closing || this.processFailed) return;
+    if (this.openingUpdates !== null) {
+      if (this.openingError) return;
+      this.openingBytes += Buffer.byteLength(JSON.stringify(notification), "utf8");
+      if (this.openingUpdates.length >= 4096 || this.openingBytes > 8 * 1024 * 1024) {
+        this.openingUpdates = [];
+        this.openingError = new Error("ACP opening history exceeded 4096 notifications or 8 MiB");
+        this.rejectOpening?.(this.openingError);
+        return;
+      }
+      this.openingUpdates.push(notification);
+      return;
+    }
     if (notification.sessionId !== this.nativeSessionId) return;
+    if (this.hermesSubagents?.accept(notification.update)) return;
     this.reduceUpdate(notification.update);
   }
 
@@ -1094,12 +1134,20 @@ class AcpRuntime {
     if (this.connection.signal.aborted) {
       return Promise.reject(new Error("ACP transport is closed"));
     }
-    return Promise.race([
+    const pending = Promise.race([
       operation,
+      ...(this.openingFailure ? [this.openingFailure] : []),
       this.connection.closed.then(() => {
         throw new Error("ACP transport closed unexpectedly");
       }),
     ]);
+    return this.openingFailure
+      ? withTimeout(
+          pending,
+          this.options.options.acpOptions?.startupTimeoutMs ?? 10_000,
+          "ACP session opening timed out",
+        )
+      : pending;
   }
 
   private enqueueNotification(operation: () => void): Promise<void> {
@@ -1121,6 +1169,7 @@ class AcpRuntime {
   }
 
   private settlePendingWork(): void {
+    if (this.processFailed) this.hermesSubagents?.finish("failed");
     for (const permission of this.permissions.values()) {
       permission.resolve({ outcome: { outcome: "cancelled" } });
     }
