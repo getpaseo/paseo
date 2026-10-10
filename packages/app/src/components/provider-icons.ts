@@ -6,6 +6,7 @@ import { SvgXml } from "react-native-svg";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
 import { CodexIcon } from "@/components/icons/codex-icon";
 import { CopilotIcon } from "@/components/icons/copilot-icon";
+import { HermesIcon } from "@/components/icons/hermes-icon";
 import { MiniMaxIcon } from "@/components/icons/minimax-icon";
 import { OpenCodeIcon } from "@/components/icons/opencode-icon";
 import { OmpIcon } from "@/components/icons/omp-icon";
@@ -24,6 +25,7 @@ const BUILTIN_PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
   claude: ClaudeIcon as unknown as ProviderIconComponent,
   codex: CodexIcon as unknown as ProviderIconComponent,
   copilot: CopilotIcon as unknown as ProviderIconComponent,
+  hermes: HermesIcon,
   kiro: PackagePlus,
   minimax: MiniMaxIcon as unknown as ProviderIconComponent,
   omp: OmpIcon as unknown as ProviderIconComponent,

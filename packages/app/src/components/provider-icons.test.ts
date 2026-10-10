@@ -3,6 +3,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { Bot } from "lucide-react-native";
 import { SvgXml } from "react-native-svg";
 import { afterEach, describe, expect, it } from "vitest";
+import { HermesIcon } from "@/components/icons/hermes-icon";
 import { replaceProviderSnapshotIcons } from "@/data/provider-icons";
 import { useProviderIcon, useProviderIcons, type ProviderIconComponent } from "./provider-icons";
 
@@ -17,6 +18,22 @@ function renderIcon(Component: ProviderIconComponent) {
 }
 
 describe("useProviderIcon", () => {
+  it("uses the official Hermes icon for individual and collection consumers", () => {
+    expect(renderHook(() => useProviderIcon("hermes")).result.current).toBe(HermesIcon);
+    expect(renderHook(() => useProviderIcons()).result.current("hermes")).toBe(HermesIcon);
+    expect(renderIcon(HermesIcon)).toMatchObject({
+      props: {
+        width: 18,
+        height: 18,
+        fill: "#123456",
+        viewBox: "100 60 5120 6110",
+        children: {
+          props: { transform: "matrix(1.0330354,0,0,1.0330354,-145.41428,-2499.328)" },
+        },
+      },
+    });
+  });
+
   it("renders registered snapshot SVG metadata with the requested size and color", () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
     replaceProviderSnapshotIcons("server-1", [{ provider: "rendered-provider", iconSvg: svg }]);
