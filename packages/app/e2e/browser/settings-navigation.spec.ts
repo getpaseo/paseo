@@ -27,6 +27,8 @@ import {
   openCompactSettingsHost,
   expectAddHostMethodOptions,
   fillDirectHostUri,
+  fillDirectHostFields,
+  connectDirectHost,
   expectDirectHostFormValues,
   expectDirectHostSslEnabled,
   expectDirectHostUriValue,
@@ -110,6 +112,36 @@ test.describe("Settings sidebar navigation", () => {
     );
     await toggleHostAdvanced(page);
     await expectDirectHostUriHidden(page);
+  });
+
+  test("direct connection connects to the open Advanced URI when Host is blank", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openAddHostFlow(page);
+    await selectHostConnectionType(page, "direct");
+
+    await toggleHostAdvanced(page);
+    await fillDirectHostUri(page, `tcp://127.0.0.1:${getE2EDaemonPort()}`);
+
+    await connectDirectHost(page);
+  });
+
+  test("direct connection connects to an edited Advanced URI instead of the fields", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openAddHostFlow(page);
+    await selectHostConnectionType(page, "direct");
+
+    await fillDirectHostFields(page, { host: "127.0.0.1", port: "9" });
+    await toggleHostAdvanced(page);
+    await expectDirectHostUriValue(page, "tcp://127.0.0.1:9");
+    await fillDirectHostUri(page, `tcp://127.0.0.1:${getE2EDaemonPort()}`);
+
+    await connectDirectHost(page);
   });
 
   test("Escape lets settings dropdowns and modals close before leaving settings", async ({
