@@ -685,14 +685,9 @@ cannot evaluate that entry. Daemons advertise
 `features.pluginThemes` in `server_info`; the plugin theme catalog is the one place the app reads it, and
 a host without it contributes no themes.
 
-The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,
-so equal themes on several hosts coalesce the way sidebar contributions do. Two hosts can answer
-that id with different palettes, so picking a theme records its host through
-`rememberPluginContributionHost` and resolution prefers it; a peer connecting or dropping then does
-not repaint the app. Without a preference the sorted registry snapshot decides, so the result is
-stable rather than arrival-ordered. The app resolves that id
-against the installed catalog on every change; an id nothing contributes falls back to the default
-preference instead of painting the reserved slot's placeholder colors.
+The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`, so equal themes on several hosts coalesce the way sidebar contributions do. Two hosts can answer that id with different palettes, so picking a theme records its host through `rememberPluginContributionHost` and resolution prefers it; a peer connecting or dropping then does not repaint the app. Without a preference the sorted registry snapshot decides, so the result is stable rather than arrival-ordered. The app resolves that id against the installed catalog on every change.
+
+Contributed themes exist only once a host's plugin catalog has loaded: seconds after start on a slow connection, and again after every reconnect, because a disconnected host's plugins are removed. App settings therefore also keep `pluginThemeSnapshot`, the palette last applied and the host that contributed it, and the appearance provider paints it until the catalog answers. On start the provider restores that host as the remembered one, and another host contributing the same id first does not replace the snapshot while its own host is still loading. The snapshot is dropped only when that host has loaded its catalog without the theme (`resolveContributedTheme` in `packages/app/src/plugins/themes/index.ts`, with the registry's loaded hosts). The app then falls back to the default preference instead of painting the reserved slot's placeholder colors.
 
 Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/migration.md).
 
