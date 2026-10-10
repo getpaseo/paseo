@@ -232,7 +232,7 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
     raw: value,
     path: normalizedPath,
     lineStart: lines.lineStart ?? inlinePathTarget?.lineStart,
-    lineEnd: parsedUrl.hash ? lines.lineEnd : inlinePathTarget?.lineEnd,
+    lineEnd: lines.lineStart !== undefined ? lines.lineEnd : inlinePathTarget?.lineEnd,
   };
 }
 

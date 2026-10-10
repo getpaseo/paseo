@@ -88,6 +88,14 @@ describe("parseFileProtocolUrl", () => {
       lineEnd: undefined,
     });
   });
+  it("keeps the path line range when the fragment is not a line fragment", () => {
+    expect(parseFileProtocolUrl("file:///tmp/report.txt:2-4#preview")).toEqual({
+      raw: "file:///tmp/report.txt:2-4#preview",
+      path: "/tmp/report.txt",
+      lineStart: 2,
+      lineEnd: 4,
+    });
+  });
   it("parses file URLs with line fragments", () => {
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L81")).toEqual({
       raw: "file:///Users/test/project/src/app.tsx#L81",
