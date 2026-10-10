@@ -125,6 +125,9 @@ export function DraggableList<T>({
       activationDistance={20}
       onDragBegin={handleDragBegin}
       onRelease={handleRelease}
+      // Cancelled drags (never reach onRelease) would otherwise leave
+      // isDragging stuck true and the refresh control hidden.
+      onDragTerminate={handleRelease}
       // @ts-ignore - waitFor is supported by RNGH FlatList but missing from DraggableFlatList types
       waitFor={waitFor}
       refreshControl={refreshControl}
