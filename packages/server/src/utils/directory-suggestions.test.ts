@@ -884,9 +884,10 @@ describe("home search with excluded discovery paths", () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  function searchHome(query: string) {
+  function searchHome(query: string, searchRoots?: string[]) {
     return searchDirectoryEntries({
       root: homeDir,
+      searchRoots,
       query,
       pathFormat: "absolute",
       includeDirectories: true,
@@ -902,6 +903,16 @@ describe("home search with excluded discovery paths", () => {
   it("does not discover entries inside an excluded path", async () => {
     await expect(searchHome("match")).resolves.toEqual([]);
     await expect(searchHome("~")).resolves.toEqual([path.join(homeDir, "projects")]);
+  });
+
+  it("preserves discovery exclusions with configured roots", async () => {
+    await expect(searchHome("match", [homeDir])).resolves.toEqual([]);
+  });
+
+  it("keeps an explicit root that the excluded parent traversal cannot reach", async () => {
+    await expect(searchHome("match", [homeDir, path.join(libraryDir, "sub")])).resolves.toEqual([
+      path.join(libraryDir, "sub", "match-me"),
+    ]);
   });
 
   it("excludes by path, so a nested directory with the same name is still discovered", async () => {
