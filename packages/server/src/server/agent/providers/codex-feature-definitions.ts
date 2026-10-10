@@ -9,6 +9,40 @@ export const CodexServiceTierSchema = z.object({
 });
 export type CodexServiceTier = z.infer<typeof CodexServiceTierSchema>;
 
+export function normalizeCodexServiceTiers(model: {
+  serviceTiers?: unknown;
+  additionalSpeedTiers?: unknown;
+}): CodexServiceTier[] {
+  const tiers = new Map<string, CodexServiceTier>();
+  for (const field of [model.serviceTiers, model.additionalSpeedTiers]) {
+    let entries: unknown[] = [];
+    if (Array.isArray(field)) {
+      entries = field;
+    } else if (typeof field === "string") {
+      entries = field
+        .split(",")
+        .map((tier) => tier.trim())
+        .filter(Boolean);
+    }
+    for (const entry of entries) {
+      const record =
+        typeof entry === "object" && entry !== null && !Array.isArray(entry)
+          ? (entry as Record<string, unknown>)
+          : null;
+      const id = typeof entry === "string" ? entry : record?.id;
+      if (typeof id !== "string" || !id.trim() || id === "default" || tiers.has(id)) {
+        continue;
+      }
+      tiers.set(id, {
+        id,
+        name: typeof record?.name === "string" && record.name.trim() ? record.name : id,
+        description: typeof record?.description === "string" ? record.description : "",
+      });
+    }
+  }
+  return [...tiers.values()];
+}
+
 function buildCodexSpeedFeature(tiers: CodexServiceTier[], value: string): AgentFeature[] {
   if (tiers.length === 0) return [];
   return [
@@ -54,6 +88,7 @@ export function buildCodexFeatures(input: {
 export function readCodexServiceTier(values: Record<string, unknown> | undefined): string | null {
   const tier = values?.service_tier;
   if (typeof tier === "string") return tier;
+  if (values && Object.prototype.hasOwnProperty.call(values, "service_tier")) return null;
   // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-  return values?.fast_mode ? "fast" : null;
+  return values?.fast_mode === true ? "fast" : null;
 }
