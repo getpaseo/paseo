@@ -17,7 +17,7 @@ export const MAX_TERMINAL_OUTPUT_FRAME_BYTES = 256 * 1024;
 export const MAX_CLIENT_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 const DEFAULT_VISIBLE_RESTORE_SCROLLBACK_LINES = 200;
-const MAX_VISIBLE_RESTORE_SCROLLBACK_LINES = 500;
+const MAX_VISIBLE_RESTORE_SCROLLBACK_LINES = 1000;
 
 export type TerminalRestoreOptions = NonNullable<SubscribeTerminalRequest["restore"]>;
 
@@ -70,7 +70,7 @@ export function encodeTerminalRestoreFrame(input: {
   return encodeTerminalStreamFrame({
     opcode: TerminalStreamOpcode.Restore,
     slot: input.slot,
-    payload: renderTerminalSnapshotToAnsi(input.snapshot.state),
+    payload: input.snapshot.ansi ?? renderTerminalSnapshotToAnsi(input.snapshot.state),
   });
 }
 

@@ -1082,6 +1082,7 @@ export class TerminalSessionController {
     const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
       ...snapshotOptions,
       includeWrapFlags: this.clientSupportsWrapReflow(activeStream.owner.source),
+      renderAnsi: true,
     });
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
       return { shouldContinue: false };

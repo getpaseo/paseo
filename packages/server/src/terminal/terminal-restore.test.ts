@@ -43,9 +43,9 @@ describe("terminal restore policy", () => {
     expect(
       resolveTerminalRestoreSnapshotOptions({
         mode: "visible-snapshot",
-        scrollbackLines: 999,
+        scrollbackLines: 10_000,
       }),
-    ).toEqual({ scrollbackLines: 500 });
+    ).toEqual({ scrollbackLines: 1000 });
   });
 
   test("promotes live restore to visible restore after output overflow", () => {
@@ -71,5 +71,20 @@ describe("terminal restore policy", () => {
     expect(frame?.opcode).toBe(TerminalStreamOpcode.Restore);
     expect(frame?.slot).toBe(4);
     expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toContain("restored");
+  });
+
+  test("sends ANSI the terminal already rendered without reading the cells", () => {
+    const frame = decodeTerminalStreamFrame(
+      encodeTerminalRestoreFrame({
+        slot: 4,
+        snapshot: {
+          state: terminalState(""),
+          revision: 1,
+          ansi: "pre-rendered",
+        },
+      }),
+    );
+
+    expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toBe("pre-rendered");
   });
 });
