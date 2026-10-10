@@ -1,3 +1,4 @@
+import { useComposerEditingSession, useComposerFullscreen } from "./editing-session";
 import type { ComposerTextSource } from "./text-source";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
@@ -1336,6 +1337,8 @@ function ComposerContentImpl({
   const nextPendingFileId = useRef(0);
   const isUploadingFile = pendingFiles.length > 0;
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
+  const editingSession = useComposerEditingSession(inputMode);
+  const isFullscreen = useComposerFullscreen(editingSession);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
@@ -2364,7 +2367,7 @@ function ComposerContentImpl({
         <View style={inputAreaContainerStyle}>
           <View style={styles.inputAreaContent}>
             {queueList}
-            {sendErrorNode}
+            {!isFullscreen && sendErrorNode}
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocompleteBinding
@@ -2372,7 +2375,7 @@ function ComposerContentImpl({
                 cursor={cursor}
                 inputRef={messageInputRef}
                 anchorRef={messageInputContainerRef}
-                show={mode.showAutocomplete}
+                show={mode.showAutocomplete && !isFullscreen}
                 ref={autocompleteRef}
                 configuration={autocompleteConfiguration}
               />
@@ -2387,6 +2390,8 @@ function ComposerContentImpl({
               <RenderProfile id="MessageInput">
                 <StableMessageInput
                   ref={messageInputRef}
+                  editingSession={editingSession}
+                  submissionError={sendErrorNode}
                   value={textSource.getSnapshot()}
                   onChangeText={setUserInput}
                   onSubmit={handleSubmit}

@@ -115,6 +115,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const isHydrated = hydratedDraftKey === draftKey;
   const textReplacementRevisionRef = useRef(0);
   const [textReplacement, setTextReplacement] = useState<TextReplacement>(() => ({
+    kind: "initial",
     key: `${draftKey}:0`,
     text: textSource.getSnapshot(),
   }));
@@ -123,6 +124,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (nextText: string) => {
       textReplacementRevisionRef.current += 1;
       setTextReplacement({
+        kind: "replace",
         key: `${draftKey}:${textReplacementRevisionRef.current}`,
         text: nextText,
       });

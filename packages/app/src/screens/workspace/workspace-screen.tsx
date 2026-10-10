@@ -1,3 +1,4 @@
+import { WorkspaceComposerEditingSessionsProvider } from "@/composer/editing-session";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -753,14 +754,20 @@ function WorkspaceContentProviders({
 function WorkspacePanelContent({
   launcher,
   content,
+  tabIds,
+  workspaceKey,
 }: {
+  workspaceKey: string;
   launcher: NewTabLauncher;
   content: ReactNode;
+  tabIds: readonly string[];
 }) {
   return (
-    <NewTabLauncherProvider value={launcher}>
-      <View style={styles.content}>{content}</View>
-    </NewTabLauncherProvider>
+    <WorkspaceComposerEditingSessionsProvider workspaceKey={workspaceKey} tabIds={tabIds}>
+      <NewTabLauncherProvider value={launcher}>
+        <View style={styles.content}>{content}</View>
+      </NewTabLauncherProvider>
+    </WorkspaceComposerEditingSessionsProvider>
   );
 }
 
@@ -3491,6 +3498,8 @@ function WorkspaceScreenContent({
   const workspacePanelContent = (
     <WorkspacePanelContent
       launcher={newTabLauncher}
+      workspaceKey={`${normalizedServerId}:${normalizedWorkspaceId}`}
+      tabIds={uiTabs.map((tab) => tab.tabId)}
       content={isMobile ? content : desktopContent}
     />
   );

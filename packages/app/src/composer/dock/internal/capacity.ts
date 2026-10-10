@@ -50,3 +50,13 @@ export function updateComposerCapacity(
     capacity: resolveComposerCapacity({ ...input, keyboardShift: keyboardReserve }),
   };
 }
+
+/** Compact editing leaves conversation space above the complete composer. */
+export function resolveInlineComposerCapacity(
+  capacity: number | undefined,
+  compact: boolean,
+): number | undefined {
+  "worklet";
+  if (capacity === undefined) return undefined;
+  return compact ? capacity * 0.6 : capacity;
+}

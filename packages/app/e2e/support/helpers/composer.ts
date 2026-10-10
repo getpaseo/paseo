@@ -316,3 +316,133 @@ export async function openGithubWorkspace(
     },
   };
 }
+
+const COMPOSER_TEST_IMAGE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+export async function attachComposerTestImage(page: Page): Promise<void> {
+  await attachImageFromMenu(page, {
+    name: "fullscreen.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(COMPOSER_TEST_IMAGE_BASE64, "base64"),
+  });
+}
+
+export async function pasteComposerTestImage(page: Page): Promise<boolean> {
+  return composerInput(page).evaluate((input, base64) => {
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, COMPOSER_TEST_IMAGE_BASE64);
+}
+
+export async function enterComposerFullscreen(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Fullscreen", exact: true }).click();
+}
+export async function exitComposerFullscreen(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Exit fullscreen", exact: true }).click();
+}
+export async function resizeComposerViewport(
+  page: Page,
+  orientation: "portrait" | "landscape" | "short",
+): Promise<void> {
+  const sizes = {
+    portrait: { width: 390, height: 844 },
+    landscape: { width: 844, height: 390 },
+    short: { width: 390, height: 390 },
+  };
+  await page.setViewportSize(sizes[orientation]);
+}
+export async function selectComposerDraftRange(
+  page: Page,
+  start: number,
+  end: number,
+): Promise<void> {
+  await composerInput(page).focus();
+  await composerInput(page).evaluate(
+    (element, selection) => {
+      const input = element as HTMLTextAreaElement;
+      input.setSelectionRange(selection.start, selection.end);
+      input.dispatchEvent(new Event("select", { bubbles: true }));
+    },
+    { start, end },
+  );
+}
+export async function expectComposerDraftSelection(
+  page: Page,
+  start: number,
+  end: number,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      composerInput(page).evaluate((element) => {
+        const input = element as HTMLTextAreaElement;
+        return [input.selectionStart, input.selectionEnd];
+      }),
+    )
+    .toEqual([start, end]);
+}
+export async function expectComposerFullscreenControls(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toBeVisible();
+  await expect(page.getByTestId("composer-fullscreen").getByRole("button")).toHaveCount(2);
+  await expect(composerInput(page)).toHaveCount(1);
+}
+export async function sendComposerWithButton(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+}
+export async function queueComposerWithButton(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Queue message", exact: true }).click();
+}
+export async function configureComposerQueueSend(page: Page): Promise<void> {
+  await page.addInitScript(() =>
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ sendBehavior: "queue" })),
+  );
+}
+
+/** Drive the real tab chooser's commands even when fullscreen covers its pointer surface.
+ * This exercises retained activity changes, not a claim that covered chrome is clickable.
+ */
+export async function activateRetainedComposerTab(page: Page, title: string): Promise<void> {
+  await page
+    .getByTestId("workspace-tab-switcher-trigger")
+    .evaluate((element) => (element as HTMLElement).click());
+  const option = page.getByText(title, { exact: true }).filter({ visible: true }).last();
+  await expect(option).toBeVisible();
+  await option.evaluate((element) => (element as HTMLElement).click());
+}
+
+export async function recordVisibleComposerGeometry(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const frames: { input: number; root: number }[] = [];
+    Reflect.set(window, "__composerGeometryFrames", frames);
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      for (const root of document.querySelectorAll('[data-testid="message-input-root"]')) {
+        if (root.getClientRects().length === 0) continue;
+        const input = root.querySelector("textarea");
+        if (input)
+          frames.push({
+            input: input.getBoundingClientRect().height,
+            root: root.getBoundingClientRect().height,
+          });
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    Reflect.set(window, "__stopComposerGeometry", () => {
+      running = false;
+    });
+  });
+}
+export async function expectNoCollapsedVisibleComposer(page: Page): Promise<void> {
+  const frames = await page.evaluate(() => {
+    Reflect.get(window, "__stopComposerGeometry")?.();
+    return Reflect.get(window, "__composerGeometryFrames") as { input: number; root: number }[];
+  });
+  expect(frames.length).toBeGreaterThan(0);
+  expect(frames.filter((frame) => frame.root < 42 || frame.input < 42)).toEqual([]);
+}
