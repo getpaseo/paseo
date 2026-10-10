@@ -1,4 +1,14 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -843,3 +853,35 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     }
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "config.json symlinked from another directory",
+  () => {
+    test("saving writes through the symlink and leaves it in place", () => {
+      const parent = createTempHome();
+      const home = path.join(parent, "home");
+      const dotfiles = path.join(parent, "dotfiles");
+      const linkedConfigPath = path.join(dotfiles, "config.json");
+      const configPath = path.join(home, "config.json");
+      try {
+        mkdirSync(home);
+        mkdirSync(dotfiles, { mode: 0o755 });
+        chmodSync(dotfiles, 0o755);
+        writeFileSync(linkedConfigPath, '{ "version": 1 }\n');
+        symlinkSync(linkedConfigPath, configPath);
+
+        savePersistedConfig(home, { version: 1, daemon: { relay: { enabled: false } } });
+
+        expect(lstatSync(configPath).isSymbolicLink()).toBe(true);
+        expect(JSON.parse(readFileSync(linkedConfigPath, "utf8"))).toEqual({
+          version: 1,
+          daemon: { relay: { enabled: false } },
+        });
+        expect(modeOf(dotfiles)).toBe(0o755);
+        expect(modeOf(linkedConfigPath)).toBe(PRIVATE_FILE_MODE);
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
+    });
+  },
+);
