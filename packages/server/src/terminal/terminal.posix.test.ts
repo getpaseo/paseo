@@ -260,6 +260,41 @@ function removeZshShellIntegrationRuntimeDir(): void {
 }
 
 describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
+  it.skipIf(!isPlatform("darwin") || !hasZsh)(
+    "accepts CJK input when the macOS daemon has no locale",
+    async () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-locale-home-"));
+      temporaryDirs.push(homeDir);
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: homeDir,
+          command: "/bin/zsh",
+          args: ["-f", "-i"],
+          env: { HOME: homeDir, LANG: "", LC_ALL: "", LC_CTYPE: "", PS1: "$ " },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+      let output = "";
+      session.subscribe((message) => {
+        if (message.type === "output") {
+          output += message.data;
+        }
+      });
+
+      session.send({ type: "input", data: "가나다" });
+
+      await expect.poll(() => output).toContain("가나다");
+    },
+  );
+
+  it.each(["LANG", "LC_ALL", "LC_CTYPE"])("preserves explicit %s locale settings", (key) => {
+    const locale = { LANG: "", LC_ALL: "", LC_CTYPE: "", [key]: "C" };
+    const env = buildTerminalEnvironment({ shell: "/bin/sh", env: locale });
+
+    expect({ LANG: env.LANG, LC_ALL: env.LC_ALL, LC_CTYPE: env.LC_CTYPE }).toEqual(locale);
+  });
+
   it("sets zsh wrapper env when spawning zsh", () => {
     const resolvedEnv = buildTerminalEnvironment({
       shell: "/bin/zsh",
