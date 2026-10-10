@@ -1,9 +1,10 @@
 import {
   BottomSheetModal as GorhomBottomSheetModal,
   type BottomSheetModalProps,
+  type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
 import React from "react";
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import type { ElementRef, ReactNode } from "react";
 import { systemBackPress } from "./back-press";
 import {
@@ -11,6 +12,7 @@ import {
   createBottomSheetVisibilityTracker,
 } from "./visibility-tracker";
 import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
+import { SheetBackdrop } from "./sheet-backdrop";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
 
@@ -36,7 +38,7 @@ export type ContextBridge = (children: ReactNode) => ReactNode;
 
 type IsolatedBottomSheetModalProps = Omit<
   BottomSheetModalProps,
-  "enableDismissOnClose" | "stackBehavior" | "children"
+  "enableDismissOnClose" | "stackBehavior" | "children" | "backdropComponent"
 > & {
   /**
    * Nodes only. Gorhom also accepts a render function, but nothing here uses it and a bridge
@@ -44,6 +46,8 @@ type IsolatedBottomSheetModalProps = Omit<
    */
   children?: ReactNode;
   presentation?: "push" | "replace";
+  /** Show a dismissible backdrop. Its interaction belongs to the modal stack. */
+  backdropOpacity?: number;
   /**
    * Required, and `null` is a real answer: a sheet that needs nothing from its call site should
    * have to say so. The failure it prevents is invisible until someone adds a `useContext` deep
@@ -58,13 +62,43 @@ export const IsolatedBottomSheetModal = forwardRef<
   IsolatedBottomSheetModalRef,
   IsolatedBottomSheetModalProps
 >(function IsolatedBottomSheetModal(props, ref) {
-  const { children, presentation = "push", contextBridge, ...bottomSheetProps } = props;
+  // Gorhom puts this ref into its provider queue and reads `.current` for stack operations.
+  // A callback ref accepts the handle but leaves that queue unable to dismiss or restore it.
+  const modalRef = useRef<GorhomBottomSheetModalMethods>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      present: (...args) => modalRef.current?.present(...args),
+      dismiss: (...args) => modalRef.current?.dismiss(...args),
+      snapToIndex: (...args) => modalRef.current?.snapToIndex(...args),
+      snapToPosition: (...args) => modalRef.current?.snapToPosition(...args),
+      expand: (...args) => modalRef.current?.expand(...args),
+      collapse: (...args) => modalRef.current?.collapse(...args),
+      close: (...args) => modalRef.current?.close(...args),
+      forceClose: (...args) => modalRef.current?.forceClose(...args),
+    }),
+    [],
+  );
+  const {
+    children,
+    presentation = "push",
+    contextBridge,
+    backdropOpacity,
+    ...bottomSheetProps
+  } = props;
+  const renderBackdrop = useCallback(
+    (backdropProps: BottomSheetBackdropProps) => (
+      <SheetBackdrop {...backdropProps} opacity={backdropOpacity} />
+    ),
+    [backdropOpacity],
+  );
   const modal = (
     <GorhomBottomSheetModal
       {...bottomSheetProps}
-      ref={ref}
+      ref={modalRef}
       enableDismissOnClose
       stackBehavior={presentation}
+      backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
     >
       <BottomSheetScope>{contextBridge ? contextBridge(children) : children}</BottomSheetScope>
     </GorhomBottomSheetModal>
@@ -118,3 +152,5 @@ export function useIsolatedBottomSheetVisibility({
     handleSheetDismiss,
   };
 }
+
+export { SheetVisibleFrame } from "./visible-frame";

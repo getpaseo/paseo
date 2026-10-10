@@ -1,5 +1,4 @@
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { Logger } from "pino";
 
@@ -51,10 +50,11 @@ export function findClaudeModel(
 
 export async function getClaudeModelsWithSettings(
   logger: Logger,
-  configDir?: string,
+  configDir: string,
   claudeCodeVersion?: string,
+  discoveredModelIds: ReadonlySet<string> = new Set(),
 ): Promise<AgentModelDefinition[]> {
-  const hardcodedModels = getClaudeModels(claudeCodeVersion);
+  const hardcodedModels = getClaudeManifestModels(claudeCodeVersion, discoveredModelIds);
   const settingsModels = await readClaudeSettingsModels(logger, configDir);
   if (settingsModels.length === 0) {
     return hardcodedModels;
@@ -71,7 +71,10 @@ export async function getClaudeModelsWithSettings(
       }
       continue;
     }
-    models.push(model);
+    const manifestModel = getClaudeModels(claudeCodeVersion).find(
+      (candidate) => candidate.id === model.id,
+    );
+    models.push({ ...manifestModel, ...model });
   }
 
   return models;
@@ -79,9 +82,9 @@ export async function getClaudeModelsWithSettings(
 
 async function readClaudeSettingsModels(
   logger: Logger,
-  configDir?: string,
+  configDir: string,
 ): Promise<AgentModelDefinition[]> {
-  const settingsPath = path.join(resolveClaudeConfigDir(configDir), "settings.json");
+  const settingsPath = path.join(configDir, "settings.json");
 
   let parsed: unknown;
   try {
@@ -114,10 +117,6 @@ async function readClaudeSettingsModels(
   }
 
   return models;
-}
-
-function resolveClaudeConfigDir(configDir?: string): string {
-  return configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
 }
 
 function addSettingsModel(

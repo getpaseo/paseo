@@ -1560,11 +1560,15 @@ export async function resolveRepositoryDefaultBranch(
         );
         return localName;
       } catch {
+        await getRunGitCommand(context)(["show-ref", "--verify", "--quiet", ref], {
+          cwd: repoRoot,
+          envOverlay: READ_ONLY_GIT_ENV,
+        });
         return remoteShort;
       }
     }
   } catch {
-    // ignore
+    // A stale origin/HEAD must fall through to the available local branches.
   }
 
   const { stdout } = await getRunGitCommand(context)(["branch", "--format=%(refname:short)"], {

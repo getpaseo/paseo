@@ -2,9 +2,10 @@ import { ComposerDockBackground } from "./internal/background";
 export { ComposerDockBackground } from "./internal/background";
 import { ScrollView } from "@/components/ui/scroll-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
 import { KeyboardTranslateView } from "@/keyboard/shift";
-import { createContext, useCallback, useContext, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type ViewProps, StyleSheet } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -14,7 +15,11 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { useKeyboardShift } from "@/keyboard/shift";
-import { updateComposerCapacity, type ComposerCapacity } from "./internal/capacity";
+import {
+  resolveCenteredClearance,
+  updateComposerCapacity,
+  type ComposerCapacity,
+} from "./internal/capacity";
 
 const ViewportCapacity = createContext<SharedValue<number | undefined> | null>(null);
 
@@ -33,11 +38,12 @@ function ComposerViewport({
 }: ComposerViewportProps) {
   const measuredHeight = useSharedValue(0);
   const sizing = useSharedValue<ComposerCapacity | undefined>(undefined);
-  const { layoutShift } = useKeyboardShift();
+  const { layoutShift, bottomInset: safeAreaBottom } = useKeyboardShift();
   useAnimatedReaction(
     () => ({
       height: measuredHeight.value,
       bottomInset,
+      safeAreaBottom: safeAreaBottom.value,
       keyboardShift: layoutShift.value,
       centered,
     }),
@@ -78,6 +84,24 @@ function ComposerViewportContent({ style, ...props }: ViewProps) {
   );
 }
 
+/** The keyboard only needs to move a centered form once it reaches the form's resting bottom. */
+function useCenteredClearance(safeAreaBottom: number) {
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [formBottom, setFormBottom] = useState(0);
+  const measureViewport = useCallback((event: LayoutChangeEvent) => {
+    setViewportHeight(event.nativeEvent.layout.height);
+  }, []);
+  const measureForm = useCallback((event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setFormBottom(y + height);
+  }, []);
+  return {
+    value: resolveCenteredClearance({ viewportHeight, safeAreaBottom, formBottom }),
+    measureViewport,
+    measureForm,
+  };
+}
+
 interface ComposerDockProps {
   children: [ReactNode, ReactNode, ReactNode?];
   centered?: boolean;
@@ -89,6 +113,8 @@ export function ComposerDock({
   centered = false,
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
+  const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
+  const centeredClearance = useCenteredClearance(insets.bottom);
   // Preserve the existing centered form's visual balance on tablets.
   const bottomInset = centered ? HEADER_INNER_HEIGHT + 24 : 0;
   if (centered) {
@@ -97,8 +123,13 @@ export function ComposerDock({
         style={[dockStyles.centeredViewport, { paddingBottom: bottomInset }]}
         bottomInset={bottomInset}
         centered
+        onLayout={centeredClearance.measureViewport}
       >
-        <KeyboardTranslateView style={dockStyles.centered}>
+        <KeyboardTranslateView
+          style={[dockStyles.centered, { maxWidth: contentMaxWidth }]}
+          bottomClearance={centeredClearance.value}
+          onLayout={centeredClearance.measureForm}
+        >
           <ComposerViewportContent style={dockStyles.composer}>
             <ScrollView style={dockStyles.setup} keyboardShouldPersistTaps="handled">
               {content}
@@ -137,13 +168,15 @@ export function ComposerDock({
   );
 }
 
+// Plain React Native styles: these land on Reanimated views, which must not carry
+// theme-driven Unistyles (docs/unistyles.md). The content width arrives inline.
 const dockStyles = StyleSheet.create({
   viewport: { flex: 1, overflow: "hidden" },
   surface: { flex: 1 },
   content: { flex: 1, justifyContent: "flex-end" },
   composer: { width: "100%", flexShrink: 1 },
   centeredViewport: { flex: 1, alignItems: "center", justifyContent: "center" },
-  centered: { flexShrink: 1, width: "100%", maxWidth: MAX_CONTENT_WIDTH },
+  centered: { flexShrink: 1, width: "100%" },
   // Reserve the composer's own capped height before the setup scroll view shrinks.
   centeredComposer: { width: "100%", flexShrink: 0 },
   setup: { flexGrow: 0, flexShrink: 1, minHeight: 0 },

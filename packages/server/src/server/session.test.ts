@@ -521,6 +521,8 @@ test("routes plugin requests and releases its owned catalog subscription on clea
     },
     catalog: () => [{ id: "example", clientBundle: "bundle" }],
     invokePluginRpc: async () => ({ ok: true }),
+    listUsageReports: async () => [],
+    listLegacyUsage: async () => ({ fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] }),
   };
   const session = createSessionForTest({ messages, pluginRuntime });
 
@@ -5245,6 +5247,7 @@ test("unions viewed timelines across socket sources and removes detached sources
   const session = createSessionForTest({
     messages,
     agentManager: {
+      getAgent: (id: string) => ({ id, internal: false }),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
         agentEventListeners.push(listener);
         return () => {};
@@ -5352,6 +5355,7 @@ test("keeps selective delivery scoped per socket when a retained session also ha
     messages,
     targetedMessages,
     agentManager: {
+      getAgent: (id: string) => ({ id, internal: false }),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
         agentEventListeners.push(listener);
         return () => {};

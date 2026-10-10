@@ -1,3 +1,4 @@
+import { i18n } from "@/i18n/i18next";
 import { describe, expect, it } from "vitest";
 import type {
   SidebarProjectEntry,
@@ -211,6 +212,7 @@ describe("buildStatusSidebarShortcutModel", () => {
           ["p1", "Project 1"],
           ["p2", "Project 2"],
         ]),
+        i18n.t,
       ),
     });
 
@@ -247,7 +249,7 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]])),
+      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]]), i18n.t),
       collapsedStatusGroupKeys: new Set(["needs_input"]),
     });
 

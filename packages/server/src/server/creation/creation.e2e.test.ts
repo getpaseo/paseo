@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { z } from "zod";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { WebSocket } from "ws";
 import { SessionInboundMessageSchema, WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
@@ -9,9 +10,22 @@ import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import pino from "pino";
 import type { CreationSnapshot, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+
+function createCreationDaemon(options: Parameters<typeof createTestPaseoDaemon>[0] = {}) {
+  const agentClients = options.agentClients ?? createTestAgentClients();
+  return createTestPaseoDaemon({
+    ...options,
+    agentClients,
+    // Installed provider CLIs must not change when background naming starts.
+    providerOverrides: Object.fromEntries(
+      BUILTIN_PROVIDER_IDS.map((id) => [id, { enabled: id in agentClients }]),
+    ),
+  });
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,7 +43,7 @@ test("creation progresses before agent readiness and continues after the disconn
   const directory = await mkdtemp(join(tmpdir(), "creation-wire-"));
   let agents = 0;
   let prompts = 0;
-  const daemon = await createTestPaseoDaemon({
+  const daemon = await createCreationDaemon({
     logger: pino(
       { level: "trace" },
       {
@@ -41,11 +55,13 @@ test("creation progresses before agent readiness and continues after the disconn
       },
     ),
     agentClients: createTestAgentClients({
-      beforeCreateSession: async () => {
+      beforeCreateSession: async (config) => {
+        if (config.internal) return;
         agents++;
         await provider.promise;
       },
-      onStartTurn: () => {
+      onStartTurn: (_prompt, config) => {
+        if (config.internal) return;
         prompts++;
       },
     }),
@@ -122,11 +138,12 @@ test("creation progresses before agent readiness and continues after the disconn
     await client.close();
     await observer.close();
     await daemon.close();
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
 
 async function connectCreationPeer(port: number) {
+  const timeout = 30_000;
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const frames: SessionOutboundMessage[] = [];
   socket.on("message", (data) => {
@@ -147,7 +164,9 @@ async function connectCreationPeer(port: number) {
     }),
   );
   await expect
-    .poll(() => frames.some((m) => m.type === "status" && m.payload.status === "server_info"))
+    .poll(() => frames.some((m) => m.type === "status" && m.payload.status === "server_info"), {
+      timeout,
+    })
     .toBe(true);
   return {
     close: () => socket.close(),
@@ -160,7 +179,7 @@ async function connectCreationPeer(port: number) {
           (m) =>
             "payload" in m && "requestId" in m.payload && m.payload.requestId === message.requestId,
         );
-      await expect.poll(response).toBeDefined();
+      await expect.poll(response, { timeout }).toBeDefined();
       return response()!;
     },
   };
@@ -170,7 +189,7 @@ test.each([false, true])(
   "workspace identity does not depend on subscribing (first subscribe=%s)",
   async (subscribe) => {
     const directory = await mkdtemp(join(tmpdir(), "creation-identity-"));
-    const daemon = await createTestPaseoDaemon();
+    const daemon = await createCreationDaemon();
     const peer = await connectCreationPeer(daemon.port);
     try {
       const request = {
@@ -188,7 +207,7 @@ test.each([false, true])(
     } finally {
       peer.close();
       await daemon.close();
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   },
   60000,
@@ -199,10 +218,13 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
   async (type) => {
     const directory = await mkdtemp(join(tmpdir(), "creation-agent-identity-"));
     let creations = 0;
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createCreationDaemon({
       agentClients: createTestAgentClients({
-        beforeCreateSession: async () => {
+        beforeCreateSession: async (config) => {
+          if (config.internal) return;
           creations++;
+          // A real provider or Git checkout may take longer than Vitest's default 1s poll budget.
+          await new Promise((resolve) => setTimeout(resolve, 1_200));
         },
       }),
     });
@@ -241,7 +263,7 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
     } finally {
       peer.close();
       await daemon.close();
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   },
   60000,
@@ -264,7 +286,7 @@ test("legacy keyed creation preserves checkout error codes", async () => {
     ],
     { cwd: directory, stdio: "pipe" },
   );
-  const daemon = await createTestPaseoDaemon({ agentClients: createTestAgentClients() });
+  const daemon = await createCreationDaemon({ agentClients: createTestAgentClients() });
   const peer = await connectCreationPeer(daemon.port);
   try {
     const result = await peer.request({
@@ -281,6 +303,95 @@ test("legacy keyed creation preserves checkout error codes", async () => {
   } finally {
     peer.close();
     await daemon.close();
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
+
+test.each(["agent", "workspace"] as const)(
+  "%s creation succeeds when the provider rejects its initial prompt",
+  async (kind) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-prompt-rejected-"));
+    const rejection = "Input exceeds the maximum length of 1048576 characters.";
+    let sessions = 0;
+    let prompts = 0;
+    const daemon = await createCreationDaemon({
+      agentClients: createTestAgentClients({
+        beforeCreateSession: async (config) => {
+          if (config.internal) return;
+          sessions++;
+        },
+        onStartTurn: (_prompt, config) => {
+          if (config.internal) return;
+          prompts++;
+          throw new Error(rejection);
+        },
+      }),
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.1",
+    });
+    const snapshots: CreationSnapshot[] = [];
+    const agent = {
+      config: { provider: "codex", cwd: directory },
+      initialPrompt: "Continue the attached conversation.",
+      clientMessageId: "draft:initial-message",
+    };
+    const streamed: AgentTimelineItem[] = [];
+    const unsubscribe = daemon.daemon.agentManager.subscribe((event) => {
+      if (event.type === "agent_stream" && event.event.type === "timeline") {
+        streamed.push(event.event.item);
+      }
+    });
+    try {
+      await client.connect();
+      const submit = async () => {
+        const common = {
+          idempotencyKey: "rejected-first-prompt",
+          onEvent: (snapshot: CreationSnapshot) => snapshots.push(snapshot),
+        };
+        if (kind === "agent") return client.createAgent({ ...common, ...agent });
+        const result = await client.createWorkspace({
+          ...common,
+          source: { kind: "directory", path: directory },
+          agent,
+        });
+        expect(result.error).toBeNull();
+        return result.agent!;
+      };
+      const created = await submit();
+      expect(created).toMatchObject({ status: "error", lastError: rejection });
+      expect(snapshots.map((snapshot) => snapshot.phase)).not.toContain("prompt_started");
+      expect(snapshots.at(-1)).toMatchObject({
+        phase: "completed",
+        error: null,
+        agent: { id: created.id },
+      });
+      const expectedTimeline = [
+        {
+          type: "user_message",
+          text: agent.initialPrompt,
+          clientMessageId: agent.clientMessageId,
+          messageId: agent.clientMessageId,
+        },
+        { type: "assistant_message", text: `[System Error] ${rejection}` },
+      ];
+      expect(
+        (await client.fetchAgentTimeline(created.id)).entries.map((entry) => entry.item),
+      ).toEqual(expectedTimeline);
+      expect(streamed).toEqual(expectedTimeline);
+      expect((await submit()).id).toBe(created.id);
+      expect(
+        (await client.fetchAgentTimeline(created.id)).entries.map((entry) => entry.item),
+      ).toEqual(expectedTimeline);
+      expect((await client.fetchAgents()).entries).toHaveLength(1);
+      expect({ sessions, prompts }).toEqual({ sessions: 1, prompts: 1 });
+    } finally {
+      unsubscribe();
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  },
+  60000,
+);

@@ -7,7 +7,11 @@ import {
   expectFileTabOpen,
 } from "../support/helpers/file-explorer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { gotoAppShell } from "../support/helpers/app";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -92,6 +96,128 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("opens the non-ASCII file named by an assistant markdown link", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "encoded-markdown-link-",
+      title: "Non-ASCII file link",
+      initialPrompt: "Show the report link",
+      featureValues: { mockAssistantResponse: "[报告](docs/reports/开户赠金.md)" },
+    });
+    try {
+      await mkdir(path.join(session.cwd, "docs/reports"), { recursive: true });
+      await writeFile(path.join(session.cwd, "docs/reports/开户赠金.md"), "# Report opened\n");
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "报告");
+      await expectFileTabOpen(page, "docs/reports/开户赠金.md");
+      await expect(
+        page
+          .getByTestId("workspace-file-pane")
+          .filter({ visible: true })
+          .getByText("Report opened", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({ path: test.info().outputPath("non-ascii-file-opened.png") });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  for (const order of ["raw-first", "href-first"] as const) {
+    test(`opens literal and encoded percent filenames independently ${order}`, async ({ page }) => {
+      const session = await seedMockAgentWorkspace({
+        repoPrefix: "percent-link-cache-",
+        title: "Distinct file links",
+        initialPrompt: "Show both filenames",
+        featureValues: {
+          mockAssistantResponse: "Raw `literal%20.md`. [Decoded](literal%20.md).",
+        },
+      });
+      try {
+        await writeFile(path.join(session.cwd, "literal%20.md"), "# Literal filename\n");
+        await writeFile(path.join(session.cwd, "literal .md"), "# Decoded filename\n");
+        await openAgentRoute(page, session);
+        const links = order === "raw-first" ? ["raw", "href"] : ["href", "raw"];
+        for (const link of links) {
+          await returnToAssistant(page, session.agentId);
+          if (link === "raw") {
+            await openAssistantInlinePath(page, "literal%20.md");
+            await expectFileTabOpen(page, "literal%20.md");
+            await expectPreviewText(page, "Literal filename");
+          } else {
+            await openAssistantMarkdownLink(page, "Decoded");
+            await expectFileTabOpen(page, "literal .md");
+            await expectPreviewText(page, "Decoded filename");
+          }
+        }
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
+
+  test("jumps to each relative reference to the same file", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "relative-reference-qa-",
+      title: "Relative line references",
+      initialPrompt: "Show both references",
+      featureValues: {
+        mockAssistantResponse: "First `src/router.go:46`. Then `src/router.go:403`.",
+      },
+    });
+    try {
+      await mkdir(path.join(session.cwd, "src"));
+      await writeFile(
+        path.join(session.cwd, "src/router.go"),
+        Array.from({ length: 450 }, (_, n) => `// line ${n + 1}`).join("\n"),
+      );
+      await openAgentRoute(page, session);
+      for (const line of [46, 403, 46]) {
+        await page
+          .getByTestId(`workspace-tab-agent_${session.agentId}`)
+          .filter({ visible: true })
+          .click();
+        await page.getByText(`src/router.go:${line}`, { exact: true }).click();
+        await expect(page.getByLabel(`Line ${line}, column 1`)).toBeVisible();
+      }
+      await page.screenshot({ path: test.info().outputPath("relative-line-target.png") });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("shows an absolute POSIX assistant file link relative to the workspace on hover", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "file-link-tooltip-" });
+    const filePath = path.join(workspace.repoPath, "src", "target.ts");
+    try {
+      const agent = await workspace.client.createAgent({
+        provider: "mock",
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Absolute file link tooltip",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+        initialPrompt: "Show the file link",
+        featureValues: { mockAssistantResponse: `[Open target](${filePath}:42-45)` },
+      });
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      const workspaceRow = page.getByTestId(
+        `sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`,
+      );
+      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
+      await workspaceRow.click();
+      await page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).click();
+
+      const fileLink = page.getByRole("link", { name: "Open target" }).first();
+      await expect(fileLink).toBeVisible({ timeout: 15_000 });
+      await fileLink.hover();
+      await expect(page.getByText("src/target.ts:42-45", { exact: true })).toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("renders a lockfile-sized read-only source with a bounded CodeMirror DOM", async ({
     page,
   }) => {
@@ -241,7 +367,12 @@ test.describe("CodeMirror workspace file editing", () => {
       await openAgentRoute(page, session);
 
       await openWorkspaceFile(page, "target.ts");
-      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+      await expect(
+        page
+          .locator('[data-testid^="workspace-pane-"]')
+          .getByTestId("workspace-tabs-row")
+          .filter({ visible: true }),
+      ).toHaveCount(2);
 
       await page
         .getByTestId(`workspace-tab-agent_${session.agentId}`)
@@ -684,3 +815,24 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByLabel("Vim mode NORMAL")).toBeVisible();
   });
 });
+
+async function openAssistantMarkdownLink(page: Page, name: string): Promise<void> {
+  await page.getByRole("link", { name, exact: true }).first().click();
+}
+
+async function returnToAssistant(page: Page, agentId: string): Promise<void> {
+  await page.getByTestId(`workspace-tab-agent_${agentId}`).filter({ visible: true }).click();
+}
+
+async function openAssistantInlinePath(page: Page, token: string): Promise<void> {
+  await page.getByText(token, { exact: true }).click();
+}
+
+async function expectPreviewText(page: Page, text: string): Promise<void> {
+  await expect(
+    page
+      .getByTestId("workspace-file-pane")
+      .filter({ visible: true })
+      .getByText(text, { exact: true }),
+  ).toBeVisible();
+}

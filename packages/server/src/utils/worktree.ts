@@ -39,6 +39,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -195,6 +196,7 @@ export type WorktreeSource =
   | { kind: "branch-off"; baseBranch: string; branchName: string }
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
+  | { kind: "restore-from-base"; baseRef: string; branchName: string }
   | {
       kind: "checkout-change-request";
       forge: string;
@@ -1337,10 +1339,7 @@ export const createWorktree = async ({
     branchName: sourcePlan.branchName,
     worktreeIncludeSummary,
     worktreePath,
-    comparisonBaseRef:
-      source.kind === "checkout-branch"
-        ? null
-        : (sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName),
+    comparisonBaseRef: sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName,
   };
 };
 
@@ -1401,6 +1400,21 @@ async function resolveRestoredWorktreeSourcePlan(
   };
 }
 
+async function resolveRestoredWorktreeFromBasePlan(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "restore-from-base" }>,
+): Promise<WorktreeSourcePlan> {
+  await validateGitBranchName(cwd, source.branchName);
+  const baseRef = await resolveBaseBranchForWorktree(cwd, source.baseRef);
+  const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+  return {
+    branchName,
+    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef),
+    metadataBaseRef: baseRef,
+    addArguments: ["-b", branchName, "--no-track", baseRef],
+  };
+}
+
 async function resolveBranchOffWorktreeSourcePlan(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "branch-off" }>,
@@ -1412,6 +1426,7 @@ async function resolveBranchOffWorktreeSourcePlan(
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
   const base = branchExists ? branchName : resolvedBaseBranch;
+  await refreshRemoteTrackingBaseRef(cwd, base);
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
 
@@ -1438,16 +1453,19 @@ async function resolveWorktreeSourcePlan({
       return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug);
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
+    case "restore-from-base":
+      return resolveRestoredWorktreeFromBasePlan(cwd, source);
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
       const hadLocalBranch = await localBranchExists(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);
+      const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
       if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
           createdBranchName: branchName,
-          metadataBaseRefName: source.branchName,
+          metadataBaseRefName: baseRef,
           changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
             headRef: branchName,
             localBranchName: branchName,
@@ -1459,7 +1477,7 @@ async function resolveWorktreeSourcePlan({
       return {
         branchName: source.branchName,
         ...(hadLocalBranch ? {} : { createdBranchName: source.branchName }),
-        metadataBaseRefName: source.branchName,
+        metadataBaseRefName: baseRef,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.branchName,
           localBranchName: source.branchName,
@@ -1715,6 +1733,21 @@ function normalizeRequiredBaseBranch(baseBranch: string): string {
   return normalizedBaseBranch;
 }
 
+// The checked-out branch itself isn't a base to diff against — resolve the
+// repository's default branch so the diff panel has a real comparison target.
+// If the default branch can't be determined (no origin/HEAD, no local
+// main/master — e.g. a local-only repo based on "develop"), fall back to
+// whichever branch is currently checked out in the main repo, since that's
+// almost always the branch this one was intended to be compared against.
+async function resolveCheckoutBranchBaseRef(cwd: string, branchName: string): Promise<string> {
+  const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
+  if (defaultBranch) {
+    return defaultBranch;
+  }
+  const currentBranch = await getCurrentBranch(cwd);
+  return currentBranch && currentBranch !== branchName ? currentBranch : branchName;
+}
+
 async function resolveBaseBranchForWorktree(
   cwd: string,
   requestedBaseBranch: string,
@@ -1747,6 +1780,41 @@ async function resolveBaseBranchForWorktree(
     }
   }
   throw new Error(`Base branch not found: ${normalized}`);
+}
+
+// Clients give up on a create request after 60s. A remote that accepts the connection and never
+// answers (a VPN-only host while off the VPN) must fall back to the cached ref well before that.
+const REMOTE_BASE_REFRESH_TIMEOUT_MS = 15_000;
+
+// A remote-tracking base is only as fresh as the last fetch, and the background fetch only runs
+// while a workspace of the repository is observed. Refresh the one base branch so the new branch
+// starts at the remote tip; when the fetch fails (offline, auth) the cached ref is still usable.
+async function refreshRemoteTrackingBaseRef(cwd: string, baseRef: string): Promise<void> {
+  if (!baseRef.startsWith("refs/remotes/")) {
+    return;
+  }
+  try {
+    // Remote names may contain slashes, so the owning remote is looked up rather than parsed.
+    const { stdout } = await runGitCommand(["remote"], { cwd });
+    const remoteName = stdout
+      .split("\n")
+      .map((name) => name.trim())
+      .find((name) => name.length > 0 && baseRef.startsWith(`refs/remotes/${name}/`));
+    if (!remoteName) {
+      return;
+    }
+    const remoteBranch = baseRef.slice(`refs/remotes/${remoteName}/`.length);
+    // No refspec is added to remote.<name>.fetch: one left behind breaks later fetches once the
+    // branch is deleted on the remote.
+    await runGitCommand(["fetch", remoteName, `+refs/heads/${remoteBranch}:${baseRef}`], {
+      cwd,
+      envOverlay: { GIT_TERMINAL_PROMPT: "0" },
+      timeout: REMOTE_BASE_REFRESH_TIMEOUT_MS,
+      acceptExitCodes: [0, 1, 128],
+    });
+  } catch {
+    // The fetch timed out; branch from the cached ref.
+  }
 }
 
 async function ensureLocalBranch(cwd: string, branchName: string): Promise<void> {

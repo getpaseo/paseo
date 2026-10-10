@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.9.2",
+  "version": "0.11.2",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -21,6 +21,7 @@
     "url": "https://github.com/getpaseo/paseo.git"
   },
   "workspaces": [
+    "plugins",
     "packages/expo-two-way-audio",
     "packages/highlight",
     "packages/plugin",
@@ -66,7 +67,7 @@
     "watch:protocol": "npm run watch --workspace=@getpaseo/protocol",
     "watch:client": "tsc -p packages/client/tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "typecheck:server": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/protocol && npm run typecheck --workspace=@getpaseo/client && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",
+    "typecheck:server": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/protocol && npm run typecheck --workspace=@getpaseo/client && npm run typecheck --workspace=@getpaseo/builtin-plugins && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",
     "test": "npm run test --workspaces --if-present",
     "format": "oxfmt .",
     "format:files": "oxfmt",

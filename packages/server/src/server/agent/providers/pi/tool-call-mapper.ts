@@ -59,11 +59,7 @@ interface PiToolResultObject {
 
 interface PiToolResultDetails {
   diff?: string;
-  mode?: string;
-  server?: string;
-  tool?: string;
-  mcpResult?: unknown;
-  xdev?: unknown;
+  [key: string]: unknown;
 }
 
 interface PiToolResultTextContent {
@@ -163,13 +159,6 @@ const PiToolResultDetailsSchema = z
   })
   .passthrough();
 
-const XdevExecuteDetailsSchema = z.object({
-  tool: z.string().trim().min(1),
-  mode: z.literal("execute"),
-  args: z.unknown().optional(),
-  inner: z.unknown().optional(),
-});
-
 const PiToolResultObjectSchema = z
   .object({
     output: z.string().optional(),
@@ -183,14 +172,6 @@ const PiToolResultObjectSchema = z
   .passthrough();
 
 const PiToolResultSchema = z.union([z.string(), PiToolResultObjectSchema, z.null()]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
 
 const BashToolInputSchema: z.ZodType<BashToolInput> = z.object({
   command: z.string(),
@@ -295,54 +276,8 @@ export function parseToolArgs(toolName: string, rawArgs: unknown): PiTrackedTool
   return { kind: "unknown", toolName, args: rawArgs ?? null };
 }
 
-function stripMcpProxyPrefix(toolName: string, serverName: string): string {
-  const prefix = `${serverName}_`;
-  return toolName.startsWith(prefix) ? toolName.slice(prefix.length) : toolName;
-}
-
-export function resolveToolCallName(toolCall: PiTrackedToolCall, result?: PiToolResult): string {
-  if (toolCall.kind === "write" && result && typeof result !== "string") {
-    const xdev = XdevExecuteDetailsSchema.safeParse(result.details?.xdev);
-    if (xdev.success) {
-      return xdev.data.tool;
-    }
-  }
-
-  if (toolCall.toolName !== "mcp") {
-    return toolCall.toolName;
-  }
-
-  if (result && typeof result !== "string") {
-    const serverName = readNonEmptyString(result.details?.server);
-    const toolName = readNonEmptyString(result.details?.tool);
-    if (serverName && toolName) {
-      return `${serverName}.${toolName}`;
-    }
-  }
-
-  if (isRecord(toolCall.args)) {
-    const requestedTool = readNonEmptyString(toolCall.args.tool);
-    const requestedServer = readNonEmptyString(toolCall.args.server);
-    if (requestedTool && requestedServer) {
-      return `${requestedServer}.${stripMcpProxyPrefix(requestedTool, requestedServer)}`;
-    }
-    if (requestedTool) {
-      const [serverName, ...toolParts] = requestedTool.split("_");
-      if (serverName && toolParts.length > 0) {
-        return `${serverName}.${toolParts.join("_")}`;
-      }
-    }
-  }
-
-  return toolCall.toolName;
-}
-
 export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult): ToolCallDetail {
   const parsedResult = result ?? null;
-
-  if (isTaskToolCall(toolCall)) {
-    return mapTaskToolDetail(toolCall.args, parsedResult);
-  }
 
   switch (toolCall.kind) {
     case "bash": {
@@ -376,7 +311,7 @@ export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult
       };
     }
     case "write":
-      return mapWriteToolDetail(toolCall.args, parsedResult);
+      return { type: "write", filePath: toolCall.args.path, content: toolCall.args.content };
     case "find":
       return mapFindToolDetail(toolCall.args, parsedResult);
     case "grep":
@@ -390,58 +325,6 @@ export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult
         output: parsedResult,
       };
   }
-}
-
-function isTaskToolCall(toolCall: PiTrackedToolCall): boolean {
-  if (toolCall.toolName === "task") {
-    return true;
-  }
-  if (toolCall.toolName !== "subagent" || !isRecord(toolCall.args)) {
-    return false;
-  }
-  return (
-    toolCall.args.action === undefined &&
-    (readNonEmptyString(toolCall.args.agent) !== undefined ||
-      readNonEmptyString(toolCall.args.task) !== undefined)
-  );
-}
-
-function mapTaskToolDetail(args: unknown, result: PiToolResult): ToolCallDetail {
-  const argRecord = isRecord(args) ? args : {};
-  return {
-    type: "sub_agent",
-    subAgentType: readNonEmptyString(argRecord.agent),
-    description: readNonEmptyString(argRecord.task),
-    log: extractTextFromToolResult(result)?.trim() ?? "",
-  };
-}
-
-function mapWriteToolDetail(args: WriteToolInput, result: PiToolResult): ToolCallDetail {
-  if (result && typeof result !== "string" && result.details && "xdev" in result.details) {
-    const xdev = XdevExecuteDetailsSchema.safeParse(result.details.xdev);
-    if (xdev.success) {
-      return {
-        type: "unknown",
-        input: xdev.data.args ?? null,
-        output: {
-          ...result,
-          details: xdev.data.inner ?? null,
-        },
-      };
-    }
-
-    return {
-      type: "unknown",
-      input: args,
-      output: result,
-    };
-  }
-
-  return {
-    type: "write",
-    filePath: args.path,
-    content: args.content,
-  };
 }
 
 function resolveToolCallOutput(result: PiToolResult): ToolCallOutputSummary {

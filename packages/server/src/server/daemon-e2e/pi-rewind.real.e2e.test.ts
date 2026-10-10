@@ -1,4 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
@@ -302,6 +305,64 @@ describe("daemon E2E (real pi) - rewind", () => {
       await expectNoCreatedFiles(session);
     } finally {
       await closePiRewindSession(session);
+    }
+  }, 900_000);
+
+  test("keeps a rewind after the daemon restarts", async () => {
+    const cwd = tmpRewindCwd("daemon-real-pi-rewind-");
+    const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "daemon-real-pi-rewind-home-"));
+    const logger = pino({ level: "silent" });
+    const startDaemon = async (): Promise<PiRewindHarness> => {
+      const daemon = await createTestPaseoDaemon({
+        agentClients: createRealProviderClients(["pi"], logger),
+        logger,
+        paseoHomeRoot,
+        cleanup: false,
+      });
+      const client = new DaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+      });
+      await client.connect();
+      await client.fetchAgents({ subscribe: {} });
+      return { client, daemon };
+    };
+    const stopDaemon = async (restarted: PiRewindHarness): Promise<void> => {
+      await restarted.client.close().catch(() => undefined);
+      await restarted.daemon.close().catch(() => undefined);
+    };
+    let current = await startDaemon();
+
+    try {
+      const agent = await current.client.createAgent({
+        cwd,
+        title: "pi-rewind-restart-real",
+        provider: "pi",
+        model: PI_REAL_TEST_MODEL,
+        thinkingOptionId: "medium",
+      });
+      const session = { agentId: agent.id, cwd };
+      for (const token of ["ONE", "TWO", "THREE", "FOUR"]) {
+        await askPi(current, session, turn(token));
+      }
+      const threeId = userMessageIdForToken(
+        await fetchTimelineItems(current.client, agent.id),
+        "PI_REWIND_PROMPT_THREE",
+      );
+      await current.client.rewindAgent(agent.id, threeId, "conversation");
+      const rewound = {
+        userTexts: [piPrompt(turn("ONE")), piPrompt(turn("TWO"))],
+        assistantCount: 2,
+      };
+      expectTimeline(await fetchTimelineItems(current.client, agent.id), rewound);
+
+      await stopDaemon(current);
+      current = await startDaemon();
+
+      expectTimeline(await fetchTimelineItems(current.client, agent.id), rewound);
+    } finally {
+      await stopDaemon(current);
+      rmSync(paseoHomeRoot, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
     }
   }, 900_000);
 });

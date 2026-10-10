@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import {
   type GitSetupOptions,
+  type CreateAgentWorktreeTarget,
   type FirstAgentContext,
   type ChangeRequestCheckoutSource,
   type SessionInboundMessage,
@@ -108,7 +109,6 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   emit: EmitSessionMessage;
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   getDaemonTcpPort: (() => number | null) | null;
@@ -321,7 +321,42 @@ function validateNormalizedGitOptions(input: ValidateNormalizedGitOptionsInput):
   }
 }
 
-export function normalizeGitOptions(
+export function normalizeAgentCreationGitOptions(
+  gitOptions?: GitSetupOptions,
+  legacyWorktreeName?: string,
+  worktree?: CreateAgentWorktreeTarget,
+): NormalizedGitOptions | null {
+  if (worktree && gitOptions) {
+    throw new Error("create_agent_request worktree cannot be combined with git options");
+  }
+  if (worktree) {
+    switch (worktree.mode) {
+      case "branch-off":
+        gitOptions = {
+          createWorktree: true,
+          createNewBranch: true,
+          newBranchName: worktree.newBranch,
+          baseBranch: worktree.base,
+          action: "branch-off",
+          refName: worktree.base,
+        };
+        break;
+      case "checkout-branch":
+        gitOptions = { createWorktree: true, action: "checkout", refName: worktree.branch };
+        break;
+      case "checkout-pr":
+        gitOptions = {
+          createWorktree: true,
+          action: "checkout",
+          githubPrNumber: worktree.prNumber,
+        };
+        break;
+    }
+  }
+  return normalizeGitOptions(gitOptions, legacyWorktreeName);
+}
+
+function normalizeGitOptions(
   gitOptions?: GitSetupOptions,
   legacyWorktreeName?: string,
 ): NormalizedGitOptions | null {
@@ -836,7 +871,6 @@ export async function runWorktreeSetupInBackground(
 ): Promise<void> {
   let worktree: WorktreeConfig = options.worktree;
   let setupResults: WorktreeSetupCommandResult[] = [];
-  let setupStarted = false;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
   const workspaceId = options.workspaceId;
 
@@ -873,7 +907,6 @@ export async function runWorktreeSetupInBackground(
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
         const setupCommands = getWorktreeSetupCommands(workspaceCwd);
         if (setupCommands.length === 0) {
-          setupStarted = true;
           emitSetupProgress("completed", null);
         } else {
           const runtimeEnv = await resolveWorktreeRuntimeEnv({
@@ -885,7 +918,6 @@ export async function runWorktreeSetupInBackground(
             cwd: workspaceCwd,
             env: runtimeEnv,
           });
-          setupStarted = true;
           setupResults = await runWorktreeSetupCommands({
             worktreePath: workspaceCwd,
             branchName: worktree.branchName,
@@ -917,10 +949,6 @@ export async function runWorktreeSetupInBackground(
       const message = error instanceof Error ? error.message : String(error);
       emitSetupProgress("failed", message);
 
-      if (!setupStarted) {
-        await dependencies.archiveWorkspaceRecord(options.workspaceId);
-      }
-
       dependencies.sessionLogger.error(
         {
           err: error,
@@ -928,7 +956,6 @@ export async function runWorktreeSetupInBackground(
           repoRoot: options.repoRoot,
           worktreeSlug: worktree.branchName,
           worktreePath: worktree.worktreePath,
-          setupStarted,
         },
         "Background worktree setup failed",
       );

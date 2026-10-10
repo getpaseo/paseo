@@ -6,6 +6,10 @@ import {
   mapClaudeRunningToolCall,
 } from "./tool-call-mapper.js";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
+import {
+  isClaudeSubagentHandbackToolName,
+  readClaudeSubagentHandback,
+} from "./subagent-handback.js";
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 
@@ -91,7 +95,7 @@ export class ClaudeSidechainTracker {
     const contextUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
     const actionCandidates = this.extractSubAgentActionCandidates(message);
     const childTimelineItems = [
-      ...this.extractSubAgentTimelineItems(message),
+      ...this.extractSubAgentTimelineItems(message, state),
       ...this.extractSubAgentToolResults(message, state),
     ];
     let actionUpdated = false;
@@ -233,7 +237,10 @@ export class ClaudeSidechainTracker {
     this.activeSidechains.clear();
   }
 
-  private extractSubAgentTimelineItems(message: SDKMessage): AgentTimelineItem[] {
+  private extractSubAgentTimelineItems(
+    message: SDKMessage,
+    state: SubAgentActivityState,
+  ): AgentTimelineItem[] {
     if (message.type !== "assistant" || !Array.isArray(message.message?.content)) {
       return [];
     }
@@ -253,6 +260,18 @@ export class ClaudeSidechainTracker {
       } else if (block.type === "thinking") {
         const text = readTrimmedString(block.thinking);
         if (text) items.push({ type: "reasoning", text });
+      } else {
+        const handback = readClaudeSubagentHandback(block);
+        if (!handback) continue;
+        // The handback's result is only an acknowledgement, never a tool card.
+        state.completedActionKeys.add(handback.callId);
+        if (handback.report) {
+          items.push({
+            type: "assistant_message",
+            text: handback.report,
+            ...(messageId ? { messageId } : {}),
+          });
+        }
       }
     }
     return items;
@@ -391,6 +410,12 @@ export class ClaudeSidechainTracker {
   }
 
   private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
+    return this.extractToolActionCandidates(message).filter(
+      (action) => !isClaudeSubagentHandbackToolName(action.toolName),
+    );
+  }
+
+  private extractToolActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
     if (message.type === "assistant") {
       return this.extractAssistantMessageActions(message);
     }

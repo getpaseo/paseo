@@ -14,12 +14,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore } from "@/stores/session-store";
+import { density } from "@/styles/density";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -30,12 +32,10 @@ import { openExternalUrl } from "@/utils/open-external-url";
 const DISCORD_URL = "https://discord.gg/jz8T2uahpH";
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const ThemedActivity = withUnistyles(Activity);
-const ThemedCircleHelp = withUnistyles(CircleHelp);
 const ThemedGift = withUnistyles(Gift);
 const ThemedKeyboard = withUnistyles(Keyboard);
 const ThemedDiscordIcon = withUnistyles(DiscordIcon);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -109,9 +109,10 @@ export function SidebarHelpMenu() {
               accessibilityLabel={t("sidebar.help.trigger")}
             >
               {({ hovered }) => (
-                <ThemedCircleHelp
-                  size={ICON_SIZE.md}
-                  uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
+                <DensityIcon
+                  icon={CircleHelp}
+                  size="md"
+                  color={hovered ? "foreground" : "foregroundMuted"}
                 />
               )}
             </DropdownMenuTrigger>
@@ -182,8 +183,8 @@ export function SidebarHelpMenu() {
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    width: 28,
-    height: 28,
+    width: density.iconButton,
+    height: density.iconButton,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: theme.spacing[1],

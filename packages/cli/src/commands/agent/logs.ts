@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { connectToDaemon } from "../../utils/client.js";
-import type { CommandOptions } from "../../output/index.js";
+import { waitForStop } from "../../utils/wait-for-stop.js";
+import type { CommandError, CommandOptions } from "../../output/index.js";
 import {
   fetchProjectedTimelineItems,
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
@@ -31,12 +32,29 @@ export type AgentLogsResult = void;
 
 export const NO_ACTIVITY_MESSAGE = "No activity to display.";
 
+interface FetchAgentTimelineItemsOptions {
+  timeoutMs?: number;
+  sinceTimestampMs?: number;
+}
+
+interface FollowModeInput {
+  client: DaemonClient;
+  agentId: string;
+  options: AgentLogsOptions;
+  sinceTimestampMs: number | undefined;
+}
+
 export async function fetchAgentTimelineItems(
   client: DaemonClient,
   agentId: string,
-  options?: { timeoutMs?: number },
+  options?: FetchAgentTimelineItemsOptions,
 ): Promise<AgentTimelineItem[]> {
-  return fetchProjectedTimelineItems({ client, agentId, timeoutMs: options?.timeoutMs });
+  return fetchProjectedTimelineItems({
+    client,
+    agentId,
+    timeoutMs: options?.timeoutMs,
+    sinceTimestampMs: options?.sinceTimestampMs,
+  });
 }
 
 export function formatAgentActivityTranscript(
@@ -59,6 +77,19 @@ function parseTailCount(raw: string | undefined): number | undefined {
     return undefined;
   }
   return parsed;
+}
+
+function parseSinceTimestamp(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const timestampMs = Date.parse(raw);
+  if (Number.isNaN(timestampMs)) {
+    throw {
+      code: "INVALID_TIMESTAMP",
+      message: `Invalid --since value: ${raw}`,
+      details: "Use a timestamp such as 2026-01-01T00:00:00Z.",
+    } satisfies CommandError;
+  }
+  return timestampMs;
 }
 
 /**
@@ -97,6 +128,7 @@ export async function runLogsCommand(
     process.exit(1);
   }
 
+  const sinceTimestampMs = parseSinceTimestamp(options.since);
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
@@ -117,12 +149,12 @@ export async function runLogsCommand(
         await client.close().catch(() => {});
         process.exit(1);
       }
-      await runFollowMode(client, resolvedId, options);
+      await runFollowMode({ client, agentId: resolvedId, options, sinceTimestampMs });
       return;
     }
 
     // Fetch timeline directly via cursor RPC.
-    let timelineItems = await fetchAgentTimelineItems(client, resolvedId);
+    let timelineItems = await fetchAgentTimelineItems(client, resolvedId, { sinceTimestampMs });
 
     // Apply filter
     if (options.filter) {
@@ -158,11 +190,12 @@ export async function runLogsCommand(
 /**
  * Follow mode: stream logs in real-time until interrupted
  */
-async function runFollowMode(
-  client: DaemonClient,
-  agentId: string,
-  options: AgentLogsOptions,
-): Promise<void> {
+async function runFollowMode({
+  client,
+  agentId,
+  options,
+  sinceTimestampMs,
+}: FollowModeInput): Promise<void> {
   const DEFAULT_FOLLOW_TAIL = 10;
   const tailCount = parseTailCount(options.tail) ?? DEFAULT_FOLLOW_TAIL;
 
@@ -171,6 +204,7 @@ async function runFollowMode(
   try {
     existingItems = await fetchAgentTimelineItems(client, agentId, {
       timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
+      sinceTimestampMs,
     });
   } catch (error) {
     console.warn("Warning: failed to fetch existing timeline", error);
@@ -208,6 +242,11 @@ async function runFollowMode(
       return;
     }
     if (message.payload.event.type === "timeline") {
+      const matchesSince =
+        sinceTimestampMs === undefined || Date.parse(message.payload.timestamp) >= sinceTimestampMs;
+      if (!matchesSince) {
+        return;
+      }
       const item = message.payload.event.item;
       // Apply filter
       if (options.filter && !matchesFilter(item, options.filter)) {
@@ -224,16 +263,7 @@ async function runFollowMode(
   await unsubscribe.ready;
   console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
-  // Wait for interrupt
-  await new Promise<void>((resolve) => {
-    const cleanup = () => {
-      unsubscribe();
-      resolve();
-    };
-
-    process.on("SIGINT", cleanup);
-    process.on("SIGTERM", cleanup);
-  });
-
+  await waitForStop();
+  unsubscribe();
   await client.close();
 }

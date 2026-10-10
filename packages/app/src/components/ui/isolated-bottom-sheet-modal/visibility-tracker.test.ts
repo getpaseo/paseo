@@ -245,3 +245,12 @@ describe("bottom sheet visibility tracker", () => {
     expect(context.backPress.press()).toBe(false);
   });
 });
+
+it("does not cancel the owner's editor when the compact sheet leaves the tree on resize", () => {
+  const context = setup();
+  openSheet(context);
+  context.tracker.attachController(null);
+  context.tracker.handleSheetDismiss();
+  expect(context.closeCount()).toBe(0);
+  expect(context.backPress.press()).toBe(false);
+});

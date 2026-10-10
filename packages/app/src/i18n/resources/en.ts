@@ -22,9 +22,11 @@ export const en = {
     total: "{{total}} matches",
   },
   common: {
+    bottomSheetBackdrop: "Bottom sheet backdrop",
     back: "Back",
     loading: "Loading...",
     actions: {
+      save: "Save",
       back: "Back",
       cancel: "Cancel",
       close: "Close",
@@ -378,6 +380,9 @@ export const en = {
         completed: "Completed",
       },
     },
+    turnFooter: {
+      workedFor: "Worked for {{duration}}",
+    },
     compaction: {
       loading: "Compacting...",
       auto: "Context automatically compacted",
@@ -436,7 +441,9 @@ export const en = {
       recovery: {
         archivedTitle: "Workspace archived",
         restoreDescription:
-          "{{workspaceName}} was archived and its worktree was removed. Restore branch {{branch}} to open it again.",
+          "Restore {{workspaceName}} to return to its agents. Its worktree will use branch {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Restore {{workspaceName}} to return to its agents. A new branch will start from the saved base or the repository default.",
         unarchiveDescription: "{{workspaceName}} is archived. Unarchive it to open it again.",
         restoreAction: "Restore",
         unarchiveAction: "Unarchive",
@@ -975,6 +982,47 @@ export const en = {
         actions: {
           viewPullRequest: "View",
           openOn: "Open on {{brand}}",
+          addToChat: "Add to chat",
+          addAllToChat: "Add all to chat",
+          addingToChat: "Adding...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "Some checks need your attention",
+            failure: "Some checks were not successful",
+            pending: "Some checks haven't completed yet",
+            success: "All checks have passed",
+            none: "No checks",
+          },
+          count: {
+            actionRequired: "{{count}} needs action",
+            warning: "{{count}} warning",
+            failure: "{{count}} failing",
+            pending: "{{count}} in progress",
+            manual: "{{count}} manual",
+            success: "{{count}} successful",
+            ignored: "{{count}} skipped",
+          },
+          detailOne: "{{parts}} check",
+          detailMany: "{{parts}} checks",
+          groupOne: {
+            actionRequired: "{{count}} needs action check",
+            warning: "{{count}} warning check",
+            failure: "{{count}} failing check",
+            pending: "{{count}} in progress check",
+            manual: "{{count}} manual check",
+            success: "{{count}} successful check",
+            ignored: "{{count}} skipped check",
+          },
+          groupMany: {
+            actionRequired: "{{count}} needs action checks",
+            warning: "{{count}} warning checks",
+            failure: "{{count}} failing checks",
+            pending: "{{count}} in progress checks",
+            manual: "{{count}} manual checks",
+            success: "{{count}} successful checks",
+            ignored: "{{count}} skipped checks",
+          },
         },
         checksSummary: {
           passedLabel: "passed",
@@ -988,17 +1036,21 @@ export const en = {
           checks: "Checks",
           pipeline: "Pipeline",
           reviews: "Reviews",
+          activity: "Activity",
         },
         empty: {
           noJobs: "No jobs",
           loadingPipeline: "Loading pipeline…",
           pipelineJobsLoadFailed: "Could not load pipeline jobs",
           allowedToFail: "allowed to fail",
+          noActivity: "No activity yet",
         },
         approvals: "{{given}} of {{required}} approvals",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          commentActions: "Comment actions",
+          threadActions: "Thread actions",
           checkStatus: {
             passed: "Passed",
             failed: "Failed",
@@ -1027,6 +1079,8 @@ export const en = {
         },
         thread: {
           discussion: "Discussion thread",
+          resolved: "Resolved",
+          outdated: "Outdated",
         },
         errors: {
           statusLoadFailed: "Unable to load pull request status",
@@ -1093,7 +1147,16 @@ export const en = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} group",
+    statusBucket: {
+      needsInput: "Needs input",
+      failed: "Failed",
+      readyToReview: "Ready to review",
+      working: "Working",
+      done: "Done",
+    },
     display: {
+      showBackground: "Show background",
       trigger: "Display preferences",
       heading: "Display",
       grouping: {
@@ -1152,6 +1215,9 @@ export const en = {
       hosts: "Hosts",
       settings: "Settings",
       closeSidebar: "Close sidebar",
+    },
+    footer: {
+      usage: "Usage",
     },
     help: {
       trigger: "Help and support",
@@ -1547,6 +1613,8 @@ export const en = {
     noFiles: "No files or directories found",
     noCommands: "No commands found",
     failedToLoad: "Failed to load",
+    chooseProjectForCommands: "Choose a project to see commands",
+    chooseModelForCommands: "Select a model to see commands",
   },
   loadOlderHistory: {
     failed: "Couldn't load older history",
@@ -1638,6 +1706,21 @@ export const en = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "Password for {{host}}",
+      label: "Host password",
+    },
+    hostConfirmation: {
+      title: "Connect to this host?",
+      description:
+        "This host will be able to run code in this app and reach your other connected hosts. Only connect if you recognize it.",
+      descriptionChanged:
+        "This link changes how you connect to this host. The host will be able to run code in this app and reach your other connected hosts. Only connect if you recognize it.",
+      hostLabel: "Host",
+      fingerprintLabel: "Key fingerprint",
+      relayLabel: "Relay",
+      connect: "Connect",
+    },
     connectionMethods: {
       title: "Add connection",
       direct: {
@@ -1704,6 +1787,12 @@ export const en = {
       helper: "Connect to a Paseo daemon running on the remote host.",
       fields: {
         target: "SSH host",
+        password: "Daemon password",
+        optional: "Optional",
+      },
+      passwordVisibility: {
+        show: "Show password",
+        hide: "Hide password",
       },
       actions: {
         cancel: "Cancel",
@@ -1933,6 +2022,8 @@ export const en = {
     dismiss: "Dismiss",
   },
   contextWindow: {
+    noData: "No context data",
+    accessibilityNoData: "Context window: No context data",
     title: "Context window",
     used: "{{percentage}}% used",
     tokens: "{{used}} / {{max}} tokens",
@@ -1940,6 +2031,17 @@ export const en = {
     accessibility: "Context window {{percentage}}% used",
   },
   review: {
+    feedback: {
+      send: "Send feedback ({{count}})",
+      sending: "Sending feedback ({{count}})",
+      chooseAgent: "Choose an agent",
+      sent: "Feedback sent to {{recipient}}",
+      "no-agents": "Open an agent tab in this workspace to send feedback.",
+      disconnected: "Connect to the host to send feedback.",
+      "no-context": "Saved comments no longer match this diff.",
+      failed: "Failed to send feedback. Try again.",
+      prompt: "Please address this code review.",
+    },
     comment: {
       add: "Add review comment",
       edit: "Edit review comment",
@@ -1974,9 +2076,12 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
+      chat: "Chat",
       appearance: "Appearance",
-      layout: "Layout",
+      sidebar: "Sidebar",
       editor: "Editor",
+      terminal: "Terminal",
+      browser: "Browser",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
       notifications: "Notifications",
@@ -1994,28 +2099,31 @@ export const en = {
         },
         sources: {
           explorerFiles: {
-            label: "Selecting a file in Explorer",
+            label: "Clicking a file in the Explorer sidebar",
             description: "Open files selected in the Explorer sidebar beside your work",
           },
           diffs: {
-            label: "Opening a diff",
+            label: "Clicking a change in the Explorer sidebar or a chat",
             description: "Open diffs from Explorer and agent conversations beside your work",
           },
           chatFiles: {
-            label: "Opening a file from an agent chat",
+            label: "Clicking a file in an agent chat",
             description: "Open file links and tool-call files beside the conversation",
           },
           diffFiles: {
-            label: "Opening a file from Changes",
+            label: "Clicking a file in a diff",
             description: "Open source files selected from a diff beside it",
           },
           subagents: {
-            label: "Opening a subagent",
+            label: "Clicking a subagent in an agent chat",
             description: "Open subagents beside their parent agent",
           },
           pullRequests: {
-            label: "Opening a pull request from Changes",
+            label: "Clicking a pull request in the Explorer sidebar",
             description: "Open pull request details beside Changes",
+          },
+          serviceUrls: {
+            label: "Clicking a script's service URL",
           },
         },
       },
@@ -2059,6 +2167,7 @@ export const en = {
         offline: "Connect to this host to open plugin settings.",
         update: "Update this host to use plugin settings.",
         unavailable: "This plugin settings screen is unavailable.",
+        backToPlugins: "Back to plugins",
       },
       trustedTitle: "Plugins are trusted code",
       trustedDescription:
@@ -2066,7 +2175,7 @@ export const en = {
       globalTitle: "Enable plugins",
       globalHint: "Global switch for every configured plugin",
       sourceLabel: "Plugin source",
-      sourcePlaceholder: "Directory, Git URL, or npm package",
+      sourcePlaceholder: "owner/slug, directory, Git URL, or npm package",
       docs: "Docs",
       install: "Install plugin",
       installing: "Installing…",
@@ -2130,6 +2239,7 @@ export const en = {
     },
     general: {
       title: "General",
+      sending: "Sending",
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",
@@ -2156,8 +2266,6 @@ export const en = {
         },
       },
       serviceUrls: {
-        label: "Service URLs",
-        description: "Where to open URLs from running scripts",
         options: {
           ask: "Ask",
           inApp: "In Paseo",
@@ -2176,7 +2284,6 @@ export const en = {
       toolCallDetail: {
         label: "Tool call display",
         description: "How tool calls appear in the timeline",
-        accessibilityLabel: "Select tool call display ({{value}})",
         options: {
           overview: "Summary",
           detailed: "Full detail",
@@ -2279,8 +2386,15 @@ export const en = {
         description: "Show an outline for jumping between prompts",
       },
       sidebar: {
-        title: "Sidebar",
-        description: "Choose which items appear at the top of the sidebar and in what order",
+        header: {
+          title: "Header",
+          description: "Choose which items appear at the top of the sidebar and in what order",
+        },
+        footer: {
+          title: "Footer",
+          description:
+            "Choose which rows appear at the bottom of the sidebar and in what order. Add project and the icon row always show",
+        },
         moveUp: "Move up",
         moveDown: "Move down",
       },
@@ -2303,6 +2417,14 @@ export const en = {
         codeSize: "Code size",
         codeSizeHint: "Used for code, diffs, and terminal output",
         codeSizeAccessibility: "Code font size",
+      },
+      layout: {
+        title: "Layout",
+        contentWidth: "Content width",
+        contentWidthHint: "Max width of chat and Markdown files on wide screens",
+        contentWidthAccessibility: "Content width in pixels",
+        reset: "Reset",
+        resetAccessibility: "Reset content width to default",
       },
       syntax: {
         title: "Syntax",
@@ -2413,6 +2535,9 @@ export const en = {
       },
     },
     host: {
+      password: {
+        guidance: "Remove this host and add it again with the password this daemon asks for.",
+      },
       appearance: {
         title: "Appearance",
         name: {

@@ -191,11 +191,13 @@ its own.
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
+- **Sheet stacking and backdrop dismissal belong to `IsolatedBottomSheetModal`.** Menus only
+  request a backdrop opacity. See [floating-panels.md](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth).
 - **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
   inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
   portal backdrop blocking the destination. On web the chat suspends one commit after it goes
   inactive, and that inactive commit is where the surface unmounts.
-- Anchoring, flipping, and edge clamping live in `menu-anchor.ts` and are unit-tested. Fix
-  positioning bugs there, not at a call site.
+- Anchoring, flipping, and edge clamping live in `components/ui/anchor.ts`, shared with the hover
+  card, and are unit-tested. Fix positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
   status-bar offset, the open flash — is in [floating-panels.md](floating-panels.md).

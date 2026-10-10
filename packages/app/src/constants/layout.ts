@@ -11,8 +11,6 @@ export const HEADER_INNER_HEIGHT_MOBILE = 56;
 export const WORKSPACE_SECONDARY_HEADER_HEIGHT = 36;
 export const HEADER_TOP_PADDING_MOBILE = 8;
 
-// Max width for chat content (stream view, input area, new agent form)
-export const MAX_CONTENT_WIDTH = 820;
 export const COMPACT_FORM_FACTOR_WIDTH = 500;
 
 // Settings uses the canonical desktop list + detail layout. Its sidebar and
@@ -35,13 +33,18 @@ export {
   getIsElectronMac as getIsElectronRuntimeMac,
 } from "./platform";
 
+/** Compact layouts are the breakpoints below `md`. */
+export function isCompactBreakpoint(breakpoint: string | undefined): boolean {
+  return breakpoint === "xs" || breakpoint === "sm";
+}
+
 /**
  * Reactive hook — re-renders the component when the breakpoint changes.
  * Always use this instead of reading UnistylesRuntime.breakpoint directly.
  */
 export function useIsCompactFormFactor(): boolean {
   const { rt } = useUnistyles();
-  return rt.breakpoint === "xs" || rt.breakpoint === "sm";
+  return isCompactBreakpoint(rt.breakpoint);
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.

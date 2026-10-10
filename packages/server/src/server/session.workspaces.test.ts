@@ -3466,7 +3466,7 @@ test("fetch_agent_request still resolves archived historical agents", async () =
   session.resolveAgentIdentifier = async (identifier: string) =>
     identifier === "Archived History Agent"
       ? { ok: true, agentId: agent.id }
-      : { ok: false, error: `Agent not found: ${identifier}` };
+      : { ok: false, notFound: true, error: `Agent not found: ${identifier}` };
   session.getAgentPayloadById = async (agentId: string) => (agentId === agent.id ? agent : null);
   session.buildProjectPlacementForWorkspaceId = async () => ({
     projectKey: "proj-history-detail",
@@ -9512,6 +9512,50 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
     cwd: REPO_CWD,
     projectId: "prj_explicit",
   });
+});
+
+test("workspace.create.request with background persists a hidden workspace that only opted-in listings show", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, PersistedWorkspaceRecord>();
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const workspace = record as PersistedWorkspaceRecord;
+    workspaces.set(workspace.workspaceId, workspace);
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-background-workspace",
+    background: true,
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  const response = findByType(emitted, "workspace.create.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-background-workspace",
+    error: null,
+    workspace: { background: true },
+  });
+  const workspaceId = response?.payload.workspace?.id as string;
+  expect(workspaces.get(workspaceId)?.background).toBe(true);
+  // No subscription exists, and the legacy causal update stays quiet for a hidden workspace.
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
+
+  const hidden = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "req-list-hidden",
+  });
+  expect(hidden.entries).toEqual([]);
+
+  const shown = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "req-list-shown",
+    filter: { includeBackground: true },
+  });
+  expect(shown.entries.map((entry) => [entry.id, entry.background])).toEqual([[workspaceId, true]]);
 });
 
 test("workspace.create.request reports an unknown explicit project", async () => {
