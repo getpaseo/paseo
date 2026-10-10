@@ -144,6 +144,27 @@ describe("computeCanStartDictation", () => {
   });
 });
 
+describe("voice mute keyboard behavior", () => {
+  it.each([false, true])("only consumes the shortcut while voice is active (%s)", (active) => {
+    let muteCalls = 0;
+    const handled = runMessageInputKeyboardAction("voice-mute-toggle", {
+      focusInput: () => undefined,
+      isDictationRecording: () => false,
+      markTranscriptForSend: () => undefined,
+      startDictation: () => undefined,
+      confirmDictation: () => undefined,
+      cancelDictation: () => undefined,
+      toggleRealtimeVoice: () => undefined,
+      isRealtimeVoiceActive: active,
+      toggleRealtimeVoiceMute: () => {
+        muteCalls += 1;
+      },
+    });
+    expect(handled).toBe(active);
+    expect(muteCalls).toBe(active ? 1 : 0);
+  });
+});
+
 describe("dictation keyboard behavior", () => {
   it("starts dictation again after the previous dictation finishes", () => {
     const keyboard = createDictationKeyboard({ startsRecording: true });

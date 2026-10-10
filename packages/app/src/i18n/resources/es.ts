@@ -2004,6 +2004,7 @@ export const es: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "Ajustar líneas largas",
     error: "Error",
     empty: "No hay detalles adicionales disponibles",
     subAgentActivity: "Actividad de subagente",

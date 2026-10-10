@@ -43,6 +43,38 @@ const MOCK_LOAD_TEST_INTERVAL_MS = 40;
 function getPositiveFeatureInteger(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
+
+type ConfiguredToolDetail = Extract<ToolCallDetail, { type: "shell" | "edit" }>;
+
+function getConfiguredToolDetail(value: unknown): ConfiguredToolDetail | null {
+  if (!value || typeof value !== "object" || !("type" in value)) return null;
+  if (
+    value.type === "shell" &&
+    "command" in value &&
+    typeof value.command === "string" &&
+    "output" in value &&
+    typeof value.output === "string"
+  ) {
+    return { type: "shell", command: value.command, output: value.output, exitCode: 0 };
+  }
+  if (
+    value.type === "edit" &&
+    "filePath" in value &&
+    typeof value.filePath === "string" &&
+    "oldString" in value &&
+    typeof value.oldString === "string" &&
+    "newString" in value &&
+    typeof value.newString === "string"
+  ) {
+    return {
+      type: "edit",
+      filePath: value.filePath,
+      oldString: value.oldString,
+      newString: value.newString,
+    };
+  }
+  return null;
+}
 const ONE_PIXEL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl4Kj8AAAAASUVORK5CYII=";
 
@@ -747,6 +779,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly assistantResponse: string | null;
+  private readonly toolCallDetail: ConfiguredToolDetail | null;
   private readonly assistantResponses: string[];
   private readonly streamingAssistantResponse: string | null;
   private readonly streamingAssistantIntervalMs: number;
@@ -763,6 +796,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
         : null;
+    this.toolCallDetail = getConfiguredToolDetail(options.config.featureValues?.mockToolCallDetail);
     this.assistantResponses = getConfiguredAssistantResponses(
       options.config.featureValues?.mockAssistantResponses,
     );
@@ -860,6 +894,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleFailedTurn(turn);
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
+      } else if (this.toolCallDetail !== null) {
+        this.scheduleToolCallTurn(turn, this.toolCallDetail);
       } else if (this.streamingAssistantResponse !== null) {
         this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
       } else if (this.assistantResponses.length > 0 || this.assistantResponse !== null) {
@@ -1240,6 +1276,25 @@ export class MockLoadTestAgentSession implements AgentSession {
   private scheduleSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     turn.timer = setTimeout(() => {
       this.emitSettledAssistantTurn(turn, finalText);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  private scheduleToolCallTurn(turn: ActiveTurn, detail: ConfiguredToolDetail): void {
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) return;
+      this.clearTurnTimer(turn);
+      this.emitTurnStarted(turn);
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({
+          callId: `${turn.turnId}:configured-tool`,
+          name: detail.type === "shell" ? "bash" : "edit",
+          status: "completed",
+          detail,
+        }),
+      );
+      this.finishTurnWithText(turn, "Synthetic tool call complete");
     }, 0);
     turn.timer.unref?.();
   }

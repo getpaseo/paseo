@@ -1976,6 +1976,7 @@ export const ja: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "長い行を折り返す",
     error: "エラー",
     empty: "追加の詳細はありません",
     subAgentActivity: "サブエージェントアクティビティ",

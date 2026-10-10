@@ -1934,6 +1934,7 @@ export const zhCN: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "长行自动换行",
     error: "错误",
     empty: "没有可用的更多详情",
     subAgentActivity: "Sub-agent 活动",

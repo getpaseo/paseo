@@ -156,9 +156,8 @@ export function runMessageInputKeyboardAction(
     return true;
   }
   if (action === "voice-mute-toggle") {
-    if (actions.isRealtimeVoiceActive) {
-      actions.toggleRealtimeVoiceMute();
-    }
+    if (!actions.isRealtimeVoiceActive) return false;
+    actions.toggleRealtimeVoiceMute();
     return true;
   }
   if (action === "dictation-cancel") {
