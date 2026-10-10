@@ -1552,6 +1552,78 @@ export const ar: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "اختر المضيف",
+      method: "إضافة مشروع",
+      directorySearch: "البحث عن مجلد",
+      githubSearch: "استنساخ من GitHub",
+      githubLocation: "اختر الوجهة",
+      newDirectoryParent: "اختر المجلد الأصل",
+      newDirectoryName: "تسمية المجلد",
+    },
+    placeholders: {
+      host: "ابحث عن المضيفين...",
+      directorySearch: "ابحث عن مجلدات أو أدخل مسارًا...",
+      githubSearch: "ابحث عن مستودع GitHub أو أدخله...",
+      parentDirectory: "ابحث عن المجلدات الأصل أو أدخل مسارًا...",
+      directoryName: "اسم المجلد",
+    },
+    methods: {
+      directorySearch: {
+        label: "البحث عن مجلد",
+        description: "ابحث عن مجلد على {{host}}",
+      },
+      browse: {
+        label: "استعراض",
+        description: "اختر مجلدًا أو أنشئه في Finder",
+      },
+      github: {
+        label: "استنساخ من GitHub",
+        searchDescription: "ابحث في المشاريع المتاحة لحسابك على GitHub",
+        manualDescription: "أدخل رابط GitHub أو owner/repo",
+        updateHost: "حدّث هذا المضيف لاستنساخ مستودعات GitHub",
+      },
+      newDirectory: {
+        label: "مجلد جديد",
+        description: "أنشئ مجلدًا فارغًا على {{host}}",
+        updateHost: "حدّث هذا المضيف لإنشاء المجلدات",
+      },
+    },
+    options: {
+      openPath: "افتح هذا المسار",
+      useParent: "استخدم هذا المجلد الأصل",
+      addHost: "إضافة مضيف",
+      repositoryVia: "{{repository}} عبر {{protocol}}",
+      cloneUrl: "استنساخ رابط هذا المستودع",
+      cloneShorthand: "استنساخ owner/repo عبر {{protocol}}",
+      alreadyExists: "موجود بالفعل",
+      parentDirectory: "المجلد الأصل: {{path}}",
+    },
+    states: {
+      cloning: "جارٍ استنساخ المشروع...",
+      creatingDirectory: "جارٍ إنشاء المجلد...",
+      adding: "جارٍ إضافة المشروع...",
+      noHosts: "لا يوجد مضيفون متصلون",
+      noMatches: "لا توجد خيارات مطابقة",
+      updateHost: "حدّث المضيف لاستخدام إضافة مشروع.",
+    },
+    errors: {
+      searchDirectories: "تعذّر البحث في المجلدات",
+      searchGithub: "تعذّر البحث في مستودعات GitHub",
+      githubUnavailable: "البحث في GitHub غير متاح",
+      directoryNotFound: "المجلد غير موجود",
+      addProject: "تعذّرت إضافة المشروع",
+      browse: "تعذّر استعراض المجلدات",
+      clone: "تعذّر استنساخ المستودع",
+      directoryNameRequired: "أدخل اسم المجلد",
+      createDirectory: "تعذّر إنشاء المجلد",
+    },
+    hints: {
+      navigate: "تنقّل",
+      select: "اختيار",
+    },
+  },
   projectPicker: {
     placeholder: "اكتب للبحث...",
     browse: "استعراض…",
@@ -2534,7 +2606,27 @@ export const ar: TranslationResources = {
       agents: {
         unavailable: "Connect to this host to manage agents",
       },
+      browserTools: {
+        title: "أدوات المتصفح",
+        warning:
+          "اسمح للوكلاء بالوصول إلى علامات تبويب متصفح Paseo والتحكم فيها، بما في ذلك حالة تسجيل الدخول. فعّل هذا فقط للوكلاء الذين تثق بهم.",
+        accessibilityLabel: "تفعيل أدوات المتصفح",
+        updating: "جارٍ تحديث أدوات المتصفح…",
+      },
+      terminalAgents: {
+        sectionTitle: "وكلاء الطرفية",
+        hooks: {
+          title: "تفعيل خطافات وكلاء الطرفية",
+          hint: "احصل على الإشعارات والحالة من وكلاء الطرفية. يثبّت هذا خطافات في ملفات إعداد الوكلاء.",
+          updateFailed: "تعذّر تحديث خطافات وكلاء الطرفية",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "أرشفة مساحات عمل طلبات الدمج المدمجة",
+          hint: "أرشف تلقائيًا مساحات عمل Paseo النظيفة بعد دمج طلب السحب الخاص بها",
+          updateFailed: "تعذّر تحديث مساحات العمل",
+        },
         unavailable: "Connect to this host to manage workspaces",
       },
       terminalProfiles: {

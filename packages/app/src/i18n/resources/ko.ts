@@ -1561,6 +1561,78 @@ export const ko: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "호스트 선택",
+      method: "프로젝트 추가",
+      directorySearch: "디렉터리 검색",
+      githubSearch: "GitHub에서 클론",
+      githubLocation: "저장 위치 선택",
+      newDirectoryParent: "상위 디렉터리 선택",
+      newDirectoryName: "디렉터리 이름 지정",
+    },
+    placeholders: {
+      host: "호스트 검색...",
+      directorySearch: "디렉터리를 검색하거나 경로 입력...",
+      githubSearch: "GitHub 저장소를 검색하거나 입력...",
+      parentDirectory: "상위 디렉터리를 검색하거나 경로 입력...",
+      directoryName: "디렉터리 이름",
+    },
+    methods: {
+      directorySearch: {
+        label: "디렉터리 검색",
+        description: "{{host}}에서 디렉터리 찾기",
+      },
+      browse: {
+        label: "찾아보기",
+        description: "Finder에서 디렉터리 선택 또는 생성",
+      },
+      github: {
+        label: "GitHub에서 클론",
+        searchDescription: "GitHub 계정에서 사용할 수 있는 프로젝트 검색",
+        manualDescription: "GitHub URL 또는 owner/repo 입력",
+        updateHost: "GitHub 저장소를 클론하려면 이 호스트를 업데이트하세요",
+      },
+      newDirectory: {
+        label: "새 디렉터리",
+        description: "{{host}}에 빈 디렉터리 만들기",
+        updateHost: "디렉터리를 만들려면 이 호스트를 업데이트하세요",
+      },
+    },
+    options: {
+      openPath: "이 경로 열기",
+      useParent: "이 상위 디렉터리 사용",
+      addHost: "호스트 추가",
+      repositoryVia: "{{repository}} ({{protocol}})",
+      cloneUrl: "이 저장소 URL 클론",
+      cloneShorthand: "{{protocol}}로 owner/repo 클론",
+      alreadyExists: "이미 있음",
+      parentDirectory: "상위 디렉터리: {{path}}",
+    },
+    states: {
+      cloning: "프로젝트 클론 중...",
+      creatingDirectory: "디렉터리 만드는 중...",
+      adding: "프로젝트 추가 중...",
+      noHosts: "연결된 호스트 없음",
+      noMatches: "일치하는 항목 없음",
+      updateHost: "프로젝트를 추가하려면 호스트를 업데이트하세요.",
+    },
+    errors: {
+      searchDirectories: "디렉터리를 검색할 수 없습니다",
+      searchGithub: "GitHub 저장소를 검색할 수 없습니다",
+      githubUnavailable: "GitHub 검색을 사용할 수 없습니다",
+      directoryNotFound: "디렉터리를 찾을 수 없습니다",
+      addProject: "프로젝트를 추가할 수 없습니다",
+      browse: "디렉터리를 찾아볼 수 없습니다",
+      clone: "저장소를 클론할 수 없습니다",
+      directoryNameRequired: "디렉터리 이름을 입력하세요",
+      createDirectory: "디렉터리를 만들 수 없습니다",
+    },
+    hints: {
+      navigate: "이동",
+      select: "선택",
+    },
+  },
   projectPicker: {
     placeholder: "검색할 내용을 입력하세요...",
     browse: "찾아보기…",
@@ -2545,7 +2617,27 @@ export const ko: TranslationResources = {
       agents: {
         unavailable: "에이전트를 관리하려면 이 호스트에 연결하세요",
       },
+      browserTools: {
+        title: "브라우저 도구",
+        warning:
+          "에이전트가 로그인 상태를 포함한 Paseo 브라우저 탭에 접근하고 제어할 수 있게 합니다. 신뢰하는 에이전트에만 사용하세요.",
+        accessibilityLabel: "브라우저 도구 사용",
+        updating: "브라우저 도구 업데이트 중…",
+      },
+      terminalAgents: {
+        sectionTitle: "터미널 에이전트",
+        hooks: {
+          title: "터미널 에이전트 훅 사용",
+          hint: "터미널 에이전트의 알림과 상태를 받습니다. 에이전트 설정 파일에 훅을 설치합니다.",
+          updateFailed: "터미널 에이전트 훅을 업데이트할 수 없습니다",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "병합된 PR 워크스페이스 보관",
+          hint: "풀 리퀘스트가 병합되면 변경 사항이 없는 Paseo 워크스페이스를 자동으로 보관합니다",
+          updateFailed: "워크스페이스를 업데이트할 수 없습니다",
+        },
         unavailable: "워크스페이스를 관리하려면 이 호스트에 연결하세요",
       },
       terminalProfiles: {

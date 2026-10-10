@@ -1535,6 +1535,78 @@ export const zhCN: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "选择主机",
+      method: "添加项目",
+      directorySearch: "搜索目录",
+      githubSearch: "从 GitHub 克隆",
+      githubLocation: "选择存放位置",
+      newDirectoryParent: "选择上级目录",
+      newDirectoryName: "命名目录",
+    },
+    placeholders: {
+      host: "搜索主机...",
+      directorySearch: "搜索目录或输入路径...",
+      githubSearch: "搜索或输入 GitHub 仓库...",
+      parentDirectory: "搜索上级目录或输入路径...",
+      directoryName: "目录名称",
+    },
+    methods: {
+      directorySearch: {
+        label: "搜索目录",
+        description: "在 {{host}} 上查找目录",
+      },
+      browse: {
+        label: "浏览",
+        description: "在 Finder 中选择或新建目录",
+      },
+      github: {
+        label: "从 GitHub 克隆",
+        searchDescription: "搜索你的 GitHub 账号可访问的项目",
+        manualDescription: "输入 GitHub URL 或 owner/repo",
+        updateHost: "更新此主机后才能克隆 GitHub 仓库",
+      },
+      newDirectory: {
+        label: "新建目录",
+        description: "在 {{host}} 上新建一个空目录",
+        updateHost: "更新此主机后才能新建目录",
+      },
+    },
+    options: {
+      openPath: "打开此路径",
+      useParent: "使用此上级目录",
+      addHost: "添加主机",
+      repositoryVia: "{{repository}}（通过 {{protocol}}）",
+      cloneUrl: "克隆此仓库 URL",
+      cloneShorthand: "通过 {{protocol}} 克隆 owner/repo",
+      alreadyExists: "已存在",
+      parentDirectory: "上级目录：{{path}}",
+    },
+    states: {
+      cloning: "正在克隆项目...",
+      creatingDirectory: "正在新建目录...",
+      adding: "正在添加项目...",
+      noHosts: "没有已连接的主机",
+      noMatches: "没有匹配的选项",
+      updateHost: "更新主机后才能使用添加项目。",
+    },
+    errors: {
+      searchDirectories: "无法搜索目录",
+      searchGithub: "无法搜索 GitHub 仓库",
+      githubUnavailable: "GitHub 搜索不可用",
+      directoryNotFound: "目录不存在",
+      addProject: "无法添加项目",
+      browse: "无法打开目录选择器",
+      clone: "无法克隆仓库",
+      directoryNameRequired: "请输入目录名称",
+      createDirectory: "无法新建目录",
+    },
+    hints: {
+      navigate: "移动",
+      select: "选择",
+    },
+  },
   projectPicker: {
     placeholder: "输入以搜索...",
     browse: "浏览…",
@@ -2506,7 +2578,27 @@ export const zhCN: TranslationResources = {
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",
       },
+      browserTools: {
+        title: "浏览器工具",
+        warning:
+          "允许智能体访问和控制 Paseo 浏览器标签页，包括已登录的浏览器状态。只为你信任的智能体启用。",
+        accessibilityLabel: "启用浏览器工具",
+        updating: "正在更新浏览器工具…",
+      },
+      terminalAgents: {
+        sectionTitle: "终端智能体",
+        hooks: {
+          title: "启用终端智能体 hooks",
+          hint: "接收终端智能体的通知和状态。启用后会在智能体的配置文件中安装 hooks。",
+          updateFailed: "无法更新终端智能体 hooks",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "归档 PR 已合并的工作区",
+          hint: "Pull request 合并后，自动归档没有未提交改动的 Paseo 工作区",
+          updateFailed: "无法更新工作区设置",
+        },
         unavailable: "连接到这个 Host 以管理 Workspace",
       },
       terminalProfiles: {

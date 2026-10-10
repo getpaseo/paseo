@@ -1597,6 +1597,78 @@ export const es: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "Elegir host",
+      method: "Añadir proyecto",
+      directorySearch: "Buscar directorio",
+      githubSearch: "Clonar desde GitHub",
+      githubLocation: "Elegir destino",
+      newDirectoryParent: "Elegir directorio padre",
+      newDirectoryName: "Nombrar directorio",
+    },
+    placeholders: {
+      host: "Buscar hosts...",
+      directorySearch: "Busca directorios o escribe una ruta...",
+      githubSearch: "Busca o escribe un repositorio de GitHub...",
+      parentDirectory: "Busca directorios padre o escribe una ruta...",
+      directoryName: "Nombre del directorio",
+    },
+    methods: {
+      directorySearch: {
+        label: "Buscar directorio",
+        description: "Busca un directorio en {{host}}",
+      },
+      browse: {
+        label: "Explorar",
+        description: "Elige o crea un directorio en Finder",
+      },
+      github: {
+        label: "Clonar desde GitHub",
+        searchDescription: "Busca proyectos disponibles para tu cuenta de GitHub",
+        manualDescription: "Escribe una URL de GitHub u owner/repo",
+        updateHost: "Actualiza este host para clonar repositorios de GitHub",
+      },
+      newDirectory: {
+        label: "Nuevo directorio",
+        description: "Crea un directorio vacío en {{host}}",
+        updateHost: "Actualiza este host para crear directorios",
+      },
+    },
+    options: {
+      openPath: "Abrir esta ruta",
+      useParent: "Usar este directorio padre",
+      addHost: "Añadir host",
+      repositoryVia: "{{repository}} vía {{protocol}}",
+      cloneUrl: "Clonar la URL de este repositorio",
+      cloneShorthand: "Clonar owner/repo vía {{protocol}}",
+      alreadyExists: "Ya existe",
+      parentDirectory: "Directorio padre: {{path}}",
+    },
+    states: {
+      cloning: "Clonando proyecto...",
+      creatingDirectory: "Creando directorio...",
+      adding: "Añadiendo proyecto...",
+      noHosts: "No hay hosts conectados",
+      noMatches: "No hay opciones que coincidan",
+      updateHost: "Actualiza el host para usar Añadir proyecto.",
+    },
+    errors: {
+      searchDirectories: "No se pueden buscar directorios",
+      searchGithub: "No se pueden buscar repositorios de GitHub",
+      githubUnavailable: "La búsqueda de GitHub no está disponible",
+      directoryNotFound: "Directorio no encontrado",
+      addProject: "No se pudo añadir el proyecto",
+      browse: "No se pudo explorar en busca de un directorio",
+      clone: "No se pudo clonar el repositorio",
+      directoryNameRequired: "Escribe un nombre de directorio",
+      createDirectory: "No se pudo crear el directorio",
+    },
+    hints: {
+      navigate: "Navegar",
+      select: "Seleccionar",
+    },
+  },
   projectPicker: {
     placeholder: "Escriba para buscar...",
     browse: "Explorar…",
@@ -2590,7 +2662,27 @@ export const es: TranslationResources = {
       agents: {
         unavailable: "Connect to this host to manage agents",
       },
+      browserTools: {
+        title: "Herramientas del navegador",
+        warning:
+          "Permite que los agentes accedan y controlen las pestañas del navegador de Paseo, incluido el estado de sesión iniciada. Actívalo solo para agentes de confianza.",
+        accessibilityLabel: "Activar herramientas del navegador",
+        updating: "Actualizando herramientas del navegador…",
+      },
+      terminalAgents: {
+        sectionTitle: "Agentes de terminal",
+        hooks: {
+          title: "Activar hooks de agentes de terminal",
+          hint: "Recibe notificaciones y estado de los agentes de terminal. Instala hooks en los archivos de configuración de tus agentes.",
+          updateFailed: "No se pudieron actualizar los hooks de agentes de terminal",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "Archivar espacios de trabajo de PR fusionadas",
+          hint: "Archiva automáticamente los espacios de trabajo de Paseo sin cambios cuando se fusiona su pull request",
+          updateFailed: "No se pudieron actualizar los espacios de trabajo",
+        },
         unavailable: "Connect to this host to manage workspaces",
       },
       terminalProfiles: {

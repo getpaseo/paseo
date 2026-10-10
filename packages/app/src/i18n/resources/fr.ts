@@ -1591,6 +1591,78 @@ export const fr: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "Choisir l’hôte",
+      method: "Ajouter un projet",
+      directorySearch: "Rechercher un dossier",
+      githubSearch: "Cloner depuis GitHub",
+      githubLocation: "Choisir la destination",
+      newDirectoryParent: "Choisir le dossier parent",
+      newDirectoryName: "Nommer le dossier",
+    },
+    placeholders: {
+      host: "Rechercher des hôtes…",
+      directorySearch: "Rechercher des dossiers ou saisir un chemin…",
+      githubSearch: "Rechercher ou saisir un dépôt GitHub…",
+      parentDirectory: "Rechercher des dossiers parents ou saisir un chemin…",
+      directoryName: "Nom du dossier",
+    },
+    methods: {
+      directorySearch: {
+        label: "Rechercher un dossier",
+        description: "Trouver un dossier sur {{host}}",
+      },
+      browse: {
+        label: "Parcourir",
+        description: "Choisir ou créer un dossier dans le Finder",
+      },
+      github: {
+        label: "Cloner depuis GitHub",
+        searchDescription: "Rechercher les projets accessibles à votre compte GitHub",
+        manualDescription: "Saisissez une URL GitHub ou owner/repo",
+        updateHost: "Mettez à jour cet hôte pour cloner des dépôts GitHub",
+      },
+      newDirectory: {
+        label: "Nouveau dossier",
+        description: "Créer un dossier vide sur {{host}}",
+        updateHost: "Mettez à jour cet hôte pour créer des dossiers",
+      },
+    },
+    options: {
+      openPath: "Ouvrir ce chemin",
+      useParent: "Utiliser ce dossier parent",
+      addHost: "Ajouter un hôte",
+      repositoryVia: "{{repository}} via {{protocol}}",
+      cloneUrl: "Cloner l’URL de ce dépôt",
+      cloneShorthand: "Cloner owner/repo via {{protocol}}",
+      alreadyExists: "Existe déjà",
+      parentDirectory: "Dossier parent : {{path}}",
+    },
+    states: {
+      cloning: "Clonage du projet…",
+      creatingDirectory: "Création du dossier…",
+      adding: "Ajout du projet…",
+      noHosts: "Aucun hôte connecté",
+      noMatches: "Aucune option correspondante",
+      updateHost: "Mettez à jour l’hôte pour utiliser Ajouter un projet.",
+    },
+    errors: {
+      searchDirectories: "Impossible de rechercher des dossiers",
+      searchGithub: "Impossible de rechercher des dépôts GitHub",
+      githubUnavailable: "La recherche GitHub est indisponible",
+      directoryNotFound: "Dossier introuvable",
+      addProject: "Impossible d’ajouter le projet",
+      browse: "Impossible de parcourir les dossiers",
+      clone: "Impossible de cloner le dépôt",
+      directoryNameRequired: "Saisissez un nom de dossier",
+      createDirectory: "Impossible de créer le dossier",
+    },
+    hints: {
+      navigate: "Naviguer",
+      select: "Sélectionner",
+    },
+  },
   projectPicker: {
     placeholder: "Tapez pour rechercher…",
     browse: "Parcourir…",
@@ -2591,7 +2663,27 @@ export const fr: TranslationResources = {
       agents: {
         unavailable: "Connectez-vous à cet hôte pour gérer les agents",
       },
+      browserTools: {
+        title: "Outils de navigateur",
+        warning:
+          "Autorise les agents à accéder aux onglets du navigateur Paseo et à les contrôler, y compris aux sessions connectées. N’activez cette option que pour des agents de confiance.",
+        accessibilityLabel: "Activer les outils de navigateur",
+        updating: "Mise à jour des outils de navigateur…",
+      },
+      terminalAgents: {
+        sectionTitle: "Agents de terminal",
+        hooks: {
+          title: "Activer les hooks des agents de terminal",
+          hint: "Recevez les notifications et l’état des agents de terminal. Cette option installe des hooks dans les fichiers de configuration de vos agents.",
+          updateFailed: "Impossible de mettre à jour les hooks des agents de terminal",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "Archiver les espaces de travail des PR fusionnées",
+          hint: "Archive automatiquement les espaces de travail Paseo sans modifications une fois leur pull request fusionnée",
+          updateFailed: "Impossible de mettre à jour les espaces de travail",
+        },
         unavailable: "Connectez-vous à cet hôte pour gérer les espaces de travail",
       },
       terminalProfiles: {

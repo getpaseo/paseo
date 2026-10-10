@@ -1582,6 +1582,78 @@ export const ptBR: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "Escolher host",
+      method: "Adicionar projeto",
+      directorySearch: "Buscar diretório",
+      githubSearch: "Clonar do GitHub",
+      githubLocation: "Escolher destino",
+      newDirectoryParent: "Escolher diretório pai",
+      newDirectoryName: "Nomear diretório",
+    },
+    placeholders: {
+      host: "Buscar hosts...",
+      directorySearch: "Busque diretórios ou digite um caminho...",
+      githubSearch: "Busque ou digite um repositório do GitHub...",
+      parentDirectory: "Busque diretórios pai ou digite um caminho...",
+      directoryName: "Nome do diretório",
+    },
+    methods: {
+      directorySearch: {
+        label: "Buscar diretório",
+        description: "Encontre um diretório em {{host}}",
+      },
+      browse: {
+        label: "Procurar",
+        description: "Escolha ou crie um diretório no Finder",
+      },
+      github: {
+        label: "Clonar do GitHub",
+        searchDescription: "Busque projetos disponíveis para sua conta do GitHub",
+        manualDescription: "Digite uma URL do GitHub ou owner/repo",
+        updateHost: "Atualize este host para clonar repositórios do GitHub",
+      },
+      newDirectory: {
+        label: "Novo diretório",
+        description: "Crie um diretório vazio em {{host}}",
+        updateHost: "Atualize este host para criar diretórios",
+      },
+    },
+    options: {
+      openPath: "Abrir este caminho",
+      useParent: "Usar este diretório pai",
+      addHost: "Adicionar host",
+      repositoryVia: "{{repository}} via {{protocol}}",
+      cloneUrl: "Clonar a URL deste repositório",
+      cloneShorthand: "Clonar owner/repo via {{protocol}}",
+      alreadyExists: "Já existe",
+      parentDirectory: "Diretório pai: {{path}}",
+    },
+    states: {
+      cloning: "Clonando projeto...",
+      creatingDirectory: "Criando diretório...",
+      adding: "Adicionando projeto...",
+      noHosts: "Nenhum host conectado",
+      noMatches: "Nenhuma opção correspondente",
+      updateHost: "Atualize o host para usar Adicionar projeto.",
+    },
+    errors: {
+      searchDirectories: "Não foi possível buscar diretórios",
+      searchGithub: "Não foi possível buscar repositórios do GitHub",
+      githubUnavailable: "A busca do GitHub não está disponível",
+      directoryNotFound: "Diretório não encontrado",
+      addProject: "Não foi possível adicionar o projeto",
+      browse: "Não foi possível procurar um diretório",
+      clone: "Não foi possível clonar o repositório",
+      directoryNameRequired: "Digite um nome de diretório",
+      createDirectory: "Não foi possível criar o diretório",
+    },
+    hints: {
+      navigate: "Navegar",
+      select: "Selecionar",
+    },
+  },
   projectPicker: {
     placeholder: "Digite para pesquisar...",
     browse: "Procurar…",
@@ -2572,7 +2644,27 @@ export const ptBR: TranslationResources = {
       agents: {
         unavailable: "Conecte-se a este host para gerenciar agentes",
       },
+      browserTools: {
+        title: "Ferramentas do navegador",
+        warning:
+          "Permite que agentes acessem e controlem abas do navegador do Paseo, incluindo o estado de login. Ative apenas para agentes em que você confia.",
+        accessibilityLabel: "Ativar ferramentas do navegador",
+        updating: "Atualizando ferramentas do navegador…",
+      },
+      terminalAgents: {
+        sectionTitle: "Agentes de terminal",
+        hooks: {
+          title: "Ativar hooks de agentes de terminal",
+          hint: "Receba notificações e status dos agentes de terminal. Isso instala hooks nos arquivos de configuração dos seus agentes.",
+          updateFailed: "Não foi possível atualizar os hooks de agentes de terminal",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "Arquivar espaços de trabalho de PRs mescladas",
+          hint: "Arquiva automaticamente espaços de trabalho do Paseo sem alterações depois que a pull request é mesclada",
+          updateFailed: "Não foi possível atualizar os espaços de trabalho",
+        },
         unavailable: "Conecte-se a este host para gerenciar workspaces",
       },
       terminalProfiles: {

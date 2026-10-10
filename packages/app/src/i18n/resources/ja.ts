@@ -1568,6 +1568,78 @@ export const ja: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "ホストを選択",
+      method: "プロジェクトを追加",
+      directorySearch: "ディレクトリを検索",
+      githubSearch: "GitHub からクローン",
+      githubLocation: "保存先を選択",
+      newDirectoryParent: "親ディレクトリを選択",
+      newDirectoryName: "ディレクトリ名を入力",
+    },
+    placeholders: {
+      host: "ホストを検索...",
+      directorySearch: "ディレクトリを検索、またはパスを入力...",
+      githubSearch: "GitHub リポジトリを検索、または入力...",
+      parentDirectory: "親ディレクトリを検索、またはパスを入力...",
+      directoryName: "ディレクトリ名",
+    },
+    methods: {
+      directorySearch: {
+        label: "ディレクトリを検索",
+        description: "{{host}} 上のディレクトリを探す",
+      },
+      browse: {
+        label: "参照",
+        description: "Finder でディレクトリを選択または作成",
+      },
+      github: {
+        label: "GitHub からクローン",
+        searchDescription: "GitHub アカウントで利用できるプロジェクトを検索",
+        manualDescription: "GitHub の URL または owner/repo を入力",
+        updateHost: "GitHub リポジトリをクローンするにはこのホストを更新してください",
+      },
+      newDirectory: {
+        label: "新しいディレクトリ",
+        description: "{{host}} 上に空のディレクトリを作成",
+        updateHost: "ディレクトリを作成するにはこのホストを更新してください",
+      },
+    },
+    options: {
+      openPath: "このパスを開く",
+      useParent: "この親ディレクトリを使う",
+      addHost: "ホストを追加",
+      repositoryVia: "{{repository}}（{{protocol}} 経由）",
+      cloneUrl: "このリポジトリ URL をクローン",
+      cloneShorthand: "{{protocol}} 経由で owner/repo をクローン",
+      alreadyExists: "既に存在します",
+      parentDirectory: "親ディレクトリ: {{path}}",
+    },
+    states: {
+      cloning: "プロジェクトをクローン中...",
+      creatingDirectory: "ディレクトリを作成中...",
+      adding: "プロジェクトを追加中...",
+      noHosts: "接続済みのホストがありません",
+      noMatches: "一致する項目がありません",
+      updateHost: "プロジェクトを追加するにはホストを更新してください。",
+    },
+    errors: {
+      searchDirectories: "ディレクトリを検索できません",
+      searchGithub: "GitHub リポジトリを検索できません",
+      githubUnavailable: "GitHub 検索は利用できません",
+      directoryNotFound: "ディレクトリが見つかりません",
+      addProject: "プロジェクトを追加できません",
+      browse: "ディレクトリを参照できません",
+      clone: "リポジトリをクローンできません",
+      directoryNameRequired: "ディレクトリ名を入力してください",
+      createDirectory: "ディレクトリを作成できません",
+    },
+    hints: {
+      navigate: "移動",
+      select: "選択",
+    },
+  },
   projectPicker: {
     placeholder: "入力して検索...",
     browse: "参照…",
@@ -2559,7 +2631,27 @@ export const ja: TranslationResources = {
       agents: {
         unavailable: "エージェントを管理するにはこのホストに接続してください",
       },
+      browserTools: {
+        title: "ブラウザツール",
+        warning:
+          "エージェントが Paseo のブラウザタブ（ログイン中の状態を含む）にアクセスして操作できるようにします。信頼できるエージェントにのみ有効にしてください。",
+        accessibilityLabel: "ブラウザツールを有効にする",
+        updating: "ブラウザツールを更新中…",
+      },
+      terminalAgents: {
+        sectionTitle: "ターミナルエージェント",
+        hooks: {
+          title: "ターミナルエージェントのフックを有効にする",
+          hint: "ターミナルエージェントから通知とステータスを受け取ります。エージェントの設定ファイルにフックをインストールします。",
+          updateFailed: "ターミナルエージェントのフックを更新できません",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "マージ済み PR のワークスペースをアーカイブ",
+          hint: "プルリクエストがマージされた後、変更のない Paseo ワークスペースを自動でアーカイブします",
+          updateFailed: "ワークスペースを更新できません",
+        },
         unavailable: "ワークスペースを管理するにはこのホストに接続してください",
       },
       terminalProfiles: {

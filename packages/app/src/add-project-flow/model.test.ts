@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   backAddProjectPage,
   chooseAddProjectHost,
@@ -111,6 +112,33 @@ describe("Add Project navigation", () => {
 });
 
 describe("Add Project options", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("describes methods and clone destinations in the app language", async () => {
+    await i18n.changeLanguage("zh-CN");
+
+    expect(
+      buildAddProjectMethods(HOST).map(({ label, description }) => [label, description]),
+    ).toEqual([
+      ["搜索目录", "在 Local 上查找目录"],
+      ["浏览", "在 Finder 中选择或新建目录"],
+      ["从 GitHub 克隆", "搜索你的 GitHub 账号可访问的项目"],
+      ["新建目录", "在 Local 上新建一个空目录"],
+    ]);
+    expect(addProjectMethodEmptyText({ ...HOST, canAddProject: false })).toBe(
+      "更新主机后才能使用添加项目。",
+    );
+    expect(
+      buildCloneLocationOptions({
+        parents: ["~/dev", "~/workspace"],
+        repositoryName: "paseo",
+        existingPaths: ["~/workspace/paseo"],
+      }).map((option) => option.secondaryText),
+    ).toEqual(["上级目录：~/dev", "已存在"]);
+  });
+
   it("hides every mutating method when the host lacks stable project identity", () => {
     const outdatedHost = { ...HOST, canAddProject: false };
 

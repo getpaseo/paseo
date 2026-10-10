@@ -1579,6 +1579,78 @@ export const ru: TranslationResources = {
       },
     },
   },
+  addProject: {
+    titles: {
+      host: "Выберите хост",
+      method: "Добавить проект",
+      directorySearch: "Найти папку",
+      githubSearch: "Клонировать из GitHub",
+      githubLocation: "Выберите место",
+      newDirectoryParent: "Выберите родительскую папку",
+      newDirectoryName: "Название папки",
+    },
+    placeholders: {
+      host: "Поиск хостов...",
+      directorySearch: "Найдите папку или введите путь...",
+      githubSearch: "Найдите или введите репозиторий GitHub...",
+      parentDirectory: "Найдите родительскую папку или введите путь...",
+      directoryName: "Название папки",
+    },
+    methods: {
+      directorySearch: {
+        label: "Найти папку",
+        description: "Найти папку на {{host}}",
+      },
+      browse: {
+        label: "Обзор",
+        description: "Выбрать или создать папку в Finder",
+      },
+      github: {
+        label: "Клонировать из GitHub",
+        searchDescription: "Поиск проектов, доступных вашему аккаунту GitHub",
+        manualDescription: "Введите URL GitHub или owner/repo",
+        updateHost: "Обновите этот хост, чтобы клонировать репозитории GitHub",
+      },
+      newDirectory: {
+        label: "Новая папка",
+        description: "Создать пустую папку на {{host}}",
+        updateHost: "Обновите этот хост, чтобы создавать папки",
+      },
+    },
+    options: {
+      openPath: "Открыть этот путь",
+      useParent: "Использовать эту папку",
+      addHost: "Добавить хост",
+      repositoryVia: "{{repository}} через {{protocol}}",
+      cloneUrl: "Клонировать по этому URL",
+      cloneShorthand: "Клонировать owner/repo через {{protocol}}",
+      alreadyExists: "Уже существует",
+      parentDirectory: "Родительская папка: {{path}}",
+    },
+    states: {
+      cloning: "Клонирование проекта...",
+      creatingDirectory: "Создание папки...",
+      adding: "Добавление проекта...",
+      noHosts: "Нет подключённых хостов",
+      noMatches: "Нет подходящих вариантов",
+      updateHost: "Обновите хост, чтобы добавлять проекты.",
+    },
+    errors: {
+      searchDirectories: "Не удалось выполнить поиск папок",
+      searchGithub: "Не удалось выполнить поиск репозиториев GitHub",
+      githubUnavailable: "Поиск по GitHub недоступен",
+      directoryNotFound: "Папка не найдена",
+      addProject: "Не удалось добавить проект",
+      browse: "Не удалось открыть выбор папки",
+      clone: "Не удалось клонировать репозиторий",
+      directoryNameRequired: "Введите название папки",
+      createDirectory: "Не удалось создать папку",
+    },
+    hints: {
+      navigate: "Перейти",
+      select: "Выбрать",
+    },
+  },
   projectPicker: {
     placeholder: "Введите текст для поиска...",
     browse: "Обзор…",
@@ -2580,7 +2652,27 @@ export const ru: TranslationResources = {
       agents: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять агентами",
       },
+      browserTools: {
+        title: "Инструменты браузера",
+        warning:
+          "Разрешает агентам открывать вкладки браузера Paseo и управлять ими, включая сохранённые входы в аккаунты. Включайте только для агентов, которым доверяете.",
+        accessibilityLabel: "Включить инструменты браузера",
+        updating: "Обновление инструментов браузера…",
+      },
+      terminalAgents: {
+        sectionTitle: "Терминальные агенты",
+        hooks: {
+          title: "Включить хуки терминальных агентов",
+          hint: "Получайте уведомления и статус от терминальных агентов. Хуки устанавливаются в конфигурационные файлы агентов.",
+          updateFailed: "Не удалось обновить хуки терминальных агентов",
+        },
+      },
       workspaces: {
+        autoArchiveMerged: {
+          title: "Архивировать рабочие пространства слитых PR",
+          hint: "Автоматически архивировать рабочие пространства Paseo без изменений после слияния их pull request",
+          updateFailed: "Не удалось обновить рабочие пространства",
+        },
         unavailable: "Подключитесь к этому хосту, чтобы управлять рабочими пространствами",
       },
       terminalProfiles: {
