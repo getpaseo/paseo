@@ -1,90 +1,219 @@
+import { readFile } from "node:fs/promises";
+import { ReadStream } from "node:fs";
 import pino from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
+import { OpenAISTT, type TranscriptionClient } from "./stt.js";
+import type {
+  StreamingTranscriptionEvent,
+  StreamingTranscriptionCommittedEvent,
+} from "../../speech-provider.js";
 
-const { openAiConstructorOptionsMock, transcriptionsCreateMock } = vi.hoisted(() => ({
-  openAiConstructorOptionsMock: vi.fn(),
-  transcriptionsCreateMock: vi.fn(),
-}));
+const logger = pino({ level: "silent" });
 
-vi.mock("openai", () => ({
-  OpenAI: vi.fn(function OpenAI(options: unknown) {
-    openAiConstructorOptionsMock(options);
-    return {
-      audio: {
-        transcriptions: {
-          create: transcriptionsCreateMock,
-        },
-      },
-    };
-  }),
-}));
+interface ControlledTranscriptionRequest {
+  pcm: Buffer;
+  request: Parameters<TranscriptionClient["create"]>[0];
+  body?: unknown;
+  resolve: (response: unknown) => void;
+  reject: (error: Error) => void;
+}
 
-import { OpenAISTT } from "./stt.js";
+class ControlledTranscriptions implements TranscriptionClient {
+  readonly requests: ControlledTranscriptionRequest[] = [];
+
+  async create(
+    request: Parameters<TranscriptionClient["create"]>[0],
+    options?: Parameters<TranscriptionClient["create"]>[1],
+  ): Promise<unknown> {
+    if (!(request.file instanceof ReadStream) || typeof request.file.path !== "string") {
+      throw new Error("Expected the real temporary WAV file");
+    }
+    const wav = await readFile(request.file.path);
+    request.file.destroy();
+    return new Promise((resolve, reject) => {
+      this.requests.push({ pcm: wav.subarray(44), request, body: options?.body, resolve, reject });
+    });
+  }
+}
+
+function setup(model = "whisper-1") {
+  const client = new ControlledTranscriptions();
+  const provider = new OpenAISTT({
+    config: { apiKey: "sk-test", model },
+    logger,
+    createClient: () => client,
+  });
+  const session = provider.createSession({ logger, language: "en", prompt: "Paseo, TypeScript" });
+  const committed: StreamingTranscriptionCommittedEvent[] = [];
+  const transcripts: StreamingTranscriptionEvent[] = [];
+  const errors: unknown[] = [];
+  session.on("committed", (event) => committed.push(event));
+  session.on("transcript", (event) => transcripts.push(event));
+  session.on("error", (error) => errors.push(error));
+  return { client, session, committed, transcripts, errors };
+}
+
+async function startPendingSegment() {
+  const scenario = setup();
+  await scenario.session.connect();
+  scenario.session.appendPcm16(Buffer.from([1, 0, 2, 0]));
+  scenario.session.commit();
+  await expect.poll(() => scenario.client.requests.length).toBe(1);
+  scenario.session.appendPcm16(Buffer.from([3, 0, 4, 0]));
+  return scenario;
+}
+
+async function stopBeforePreviousResponse() {
+  const scenario = await startPendingSegment();
+  scenario.session.commit();
+  await expect.poll(() => scenario.client.requests.length).toBe(2);
+  scenario.client.requests[1]!.resolve({ text: "last" });
+  scenario.client.requests[0]!.resolve({ text: "first" });
+  await expect.poll(() => scenario.transcripts.length).toBe(2);
+  return scenario;
+}
+
+async function stopAfterPreviousResponse() {
+  const scenario = await startPendingSegment();
+  scenario.client.requests[0]!.resolve({ text: "first" });
+  await expect.poll(() => scenario.transcripts.length).toBe(1);
+  scenario.session.commit();
+  await expect.poll(() => scenario.client.requests.length).toBe(2);
+  scenario.client.requests[1]!.resolve({ text: "last" });
+  await expect.poll(() => scenario.transcripts.length).toBe(2);
+  return scenario;
+}
 
 describe("OpenAISTT", () => {
-  afterEach(() => {
-    openAiConstructorOptionsMock.mockReset();
-    transcriptionsCreateMock.mockReset();
-  });
-
-  test("passes configured baseUrl to the OpenAI client", () => {
-    const provider = new OpenAISTT(
-      { apiKey: "sk-test", baseUrl: "https://speech.example.com/v1" },
-      pino({ level: "silent" }),
-    );
-
-    expect(provider.id).toBe("openai");
-    expect(openAiConstructorOptionsMock).toHaveBeenCalledWith({
-      apiKey: "sk-test",
-      baseURL: "https://speech.example.com/v1",
-    });
-  });
-
-  test("passes transcription prompt to OpenAI REST STT", async () => {
-    transcriptionsCreateMock.mockImplementation(
-      async (request: { file: NodeJS.ReadableStream }) => {
-        await new Promise<void>((resolve, reject) => {
-          request.file.once("error", reject);
-          request.file.once("end", resolve);
-          request.file.resume();
-        });
-        return { text: "hello" };
+  test("passes configured baseUrl to the client factory", () => {
+    let received: unknown;
+    const client = new ControlledTranscriptions();
+    const provider = new OpenAISTT({
+      config: { apiKey: "sk-test", baseUrl: "https://speech.example.com/v1" },
+      logger,
+      createClient: (options) => {
+        received = options;
+        return client;
       },
-    );
-
-    const provider = new OpenAISTT(
-      { apiKey: "sk-test", model: "gpt-4o-transcribe" },
-      pino({ level: "silent" }),
-    );
-    const session = provider.createSession({
-      logger: pino({ level: "silent" }),
-      language: "en",
-      prompt: "Only transcribe the speaker.",
     });
+    expect(provider.id).toBe("openai");
+    expect(received).toEqual({ apiKey: "sk-test", baseURL: "https://speech.example.com/v1" });
+  });
 
-    const transcript = new Promise<string>((resolve, reject) => {
-      session.on("transcript", (event) => {
-        if (event.isFinal) {
-          resolve(event.transcript);
-        }
-      });
-      session.on("error", (error) => {
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
-    });
+  test.each([
+    { stop: "before", record: stopBeforePreviousResponse },
+    { stop: "after", record: stopAfterPreviousResponse },
+  ])("keeps the final chunk when stop is $stop the previous response", async ({ record }) => {
+    const { client, session, committed, transcripts, errors } = await record();
+    expect(client.requests.map((request) => Array.from(request.pcm))).toEqual([
+      [1, 0, 2, 0],
+      [3, 0, 4, 0],
+    ]);
+    expect(new Set(committed.map((event) => event.segmentId)).size).toBe(2);
+    expect(committed[1]!.previousSegmentId).toBe(committed[0]!.segmentId);
+    expect(
+      transcripts.find((event) => event.segmentId === committed[1]!.segmentId)?.transcript,
+    ).toBe("last");
+    expect(errors).toEqual([]);
+    session.close();
+  });
 
+  test("keeps three overlapping commits distinct when responses finish in reverse order", async () => {
+    const { client, session, committed, transcripts } = setup();
     await session.connect();
-    session.appendPcm16(Buffer.from([0, 0, 0, 0]));
-    session.commit();
+    for (const sample of [1, 2, 3]) {
+      session.appendPcm16(Buffer.from([sample, 0]));
+      session.commit();
+      await expect.poll(() => client.requests.length).toBe(sample);
+    }
+    await expect.poll(() => client.requests.length).toBe(3);
+    expect(client.requests.map((request) => Array.from(request.pcm))).toEqual([
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ]);
+    expect(new Set(committed.map((event) => event.segmentId)).size).toBe(3);
+    expect(committed.map((event) => event.previousSegmentId)).toEqual([
+      null,
+      committed[0]!.segmentId,
+      committed[1]!.segmentId,
+    ]);
+    for (const request of client.requests.toReversed())
+      request.resolve({ text: String(request.pcm[0]) });
+    await expect.poll(() => transcripts.length).toBe(3);
+    const bySegment = new Map(transcripts.map((event) => [event.segmentId, event.transcript]));
+    expect(committed.map((event) => bySegment.get(event.segmentId))).toEqual(["1", "2", "3"]);
+    session.close();
+  });
 
-    await expect(transcript).resolves.toBe("hello");
-    expect(transcriptionsCreateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        language: "en",
-        model: "gpt-4o-transcribe",
-        prompt: "Only transcribe the speaker.",
-        response_format: "json",
-      }),
-    );
+  test("preserves the next segment after a transcription error", async () => {
+    const { client, session, transcripts, errors } = setup();
+    await session.connect();
+    session.appendPcm16(Buffer.from([1, 0]));
+    session.commit();
+    await expect.poll(() => client.requests.length).toBe(1);
+    session.appendPcm16(Buffer.from([2, 0]));
+    client.requests[0]!.reject(new Error("request failed"));
+    await expect.poll(() => errors.length).toBe(1);
+    session.commit();
+    await expect.poll(() => client.requests.length).toBe(2);
+    expect([...client.requests[1]!.pcm]).toEqual([2, 0]);
+    client.requests[1]!.resolve({ text: "last" });
+    await expect.poll(() => transcripts.length).toBe(1);
+    session.close();
+  });
+
+  test("does not upload an empty commit", async () => {
+    const { client, session, transcripts } = setup();
+    await session.connect();
+    session.commit();
+    expect(transcripts[0]?.transcript).toBe("");
+    expect(client.requests).toEqual([]);
+    session.close();
+  });
+
+  test("preserves explicit context and confidence metadata for gpt-4o-transcribe", async () => {
+    const { client, session, transcripts } = setup("gpt-4o-transcribe");
+    await session.connect();
+    session.appendPcm16(Buffer.from([1, 0]));
+    session.commit();
+    await expect.poll(() => client.requests.length).toBe(1);
+    expect(client.requests[0]!.request).toMatchObject({
+      language: "en",
+      model: "gpt-4o-transcribe",
+      prompt: "Paseo, TypeScript",
+      include: ["logprobs"],
+      response_format: "json",
+    });
+    client.requests[0]!.resolve({
+      text: "Paseo",
+      logprobs: [{ token: "Paseo", logprob: -0.5, bytes: [80] }],
+    });
+    await expect.poll(() => transcripts.length).toBe(1);
+    expect(transcripts[0]).toMatchObject({
+      transcript: "Paseo",
+      avgLogprob: -0.5,
+      isLowConfidence: false,
+    });
+    session.close();
+  });
+
+  test("uses plural language hints for gpt-transcribe", async () => {
+    const { client, session, transcripts } = setup("gpt-transcribe");
+    await session.connect();
+    session.appendPcm16(Buffer.from([1, 0]));
+    session.commit();
+    await expect.poll(() => client.requests.length).toBe(1);
+    expect(client.requests[0]!.request).not.toHaveProperty("language");
+    expect(client.requests[0]!.body).toMatchObject({
+      model: "gpt-transcribe",
+      languages: ["en"],
+      prompt: "Paseo, TypeScript",
+      response_format: "json",
+    });
+    client.requests[0]!.resolve({ text: "hello", languages: [{ code: "en" }] });
+    await expect.poll(() => transcripts.length).toBe(1);
+    expect(transcripts[0]?.language).toBe("en");
+    session.close();
   });
 });
