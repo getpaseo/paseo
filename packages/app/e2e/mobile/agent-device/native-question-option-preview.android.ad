@@ -1,0 +1,10 @@
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "label=\"rollout\"" 20000
+press "label=\"rollout\""
+wait "id=\"question-form-option-preview\"" 10000
+gesture pan 570 1120 0 -440 600
+is visible "text=\"// LAST PREVIEW LINE\""
+close
