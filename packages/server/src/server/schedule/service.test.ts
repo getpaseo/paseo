@@ -345,6 +345,73 @@ describe("ScheduleService", () => {
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test.each(["new-agent", "agent", "maxRuns: 1"] as const)(
+    "dispatches a shared cron slot only once for %s after an earlier tick resumes",
+    async (targetKind) => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let dispatches = 0;
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async (schedule) => {
+          if (schedule.prompt === "earlier slow schedule") {
+            started.resolve();
+            await release.promise;
+          } else {
+            dispatches += 1;
+          }
+          return { agentId: null, output: "done" };
+        },
+      });
+      const cadence = { type: "cron" as const, expression: "0 6 * * 1", timezone: "Europe/Prague" };
+      await service.create({
+        prompt: "earlier slow schedule",
+        cadence,
+        target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      });
+      // Give the later schedule a distinct creation time so file ordering cannot affect the race.
+      now = new Date("2026-01-01T00:00:01.000Z");
+      const agentId = "00000000-0000-0000-0000-000000000001";
+      if (targetKind === "agent") {
+        await agentStorage.upsert(
+          buildAgentRecord({ id: agentId, cwd: tempDir, iso: now.toISOString() }),
+        );
+      }
+      const later = await service.create({
+        prompt: "later quick schedule",
+        cadence,
+        target:
+          targetKind === "agent"
+            ? { type: "agent", agentId }
+            : { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+        maxRuns: targetKind === "maxRuns: 1" ? 1 : undefined,
+      });
+      now = new Date("2026-01-05T05:00:00.000Z");
+      const delayedTick = service.tick();
+      await started.promise;
+      try {
+        now = new Date("2026-01-05T05:00:01.000Z");
+        await service.tick();
+      } finally {
+        release.resolve();
+        await delayedTick;
+      }
+      const result = await service.inspect(later.id);
+      expect.soft(dispatches).toBe(1);
+      expect.soft(result.runs).toHaveLength(1);
+      expect.soft(result.runs.map((run) => run.scheduledFor)).toEqual(["2026-01-05T05:00:00.000Z"]);
+      expect(result.nextRunAt).toBe(
+        targetKind === "maxRuns: 1" ? null : "2026-01-12T05:00:00.000Z",
+      );
+      expect(result.status).toBe(targetKind === "maxRuns: 1" ? "completed" : "active");
+    },
+  );
+
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
