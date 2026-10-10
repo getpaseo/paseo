@@ -36,6 +36,7 @@ import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
+import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -319,6 +320,14 @@ function StatusIndicator({ status, compact }: { status: ProviderStatus; compact:
   );
 }
 
+// Remove deletes the provider's config.json entry. Plugin providers are also "custom" but have no
+// entry with `extends`, so removing one would succeed without changing the provider list.
+function isRemovableProvider(entry: ProviderEntry, config: MutableDaemonConfig | null): boolean {
+  return (
+    entry.source === "custom" && typeof config?.providers[entry.provider]?.extends === "string"
+  );
+}
+
 export interface ProvidersSectionProps {
   serverId: string;
 }
@@ -328,7 +337,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
-  const { patchConfig } = useDaemonConfig(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
@@ -444,7 +453,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
                   isRemoving={removingProviderId === def.id}
-                  canRemove={supportsProviderRemoval && entry.source === "custom"}
+                  canRemove={supportsProviderRemoval && isRemovableProvider(entry, config)}
                   isFirst={index === 0}
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}

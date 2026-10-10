@@ -7,41 +7,49 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
-const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
-  () => ({
-    theme: {
-      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-      iconSize: { sm: 14, md: 20 },
-      fontSize: { xs: 11, sm: 13, base: 15 },
-      fontWeight: { normal: "400" },
-      borderRadius: { lg: 8 },
-      opacity: { 50: 0.5 },
-      colors: {
-        surface1: "#111",
-        surface2: "#222",
-        surface3: "#333",
-        foreground: "#fff",
-        foregroundMuted: "#aaa",
-        border: "#555",
-        accent: "#0a84ff",
-        statusSuccess: "#00ff00",
-        statusWarning: "#ff9500",
-        statusDanger: "#ff0000",
-        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
-      },
+const {
+  theme,
+  snapshotState,
+  configState,
+  hostFeatureState,
+  patchConfigMock,
+  openProviderSettingsMock,
+} = vi.hoisted(() => ({
+  theme: {
+    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+    iconSize: { sm: 14, md: 20 },
+    fontSize: { xs: 11, sm: 13, base: 15 },
+    fontWeight: { normal: "400" },
+    borderRadius: { lg: 8 },
+    opacity: { 50: 0.5 },
+    colors: {
+      surface1: "#111",
+      surface2: "#222",
+      surface3: "#333",
+      foreground: "#fff",
+      foregroundMuted: "#aaa",
+      border: "#555",
+      accent: "#0a84ff",
+      statusSuccess: "#00ff00",
+      statusWarning: "#ff9500",
+      statusDanger: "#ff0000",
+      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
     },
-    snapshotState: {
-      entries: undefined as ProviderSnapshotEntry[] | undefined,
-      isLoading: false,
-      isRefreshing: false,
-    },
-    configState: {
-      config: null as MutableDaemonConfig | null,
-    },
-    patchConfigMock: vi.fn(async () => undefined),
-    openProviderSettingsMock: vi.fn(),
-  }),
-);
+  },
+  snapshotState: {
+    entries: undefined as ProviderSnapshotEntry[] | undefined,
+    isLoading: false,
+    isRefreshing: false,
+  },
+  configState: {
+    config: null as MutableDaemonConfig | null,
+  },
+  hostFeatureState: {
+    enabled: false,
+  },
+  patchConfigMock: vi.fn(async () => undefined),
+  openProviderSettingsMock: vi.fn(),
+}));
 
 vi.mock("react-native", () => ({
   Platform: { OS: "web" },
@@ -272,7 +280,7 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 
 vi.mock("@/runtime/host-features", () => ({
-  useHostFeature: () => false,
+  useHostFeature: () => hostFeatureState.enabled,
 }));
 
 vi.mock("@/utils/confirm-dialog", () => ({
@@ -302,6 +310,26 @@ const disabledCodexEntry: ProviderSnapshotEntry = {
   enabled: false,
   label: "Codex",
   description: "OpenAI Codex",
+  defaultModeId: null,
+  modes: [],
+};
+
+const customAcpEntry: ProviderSnapshotEntry = {
+  provider: "gemini",
+  status: "ready",
+  enabled: true,
+  source: "custom",
+  label: "Gemini",
+  defaultModeId: null,
+  modes: [],
+};
+
+const pluginEntry: ProviderSnapshotEntry = {
+  provider: "muse",
+  status: "error",
+  enabled: true,
+  source: "custom",
+  label: "Muse Code",
   defaultModeId: null,
   modes: [],
 };
@@ -347,6 +375,7 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
+    hostFeatureState.enabled = false;
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
@@ -462,5 +491,28 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
+  });
+
+  it("offers Remove for a custom provider defined in config.json", () => {
+    hostFeatureState.enabled = true;
+    snapshotState.entries = [customAcpEntry];
+    configState.config = makeConfig({
+      gemini: { extends: "acp", label: "Gemini", command: ["gemini", "--acp"] },
+    });
+
+    render();
+
+    expect(container?.querySelector('[data-testid="provider-remove-gemini"]')).not.toBeNull();
+  });
+
+  it("does not offer Remove for a plugin provider without a config.json definition", () => {
+    hostFeatureState.enabled = true;
+    snapshotState.entries = [pluginEntry];
+    configState.config = makeConfig({ muse: { enabled: true } });
+
+    render();
+
+    expect(container?.querySelector('[data-testid="provider-actions-muse"]')).toBeNull();
+    expect(container?.querySelector('[data-testid="provider-remove-muse"]')).toBeNull();
   });
 });
