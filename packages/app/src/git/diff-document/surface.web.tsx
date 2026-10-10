@@ -42,6 +42,9 @@ import type {
   TextMeasurer,
 } from "./types";
 import { useDiffDocumentWorkspaceCache } from "./workspace-cache";
+import { DiffFindOverlay, useDiffFind } from "./find/view.web";
+import { diffMatchRectangles, locateDiffMatch, planDiffMatchReveal } from "./find/geometry";
+import type { DiffFindSnapshot } from "./find/model";
 
 const DEFAULT_MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 const RESIZE_SETTLE_DELAY_MS = 120;
@@ -82,6 +85,15 @@ export function DiffSurface(props: DiffSurfaceProps) {
   ]);
   const canvasScratchRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const find = useDiffFind(props.files, rootRef);
+  const visibleFind =
+    find.snapshot.phase === "ready" && find.snapshot.files === props.files
+      ? find.snapshot
+      : undefined;
+  const findPaintRef = useRef(visibleFind);
+  findPaintRef.current = visibleFind;
+  const revealedFindRef = useRef<{ snapshot: DiffFindSnapshot; layout: string } | null>(null);
+  const [findPlacement, setFindPlacement] = useState<"top" | "bottom">("top");
   const modelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
   const previousModelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
   const consumedFocusRef = useRef<string | null>(null);
@@ -338,6 +350,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       viewportHeight: canvasHeight,
       horizontalOffsets: horizontalOffsetsRef.current,
       selection: selectionRef.current,
+      find: findPaintRef.current,
       activeHeaderPath: activeHeaderPathRef.current,
       devicePixelRatio: ratio,
       paintTop,
@@ -472,6 +485,69 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const mode = props.mode;
   const collapsedFilePaths = props.collapsedFilePaths;
   const onToggleFile = props.onToggleFile;
+  useLayoutEffect(() => {
+    schedulePaint();
+  }, [visibleFind, schedulePaint]);
+  useLayoutEffect(() => {
+    const match = visibleFind?.matches[visibleFind.current];
+    const scroll = scrollRef.current;
+    if (!match || !visibleFind) {
+      revealedFindRef.current = null;
+      return;
+    }
+    if (!scroll || viewport.width <= 0 || viewport.height <= 0) return;
+    const layout = `${model.layout}:${model.wrapLines}:${viewport.width}:${viewport.height}:${family}:${model.lineHeight}`;
+    const previous = revealedFindRef.current;
+    if (previous?.snapshot === visibleFind && previous.layout === layout) return;
+    if (collapsedFilePaths.has(match.file.path)) {
+      onToggleFile(match.file.path);
+      return;
+    }
+    const located = locateDiffMatch(model, match);
+    if (!located) return;
+    const rectangle = diffMatchRectangles(model, match)[0];
+    if (!rectangle) {
+      // Offscreen rows have cheap geometry but no shaped fragments yet.
+      scroll.scrollTop = Math.max(0, located.row.top - FILE_HEADER_HEIGHT);
+      scrollTopRef.current = scroll.scrollTop;
+      updateInteractionFiles(scroll.scrollTop);
+      return;
+    }
+    const widgetHeight = find.container.current?.getBoundingClientRect().height ?? 80;
+    const reveal = planDiffMatchReveal({
+      top: rectangle.y,
+      height: rectangle.height,
+      lineHeight: model.lineHeight,
+      viewportHeight: viewport.height,
+      widgetHeight,
+    });
+    setFindPlacement(reveal.placement);
+    scroll.scrollTop = reveal.scrollTop;
+    scrollTopRef.current = scroll.scrollTop;
+    updateInteractionFiles(scroll.scrollTop);
+    if (!model.wrapLines) {
+      const horizontal = rootRef.current?.querySelector<HTMLElement>(
+        `[data-testid="diff-file-${rectangle.fileIndex}-horizontal-scroll"]`,
+      );
+      if (!horizontal) return;
+      const margin = 16;
+      horizontal.scrollLeft = Math.max(0, rectangle.x - rectangle.clipX - margin);
+      horizontalOffsetsRef.current.set(match.file.path, horizontal.scrollLeft);
+    }
+    revealedFindRef.current = { snapshot: visibleFind, layout };
+    schedulePaint();
+  }, [
+    visibleFind,
+    model,
+    viewport,
+    family,
+    collapsedFilePaths,
+    onToggleFile,
+    find.container,
+    interactionFiles,
+    updateInteractionFiles,
+    schedulePaint,
+  ]);
   useEffect(() => {
     if (mode.kind !== "working") return;
     const focusPath = mode.focusPath;
@@ -772,7 +848,8 @@ export function DiffSurface(props: DiffSurfaceProps) {
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
     [props.palette.surface],
   );
-  const contentInsetBottom = props.contentInsetBottom ?? 0;
+  const contentInsetBottom =
+    (props.contentInsetBottom ?? 0) + (find.snapshot.phase === "closed" ? 0 : 120);
   const contentStyle = useMemo<React.CSSProperties>(
     () => ({
       ...CONTENT_STYLE,
@@ -875,6 +952,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         </div>
       </div>
       <DomOverlayScrollbar scrollContainerRef={scrollRef} onUserScrollUp={noop} />
+      <DiffFindOverlay find={find} placement={findPlacement} scroll={scrollRef} />
       {hoveredAffordance?.hit.target && reviewActions ? (
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
       ) : null}
