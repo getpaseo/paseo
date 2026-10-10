@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { createTestPaseoDaemon } from "../../../../server/src/server/test-utils/paseo-daemon.js";
-import { DaemonClient } from "../../../../server/src/server/test-utils/daemon-client.js";
+import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
 
 // A real daemon and CLI with a deterministic provider emitting two text chunks.
 // The live Claude reproduction is recorded in the PR; this locks its CLI behavior.
@@ -26,7 +26,7 @@ test("logs --follow preserves the same assistant text as one-shot logs", async (
       process.execPath,
       [
         fileURLToPath(import.meta.resolve("tsx/cli")),
-        fileURLToPath(new URL("../../index.ts", import.meta.url)),
+        fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
         "--host",
         `127.0.0.1:${daemon.port}`,
         "logs",
