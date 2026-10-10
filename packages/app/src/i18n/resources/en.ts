@@ -229,6 +229,7 @@ export const en = {
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
     messageCapped: "This message was capped ({{bytes}} bytes).",
+    thoughtCapped: "This thought was capped to protect the renderer.",
     permission: {
       rejectedPlan: "Rejected plan",
       approvedPlan: "Approved plan",
