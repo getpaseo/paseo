@@ -458,6 +458,12 @@ export type AgentStreamEvent =
       type: "provider_subagent";
       provider: AgentProvider;
       event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
+    }
+  | {
+      /** Full replacement of the agent's live background work (shells, monitors…). */
+      type: "background_work";
+      provider: AgentProvider;
+      items: import("./background-work/store.js").AgentBackgroundWorkInput[];
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {

@@ -143,6 +143,13 @@ function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelin
     .find((item) => item.status === "completed" && item.name.toLowerCase() === "bash");
 }
 
+function hasBackgroundShell(events: AgentStreamEvent[]): boolean {
+  return events.some(
+    (event) =>
+      event.type === "background_work" && event.items.some((item) => item.kind === "shell"),
+  );
+}
+
 function getInternalQuery(session: AgentSession): unknown {
   return (session as AgentSession & { query?: unknown }).query ?? null;
 }
@@ -414,6 +421,39 @@ describe("ClaudeAgentSession integration", () => {
         type: "turn_completed",
         provider: "claude",
       });
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 180_000);
+
+  test("lists a background shell as background work until it exits", async () => {
+    const handle = await createSession({ cwdPrefix: "claude-agent-background-work-" });
+    try {
+      const liveEventsPromise = collectSubscribedUntil(
+        handle.session,
+        (event, events) =>
+          event.type === "background_work" &&
+          event.items.length === 0 &&
+          hasBackgroundShell(events),
+        90_000,
+      );
+
+      await collectUntilTerminal(
+        streamSession(
+          handle.session,
+          [
+            "Use the Bash tool with run_in_background.",
+            "Run exactly: sleep 8",
+            "Do not wait for the task result.",
+            "Reply immediately with exactly: SPAWNED",
+          ].join(" "),
+        ),
+        { timeoutMs: 90_000 },
+      );
+
+      const liveEvents = await liveEventsPromise;
+      expect(hasBackgroundShell(liveEvents)).toBe(true);
+      expect(liveEvents.at(-1)).toMatchObject({ type: "background_work", items: [] });
     } finally {
       await cleanupSession(handle);
     }

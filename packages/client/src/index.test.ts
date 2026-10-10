@@ -1734,3 +1734,197 @@ test("canceled timeline handles and captured state are collectible while their A
   );
   expect(result.stdout).toContain('"phase":"API alive"');
 }, 20000);
+
+const BACKGROUND_WORK_FEATURES = { ownedSubscriptions: true, agentBackgroundWork: true };
+const SHELL_ITEM = {
+  id: "bash-1",
+  kind: "shell",
+  description: "sleep 20",
+  startedAt: "2026-10-06T10:00:00.000Z",
+};
+
+function answerBackgroundWorkList(ws: FakeWebSocket, items: unknown[]): void {
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "agent.background_work.list.request", agentId: "agent-a" });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: { requestId: request.requestId, agentId: "agent-a", items, error: null },
+    }),
+  );
+}
+
+test("agent handles list background work", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+
+  const pending = client.agents.ref("agent-a").backgroundWork.list();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "agent.background_work.list.request", agentId: "agent-a" });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-a",
+        items: [SHELL_ITEM],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(pending).resolves.toEqual([SHELL_ITEM]);
+  await client.close();
+});
+
+test("agent handles follow only their own background work", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  const unsubscribe = client.agents
+    .ref("agent-a")
+    .backgroundWork.subscribe((items) => received.push(items));
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["agent.background_work.update"],
+  });
+  acknowledgeObservation(ws, "background-work-sdk");
+  answerBackgroundWorkList(ws, []);
+  await vi.waitFor(() => expect(received).toEqual([[]]));
+
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-b", items: [SHELL_ITEM] },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [SHELL_ITEM] },
+    }),
+  );
+  await vi.waitFor(() => expect(received).toEqual([[], [SHELL_ITEM]]));
+
+  unsubscribe();
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
+    }),
+  );
+  expect(received).toEqual([[], [SHELL_ITEM]]);
+  await client.close();
+});
+
+test("background work subscriptions list the current work again after a reconnect", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items));
+  acknowledgeObservation(ws, "background-work-first");
+  answerBackgroundWorkList(ws, [SHELL_ITEM]);
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM]]));
+
+  ws.readyState = 3;
+  ws.onclose?.({ code: 1006, reason: "Connection lost" });
+  const reconnecting = client.connect();
+  const next = FakeWebSocket.instances[1];
+  next.open();
+  next.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv_sdk_test",
+        hostname: null,
+        version: null,
+        features: BACKGROUND_WORK_FEATURES,
+      },
+    }),
+  );
+  await reconnecting;
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(next.sent.at(-1))).toMatchObject({
+      type: "session.events.set_subscription.request",
+    }),
+  );
+  acknowledgeObservation(next, "background-work-second");
+  answerBackgroundWorkList(next, []);
+
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM], []]));
+  await client.close();
+});
+
+test("background work subscriptions keep an update that overtakes their list", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items));
+  acknowledgeObservation(ws, "background-work-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.background_work.list.request",
+    }),
+  );
+  const listRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: {
+        requestId: listRequest.requestId,
+        agentId: "agent-a",
+        items: [SHELL_ITEM],
+        error: null,
+      },
+    }),
+  );
+
+  await vi.waitFor(() => expect(received).toEqual([[]]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(received).toEqual([[]]);
+  await client.close();
+});
+
+test("background work subscriptions report a failed list to onError", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items), {
+    onError: (error) => errors.push(error),
+  });
+  acknowledgeObservation(ws, "background-work-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.background_work.list.request",
+    }),
+  );
+  const listRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: { requestId: listRequest.requestId, agentId: "agent-a", items: [], error: "boom" },
+    }),
+  );
+
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toBeInstanceOf(Error);
+  expect((errors[0] as Error).message).toContain("boom");
+  expect(received).toEqual([]);
+  await client.close();
+});
+
+test("background work asks for a host update when the daemon lacks it", async () => {
+  const { client } = await connectClient({ ownedSubscriptions: true });
+  const handle = client.agents.ref("agent-a");
+
+  await expect(handle.backgroundWork.list()).rejects.toThrow("Update the host");
+  expect(() => handle.backgroundWork.subscribe(() => {})).toThrow("Update the host");
+  await client.close();
+});

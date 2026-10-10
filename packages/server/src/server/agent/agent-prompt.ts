@@ -590,7 +590,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         return;
       }
 
-      if (event.type === "timeline_replacement") {
+      if (event.type === "timeline_replacement" || event.type === "background_work") {
         return;
       }
 

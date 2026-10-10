@@ -42,6 +42,7 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
+import { toBackgroundWorkInputs } from "./background-work.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
@@ -3832,11 +3833,13 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private failRunningRuntimeTasks(): void {
-    this.dispatchEvents(
-      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
+    this.dispatchEvents([
+      ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
       ),
-    );
+      // The SDK resets its background task set when the CLI process (re)starts.
+      { type: "background_work", provider: "claude", items: [] },
+    ]);
   }
 
   private startQueryPump(): void {
@@ -3905,6 +3908,15 @@ class ClaudeAgentSession implements AgentSession {
       consecutiveInterruptAbortRecoveries = 0;
       if (await this.handleMissingResumedConversation(message, activeQuery)) {
         return true;
+      }
+      // Retiring a query empties the background work list, but the retired query
+      // keeps draining what it had queued. Its task set died with its process.
+      if (
+        this.query !== activeQuery &&
+        message.type === "system" &&
+        message.subtype === "background_tasks_changed"
+      ) {
+        return false;
       }
       await this.routeSdkMessageFromPump(message);
       return false;
@@ -4505,6 +4517,18 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (message.subtype === "task_notification") {
       this.appendTaskNotificationEvents(message, events);
+      return;
+    }
+    if (message.subtype === "background_tasks_changed") {
+      this.logger.debug(
+        { tasks: message.tasks.map(({ task_id, task_type }) => ({ task_id, task_type })) },
+        "claude.background_tasks_changed",
+      );
+      events.push({
+        type: "background_work",
+        provider: "claude",
+        items: toBackgroundWorkInputs(message.tasks),
+      });
       return;
     }
     if (message.subtype === "task_progress") {

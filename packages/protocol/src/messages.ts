@@ -1901,6 +1901,12 @@ export const ProviderSubagentListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentBackgroundWorkListRequestMessageSchema = z.object({
+  type: z.literal("agent.background_work.list.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
 export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   type: z.literal("agent.provider_subagents.timeline.get.request"),
   parentAgentId: z.string(),
@@ -3153,6 +3159,7 @@ export const SessionEventSubscriptionSchema = z.enum([
   "script_status_update",
   "workspace_setup_progress",
   "agent.provider_subagents.update",
+  "agent.background_work.update",
   "terminal_attention_required",
   "status.server_info",
   "status.daemon_config_changed",
@@ -3289,6 +3296,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineSearchRequestMessageSchema,
   AgentTimelineListPromptsRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
+  AgentBackgroundWorkListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
@@ -3686,6 +3694,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(agentBackgroundWork): added after v0.11.0-beta.5, remove gate after 2027-04-06.
+        agentBackgroundWork: z.boolean().optional(),
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
@@ -4724,6 +4734,38 @@ export const ProviderSubagentListResponseMessageSchema = z.object({
     parentAgentId: z.string(),
     subagents: z.array(ProviderSubagentDescriptorPayloadSchema),
     error: z.string().nullable(),
+  }),
+});
+
+export const AgentBackgroundWorkItemSchema = z.object({
+  id: z.string(),
+  // Open string: "shell" or "other" today (Claude Monitor watches report as "shell").
+  // Clients treat unknown values as "other".
+  kind: z.string(),
+  description: z.string().nullable(),
+  startedAt: z.string(),
+});
+
+export type AgentBackgroundWorkItemPayload = z.infer<typeof AgentBackgroundWorkItemSchema>;
+
+export const AgentBackgroundWorkListResponseMessageSchema = z.object({
+  type: z.literal("agent.background_work.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    items: z.array(AgentBackgroundWorkItemSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+// Event push delivered through session.events.set_subscription; it has no .request/.response pair.
+// Each update replaces the agent's whole list.
+export const AgentBackgroundWorkUpdateMessageSchema = z.object({
+  type: z.literal("agent.background_work.update"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    agentId: z.string(),
+    items: z.array(AgentBackgroundWorkItemSchema),
   }),
 });
 
@@ -6928,6 +6970,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
+  AgentBackgroundWorkListResponseMessageSchema,
+  AgentBackgroundWorkUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
