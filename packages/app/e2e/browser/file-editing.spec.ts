@@ -108,8 +108,13 @@ test.describe("CodeMirror workspace file editing", () => {
       await writeFile(path.join(session.cwd, "docs/reports/开户赠金.md"), "# Report opened\n");
       await openAgentRoute(page, session);
       await openAssistantMarkdownLink(page, "报告");
-      await expectFileTabOpen(page, "开户赠金.md");
-      await expect(page.getByRole("heading", { name: "Report opened" })).toBeVisible();
+      await expectFileTabOpen(page, "docs/reports/开户赠金.md");
+      await expect(
+        page
+          .getByTestId("workspace-file-pane")
+          .filter({ visible: true })
+          .getByText("Report opened", { exact: true }),
+      ).toBeVisible();
       await page.screenshot({ path: test.info().outputPath("non-ascii-file-opened.png") });
     } finally {
       await session.cleanup();
@@ -779,5 +784,5 @@ test.describe("CodeMirror workspace file editing", () => {
 });
 
 async function openAssistantMarkdownLink(page: Page, name: string): Promise<void> {
-  await page.getByRole("link", { name, exact: true }).click();
+  await page.getByRole("link", { name, exact: true }).first().click();
 }
