@@ -13,7 +13,7 @@ const PASEO_BROWSER_STORAGE_TYPES = [
   "shadercache",
 ] as const;
 
-interface BrowserProfileSession {
+export interface BrowserProfileSession {
   clearStorageData(options: {
     storages: Array<(typeof PASEO_BROWSER_STORAGE_TYPES)[number]>;
   }): Promise<void>;
@@ -33,13 +33,15 @@ interface BrowserProfileWebContents extends BrowserProfileGuest {
 }
 
 interface ListBrowserProfileGuestsInput {
-  profileSession: object;
+  profileSessions: readonly object[];
   webContents: BrowserProfileWebContents[];
 }
 
 interface ClearBrowserProfileInput {
   profileSessions: BrowserProfileSession[];
   listGuests(): BrowserProfileGuest[];
+  /** Runs after the sessions are cleared and before guests reload. */
+  beforeReload?(): Promise<void>;
   logReloadError(guestId: number, error: unknown): void;
 }
 
@@ -70,6 +72,9 @@ export function readLegacyPaseoBrowserIds(input: unknown): string[] {
 export function getPaseoBrowserProfileSessions(
   sessions: ElectronSessions,
   legacyBrowserIds: string[],
+  // Routed per-host sessions come from the routing manager, never from
+  // `fromPartition` here: it creates them behind their proxy.
+  routedSessions: BrowserProfileSession[] = [],
 ): [BrowserProfileSession, ...BrowserProfileSession[]] {
   return [
     getPaseoBrowserProfileSession(sessions),
@@ -77,6 +82,7 @@ export function getPaseoBrowserProfileSessions(
     ...legacyBrowserIds.map((browserId) =>
       sessions.fromPartition(`${PASEO_BROWSER_PROFILE_PARTITION}-${browserId}`),
     ),
+    ...routedSessions,
   ];
 }
 
@@ -93,11 +99,12 @@ export function getLegacyPaseoBrowserProfileSession(
 export function listPaseoBrowserProfileGuests(
   input: ListBrowserProfileGuestsInput,
 ): BrowserProfileGuest[] {
+  const profileSessions = new Set(input.profileSessions);
   return input.webContents.filter(
     (contents) =>
       !contents.isDestroyed() &&
       (contents.getType() === "webview" || contents.getType() === "window") &&
-      contents.session === input.profileSession,
+      profileSessions.has(contents.session),
   );
 }
 
@@ -109,6 +116,7 @@ export async function clearPaseoBrowserProfile(input: ClearBrowserProfileInput):
       profileSession.clearAuthCache(),
     ]),
   );
+  await input.beforeReload?.();
 
   for (const guest of input.listGuests()) {
     if (guest.isDestroyed()) {

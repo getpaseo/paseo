@@ -23,10 +23,24 @@ interface DesktopSettingsPatch {
   daemon?: Partial<DesktopSettings["daemon"]>;
 }
 
+export interface BrowserRoutingHostSettings {
+  enabled: boolean;
+  partition: string;
+}
+
+// Keyed by daemon serverId. Entries are never deleted: a disabled host keeps its
+// partition so "Clear browser data" can still wipe the profile it created.
+export type BrowserRoutingSettings = Record<string, BrowserRoutingHostSettings>;
+
 export interface DesktopSettingsStore {
   get(): Promise<DesktopSettings>;
   patch(patch: unknown): Promise<DesktopSettings>;
   migrateLegacyRendererSettings(legacySettings: unknown): Promise<DesktopSettings>;
+  getBrowserRouting(): Promise<BrowserRoutingSettings>;
+  setBrowserRoutingHost(
+    serverId: string,
+    host: BrowserRoutingHostSettings,
+  ): Promise<BrowserRoutingSettings>;
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
@@ -75,11 +89,36 @@ const MigrationsSchema = z
     daemonStopOnQuitDefaultApplied: false,
   }));
 
+const BROWSER_ROUTING_PARTITION_PATTERN = /^persist:paseo-browser-via-[0-9a-f]{16}$/;
+
+const BrowserRoutingHostSchema = z.looseObject({
+  enabled: z.boolean().catch(false),
+  partition: z.string().regex(BROWSER_ROUTING_PARTITION_PATTERN),
+});
+
+// Browser routing lives beside `settings`, not inside it: the renderer reads
+// `settings` as a whole through get_desktop_settings, and routing state is
+// only reachable through the browser_routing_* commands.
+const BrowserRoutingSchema = z
+  .record(z.string(), z.unknown())
+  .catch(() => ({}))
+  .transform((hosts): BrowserRoutingSettings => {
+    const parsed: BrowserRoutingSettings = {};
+    for (const [serverId, host] of Object.entries(hosts)) {
+      const result = BrowserRoutingHostSchema.safeParse(host);
+      if (serverId.trim().length > 0 && result.success) {
+        parsed[serverId] = { enabled: result.data.enabled, partition: result.data.partition };
+      }
+    }
+    return parsed;
+  });
+
 const PersistedDocumentSchema = z
   .looseObject({
     version: z.literal(1).catch(1),
     settings: DesktopSettingsSchema,
     migrations: MigrationsSchema,
+    browserRouting: BrowserRoutingSchema,
   })
   .catch(() => buildDefaultDocument());
 
@@ -119,7 +158,12 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
       legacyRendererSettingsImported: false,
       daemonStopOnQuitDefaultApplied: true,
     },
+    browserRouting: {},
   };
+}
+
+export function isBrowserRoutingPartition(partition: string): boolean {
+  return BROWSER_ROUTING_PARTITION_PATTERN.test(partition);
 }
 
 function toDesktopSettings(stored: StoredDesktopSettings): DesktopSettings {
@@ -233,6 +277,15 @@ export function createDesktopSettingsStore({
   const filePath = path.join(userDataPath, DESKTOP_SETTINGS_FILENAME);
   let cachedDocument: PersistedDesktopSettingsDocument | null = null;
   let persistQueue: Promise<void> = Promise.resolve();
+  // Mutations run one at a time: two concurrent read-modify-write cycles would
+  // both start from the same document and the second would drop the first's change.
+  let mutationQueue: Promise<unknown> = Promise.resolve();
+
+  function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const run = mutationQueue.then(operation, operation);
+    mutationQueue = run.catch(() => undefined);
+    return run;
+  }
 
   async function persistDocument(document: PersistedDesktopSettingsDocument): Promise<void> {
     const write = async () => {
@@ -284,42 +337,69 @@ export function createDesktopSettingsStore({
       return toDesktopSettings(document.settings);
     },
 
-    async patch(patch: unknown): Promise<DesktopSettings> {
-      const current = await loadDocument();
-      const coercedPatch = coerceDesktopSettingsPatch(patch);
-      const next = mergeDesktopSettings(current.settings, coercedPatch);
-      await persistDocument({
-        ...current,
-        settings: next,
-        migrations: {
-          ...current.migrations,
-          legacyRendererSettingsImported:
-            current.migrations.legacyRendererSettingsImported ||
-            hasLegacyRendererOwnedPatch(coercedPatch),
-        },
+    patch(patch: unknown): Promise<DesktopSettings> {
+      return withMutationLock(async () => {
+        const current = await loadDocument();
+        const coercedPatch = coerceDesktopSettingsPatch(patch);
+        const next = mergeDesktopSettings(current.settings, coercedPatch);
+        await persistDocument({
+          ...current,
+          settings: next,
+          migrations: {
+            ...current.migrations,
+            legacyRendererSettingsImported:
+              current.migrations.legacyRendererSettingsImported ||
+              hasLegacyRendererOwnedPatch(coercedPatch),
+          },
+        });
+        return toDesktopSettings(next);
       });
-      return toDesktopSettings(next);
     },
 
-    async migrateLegacyRendererSettings(legacySettings: unknown): Promise<DesktopSettings> {
-      const current = await initializeLegacyRendererMigration();
-      if (current.migrations.legacyRendererSettingsImported) {
-        return toDesktopSettings(current.settings);
-      }
+    async getBrowserRouting(): Promise<BrowserRoutingSettings> {
+      const document = await loadDocument();
+      return { ...document.browserRouting };
+    },
 
-      const next = mergeDesktopSettings(
-        current.settings,
-        pickDesktopSettingsFromLegacyRendererSettings(legacySettings),
-      );
-      await persistDocument({
-        ...current,
-        settings: next,
-        migrations: {
-          ...current.migrations,
-          legacyRendererSettingsImported: true,
-        },
+    setBrowserRoutingHost(
+      serverId: string,
+      host: BrowserRoutingHostSettings,
+    ): Promise<BrowserRoutingSettings> {
+      if (!isBrowserRoutingPartition(host.partition)) {
+        return Promise.reject(new Error(`Invalid browser routing partition: ${host.partition}`));
+      }
+      return withMutationLock(async () => {
+        const current = await loadDocument();
+        const browserRouting: BrowserRoutingSettings = {
+          ...current.browserRouting,
+          [serverId]: { enabled: host.enabled, partition: host.partition },
+        };
+        await persistDocument({ ...current, browserRouting });
+        return { ...browserRouting };
       });
-      return toDesktopSettings(next);
+    },
+
+    migrateLegacyRendererSettings(legacySettings: unknown): Promise<DesktopSettings> {
+      return withMutationLock(async () => {
+        const current = await initializeLegacyRendererMigration();
+        if (current.migrations.legacyRendererSettingsImported) {
+          return toDesktopSettings(current.settings);
+        }
+
+        const next = mergeDesktopSettings(
+          current.settings,
+          pickDesktopSettingsFromLegacyRendererSettings(legacySettings),
+        );
+        await persistDocument({
+          ...current,
+          settings: next,
+          migrations: {
+            ...current.migrations,
+            legacyRendererSettingsImported: true,
+          },
+        });
+        return toDesktopSettings(next);
+      });
     },
   };
 }
