@@ -318,6 +318,12 @@ export const fr: TranslationResources = {
       runningAgent: "Cet agent est toujours en cours d’exécution. L’archiver l’arrêtera.",
       archive: "Archiver",
     },
+    snippetSource: {
+      user: "Votre message",
+      reply: "Réponse",
+      thinking: "Réflexion",
+      tool: "Outil",
+    },
   },
   message: {
     diagram: {
