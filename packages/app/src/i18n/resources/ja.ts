@@ -2,6 +2,25 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  browserRouting: {
+    sectionTitle: "ブラウザー",
+    permissionDenied:
+      "この接続にはホストのネットワークを使用する権限がありません。ホストの所有者にネットワークへのアクセスを許可してもらってください。",
+    title: "ブラウザータブでホストのネットワークを使用",
+    description:
+      "このホストのタブはホストのネットワークと、Cookie が分離された専用プロファイルを使用します。",
+    updateHost: "ブラウザータブでネットワークを使用するには、このホストを更新してください。",
+    settingFailed: "この設定を保存または読み込めませんでした。もう一度お試しください。",
+    viaHost: "{{host}} 経由",
+    proxyUnavailable:
+      "ホスト {{host}} のネットワークへのブラウザー接続を利用できません。ホストに再接続して再読み込みしてください。",
+    destinationFailed:
+      "ホスト {{host}} のネットワーク経由でこのアドレスに接続できませんでした。アドレスとホストの接続を確認してください。",
+    connectionClosed:
+      "ホスト {{host}} のネットワーク経由の接続が切断されました。ホストに再接続して再読み込みしてください。",
+    notReady:
+      "ホスト {{host}} のネットワークを準備できませんでした。タブをもう一度開いてください。",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
@@ -2139,11 +2158,13 @@ export const ja: TranslationResources = {
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
-        description: "ブラウザータブ間でログイン情報とサイトデータが共有されます。",
+        description:
+          "ブラウザータブ間でログイン情報とサイトデータが共有されます。「ブラウザータブでホストのネットワークを使用」がオンのホストは別のプロファイルを持ち、消去すると両方が削除されます。",
         clear: "ブラウザーデータを消去",
         clearing: "消去中...",
         confirmTitle: "ブラウザーデータを消去しますか？",
-        confirmMessage: "サイトからログアウトし、開いているブラウザータブを再読み込みします。",
+        confirmMessage:
+          "すべてのプロファイルでサイトからログアウトし、開いているブラウザータブを再読み込みします。",
         success: "ブラウザーデータを消去しました。",
         error: "ブラウザーデータを消去できませんでした。",
       },

@@ -2,6 +2,24 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  browserRouting: {
+    sectionTitle: "Navegador",
+    permissionDenied:
+      "Esta conexión no tiene permiso para usar la red del host. Pide al responsable del host que permita el acceso a la red.",
+    title: "Usar la red del host en las pestañas del navegador",
+    description: "Las pestañas de este host usan su red y un perfil propio con cookies separadas.",
+    updateHost: "Actualiza este host para usar su red en las pestañas del navegador.",
+    settingFailed: "No se pudo guardar o cargar esta opción. Inténtalo de nuevo.",
+    viaHost: "vía {{host}}",
+    proxyUnavailable:
+      "La conexión del navegador a la red del host {{host}} no está disponible. Vuelve a conectar el host y recarga.",
+    destinationFailed:
+      "No se pudo acceder a esta dirección a través de la red del host {{host}}. Comprueba la dirección y la conexión del host.",
+    connectionClosed:
+      "La conexión a través de la red del host {{host}} se cerró. Vuelve a conectar el host y recarga.",
+    notReady:
+      "El navegador no pudo preparar la red del host {{host}}. Intenta abrir la pestaña de nuevo.",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",
@@ -2167,12 +2185,12 @@ export const es: TranslationResources = {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",
         description:
-          "Las pestañas del navegador comparten inicios de sesión y datos de sitios en Paseo.",
+          "Las pestañas del navegador comparten inicios de sesión y datos de sitios en Paseo. Los hosts con “Usar la red del host en las pestañas del navegador” activado mantienen un perfil aparte, y borrar los datos elimina ambos.",
         clear: "Borrar datos del navegador",
         clearing: "Borrando...",
         confirmTitle: "¿Borrar los datos del navegador?",
         confirmMessage:
-          "Se cerrarán las sesiones de los sitios y se recargarán las pestañas abiertas del navegador.",
+          "Se cerrarán las sesiones de los sitios en todos los perfiles y se recargarán las pestañas abiertas del navegador.",
         success: "Datos del navegador borrados.",
         error: "No se pudieron borrar los datos del navegador.",
       },

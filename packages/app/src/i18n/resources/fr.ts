@@ -2,6 +2,25 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  browserRouting: {
+    sectionTitle: "Navigateur",
+    permissionDenied:
+      "Cette connexion n’a pas l’autorisation d’utiliser le réseau de l’hôte. Demandez au propriétaire de l’hôte d’autoriser l’accès au réseau.",
+    title: "Utiliser le réseau de l’hôte pour les onglets du navigateur",
+    description:
+      "Les onglets de cet hôte utilisent son réseau et un profil distinct avec leurs propres cookies.",
+    updateHost: "Mettez cet hôte à jour pour utiliser son réseau dans les onglets du navigateur.",
+    settingFailed: "Impossible d’enregistrer ou de charger ce réglage. Réessayez.",
+    viaHost: "via {{host}}",
+    proxyUnavailable:
+      "La connexion du navigateur au réseau de l’hôte {{host}} est indisponible. Reconnectez l’hôte et rechargez.",
+    destinationFailed:
+      "Impossible d’accéder à cette adresse via le réseau de l’hôte {{host}}. Vérifiez l’adresse et la connexion de l’hôte.",
+    connectionClosed:
+      "La connexion via le réseau de l’hôte {{host}} a été fermée. Reconnectez l’hôte et rechargez.",
+    notReady:
+      "Le navigateur n’a pas pu préparer le réseau de l’hôte {{host}}. Réessayez d’ouvrir l’onglet.",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
@@ -2165,11 +2184,12 @@ export const fr: TranslationResources = {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
         description:
-          "Les onglets du navigateur partagent les connexions et les données des sites dans Paseo.",
+          "Les onglets du navigateur partagent les connexions et les données des sites dans Paseo. Les hôtes avec « Utiliser le réseau de l’hôte pour les onglets du navigateur » activé conservent un profil distinct, et l’effacement supprime les deux.",
         clear: "Effacer les données du navigateur",
         clearing: "Effacement…",
         confirmTitle: "Effacer les données du navigateur ?",
-        confirmMessage: "Vous serez déconnecté des sites et les onglets ouverts seront rechargés.",
+        confirmMessage:
+          "Vous serez déconnecté des sites sur tous les profils et les onglets ouverts seront rechargés.",
         success: "Données du navigateur effacées.",
         error: "Impossible d’effacer les données du navigateur.",
       },
