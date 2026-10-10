@@ -4741,6 +4741,7 @@ export class DaemonClient {
     requestId?: string,
     acceptBinary = false,
     maxBytes?: number,
+    timeout?: number,
   ): Promise<FileExplorerPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4753,6 +4754,7 @@ export class DaemonClient {
         ...(maxBytes ? { maxBytes } : {}),
       },
       responseType: "file_explorer_response",
+      timeout,
     });
   }
 
@@ -4771,11 +4773,17 @@ export class DaemonClient {
     return payload.directory;
   }
 
+  /**
+   * `timeout` bounds the whole transfer, not each frame. `0` disables the timer (as
+   * `workspace.create` does) for files that legitimately take longer than the default over a
+   * slow link; a dead connection still rejects on disconnect.
+   */
   async readFile(
     cwd: string,
     path: string,
     requestId?: string,
     maxBytes?: number,
+    timeout?: number,
   ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
     this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
@@ -4787,6 +4795,7 @@ export class DaemonClient {
         resolvedRequestId,
         true,
         maxBytes,
+        timeout,
       );
       if (payload.error) {
         throw new Error(payload.error);
@@ -6520,6 +6529,18 @@ export class DaemonClient {
           requestId: frame.requestId,
         },
       });
+      return;
+    }
+
+    const received = transfer.chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    if (received !== transfer.size) {
+      this.activeBinaryFileTransfers.delete(frame.requestId);
+      this.rejectWaitersForRequestId(
+        frame.requestId,
+        new Error(
+          `File transfer incomplete: expected ${transfer.size} bytes, received ${received}.`,
+        ),
+      );
       return;
     }
 
