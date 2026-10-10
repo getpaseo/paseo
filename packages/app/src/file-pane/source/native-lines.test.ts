@@ -36,10 +36,10 @@ describe("native source lines", () => {
     expect(lines.map(lineText).join("\n")).toBe(content);
   });
   it("falls back only for dense rows, without changing text or line numbering", () => {
-    const dense = JSON.stringify(Array.from({ length: 16 }, (_, i) => i));
+    const dense = `${JSON.stringify(Array.from({ length: 25 }, (_, i) => i))} `;
     const content = `${dense}\n{"ok":true}\n`;
     const original = highlightCode(content, "data.json");
-    expect(original[0]).toHaveLength(33);
+    expect(original[0]).toHaveLength(52);
     const lines = buildNativeSourceLines({
       content,
       filename: "data.json",
@@ -53,11 +53,21 @@ describe("native source lines", () => {
   });
 
   it("keeps a row at the span budget highlighted", () => {
-    const content = `${JSON.stringify(Array.from({ length: 15 }, (_, i) => i))} `;
+    const content = JSON.stringify(Array.from({ length: 25 }, (_, i) => i));
     const original = highlightCode(content, "data.json");
-    expect(original[0]).toHaveLength(32);
+    expect(original[0]).toHaveLength(51);
     expect(
       buildNativeSourceLines({ content, filename: "data.json", presentation: "highlighted" }),
+    ).toEqual([{ number: 1, tokens: original[0] }]);
+  });
+
+  it("keeps ordinary TypeScript statements within the span budget highlighted", () => {
+    const content =
+      'const values = [{ id: 0, name: "item0" }, { id: 1, name: "item1" }, { id: 2, name: "item2" }];';
+    const original = highlightCode(content, "ordinary.ts");
+    expect(original[0]).toHaveLength(50);
+    expect(
+      buildNativeSourceLines({ content, filename: "ordinary.ts", presentation: "highlighted" }),
     ).toEqual([{ number: 1, tokens: original[0] }]);
   });
 

@@ -1,9 +1,9 @@
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 
-// Android gives text spans 256 priority slots. A colored token also inherits
-// size, font family and line height and gets a tag span, so leave room for
-// those operations instead of mounting an unbounded text tree in one row.
-const MAX_HIGHLIGHTED_TOKENS_PER_LINE = 32;
+// Android has 256 span-priority slots (indices 0–255). Each colored source
+// token produces five operations: color, size, font family, line height and
+// tag. 51 tokens use 255 operations; the 52nd exceeds the priority limit.
+const MAX_HIGHLIGHTED_TOKENS_PER_LINE = 51;
 
 export interface SourceLine {
   number: number;
