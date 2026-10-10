@@ -1932,6 +1932,7 @@ describe("ClaudeAgentSession context window usage", () => {
   interface QueryFactoryForTurnsOptions {
     getContextUsage?: ReturnType<typeof vi.fn>;
     model?: string;
+    modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
   }
 
   async function createSessionForTest(): Promise<TestClaudeSession> {
@@ -1951,6 +1952,7 @@ describe("ClaudeAgentSession context window usage", () => {
       logger,
       queryFactory: createQueryFactoryForTurns(turns, options),
       resolveBinary: async () => "/test/claude/bin",
+      modelContextWindowMaxTokens: options?.modelContextWindowMaxTokens,
     });
     return await client.createSession({
       provider: "claude",
@@ -2578,6 +2580,40 @@ describe("ClaudeAgentSession context window usage", () => {
         outputTokens: 7,
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 175,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("host-config context window pin overrides the runtime model report", async () => {
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent(),
+          createMessageDeltaEvent(25),
+          createSuccessResult({
+            modelUsage: { "glm-5.3": { contextWindow: 200_000 } },
+          }),
+        ],
+      ],
+      {
+        model: "glm-5.3",
+        modelContextWindowMaxTokens: new Map([["glm-5.3", 1_000_000]]),
+      },
+    );
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 10,
+        cachedInputTokens: 5,
+        outputTokens: 7,
+        totalCostUsd: 0.25,
+        contextWindowMaxTokens: 1_000_000,
         contextWindowUsedTokens: 175,
       });
     } finally {

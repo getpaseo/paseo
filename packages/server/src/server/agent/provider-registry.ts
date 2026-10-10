@@ -123,6 +123,9 @@ interface ProviderClientFactoryOptions extends Pick<
     label: string;
     extends: string;
   };
+  // Model id -> contextWindowMaxTokens pins from provider profile config. Explicit config
+  // beats the window an agent runtime guesses for model IDs it does not know.
+  modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
 }
 
 type ProviderClientFactory = (
@@ -186,10 +189,11 @@ const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
 };
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
-  claude: (logger, runtimeSettings) =>
+  claude: (logger, runtimeSettings, options) =>
     new ClaudeAgentClient({
       logger,
       runtimeSettings,
+      modelContextWindowMaxTokens: options?.modelContextWindowMaxTokens,
     }),
   codex: (logger, runtimeSettings, options) =>
     new CodexAppServerAgentClient(logger, runtimeSettings, {
@@ -263,6 +267,20 @@ function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings
     env: override.env,
     disallowedTools: override.disallowedTools,
   };
+}
+
+function toModelContextWindowPins(
+  ...modelLists: readonly (readonly ProviderProfileModel[] | undefined)[]
+): ReadonlyMap<string, number> | undefined {
+  const pins = new Map<string, number>();
+  for (const models of modelLists) {
+    for (const model of models ?? []) {
+      if (model.contextWindowMaxTokens !== undefined) {
+        pins.set(model.id, model.contextWindowMaxTokens);
+      }
+    }
+  }
+  return pins.size > 0 ? pins : undefined;
 }
 
 function mergeRuntimeSettings(
@@ -432,7 +450,9 @@ function mergeModelAdditions(
 }
 
 // Every session member must cross this boundary, including optional capabilities.
-type ForwardedAgentSession = { [K in keyof Required<AgentSession>]: AgentSession[K] };
+type ForwardedAgentSession = {
+  [K in keyof Required<AgentSession>]: AgentSession[K];
+};
 
 export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
   return {
@@ -783,6 +803,10 @@ function buildResolvedBuiltinProviders(
             managedProcesses: options.managedProcesses,
             ompRuntime: options.ompRuntime,
             openCodeBridge: options.openCodeBridge,
+            modelContextWindowMaxTokens: toModelContextWindowPins(
+              override?.models,
+              override?.additionalModels,
+            ),
           }),
         contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
       }),
@@ -897,6 +921,10 @@ function addDerivedProviders(
             label: override.label ?? providerId,
             extends: baseProviderId,
           },
+          modelContextWindowMaxTokens: toModelContextWindowPins(
+            override.models,
+            override.additionalModels,
+          ),
         }),
       contract: baseProvider.contract,
     });
