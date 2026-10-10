@@ -41,6 +41,7 @@ import {
   pushCurrentBranch,
   resolveBranchCheckout,
   resolveRepositoryDefaultBranch,
+  resolveWorktreeCreationBaseBranch,
   parseWorktreeList,
   renameCurrentBranch,
   isPaseoWorktreePath,
@@ -3722,6 +3723,46 @@ const x = 1;
         stdio: "pipe",
       }),
     ).toThrow();
+  });
+
+  it("resolves the worktree creation base to origin/<branch> when the remote-tracking ref exists", async () => {
+    execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "refs/heads/develop"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"],
+      { cwd: repoDir },
+    );
+
+    // Status/diff keep the local default branch; only worktree creation upgrades to origin/.
+    await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("develop");
+    await expect(resolveWorktreeCreationBaseBranch(repoDir)).resolves.toBe("origin/develop");
+  });
+
+  it("keeps the local default branch as the worktree creation base when origin lacks it", async () => {
+    await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("main");
+    await expect(resolveWorktreeCreationBaseBranch(repoDir)).resolves.toBe("main");
+  });
+
+  it("keeps the remote-only default branch as the worktree creation base", async () => {
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/trunk", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], {
+      cwd: repoDir,
+    });
+
+    await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("origin/trunk");
+    await expect(resolveWorktreeCreationBaseBranch(repoDir)).resolves.toBe("origin/trunk");
   });
 
   it("falls back to the repository default branch for base-dependent operations when metadata is missing", async () => {
