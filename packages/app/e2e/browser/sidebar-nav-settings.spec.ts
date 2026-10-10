@@ -30,6 +30,17 @@ import {
   setFooterItemVisible,
   setSidebarNavItemVisible,
 } from "../support/helpers/sidebar-nav-settings";
+import {
+  expectLastNavigationItemReachable,
+  expectNavigationGroupFoldedAway,
+  expectNavigationGroupScrollsWithinItsShare,
+  expectNavigationGroupShowsItems,
+  toggleNavigationGroup,
+} from "../support/helpers/sidebar-nav-group";
+
+// Short enough that the group's share sits well under the rows' natural height, so the
+// overflow assertion does not ride on a couple of pixels of row padding.
+const SHORT_WINDOW = { width: 1200, height: 240 };
 
 test("fixed footer line keeps its five icons, Help and Settings at the end", async ({ page }) => {
   test.setTimeout(120_000);
@@ -78,7 +89,7 @@ test("fixed footer line keeps its five icons, Help and Settings at the end", asy
   await footerScreenshot(page, "footer-compact-with-rows");
 });
 
-test.describe("Sidebar items in Appearance settings", () => {
+test.describe("Sidebar items in settings", () => {
   test("owner reorders and hides top-level sidebar items", async ({ page }) => {
     await gotoAppShell(page);
 
@@ -169,6 +180,30 @@ test.describe("Sidebar items in Appearance settings", () => {
     await expectSidebarItemHidden(page, "history");
     await expectSidebarItemHidden(page, "search");
     await expectSidebarItemHidden(page, "schedules");
+  });
+});
+
+test.describe("The sidebar items group", () => {
+  test("owner folds the navigation group away and finds it folded next time", async ({ page }) => {
+    await gotoAppShell(page);
+    await expectNavigationGroupShowsItems(page);
+
+    await toggleNavigationGroup(page);
+    await expectNavigationGroupFoldedAway(page);
+
+    await page.reload();
+    await expectNavigationGroupFoldedAway(page);
+
+    await toggleNavigationGroup(page);
+    await expectNavigationGroupShowsItems(page);
+  });
+
+  test("navigation items scroll in place on a short window", async ({ page }) => {
+    await page.setViewportSize(SHORT_WINDOW);
+    await gotoAppShell(page);
+
+    await expectNavigationGroupScrollsWithinItsShare(page, SHORT_WINDOW.height);
+    await expectLastNavigationItemReachable(page);
   });
 });
 
