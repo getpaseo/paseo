@@ -15,6 +15,7 @@ export interface DesktopAppUpdateCheckResult {
 
 export interface DesktopAppUpdateInstallResult {
   installed: boolean;
+  cancelled?: boolean;
   version: string | null;
   message: string;
 }
@@ -128,16 +129,22 @@ export async function checkDesktopAppUpdate({
 
 export async function installDesktopAppUpdate({
   releaseChannel,
+  whenIdle,
 }: {
   releaseChannel: DesktopReleaseChannel;
+  whenIdle?: boolean;
 }): Promise<DesktopAppUpdateInstallResult> {
-  const result = await invokeDesktopCommand<unknown>("install_app_update", { releaseChannel });
+  const result = await invokeDesktopCommand<unknown>("install_app_update", {
+    releaseChannel,
+    whenIdle,
+  });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while installing desktop update.");
   }
 
   return {
     installed: result.installed === true,
+    ...(result.cancelled === true ? { cancelled: true } : {}),
     version: toStringOrNull(result.version),
     message: toStringOrNull(result.message) ?? i18n.t("desktop.updates.status.installed"),
   };
@@ -202,4 +209,8 @@ export function buildDaemonUpdateDiagnostics(result: LocalDaemonUpdateResult): s
   const stderr = result.stderr.length > 0 ? result.stderr : "(empty)";
 
   return [`Exit code: ${result.exitCode}`, "", "STDOUT:", stdout, "", "STDERR:", stderr].join("\n");
+}
+
+export async function cancelDesktopAppUpdate(): Promise<void> {
+  await invokeDesktopCommand("cancel_app_update");
 }

@@ -213,6 +213,7 @@ type ScheduleAgentManager = Pick<
     | "hydrateTimelineFromProvider"
     | "resumeAgentFromPersistence"
     | "runAgent"
+    | "runAdmittedAgentWork"
     | "waitForAgentEvent"
     | "waitForAgentClose"
   >;
@@ -706,7 +707,11 @@ export class ScheduleService {
       const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
 
       try {
-        const result = await this.runner(scheduleWithRun, runId);
+        // A run is idle while it loads its target or creates a workspace.
+        // Admission keeps an idle shutdown from interrupting it there.
+        const result = await this.agentManager.runAdmittedAgentWork(() =>
+          this.runner(scheduleWithRun, runId),
+        );
         await this.finishRun({
           scheduleId: schedule.id,
           runId,

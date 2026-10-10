@@ -13,6 +13,8 @@ import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
 import type { AgentSessionConfig } from "../agent-sdk-types.js";
 
+const runAdmittedAgentWork = <T>(work: () => Promise<T>): Promise<T> => work();
+
 const logger = createTestLogger();
 
 function createRealAgentManager(storage: AgentStorage): AgentManager {
@@ -67,6 +69,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
   const streamAgent = vi.fn(() => (async function* noop() {})());
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runAdmittedAgentWork,
       createAgent: vi.fn(async () => snapshot),
       getAgent: vi.fn(() => snapshot),
       tryRunOutOfBand: vi.fn(() => false),
@@ -110,6 +113,7 @@ test("session create validates the requested mode against the provider's modes",
   );
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runAdmittedAgentWork,
       createAgent,
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
     agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
@@ -154,6 +158,7 @@ test("session create applies the resolved mode from the provider create config",
   });
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runAdmittedAgentWork,
       createAgent,
       getAgent: vi.fn(() => snapshot),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
@@ -192,6 +197,7 @@ test("mcp create accepts provider-only internal input and leaves model undefined
   const createAgent = vi.fn(async () => snapshot);
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runAdmittedAgentWork,
       createAgent,
       getAgent: vi.fn(() => snapshot),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],

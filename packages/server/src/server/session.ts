@@ -2611,7 +2611,7 @@ export class Session {
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
       case "shutdown_server_request":
-        return this.handleShutdownServerRequest(msg.requestId);
+        return this.handleShutdownServerRequest(msg.requestId, msg.onlyIfIdle === true);
       case "client_heartbeat":
         this.handleClientHeartbeat(msg);
         return undefined;
@@ -3158,9 +3158,22 @@ export class Session {
     });
   }
 
-  private async handleShutdownServerRequest(requestId: string): Promise<void> {
+  private async handleShutdownServerRequest(requestId: string, onlyIfIdle = false): Promise<void> {
+    if (onlyIfIdle && !this.agentManager.tryClaimIdleShutdown()) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "shutdown_server_request",
+          error: "Agents are busy",
+          code: "AGENTS_BUSY",
+        },
+      });
+      return;
+    }
+
     const reason = CLIENT_SHUTDOWN_RPC_REASON;
-    this.sessionLogger.warn({ reason }, "Shutdown requested via websocket");
+    this.sessionLogger.warn({ reason, onlyIfIdle }, "Shutdown requested via websocket");
     this.emit({
       type: "status",
       payload: {
@@ -8219,23 +8232,28 @@ export class Session {
           );
         }
       };
-      if (msg.messageId) {
-        await this.messageReceipts.send({
-          agentId,
-          messageId: msg.messageId,
-          request: {
-            prompt,
-            sourceAgentId: msg.sourceAgentId,
-            activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
-          },
-          prepare: async () => {
-            if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-          },
-          send,
-        });
-      } else {
-        await send();
-      }
+      // The receipt is written before a run exists. Admission refuses the send
+      // before that write once an idle shutdown is claimed, and keeps the idle
+      // check busy until the run starts, so no receipt is left pending.
+      await this.agentManager.runAdmittedAgentWork(async () => {
+        if (msg.messageId) {
+          await this.messageReceipts.send({
+            agentId,
+            messageId: msg.messageId,
+            request: {
+              prompt,
+              sourceAgentId: msg.sourceAgentId,
+              activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+            },
+            prepare: async () => {
+              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+            },
+            send,
+          });
+        } else {
+          await send();
+        }
+      });
 
       this.emit({
         type: "send_agent_message_response",

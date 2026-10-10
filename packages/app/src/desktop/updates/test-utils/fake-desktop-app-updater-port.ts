@@ -7,6 +7,7 @@ import type {
 import type { DesktopAppUpdaterPort } from "@/desktop/updates/desktop-app-updater";
 
 export interface FakeDesktopAppUpdaterPort extends DesktopAppUpdaterPort {
+  readonly cancellationCount: number;
   readonly recordedChecks: Array<{
     releaseChannel: DesktopReleaseChannel;
     intent: DesktopAppUpdateCheckIntent;
@@ -18,6 +19,7 @@ export interface FakeDesktopAppUpdaterPort extends DesktopAppUpdaterPort {
     reject(error: unknown): void;
   };
   failNextCheck(error: unknown): void;
+  deferNextInstall(): { resolve(result: DesktopAppUpdateInstallResult): void };
   nextInstallResult(result: DesktopAppUpdateInstallResult): void;
   failNextInstall(error: unknown): void;
 }
@@ -28,6 +30,7 @@ type CheckOutcome =
   | { kind: "deferred"; promise: Promise<DesktopAppUpdateCheckResult> };
 
 type InstallOutcome =
+  | { kind: "deferred"; promise: Promise<DesktopAppUpdateInstallResult> }
   | { kind: "result"; result: DesktopAppUpdateInstallResult }
   | { kind: "error"; error: unknown };
 
@@ -65,10 +68,17 @@ export function createFakeDesktopAppUpdaterPort(): FakeDesktopAppUpdaterPort {
   const recordedInstalls: Array<{ releaseChannel: DesktopReleaseChannel }> = [];
   const checkOutcomes: CheckOutcome[] = [];
   const installOutcomes: InstallOutcome[] = [];
+  let cancellationCount = 0;
 
   return {
     recordedChecks,
     recordedInstalls,
+    get cancellationCount() {
+      return cancellationCount;
+    },
+    async cancelDesktopAppUpdate() {
+      cancellationCount++;
+    },
     nextCheckResult(result) {
       checkOutcomes.push({ kind: "result", result });
     },
@@ -84,6 +94,14 @@ export function createFakeDesktopAppUpdaterPort(): FakeDesktopAppUpdaterPort {
     },
     failNextCheck(error) {
       checkOutcomes.push({ kind: "error", error });
+    },
+    deferNextInstall() {
+      let resolve!: (value: DesktopAppUpdateInstallResult) => void;
+      const promise = new Promise<DesktopAppUpdateInstallResult>((res) => {
+        resolve = res;
+      });
+      installOutcomes.push({ kind: "deferred", promise });
+      return { resolve };
     },
     nextInstallResult(result) {
       installOutcomes.push({ kind: "result", result });
@@ -114,6 +132,7 @@ export function createFakeDesktopAppUpdaterPort(): FakeDesktopAppUpdaterPort {
       if (outcome.kind === "result") {
         return outcome.result;
       }
+      if (outcome.kind === "deferred") return outcome.promise;
       throw outcome.error;
     },
   };

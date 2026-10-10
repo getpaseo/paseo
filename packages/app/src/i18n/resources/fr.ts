@@ -1479,6 +1479,10 @@ export const fr: TranslationResources = {
         genericError: "Une erreur s’est produite.",
         whatsNew: "Nouveautés",
         installingAction: "Installation…",
+        whenIdle: "Quand inactifs",
+        waitingTitle: "En attente des agents",
+        waitingDescription:
+          "Paseo redémarrera lorsque les agents de tous les projets locaux seront inactifs. Les sessions de terminal seront fermées.",
         installAndRestart: "Installer et redémarrer",
         installingDescription: "Installation et redémarrage…",
         versionReady: "La version {{version}} est prête à être installée.",

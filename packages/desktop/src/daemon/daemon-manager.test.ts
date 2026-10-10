@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createAppUpdateService } from "../features/app-update-service";
+import { FakeAppUpdateRuntime } from "../features/fake-app-update-runtime";
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
 import { createDaemonCommandHandlers } from "./daemon-manager";
 
@@ -77,6 +79,102 @@ vi.mock("./cli/external.js", () => ({
   runExternalCliJsonCommand: mocks.runExternalCliJsonCommand,
   runExternalCliTextCommand: mocks.runExternalCliTextCommand,
 }));
+
+const UPDATE_INFO = {
+  version: "1.2.4",
+  releaseDate: "2026-04-28T00:00:00.000Z",
+  rolloutHours: 24,
+};
+
+function createUpdateHandlers(runtime: FakeAppUpdateRuntime) {
+  const service = createAppUpdateService({
+    runtime,
+    isPackaged: () => true,
+    now: () => Date.parse("2026-04-28T12:00:00.000Z"),
+    bucket: async () => 0,
+  });
+  return createDaemonCommandHandlers({ installAppUpdate: service.downloadAndInstallUpdate });
+}
+
+// Launches a real child process as the daemon supervisor. It writes the lock
+// file and idles, so the desktop manager owns a running daemon it can stop.
+function installFakeSupervisor(fixtureRoot: string): {
+  lockPath: string;
+  exit(): void;
+  kill(): void;
+} {
+  mkdirSync(mocks.paseoHome, { recursive: true });
+  const lockPath = path.join(mocks.paseoHome, "paseo.pid");
+  const supervisorPath = path.join(fixtureRoot, "supervisor.mjs");
+  writeFileSync(
+    supervisorPath,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      "import { hostname } from 'node:os';",
+      "writeFileSync(process.argv[2], JSON.stringify({",
+      "  pid: process.pid,",
+      "  startedAt: new Date().toISOString(),",
+      "  hostname: hostname(),",
+      "  uid: process.getuid?.() ?? 0,",
+      "  listen: '127.0.0.1:6799',",
+      "  desktopManaged: true,",
+      "}));",
+      "setInterval(() => {}, 60_000);",
+    ].join("\n"),
+  );
+  mocks.createNodeEntrypointInvocation.mockReturnValue({
+    command: process.execPath,
+    args: [supervisorPath, lockPath],
+    env: {},
+  });
+  const signal = (name: NodeJS.Signals) => {
+    try {
+      const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      process.kill(lock.pid, name);
+    } catch {
+      // The supervisor never started or already exited.
+    }
+  };
+  return { lockPath, exit: () => signal("SIGTERM"), kill: () => signal("SIGKILL") };
+}
+
+function daemonStatusFromLock(lockPath: string) {
+  const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number; startedAt: string };
+  return {
+    localDaemon: "running",
+    pid: lock.pid,
+    startedAt: lock.startedAt,
+    listen: "127.0.0.1:6799",
+    hostname: hostname(),
+    daemonVersion: "1.2.3",
+    desktopManaged: true,
+    serverId: "srv_test",
+  };
+}
+
+// Answers `daemon status` from the lock file and keeps `daemon stop` open
+// until the test releases it, so a cancel can land mid-stop.
+function holdDaemonStop(lockPath: string): {
+  requested: Promise<void>;
+  release(result: { action: string }): void;
+} {
+  let release: (result: { action: string }) => void = () => undefined;
+  let markRequested: () => void = () => undefined;
+  const requested = new Promise<void>((resolve) => {
+    markRequested = resolve;
+  });
+  mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
+    if (args[1] === "status") return daemonStatusFromLock(lockPath);
+    if (args[1] === "stop") {
+      markRequested();
+      return await new Promise<{ action: string }>((resolve) => {
+        release = resolve;
+      });
+    }
+    throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
+  });
+  return { requested, release: (result) => release(result) };
+}
 
 describe("daemon-manager commands", () => {
   let fixtureRoot: string;
@@ -174,5 +272,95 @@ describe("daemon-manager commands", () => {
     expect(await handler({ listen: "remote:6799" })).toBeNull();
     writeFileSync(lockPath, JSON.stringify({ ...lock, desktopManaged: false }));
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
+  });
+
+  it("installs when cancel arrives after the daemon accepted the idle stop", async () => {
+    const supervisor = installFakeSupervisor(fixtureRoot);
+    const stop = holdDaemonStop(supervisor.lockPath);
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    try {
+      await handlers.start_desktop_daemon();
+      const installing = handlers.install_app_update({ whenIdle: true });
+      await stop.requested;
+
+      handlers.cancel_app_update();
+      stop.release({ action: "shutdown_requested" });
+      supervisor.exit();
+
+      await expect(installing).resolves.toMatchObject({ installed: true });
+      expect(runtime.installedVersions).toEqual([UPDATE_INFO.version]);
+    } finally {
+      supervisor.kill();
+      await handlers.stop_desktop_daemon().catch(() => undefined);
+    }
+  });
+
+  it("shares a When idle wait with a second window, and either window can cancel it", async () => {
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
+
+    const first = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
+    await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+    const second = handlers.install_app_update({ whenIdle: true }, { senderId: 2 });
+    handlers.cancel_app_update(undefined, { senderId: 2 });
+
+    await expect(first).resolves.toMatchObject({ installed: false, cancelled: true });
+    await expect(second).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(runtime.installedVersions).toEqual([]);
+    download.resolve();
+  });
+
+  it("ends a When idle wait when another window chooses Install & restart", async () => {
+    const supervisor = installFakeSupervisor(fixtureRoot);
+    let idleStops = 0;
+    mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
+      if (args[1] === "status") return daemonStatusFromLock(supervisor.lockPath);
+      if (args[1] === "stop" && args.includes("--if-idle")) {
+        idleStops += 1;
+        return { action: "busy" };
+      }
+      throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
+    });
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    try {
+      await handlers.start_desktop_daemon();
+      const waiting = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
+      await vi.waitFor(() => expect(idleStops).toBe(1));
+
+      const now = handlers.install_app_update(undefined, { senderId: 2 });
+
+      await expect(waiting).resolves.toMatchObject({ installed: true });
+      await expect(now).resolves.toMatchObject({ installed: true });
+      expect(idleStops).toBe(1);
+      expect(runtime.installedVersions).toEqual([UPDATE_INFO.version]);
+    } finally {
+      supervisor.kill();
+      await handlers.stop_desktop_daemon().catch(() => undefined);
+    }
+  });
+
+  it("ignores a cancel from a window that did not start the update", async () => {
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
+
+    const installing = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
+    await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+
+    handlers.cancel_app_update(undefined, { senderId: 2 });
+    expect(runtime.cancelCount).toBe(0);
+
+    handlers.cancel_app_update(undefined, { senderId: 1 });
+    await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(runtime.cancelCount).toBe(1);
+    expect(runtime.installedVersions).toEqual([]);
+    download.resolve();
   });
 });

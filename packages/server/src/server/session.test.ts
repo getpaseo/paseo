@@ -107,6 +107,37 @@ function createBinaryMessageHandler(
   };
 }
 
+test("onlyIfIdle shutdown reports AGENTS_BUSY and does not emit a lifecycle intent", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const intents: string[] = [];
+  const session = createSessionForTest({
+    messages,
+    onLifecycleIntent: (intent) => {
+      intents.push(intent.type);
+    },
+    agentManager: {
+      tryClaimIdleShutdown: vi.fn(() => false),
+    },
+  });
+
+  await session.handleMessage({
+    type: "shutdown_server_request",
+    requestId: "req-busy",
+    onlyIfIdle: true,
+  });
+
+  expect(intents).toEqual([]);
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "req-busy",
+      requestType: "shutdown_server_request",
+      error: "Agents are busy",
+      code: "AGENTS_BUSY",
+    },
+  });
+});
+
 test("interruptAgentIfRunning rejects when graceful cancellation is refused", async () => {
   const agentId = "11111111-1111-4111-8111-111111111111";
   const session = createSessionForTest({
@@ -332,6 +363,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  onLifecycleIntent?: SessionOptions["onLifecycleIntent"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -370,6 +402,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     messageReceipts: createMessageReceiptsStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
+    onLifecycleIntent: options.onLifecycleIntent,
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {
