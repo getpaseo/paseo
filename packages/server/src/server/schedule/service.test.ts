@@ -44,6 +44,37 @@ interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
 }
 
+class OverlappingTickRunner {
+  private resolveFirstRunStarted: () => void = () => {};
+  private resolveFirstRunBlocked: () => void = () => {};
+  private laterScheduleRunCount = 0;
+
+  readonly firstRunStarted = new Promise<void>((resolve) => {
+    this.resolveFirstRunStarted = resolve;
+  });
+  private readonly firstRunBlocked = new Promise<void>((resolve) => {
+    this.resolveFirstRunBlocked = resolve;
+  });
+
+  async run(schedule: StoredSchedule): Promise<ScheduleExecutionResult> {
+    if (schedule.prompt === "block the first tick") {
+      this.resolveFirstRunStarted();
+      await this.firstRunBlocked;
+    } else {
+      this.laterScheduleRunCount += 1;
+    }
+    return { agentId: null, output: "ok" };
+  }
+
+  unblockFirstRun(): void {
+    this.resolveFirstRunBlocked();
+  }
+
+  get laterScheduleRuns(): number {
+    return this.laterScheduleRunCount;
+  }
+}
+
 const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -348,9 +379,7 @@ describe("ScheduleService", () => {
   test.each(["new-agent", "agent", "maxRuns: 1"] as const)(
     "dispatches a shared cron slot only once for %s after an earlier tick resumes",
     async (targetKind) => {
-      const started = Promise.withResolvers<void>();
-      const release = Promise.withResolvers<void>();
-      let dispatches = 0;
+      const runner = new OverlappingTickRunner();
       const service = createScheduleService({
         paseoHome: tempDir,
         logger: createTestLogger(),
@@ -358,32 +387,22 @@ describe("ScheduleService", () => {
         agentStorage,
         providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
         now: () => now,
-        runner: async (schedule) => {
-          if (schedule.prompt === "earlier slow schedule") {
-            started.resolve();
-            await release.promise;
-          } else {
-            dispatches += 1;
-          }
-          return { agentId: null, output: "done" };
-        },
+        runner: (schedule) => runner.run(schedule),
       });
       const cadence = { type: "cron" as const, expression: "0 6 * * 1", timezone: "Europe/Prague" };
       await service.create({
-        prompt: "earlier slow schedule",
+        prompt: "block the first tick",
         cadence,
         target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
       });
       // Give the later schedule a distinct creation time so file ordering cannot affect the race.
       now = new Date("2026-01-01T00:00:01.000Z");
       const agentId = "00000000-0000-0000-0000-000000000001";
-      if (targetKind === "agent") {
-        await agentStorage.upsert(
-          buildAgentRecord({ id: agentId, cwd: tempDir, iso: now.toISOString() }),
-        );
-      }
+      await agentStorage.upsert(
+        buildAgentRecord({ id: agentId, cwd: tempDir, iso: now.toISOString() }),
+      );
       const later = await service.create({
-        prompt: "later quick schedule",
+        prompt: "later due schedule",
         cadence,
         target:
           targetKind === "agent"
@@ -393,16 +412,16 @@ describe("ScheduleService", () => {
       });
       now = new Date("2026-01-05T05:00:00.000Z");
       const delayedTick = service.tick();
-      await started.promise;
+      await runner.firstRunStarted;
       try {
         now = new Date("2026-01-05T05:00:01.000Z");
         await service.tick();
       } finally {
-        release.resolve();
+        runner.unblockFirstRun();
         await delayedTick;
       }
       const result = await service.inspect(later.id);
-      expect.soft(dispatches).toBe(1);
+      expect.soft(runner.laterScheduleRuns).toBe(1);
       expect.soft(result.runs).toHaveLength(1);
       expect.soft(result.runs.map((run) => run.scheduledFor)).toEqual(["2026-01-05T05:00:00.000Z"]);
       expect(result.nextRunAt).toBe(
@@ -411,6 +430,32 @@ describe("ScheduleService", () => {
       expect(result.status).toBe(targetKind === "maxRuns: 1" ? "completed" : "active");
     },
   );
+
+  test("advances the next scheduled slot past a run that crosses a cadence boundary", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        now = new Date("2026-01-01T00:02:00.000Z");
+        return { agentId: null, output: "ok" };
+      },
+    });
+
+    const created = await service.create({
+      prompt: "long-running task",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    expect((await service.inspect(created.id)).nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+  });
 
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
