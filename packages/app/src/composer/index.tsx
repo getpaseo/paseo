@@ -1004,8 +1004,10 @@ function ComposerAutocompleteBinding({
     cursorIndex: Math.min(cursorIndex, userInput.length),
     onAutocompleteApplied: () => inputRef.current?.focus(),
   });
-  useImperativeHandle(ref, () => ({ onKeyPress: autocomplete.onKeyPress }), [
-    autocomplete.onKeyPress,
+  const handleKeyPress = autocomplete.onKeyPress;
+  useImperativeHandle(ref, () => ({ onKeyPress: (event) => show && handleKeyPress(event) }), [
+    show,
+    handleKeyPress,
   ]);
   const selectOption = autocomplete.onSelectOption;
   const onSelect = useCallback(

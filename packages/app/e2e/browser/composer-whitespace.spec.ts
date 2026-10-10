@@ -337,9 +337,11 @@ test("retained agent tabs preserve fullscreen editing and paste when switched aw
     await activateRetainedComposerTab(page, first.title);
     await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveCount(0);
     await writeCompactDraft(page, "Other tab draft");
+    await shrinkVisibleViewport(page);
     await activateRetainedComposerTab(page, second.title);
     await expectComposerFullscreenControls(page);
     await expect(composerLocator(page)).toHaveValue(draft);
+    await expectFullscreenInsideVisibleViewport(page);
     await expectComposerDraftSelection(page, 4, 17);
     await expect(composerLocator(page)).toBeFocused();
     expect(await pasteComposerTestImage(page)).toBe(true);
@@ -379,5 +381,74 @@ test("retained inline composers keep usable capacity through hidden tab geometry
     await expectNoCollapsedVisibleComposer(page);
   } finally {
     await workspace.cleanup();
+  }
+});
+
+async function shrinkVisibleViewport(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+  await expect.poll(() => page.evaluate(() => window.visualViewport!.height)).toBe(422);
+  await cdp.detach();
+}
+
+async function panVisibleViewport(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: 4, y: 300 }],
+  });
+  for (let y = 290; y >= 100; y -= 10) {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: 4, y }],
+    });
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await expect.poll(() => page.evaluate(() => window.visualViewport!.offsetTop)).toBeGreaterThan(0);
+  await cdp.detach();
+}
+
+async function expectFullscreenInsideVisibleViewport(page: Page): Promise<void> {
+  await expect
+    .poll(() =>
+      page.getByTestId("composer-fullscreen").evaluate((element) => {
+        const viewport = window.visualViewport!;
+        const frame = element.getBoundingClientRect();
+        const send = element.querySelector('[aria-label="Send message"]')!.getBoundingClientRect();
+        return {
+          frameFits:
+            Math.abs(frame.top - viewport.offsetTop) < 1 &&
+            Math.abs(frame.left - viewport.offsetLeft) < 1 &&
+            Math.abs(frame.height - viewport.height) < 1 &&
+            Math.abs(frame.width - viewport.width) < 1,
+          sendFits:
+            send.top >= viewport.offsetTop &&
+            send.bottom <= viewport.offsetTop + viewport.height &&
+            send.left >= viewport.offsetLeft &&
+            send.right <= viewport.offsetLeft + viewport.width,
+        };
+      }),
+    )
+    .toEqual({ frameFits: true, sendFits: true });
+}
+
+test("fullscreen Send follows the visible viewport when it shrinks and pans", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-visible-viewport-",
+    title: "Visible viewport composer",
+  });
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await writeCompactDraft(page, "First line\nSecond line\nThird line");
+    await enterComposerFullscreen(page);
+    await expectFullscreenInsideVisibleViewport(page);
+    await shrinkVisibleViewport(page);
+    await expectFullscreenInsideVisibleViewport(page);
+    await panVisibleViewport(page);
+    await expectFullscreenInsideVisibleViewport(page);
+  } finally {
+    await agent.cleanup();
   }
 });

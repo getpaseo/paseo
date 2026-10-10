@@ -60,6 +60,7 @@ import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
+import { useComposerTextMeasurement } from "./text-measurement";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
@@ -83,6 +84,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
+  resolveComposerSurfaceText,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -618,6 +620,7 @@ function FocusHint({
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
+  textReplacementKey: string;
   textInputRef: React.Ref<ComposerTextInputHandle>;
   textInputStyle: EditingTextInputProps["style"];
   readOnlyTextStyle: React.ComponentProps<typeof Text>["style"];
@@ -648,16 +651,17 @@ interface ComposerTextSurfaceProps {
  */
 function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElement {
   const { onChangeText, onRenderedLinesChange } = props;
-  const [measurementText, setMeasurementText] = useState(props.value);
-  useEffect(() => {
-    if (!isWeb) setMeasurementText(props.value);
-  }, [props.value]);
+  const [measurementText, setMeasurementText] = useComposerTextMeasurement(
+    props.value,
+    props.textReplacementKey,
+    !isWeb,
+  );
   const handleTextChange = useCallback(
     (text: string) => {
       if (!isWeb) setMeasurementText(text);
       onChangeText(text);
     },
-    [onChangeText],
+    [onChangeText, setMeasurementText],
   );
   const measureLines = useCallback(
     (event: import("react-native").TextLayoutEvent) =>
@@ -869,6 +873,7 @@ interface ToggleRealtimeVoiceContext {
   handleStopRealtimeVoice: () => Promise<unknown> | void;
   toast: { error: (msg: string) => void };
   interruptBeforeVoiceMessage: string;
+  exitFullscreen: () => void;
 }
 
 function toggleRealtimeVoiceImpl(ctx: ToggleRealtimeVoiceContext): void {
@@ -884,6 +889,7 @@ function toggleRealtimeVoiceImpl(ctx: ToggleRealtimeVoiceContext): void {
     ctx.toast.error(ctx.interruptBeforeVoiceMessage);
     return;
   }
+  ctx.exitFullscreen();
   void ctx.voice.startVoice(ctx.voiceServerId, ctx.voiceAgentId).catch((error) => {
     console.error("[MessageInput] Failed to start realtime voice", error);
     const message = extractErrorMessage(error);
@@ -898,6 +904,7 @@ interface StartDictationContext {
   canStartDictation: () => boolean;
   toast: { error: (msg: string) => void };
   startDictation: () => Promise<void>;
+  exitFullscreen: () => void;
 }
 
 async function startDictationIfAvailableImpl(ctx: StartDictationContext): Promise<void> {
@@ -908,6 +915,7 @@ async function startDictationIfAvailableImpl(ctx: StartDictationContext): Promis
   if (!ctx.canStartDictation()) {
     return;
   }
+  ctx.exitFullscreen();
   await ctx.startDictation();
 }
 
@@ -1336,6 +1344,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const changePresentation = useCallback(
       (fullscreen: boolean) => {
+        if (editingSession.getFullscreen() === fullscreen) return;
         const snapshot = getComposerInputSnapshot(
           textInputRef.current,
           valueRef.current,
@@ -1535,8 +1544,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           canStartDictation,
           toast,
           startDictation,
+          exitFullscreen,
         }),
-      [canStartDictation, dictationUnavailableMessage, startDictation, toast],
+      [canStartDictation, dictationUnavailableMessage, startDictation, toast, exitFullscreen],
     );
 
     const handleVoicePress = useCallback(
@@ -1608,10 +1618,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         handleStopRealtimeVoice,
         toast,
         interruptBeforeVoiceMessage: t("composer.voice.interruptBeforeVoice"),
+        exitFullscreen,
       });
     }, [
       disabled,
       handleStopRealtimeVoice,
+      exitFullscreen,
       isAgentRunning,
       isConnected,
       t,
@@ -1978,7 +1990,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <RenderProfile id="ComposerTextSurface">
           <ComposerTextSurface
             readOnly={readOnly}
-            value={readOnly ? value : valueRef.current}
+            value={
+              readOnly
+                ? value
+                : resolveComposerSurfaceText(
+                    valueRef.current,
+                    textReplacement,
+                    appliedTextReplacementKeyRef.current,
+                  )
+            }
+            textReplacementKey={textReplacement.key}
             textInputRef={assignTextInput}
             textInputStyle={textInputStyle}
             readOnlyTextStyle={readOnlyTextStyle}
