@@ -2759,20 +2759,22 @@ describe("PiRpcAgentClient", () => {
 
   test("discovers models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [
+        {
+          provider: "openrouter",
+          id: "google/gemini-2.5-flash-lite",
+          name: "google/gemini-2.5-flash-lite",
+          reasoning: true,
+        },
+      ];
+    });
     const client = createClient(pi);
     const catalogPromise = client.fetchCatalog({
       scope: "workspace",
       cwd: "/workspace/with-extension",
       force: false,
     });
-    pi.latestSession().models = [
-      {
-        provider: "openrouter",
-        id: "google/gemini-2.5-flash-lite",
-        name: "google/gemini-2.5-flash-lite",
-        reasoning: true,
-      },
-    ];
 
     await expect(catalogPromise).resolves.toMatchObject({
       models: [
