@@ -882,10 +882,13 @@ function throwFirstNonGlabAuthSearchRejection(results: PromiseSettledResult<unkn
   }
 }
 
-function buildGitLabListArgs(
-  kind: "mr" | "issue",
-  input: ListPullRequestsOptions | ListIssuesOptions,
-): string[] {
+function buildGitLabListArgs({
+  kind,
+  input,
+}: {
+  kind: "mr" | "issue";
+  input: ListPullRequestsOptions | ListIssuesOptions;
+}): string[] {
   const query = input.query?.trim();
   // issue list uses -O for JSON; its -F flag controls details/ids/urls.
   // mr list uses -F for JSON instead.
@@ -1079,12 +1082,16 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     }
   }
 
-  async function runList<T extends { iid: number }>(
-    kind: "mr" | "issue",
-    input: ListPullRequestsOptions | ListIssuesOptions,
-    schema: z.ZodType<T[]>,
-  ): Promise<T[]> {
-    const textSearch = runJson(buildGitLabListArgs(kind, input), { cwd: input.cwd }, schema);
+  async function runList<T extends { iid: number }>({
+    kind,
+    input,
+    schema,
+  }: {
+    kind: "mr" | "issue";
+    input: ListPullRequestsOptions | ListIssuesOptions;
+    schema: z.ZodType<T[]>;
+  }): Promise<T[]> {
+    const textSearch = runJson(buildGitLabListArgs({ kind, input }), { cwd: input.cwd }, schema);
     const numberQuery = gitLabNumberQuery(input.query);
     if (!numberQuery) return textSearch;
 
@@ -1110,12 +1117,16 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
   async function runMergeRequestList(
     input: ListPullRequestsOptions,
   ): Promise<PullRequestSummary[]> {
-    const mergeRequests = await runList("mr", input, z.array(GitLabMergeRequestSchema));
+    const mergeRequests = await runList({
+      kind: "mr",
+      input,
+      schema: z.array(GitLabMergeRequestSchema),
+    });
     return mergeRequests.map(toPullRequestSummary);
   }
 
   async function runIssueList(input: ListIssuesOptions): Promise<IssueSummary[]> {
-    const issues = await runList("issue", input, z.array(GitLabIssueSchema));
+    const issues = await runList({ kind: "issue", input, schema: z.array(GitLabIssueSchema) });
     return issues.map(toIssueSummary);
   }
 
