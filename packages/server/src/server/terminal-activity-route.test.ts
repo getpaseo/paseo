@@ -178,6 +178,39 @@ it("keeps newer terminal activity when delayed reports arrive through HTTP and t
   expect(session.getActivity()?.state).toBe("working");
   expect((await reportActivity({ state: "idle", at_ns: "invalid" })).status).toBe(400);
   expect(session.getActivity()?.state).toBe("working");
+
+  // Number#toString rounds these parsed integers in opposite directions.
+  for (const [numericTimestamp, olderTimestamp, exactTimestamp, newerTimestamp] of [
+    [
+      Number("1791586800000000256"),
+      "1791586800000000255",
+      "1791586800000000256",
+      "1791586800000000280",
+    ],
+    [
+      Number("1791586800000000512"),
+      "1791586800000000510",
+      "1791586800000000512",
+      "1791586800000000513",
+    ],
+  ] as const) {
+    expect((await reportActivity({ state: "running", at_ns: numericTimestamp })).status).toBe(204);
+    expect(session.getActivity()?.state).toBe("working");
+    expect((await reportActivity({ state: "idle", at_ns: olderTimestamp })).status).toBe(204);
+    expect(session.getActivity()?.state).toBe("working");
+    expect((await reportActivity({ state: "idle", at_ns: exactTimestamp })).status).toBe(204);
+    expect(session.getActivity()?.state).toBe("working");
+    expect((await reportActivity({ state: "idle", at_ns: newerTimestamp })).status).toBe(204);
+    expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
+
+    await manager.clearTerminalAttention(session.id);
+    const reviewedMixedFormat = session.getActivity();
+    expect(reviewedMixedFormat?.attentionReason).toBeUndefined();
+    expect((await reportActivity({ state: "needs-input", at_ns: numericTimestamp })).status).toBe(
+      204,
+    );
+    expect(session.getActivity()).toEqual(reviewedMixedFormat);
+  }
 });
 
 it("rejects non-loopback activity reports before token handling", async () => {

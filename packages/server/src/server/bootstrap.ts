@@ -325,11 +325,17 @@ export function createTerminalActivityRouteHandler(
       return;
     }
 
+    let atNs = parsed.data.at_ns;
+    if (typeof atNs === "number") {
+      // Preserve the parsed integer; String(number) can round its decimal representation.
+      atNs = BigInt(atNs).toString();
+    }
+
     try {
       const updated = await terminalManager.setTerminalActivity(
         parsed.data.terminalId,
         TERMINAL_ACTIVITY_STATE_MAP[parsed.data.state],
-        parsed.data.at_ns === undefined ? undefined : String(parsed.data.at_ns),
+        atNs,
       );
       if (!updated) {
         res.status(403).json({ error: "Forbidden" });
