@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
-import type { AgentManager } from "../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import type { AgentManager, WaitForAgentResult } from "../agent/agent-manager.js";
+import type { AgentRunResult, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
@@ -27,6 +27,8 @@ import type {
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
+// How long a new-agent run's permission prompt may stay open for a plugin to answer it.
+const DEFAULT_PERMISSION_ANSWER_GRACE_MS = 10_000;
 
 // A run failed because its target no longer exists: the agent was deleted or
 // archived, or a new-agent cwd was removed. These are permanent, so the schedule
@@ -36,6 +38,26 @@ export class ScheduleTargetGoneError extends Error {
     super(message);
     this.name = "ScheduleTargetGoneError";
   }
+}
+
+export class ScheduledAgentPermissionError extends Error {
+  readonly agentId: string;
+  readonly toolName: string;
+  readonly turnStopped: boolean;
+
+  constructor(input: { agentId: string; toolName: string; turnStopped: boolean }) {
+    const waiting = `Scheduled agent ${input.agentId} is waiting for permission to use ${input.toolName}`;
+    super(input.turnStopped ? waiting : `${waiting}; its turn could not be stopped`);
+    this.name = "ScheduledAgentPermissionError";
+    this.agentId = input.agentId;
+    this.toolName = input.toolName;
+    this.turnStopped = input.turnStopped;
+  }
+}
+
+interface ScheduledAgentRunOutcome {
+  result: AgentRunResult;
+  waitResult: WaitForAgentResult;
 }
 
 function trimOptionalName(value: string | null | undefined): string | null {
@@ -214,6 +236,7 @@ type ScheduleAgentManager = Pick<
     | "hydrateTimelineFromProvider"
     | "resumeAgentFromPersistence"
     | "runAgent"
+    | "subscribe"
     | "waitForAgentEvent"
     | "waitForAgentClose"
   >;
@@ -238,6 +261,7 @@ export interface ScheduleServiceOptions {
   archiveWorkspace: (workspaceId: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
+  permissionAnswerGraceMs?: number;
 }
 
 export class ScheduleService {
@@ -254,6 +278,7 @@ export class ScheduleService {
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
   private readonly now: () => Date;
+  private readonly permissionAnswerGraceMs: number;
   private readonly runner: (
     schedule: StoredSchedule,
     runId: string,
@@ -263,6 +288,8 @@ export class ScheduleService {
 
   constructor(options: ScheduleServiceOptions) {
     this.logger = options.logger.child({ module: "schedule-service" });
+    this.permissionAnswerGraceMs =
+      options.permissionAnswerGraceMs ?? DEFAULT_PERMISSION_ANSWER_GRACE_MS;
     this.store = new ScheduleStore(join(options.paseoHome, "schedules"), this.logger);
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
@@ -963,61 +990,112 @@ export class ScheduleService {
   }
 
   // A permission prompt doesn't end the turn, so runAgent alone would wait for an approval
-  // nobody is watching for. Watch the agent while the run is in flight and fail the run on
-  // the first prompt, so the run records which tool it stopped on. The watcher races the
-  // run itself: a turn that fails to start can settle the run without publishing any
-  // agent event, and the watcher would otherwise wait forever.
+  // nobody is watching for. The watcher races the run because a turn that fails to start can
+  // settle the run without publishing any agent event.
   private async runScheduledAgent(
     agentId: string,
     prompt: string,
-  ): Promise<{
-    result: Awaited<ReturnType<ScheduleAgentManager["runAgent"]>>;
-    waitResult: Awaited<ReturnType<ScheduleAgentManager["waitForAgentEvent"]>>;
-  }> {
+  ): Promise<ScheduledAgentRunOutcome> {
     const run = settle(this.agentManager.runAgent(agentId, prompt));
-    const stopWatching = new AbortController();
-    const watch = settle(
-      this.agentManager.waitForAgentEvent(agentId, {
-        waitForActive: true,
-        signal: stopWatching.signal,
-      }),
-    );
-    const first = await Promise.race([
-      run.then(() => "run" as const),
-      watch.then(() => "watch" as const),
-    ]);
-    if (first === "run") {
-      stopWatching.abort();
-    }
-    const watched = await watch;
-    if (first === "watch" && watched.status === "fulfilled" && watched.value.permission) {
-      // Failing the run while its turn stays parked on the prompt would let a later
-      // approval resume work this run already reported as failed.
-      try {
-        await this.agentManager.cancelAgentRun(agentId);
-        await run;
-      } catch (error) {
-        this.logger.warn(
-          { err: error, agentId },
-          "Failed to cancel a scheduled agent waiting for permission",
-        );
-      }
-      throw new Error(
-        `Scheduled agent ${agentId} is waiting for permission to use ${watched.value.permission.name}`,
+    const runSettled = run.then(() => "run" as const);
+    for (;;) {
+      const stopWatching = new AbortController();
+      const watch = settle(
+        this.agentManager.waitForAgentEvent(agentId, {
+          waitForActive: true,
+          signal: stopWatching.signal,
+        }),
       );
+      const first = await Promise.race([runSettled, watch.then(() => "watch" as const)]);
+      if (first === "run") {
+        stopWatching.abort();
+        return await this.finishScheduledRun({ agentId, run, waitResult: null });
+      }
+      const watched = await watch;
+      if (watched.status === "rejected") {
+        // The run's own failure explains more than losing track of the agent it failed on.
+        const settledRun = await run;
+        throw settledRun.status === "rejected" ? settledRun.reason : watched.reason;
+      }
+      const permission = watched.value.permission;
+      if (!permission) {
+        return await this.finishScheduledRun({ agentId, run, waitResult: watched.value });
+      }
+      if (await this.waitForPermissionAnswer(agentId, permission.id)) {
+        continue;
+      }
+      return await this.stopRunBlockedOnPermission({ agentId, run, toolName: permission.name });
     }
-    const settled = await run;
+  }
+
+  private async finishScheduledRun(input: {
+    agentId: string;
+    run: Promise<PromiseSettledResult<AgentRunResult>>;
+    waitResult: WaitForAgentResult | null;
+  }): Promise<ScheduledAgentRunOutcome> {
+    const settled = await input.run;
     if (settled.status === "rejected") {
       throw settled.reason;
     }
-    if (first === "watch" && watched.status === "rejected") {
-      throw watched.reason;
-    }
     const waitResult =
-      first === "watch" && watched.status === "fulfilled"
-        ? watched.value
-        : await this.agentManager.waitForAgentEvent(agentId, { waitForActive: true });
+      input.waitResult ??
+      (await this.agentManager.waitForAgentEvent(input.agentId, { waitForActive: true }));
     return { result: settled.value, waitResult };
+  }
+
+  // Plugins answer prompts from agent.permission_requested, after the request is published, so
+  // a prompt only blocks the run once it outlives the grace window.
+  private async waitForPermissionAnswer(agentId: string, requestId: string): Promise<boolean> {
+    let unsubscribe: () => void = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await new Promise<boolean>((resolve) => {
+        // Runs inside the manager's dispatch loop, so it must not throw. Reading the pending set
+        // covers answers, cancels and turn cleanup, which don't all publish permission_resolved.
+        const resolveIfAnswered = () => {
+          if (!this.agentManager.getAgent(agentId)?.pendingPermissions.has(requestId)) {
+            resolve(true);
+          }
+        };
+        unsubscribe = this.agentManager.subscribe(resolveIfAnswered, {
+          agentId,
+          replayState: false,
+        });
+        timer = setTimeout(() => resolve(false), this.permissionAnswerGraceMs);
+        timer.unref();
+        resolveIfAnswered();
+      });
+    } finally {
+      unsubscribe();
+      clearTimeout(timer);
+    }
+  }
+
+  // Failing the run while its turn stays parked on the prompt would let a later approval resume
+  // work this run already reported as failed. A refused cancel leaves the turn blocked, so the
+  // run is only awaited once the turn has stopped.
+  private async stopRunBlockedOnPermission(input: {
+    agentId: string;
+    run: Promise<PromiseSettledResult<AgentRunResult>>;
+    toolName: string;
+  }): Promise<ScheduledAgentRunOutcome> {
+    const blocked = { agentId: input.agentId, toolName: input.toolName };
+    const cancellation = await this.agentManager.cancelAgentRun(input.agentId);
+    if (cancellation.status === "refused") {
+      throw new ScheduledAgentPermissionError({ ...blocked, turnStopped: false });
+    }
+    const settled = await input.run;
+    // An answer that landed just after the grace window can let the turn finish before the
+    // cancel reaches it; that run succeeded.
+    const turnFinished = settled.status === "fulfilled" && !settled.value.canceled;
+    if (turnFinished) {
+      return await this.finishScheduledRun({
+        agentId: input.agentId,
+        run: input.run,
+        waitResult: null,
+      });
+    }
+    throw new ScheduledAgentPermissionError({ ...blocked, turnStopped: true });
   }
 
   private async createScheduleRunWorkspace(

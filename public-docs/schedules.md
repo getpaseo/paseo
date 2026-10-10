@@ -31,7 +31,7 @@ Both run on a cadence you set. To start an agent from an external event instead 
 
 ## Permissions
 
-A scheduled run has nobody watching it. If you leave the permission mode unset, Paseo starts the agent in the provider's mode that never asks (Bypass for Claude, Full Access for Codex). If you pick a mode that asks and the agent stops on a permission prompt, the run fails right away and its error names the tool it was waiting on. Set a mode that never asks on any schedule whose agent needs tools.
+A schedule that starts a new agent has nobody watching it. If you leave its permission mode unset, Paseo starts the agent in the provider's mode that never asks (Bypass for Claude, Full Access for Codex). If you pick a mode that asks, a plugin can still answer the agent's permission prompts. A prompt left unanswered for 10 seconds stops the agent's turn and fails the run, and the error names the tool it was waiting on.
 
 ## Ways to create one
 

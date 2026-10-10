@@ -698,7 +698,13 @@ describe("ClaudeAgentSession mode without a requested mode", () => {
     const session = await new ClaudeAgentClient({
       logger,
       resolveBinary: async () => "/test/claude/bin",
-    }).createSession({ provider: "claude", cwd: process.cwd() });
+    }).createSession(
+      { provider: "claude", cwd: process.cwd() },
+      {
+        agentId: "claude-anthropic-default-mode",
+        env: { CLAUDE_CODE_USE_BEDROCK: "", CLAUDE_CODE_USE_VERTEX: "" },
+      },
+    );
 
     try {
       await expect(session.getCurrentMode()).resolves.toBe("auto");

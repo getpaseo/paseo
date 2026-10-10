@@ -2232,7 +2232,7 @@ class ClaudeAgentSession implements AgentSession {
     // an agent nobody is watching would otherwise stall on its first tool call.
     this.currentMode = isPermissionMode(config.modeId)
       ? config.modeId
-      : claudeModeCatalog(this.buildSdkEnv()).defaultModeId;
+      : claudeModeCatalog(this.harnessEnvironment).defaultModeId;
     if (this.currentMode !== "plan") {
       this.planResumeMode = this.currentMode;
     }
