@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -320,6 +321,7 @@ test("idle Codex app-server exit reconnects without publishing a failed turn", a
     agentId = agent.id;
 
     exitedAppServer.child.emit("exit", 17, null);
+    await once(exitedAppServer.child, "close");
 
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
     expect(
@@ -370,6 +372,7 @@ test("failed reconnect preserves manager events for a later successful run", asy
     );
     agentId = agent.id;
     exitedAppServer.child.emit("exit", 17, null);
+    await once(exitedAppServer.child, "close");
 
     await expect(manager.runAgent(agent.id, "first reconnect")).rejects.toThrow("reconnect failed");
 
@@ -550,6 +553,7 @@ test("idle provider exit preserves a synthetic plan approval across reconnect", 
     });
 
     exitedAppServer.child.emit("exit", 17, null);
+    await once(exitedAppServer.child, "close");
 
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
     expect(manager.getPendingPermissions(agent.id)).toEqual([planApproval]);
@@ -611,6 +615,7 @@ test("concurrent session APIs share one reconnect after an idle provider exit", 
   try {
     await session.connect();
     appServers[0]!.child.emit("exit", 17, null);
+    await once(appServers[0]!.child, "close");
 
     const runtimeInfo = session.getRuntimeInfo();
     const turnStart = session.startTurn("continue after reconnect");
@@ -665,6 +670,7 @@ test("session close disposes a provider that arrives from an in-flight reconnect
   try {
     await session.connect();
     initialAppServer.child.emit("exit", 17, null);
+    await once(initialAppServer.child, "close");
 
     const turnStart = session.startTurn("continue after reconnect");
     await reconnectSpawned;

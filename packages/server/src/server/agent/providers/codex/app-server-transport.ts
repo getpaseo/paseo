@@ -1,5 +1,4 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import readline from "node:readline";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -168,7 +167,7 @@ function readProviderTurnId(params: unknown): string | undefined {
 }
 
 export class CodexAppServerClient {
-  private readonly rl: readline.Interface;
+  private readonly closeStdout: () => void;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private notificationHandler: NotificationHandler | null = null;
@@ -182,12 +181,36 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => {
+    let stdoutBuffer = "";
+    const onLine = (line: string) => {
       void this.handleLine(line).catch((error) => {
         this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
       });
-    });
+    };
+    const onData = (chunk: string) => {
+      stdoutBuffer += chunk;
+      let newline = stdoutBuffer.indexOf("\n");
+      while (newline !== -1) {
+        const line = stdoutBuffer.slice(0, newline);
+        stdoutBuffer = stdoutBuffer.slice(newline + 1);
+        onLine(line);
+        newline = stdoutBuffer.indexOf("\n");
+      }
+    };
+    const onEnd = () => {
+      onLine(stdoutBuffer);
+      stdoutBuffer = "";
+    };
+    // JSONL uses LF; readline also splits valid JSON strings at U+2028/U+2029.
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", onData);
+    child.stdout.on("end", onEnd);
+    this.closeStdout = () => {
+      child.stdout.off("data", onData);
+      child.stdout.off("end", onEnd);
+      child.stdout.pause();
+      stdoutBuffer = "";
+    };
 
     child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
@@ -201,7 +224,8 @@ export class CodexAppServerClient {
       this.handleUnexpectedTermination(err);
     });
 
-    child.on("exit", (code, signal) => {
+    // `exit` can precede the final stdout data/end events; `close` waits for stdio.
+    child.on("close", (code, signal) => {
       const message =
         code === 0 && !signal
           ? "Codex app-server exited"
@@ -259,7 +283,7 @@ export class CodexAppServerClient {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
-    this.rl.close();
+    this.closeStdout();
     this.rejectPending(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
@@ -286,7 +310,7 @@ export class CodexAppServerClient {
       return;
     }
     this.disposed = true;
-    this.rl.close();
+    this.closeStdout();
     this.rejectPending(error);
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;

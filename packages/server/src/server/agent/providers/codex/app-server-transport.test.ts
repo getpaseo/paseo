@@ -8,6 +8,127 @@ import {
 import { CodexAppServerClient } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test("preserves Unicode line and paragraph separators in notifications", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const notifications: unknown[] = [];
+    client.setNotificationHandler((method, params) => notifications.push({ method, params }));
+    const notification = {
+      method: "item/agentMessage/delta",
+      params: { delta: "before\u2028middle\u2029after" },
+    };
+
+    try {
+      child.stdout.write(`${JSON.stringify(notification)}\n`);
+
+      expect(notifications).toEqual([notification]);
+    } finally {
+      await client.dispose();
+      child.stdout.end();
+      child.stderr.end();
+    }
+  });
+
+  test.each([1, 7, 4096])("reads JSONL responses in %i-byte chunks", async (chunkSize) => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const history = { text: "before\u2028middle\u2029after 🚀 café" };
+    const historyRequest = client.request("thread/read", { threadId: "thread-1" });
+    const modelsRequest = client.request("model/list", {});
+    const output = Buffer.from(
+      `${JSON.stringify({ id: 1, result: history })}\r\n\n` +
+        `${JSON.stringify({ id: 2, result: { data: [] } })}\n`,
+    );
+
+    try {
+      for (let offset = 0; offset < output.length; offset += chunkSize) {
+        child.stdout.write(output.subarray(offset, offset + chunkSize));
+      }
+
+      await expect(Promise.all([historyRequest, modelsRequest])).resolves.toEqual([
+        history,
+        { data: [] },
+      ]);
+    } finally {
+      await client.dispose();
+      child.stdout.end();
+      child.stderr.end();
+    }
+  });
+
+  test("waits for LF before dispatching a complete JSON value", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const notifications: unknown[] = [];
+    client.setNotificationHandler((method, params) => notifications.push({ method, params }));
+    const notification = { method: "turn/completed", params: { threadId: "thread-1" } };
+
+    try {
+      child.stdout.write(`${JSON.stringify(notification)}\r`);
+      expect(notifications).toEqual([]);
+
+      child.stdout.write("\n");
+      expect(notifications).toEqual([notification]);
+    } finally {
+      await client.dispose();
+      child.stdout.end();
+      child.stderr.end();
+    }
+  });
+
+  test("reads the final response when stdout ends without LF", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const history = { text: "before\u2028after" };
+    const request = client.request("thread/read", { threadId: "thread-1" });
+
+    try {
+      child.stdout.end(JSON.stringify({ id: 1, result: history }));
+
+      await expect(request).resolves.toEqual(history);
+    } finally {
+      await client.dispose();
+      child.stderr.end();
+    }
+  });
+
+  test.each([0, 16, 1024])(
+    "drains the final response when the child exits with stdout split at %i",
+    async (splitAt) => {
+      const child = createCodexAppServerChildProcess();
+      const client = new CodexAppServerClient(child, createTestLogger());
+      const terminated = vi.fn();
+      client.setUnexpectedTerminationHandler(terminated);
+      const history = { text: "before\u2028middle\u2029after 🚀" };
+      const response = JSON.stringify({ id: 1, result: history });
+      const request = client.request("thread/read", { threadId: "thread-1" });
+      const unanswered = client.request("model/list", {}).catch((error: unknown) => error);
+
+      try {
+        child.stdout.write(response.slice(0, splitAt));
+        child.emit("exit", 17, null);
+        child.stdout.end(response.slice(splitAt));
+
+        await expect(request).resolves.toEqual(history);
+        expect(terminated).not.toHaveBeenCalled();
+
+        child.stderr.end("final diagnostics");
+        child.emit("close", 17, null);
+        child.emit("close", 17, null);
+
+        const error = new Error(
+          "Codex app-server exited with code 17 and signal null\nfinal diagnostics",
+        );
+        await expect(unanswered).resolves.toEqual(error);
+        expect(terminated).toHaveBeenCalledExactlyOnceWith(error);
+      } finally {
+        await client.dispose();
+        child.stdout.end();
+        child.stderr.end();
+      }
+    },
+  );
+
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
