@@ -419,6 +419,28 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("settles a child that was still running when close_agent succeeded", () => {
+    // `close_agent` reports the child status it saw before the shutdown landed (openai/codex
+    // `close_agent` + its `close_agent_submits_shutdown_and_returns_previous_status` test), so a
+    // child closed mid-run arrives here as `running`. Closing still ends it.
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-close-running",
+      tool: "closeAgent",
+      status: "completed",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: "running", message: null },
+      },
+    });
+
+    expect(item).toMatchObject({
+      type: "tool_call",
+      callId: "call-close-running",
+      status: "canceled",
+    });
+  });
+
   it("maps mcp read_file completion with detail", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem(
