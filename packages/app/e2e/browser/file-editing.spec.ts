@@ -96,6 +96,26 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("opens the non-ASCII file named by an assistant markdown link", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "encoded-markdown-link-",
+      title: "Non-ASCII file link",
+      initialPrompt: "Show the report link",
+      featureValues: { mockAssistantResponse: "[报告](docs/reports/开户赠金.md)" },
+    });
+    try {
+      await mkdir(path.join(session.cwd, "docs/reports"), { recursive: true });
+      await writeFile(path.join(session.cwd, "docs/reports/开户赠金.md"), "# Report opened\n");
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "报告");
+      await expectFileTabOpen(page, "开户赠金.md");
+      await expect(page.getByRole("heading", { name: "Report opened" })).toBeVisible();
+      await page.screenshot({ path: test.info().outputPath("non-ascii-file-opened.png") });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("jumps to each relative reference to the same file", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "relative-reference-qa-",
@@ -757,3 +777,7 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByLabel("Vim mode NORMAL")).toBeVisible();
   });
 });
+
+async function openAssistantMarkdownLink(page: Page, name: string): Promise<void> {
+  await page.getByRole("link", { name, exact: true }).click();
+}

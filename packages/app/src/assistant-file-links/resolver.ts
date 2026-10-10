@@ -159,7 +159,10 @@ function getAssistantFileLinkTokenInfo(source: AssistantFileLinkSource): {
   token: string;
   fromHref: boolean;
 } {
-  if (isLinkifiedSource(source) || source.sourceType === "inline-code") {
+  if (source.sourceType === "inline-code") {
+    return { token: source.text?.trim() || source.href, fromHref: false };
+  }
+  if (isLinkifiedSource(source)) {
     const text = source.text?.trim();
     if (text && isFileLookingAssistantToken(text)) {
       return { token: text, fromHref: false };
