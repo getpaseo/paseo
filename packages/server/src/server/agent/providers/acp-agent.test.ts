@@ -1,6 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -198,6 +198,9 @@ function createSessionWithConfig(
     modeId?: string | null;
     model?: string | null;
     featureValues?: Record<string, unknown>;
+    terminalProcessSpawner?: typeof spawnUtils.spawnProcess;
+    agentProcessSpawner?: () => Promise<SpawnedACPProcess>;
+    terminateProcess?: ProcessTerminator;
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
 ): ACPAgentSession {
@@ -222,9 +225,44 @@ function createSessionWithConfig(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      ...(config.terminalProcessSpawner
+        ? { terminalProcessSpawner: config.terminalProcessSpawner }
+        : {}),
+      ...(config.agentProcessSpawner ? { agentProcessSpawner: config.agentProcessSpawner } : {}),
+      ...(config.terminateProcess ? { terminateProcess: config.terminateProcess } : {}),
     },
   );
 }
+
+async function createInitializedSession(
+  config: {
+    provider?: string;
+    terminalProcessSpawner?: typeof spawnUtils.spawnProcess;
+  } = {},
+): Promise<ACPAgentSession> {
+  const mainChild = createProbeChildStub();
+  const session = createSessionWithConfig({
+    ...config,
+    agentProcessSpawner: async () => ({
+      child: mainChild,
+      connection: {
+        newSession: vi.fn().mockResolvedValue({ sessionId: "session-1", configOptions: [] }),
+        unstable_closeSession: vi.fn().mockResolvedValue({}),
+      } as unknown as ClientSideConnection,
+      initialize: { agentCapabilities: { sessionCapabilities: { close: {} } } },
+    }),
+    terminateProcess: async () => "terminated",
+  });
+  await session.initializeNewSession();
+  return session;
+}
+
+test("ACP usage reference uses the provider ID", async () => {
+  for (const provider of ["copilot", "cursor", "kimi", "custom-source"]) {
+    const session = createSessionWithConfig({ provider });
+    expect(await session.getUsageReference()).toEqual({ source: provider, input: {} });
+  }
+});
 
 function createKiroSession(
   options: { waitForInitialCommands?: boolean; initialCommandsWaitTimeoutMs?: number } = {},
@@ -809,6 +847,291 @@ describe("ACPAgentSession terminal tools", () => {
       output: "spawn missing-command ENOENT\n",
       truncated: false,
     });
+  });
+});
+
+describe("ACP tool-call detail mapping", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function collectToolEvents(provider: string, updates: SessionUpdate[]) {
+    const session = await createInitializedSession({ provider });
+    const items: unknown[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "tool_call") items.push(event.item);
+    });
+    for (const update of updates) {
+      await session.sessionUpdate({ sessionId: "session-1", update });
+    }
+    return items;
+  }
+
+  test("renders dsh execute calls as shell with command and output", async () => {
+    const items = await collectToolEvents("dsh", [
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        title: "bash",
+        kind: "execute",
+        status: "in_progress",
+        rawInput: { command: "pnpm test", description: "Run tests" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "all tests pass" } }],
+      },
+    ]);
+
+    expect(items).toHaveLength(2);
+    expect(items.at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "completed",
+      detail: { type: "shell", command: "pnpm test", output: "all tests pass" },
+    });
+  });
+
+  test("renders dsh edit calls as edit details with diff hunks", async () => {
+    const items = await collectToolEvents("dsh", [
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        title: "edit",
+        kind: "edit",
+        status: "in_progress",
+        rawInput: { file_path: "/tmp/a.md", old_string: "old", new_string: "new" },
+        locations: [{ path: "/tmp/a.md" }],
+        content: [{ type: "diff", path: "/tmp/a.md", oldText: "old", newText: "new" }],
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+        content: [{ type: "diff", path: "/tmp/a.md", oldText: "old", newText: "new" }],
+      },
+    ]);
+
+    expect(items.at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "completed",
+      detail: {
+        type: "edit",
+        filePath: "/tmp/a.md",
+        oldString: "old",
+        newString: "new",
+      },
+    });
+  });
+
+  test("keeps a call-time diff when the result update has no content", async () => {
+    const items = await collectToolEvents("dsh", [
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        title: "write",
+        kind: "edit",
+        status: "in_progress",
+        rawInput: { file_path: "/tmp/b.md", content: "body" },
+        locations: [{ path: "/tmp/b.md" }],
+        content: [{ type: "diff", path: "/tmp/b.md", oldText: null, newText: "body" }],
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+      },
+    ]);
+
+    expect(items.at(-1)).toMatchObject({
+      type: "tool_call",
+      detail: {
+        type: "edit",
+        filePath: "/tmp/b.md",
+        newString: "body",
+      },
+    });
+  });
+
+  test("links devin _meta.terminal_exit to terminal output and exit code", async () => {
+    const child = createTerminalChildStub();
+    const session = await createInitializedSession({
+      provider: "devin",
+      terminalProcessSpawner: () => child,
+    });
+    const items: unknown[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "tool_call") items.push(event.item);
+    });
+
+    const { terminalId } = await session.createTerminal({
+      sessionId: "session-1",
+      command: "echo devin-out",
+    });
+    child.stdout!.emit("data", "devin-out\n");
+    child.emit("exit", 0, null);
+    await session.waitForTerminalExit({ sessionId: "session-1", terminalId });
+    await session.releaseTerminal({ sessionId: "session-1", terminalId });
+    child.stdout!.emit("data", "tail-after-exit\n");
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        title: "Ran echo",
+        kind: "execute",
+        status: "in_progress",
+        rawInput: { command: "echo devin-out" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "in_progress",
+        _meta: { terminal_exit: { terminal_id: terminalId, exit_code: 0, signal: null } },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "late update" } }],
+      } as SessionUpdate,
+    });
+
+    expect(items.at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "completed",
+      detail: {
+        type: "shell",
+        command: "echo devin-out",
+        output: "devin-out\ntail-after-exit\n",
+        exitCode: 0,
+      },
+    });
+
+    let finishUnhandledRejectionWait!: () => void;
+    const unhandledRejection = new Promise<unknown>((resolve) => {
+      const handler = (reason: unknown) => {
+        process.off("unhandledRejection", handler);
+        resolve(reason);
+      };
+      process.once("unhandledRejection", handler);
+      finishUnhandledRejectionWait = () => {
+        process.off("unhandledRejection", handler);
+        resolve(undefined);
+      };
+    });
+    await session.close();
+    child.stdout!.emit("data", "late-after-close\n");
+    setImmediate(finishUnhandledRejectionWait);
+    await expect(unhandledRejection).resolves.toBeUndefined();
+  });
+
+  test("cleans released terminal results after failed tool calls", async () => {
+    const child = createTerminalChildStub();
+    const session = await createInitializedSession({
+      provider: "devin",
+      terminalProcessSpawner: () => child,
+    });
+    const items: unknown[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "tool_call") items.push(event.item);
+    });
+
+    const { terminalId } = await session.createTerminal({
+      sessionId: "session-1",
+      command: "false",
+    });
+    child.stdout!.emit("data", "failed-output\n");
+    child.emit("exit", 1, null);
+    await session.waitForTerminalExit({ sessionId: "session-1", terminalId });
+    await session.releaseTerminal({ sessionId: "session-1", terminalId });
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "failed-call",
+        title: "false",
+        kind: "execute",
+        status: "in_progress",
+        _meta: { terminal_exit: { terminal_id: terminalId } },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "failed-call",
+        status: "failed",
+      } as SessionUpdate,
+    });
+
+    expect(items.at(-1)).toMatchObject({
+      status: "failed",
+      detail: { type: "shell", output: "failed-output\n", exitCode: 1 },
+    });
+    child.stdout!.emit("data", "late-after-failure\n");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "failed-call",
+        status: "failed",
+      } as SessionUpdate,
+    });
+    expect(items.at(-1)).toMatchObject({ status: "failed", detail: { type: "shell" } });
+    expect((items.at(-1) as { detail: { output?: string } }).detail.output).toBeUndefined();
+    await session.close();
+  });
+
+  test("renders dsh read and search calls with file context", async () => {
+    const items = await collectToolEvents("dsh", [
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-read",
+        title: "read",
+        kind: "read",
+        status: "in_progress",
+        rawInput: { file_path: "/tmp/c.md", offset: 5 },
+        locations: [{ path: "/tmp/c.md" }],
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-read",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "5: line" } }],
+      },
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-grep",
+        title: "grep",
+        kind: "search",
+        status: "in_progress",
+        rawInput: { pattern: "needle", path: "/tmp" },
+        locations: [{ path: "/tmp" }],
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-grep",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "Found 1 match" } }],
+      },
+    ]);
+
+    expect(items).toMatchObject([
+      {},
+      { detail: { type: "read", filePath: "/tmp/c.md", offset: 5, content: "5: line" } },
+      {},
+      { detail: { type: "search", query: "needle", content: "Found 1 match" } },
+    ]);
   });
 });
 
