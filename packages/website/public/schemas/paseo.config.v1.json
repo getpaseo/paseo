@@ -456,7 +456,7 @@
                     },
                     "voice": {
                       "type": "string",
-                      "enum": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+                      "minLength": 1
                     },
                     "speakerId": {
                       "type": "integer"
