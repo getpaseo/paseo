@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createPluginResourceAttachment,
+  getPluginResourceAttachmentKey,
   PluginResourceComposerAttachmentSchema,
   pluginResourceAttachmentToAgentAttachment,
   togglePluginResourceAttachment,
@@ -42,6 +43,23 @@ describe("plugin resource attachments", () => {
     expect(togglePluginResourceAttachment([attachment], attachment)).toEqual([]);
   });
 
+  it("keeps matching resource ids from different source hosts separate", () => {
+    const local = createPluginResourceAttachment(source, item);
+    const remote = createPluginResourceAttachment(
+      { ...source, sourceServerId: "remote-host", sourceTitle: "Linear issue · Remote" },
+      item,
+    );
+
+    expect(PluginResourceComposerAttachmentSchema.parse(remote)).toEqual(remote);
+    expect(getPluginResourceAttachmentKey(local)).toBe(":linear:issues:issue-uuid");
+    expect(getPluginResourceAttachmentKey(remote)).toBe("remote-host:linear:issues:issue-uuid");
+    expect(togglePluginResourceAttachment([local], remote)).toEqual([local, remote]);
+    expect(togglePluginResourceAttachment([local, remote], remote)).toEqual([local]);
+    expect(pluginResourceAttachmentToAgentAttachment(remote)).toMatchObject({
+      externalResource: { providerLabel: "Linear issue · Remote" },
+    });
+  });
+
   it("submits through the backward-compatible text attachment", () => {
     const attachment = createPluginResourceAttachment(source, item);
 
@@ -64,6 +82,20 @@ describe("plugin resource attachments", () => {
     expect(splitComposerAttachmentsForSubmit([attachment])).toEqual({
       images: [],
       attachments: [agentAttachment],
+    });
+  });
+
+  it("preserves chat-history ordering metadata for transcript snapshots", () => {
+    const attachment = createPluginResourceAttachment(source, {
+      ...item,
+      contextKind: "chat_history",
+    });
+
+    expect(PluginResourceComposerAttachmentSchema.parse(attachment)).toEqual(attachment);
+    expect(pluginResourceAttachmentToAgentAttachment(attachment)).toMatchObject({
+      type: "text",
+      text: item.text,
+      contextKind: "chat_history",
     });
   });
 });
