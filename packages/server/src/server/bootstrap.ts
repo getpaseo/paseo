@@ -157,7 +157,11 @@ import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
-import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
+import {
+  resolveWorkspaceIdForPath,
+  resolveWorkspaceRecordForPath,
+} from "./resolve-workspace-id-for-path.js";
+import { SharedContextStore } from "./agent/shared-context/store.js";
 import {
   archiveByScope,
   archivePersistedWorkspaceRecord,
@@ -942,12 +946,49 @@ export async function createPaseoDaemon(
     if (git) configureGitProcessPolicy(git);
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
+  const sharedContextStore = new SharedContextStore({
+    paseoHome: config.paseoHome,
+    logger,
+  });
+  const resolveProjectIdForCwdExternal = async (cwd: string): Promise<string | null> => {
+    const workspaceRecord = resolveWorkspaceRecordForPath(cwd, await workspaceRegistry.list());
+    if (workspaceRecord) {
+      return workspaceRecord.projectId;
+    }
+    // No workspace record encloses the cwd (e.g. the agent runs in the project
+    // root while all workspace records live in managed worktrees). Fall back to
+    // the deepest enclosing project root.
+    const resolvedCwd = path.resolve(cwd);
+    let bestMatchLength = 0;
+    let bestMatch: string | null = null;
+    for (const project of await projectRegistry.list()) {
+      if (project.archivedAt) continue;
+      const rootPath = path.resolve(project.rootPath);
+      if (rootPath === resolvedCwd) {
+        return project.projectId;
+      }
+      const prefix = rootPath.endsWith(path.sep) ? rootPath : `${rootPath}${path.sep}`;
+      if (!resolvedCwd.startsWith(prefix)) {
+        continue;
+      }
+      if (rootPath.length > bestMatchLength) {
+        bestMatchLength = rootPath.length;
+        bestMatch = project.projectId;
+      }
+    }
+    return bestMatch;
+  };
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
+    sharedProjectContextDigest: (cwd) => {
+      return resolveProjectIdForCwdExternal(cwd).then((projectId) =>
+        projectId ? sharedContextStore.renderDigest(projectId) : Promise.resolve(null),
+      );
+    },
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
@@ -1438,6 +1479,8 @@ export async function createPaseoDaemon(
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
     browserToolsEnabled: browserToolsPolicy.isEnabled(),
     browserToolsBroker,
+    sharedContextStore,
+    resolveProjectIdForCwd: resolveProjectIdForCwdExternal,
     paseoToolPolicy:
       runtime.paseoToolPolicy ??
       (runtime.callerAgentId ? agentManager.getPaseoToolPolicy(runtime.callerAgentId) : undefined),
