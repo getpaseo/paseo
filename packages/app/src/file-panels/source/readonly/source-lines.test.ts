@@ -79,15 +79,15 @@ describe("buildSourceLines", () => {
 
     expect(lines).toHaveLength(5402);
     expect(lines).toEqual(highlightCode(content, filename));
-    expect(lines.some((line) => line.some((token) => token.style !== null))).toBe(true);
+    expect(lines.flat().some((token) => token.style !== null)).toBe(true);
   });
 
   it("falls back for a dense row in the preview and full result", async () => {
     const filename = "data.json";
-    const dense = JSON.stringify(Array.from({ length: 16 }, (_, i) => i));
+    const dense = `${JSON.stringify(Array.from({ length: 25 }, (_, i) => i))} `;
     const content = `${dense}\n{"ok":true}\n{"ok":false}\n`;
     const original = highlightCode(content, filename);
-    expect(original[0]).toHaveLength(33);
+    expect(original[0]).toHaveLength(52);
     const [preview, full] = await build(
       { content, filename, presentation: "highlighted", firstLines: 1 },
       2,
@@ -95,6 +95,28 @@ describe("buildSourceLines", () => {
 
     expect(preview[0]).toEqual([{ text: dense, style: null }]);
     expect(full).toEqual([[{ text: dense, style: null }], ...original.slice(1)]);
+  });
+
+  it.each([
+    ["data.json", JSON.stringify(Array.from({ length: 25 }, (_, i) => i)), 51],
+    [
+      "ordinary.ts",
+      'const values = [{ id: 0, name: "item0" }, { id: 1, name: "item1" }, { id: 2, name: "item2" }];',
+      50,
+    ],
+  ])("keeps %s highlighted within the span budget", async (filename, content, tokenCount) => {
+    const original = highlightCode(content, filename);
+    const [lines] = await build({ content, filename, presentation: "highlighted" });
+
+    expect(original[0]).toHaveLength(tokenCount);
+    expect(lines[0]).toHaveLength(tokenCount);
+    expect(lines).toEqual(original);
+  });
+
+  it("preserves every line for unknown languages", async () => {
+    const content = "hello\r\n\nworld\n";
+    const [lines] = await build({ content, filename: "data.unknown", presentation: "highlighted" });
+    expect(lines).toEqual(content.split("\n").map((text) => [{ text, style: null }]));
   });
 
   it("never reports lines once cancelled", async () => {

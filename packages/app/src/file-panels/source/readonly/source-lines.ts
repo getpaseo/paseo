@@ -3,7 +3,10 @@ import { highlightCodeInSteps, type HighlightToken } from "@getpaseo/highlight";
 /** JavaScript time per slice; the rest of the frame stays free for input and rendering. */
 const SLICE_BUDGET_MS = 12;
 const PLAIN_LINES_PER_UNIT = 2000;
-const MAX_HIGHLIGHTED_TOKENS_PER_LINE = 32;
+// Android has 256 span-priority slots. A colored source fragment uses five:
+// color, size, font family, line height, and the fragment marker. At most 51
+// tokens fit even when every token has a color.
+const MAX_HIGHLIGHTED_TOKENS_PER_LINE = 51;
 
 /**
  * Splits `content` into source lines, highlighted or plain, a time slice per task so a large file
