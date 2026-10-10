@@ -580,7 +580,7 @@ function extractCell(terminal: TerminalType, row: number, col: number): Terminal
   const bg = bgMode !== 0 ? cell.getBgColor() : undefined;
 
   return {
-    char: cell.getChars() || " ",
+    char: cell.getWidth() === 0 ? "" : cell.getChars() || " ",
     fg,
     bg,
     fgMode: fgMode !== 0 ? fgMode : undefined,
@@ -639,7 +639,7 @@ function extractScrollback(
           const fg = fgMode !== 0 ? cell.getFgColor() : undefined;
           const bg = bgMode !== 0 ? cell.getBgColor() : undefined;
           rowCells.push({
-            char: cell.getChars() || " ",
+            char: cell.getWidth() === 0 ? "" : cell.getChars() || " ",
             fg,
             bg,
             fgMode: fgMode !== 0 ? fgMode : undefined,
