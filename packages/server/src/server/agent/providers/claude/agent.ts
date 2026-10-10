@@ -2366,13 +2366,9 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.activeForegroundQuery = this.query;
       this.activeForegroundInput = this.input;
-      this.startQueryPump();
       this.input.push(sdkMessage);
-      setTimeout(() => {
-        if (this.activeForegroundTurnId === turnId) {
-          this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
-        }
-      }, 0);
+      this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
+      this.startQueryPump();
     } catch (error) {
       if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
       this.finishForegroundTurn(
@@ -3237,6 +3233,9 @@ class ClaudeAgentSession implements AgentSession {
         });
       }
     }
+
+    // A new query uses the current settings even when there was no old query to retire.
+    this.queryRestartNeeded = false;
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
     // resume: sessionId and the new query continues the existing conversation.
